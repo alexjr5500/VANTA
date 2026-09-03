@@ -1,0 +1,508 @@
+// ============================================================================
+// VANTA COMPLIANCE & PRIVACY PLATFORM - SCHEMA EXTENSIONS
+// ============================================================================
+// This file contains new models to be added to the main schema.prisma
+// Integrate these models into the main schema.prisma file
+
+// ============================================================================
+// PRIVACY & SECURITY SETTINGS (Extended)
+// ============================================================================
+
+model PrivacySettings {
+  id                       String   @id @default(cuid())
+  userId                   String   @unique
+  user                     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Account type
+  accountType              String   @default("PUBLIC") // PUBLIC, PRIVATE, CREATOR
+  
+  // Visibility controls
+  onlineStatus             String   @default("everyone") // everyone, followers, nobody
+  lastSeen                 String   @default("everyone")
+  readReceipts             String   @default("everyone")
+  storyVisibility          String   @default("everyone")
+  liveStreamVisibility     String   @default("everyone")
+  
+  // Interaction permissions
+  communityInvites         String   @default("everyone")
+  groupInvites             String   @default("everyone")
+  messagePermissions       String   @default("everyone")
+  callPermissions          String   @default("everyone")
+  tagPermissions           String   @default("everyone")
+  mentionPermissions       String   @default("everyone")
+  
+  // Discoverability
+  profileSearchVisibility  Boolean  @default(true)
+  searchVisibility         Boolean  @default(true)
+  discoverability          Boolean  @default(true)
+  
+  // AI & Personalization
+  aiPersonalization        Boolean  @default(true)
+  adPersonalization        Boolean  @default(true)
+  
+  // Cookie preferences
+  cookieAnalytics          Boolean  @default(true)
+  cookieMarketing          Boolean  @default(true)
+  cookieFunctional         Boolean  @default(true)
+  
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+}
+
+// ============================================================================
+// CONSENT MANAGEMENT
+// ============================================================================
+
+model ConsentPreference {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Consent categories
+  analytics      String   @default("not_set") // granted, denied, not_set
+  personalization String @default("not_set")
+  marketing      String   @default("not_set")
+  aiFeatures     String   @default("not_set")
+  notifications  String   @default("not_set")
+  cookies        String   @default("not_set")
+  
+  // Audit fields
+  lastUpdatedAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  
+  @@unique([userId])
+  @@index([userId])
+}
+
+model ConsentHistory {
+  id             String   @id @default(cuid())
+  userId         String
+  type           String   // analytics, personalization, marketing, ai_features, notifications, cookies
+  action         String   // granted, denied, revoked, updated
+  previousValue  String?
+  newValue       String?
+  ipAddress      String?
+  userAgent      String?
+  source         String   @default("privacy_center") // privacy_center, registration, settings, prompt
+  
+  createdAt      DateTime @default(now())
+  
+  @@index([userId, createdAt])
+  @@index([userId, type, createdAt])
+  @@index([type, action, createdAt])
+}
+
+// ============================================================================
+// REPORTING SYSTEM
+// ============================================================================
+
+model Report {
+  id              String   @id @default(cuid())
+  reporterId      String
+  reporter        User     @relation("ReportSubmitter", fields: [reporterId], references: [id], onDelete: Cascade)
+  targetUserId    String?
+  targetUser      User?    @relation("ReportTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  
+  // Target content
+  targetType      String   // USER, POST, STORY, SHORT, COMMUNITY, CHANNEL, MESSAGE, LIVE_STREAM, COMMENT, GIFT, ADVERTISEMENT
+  targetId        String   // ID of the reported content
+  
+  // Report details
+  category        String   // spam, harassment, impersonation, scams, copyright, illegal_content, hate_speech, violence, nudity, self_harm, misinformation, other
+  description     String?
+  
+  // Evidence
+  evidenceUrls    String?  // JSON array of URLs
+  
+  // Status
+  status          String   @default("PENDING") // PENDING, UNDER_REVIEW, INVESTIGATING, ACTIONED, DISMISSED, APPEALED
+  priority        String   @default("NORMAL") // LOW, NORMAL, HIGH, URGENT
+  assignedTo      String?  // Admin/moderator ID
+  
+  // Moderation outcome
+  actionTaken     String?  // none, warning, content_removed, account_suspended, account_banned, monetization_removed
+  actionDetail    String?
+  processedById   String?  // Admin who processed it
+  processedAt     DateTime?
+  resolutionNote  String?
+  
+  // Appeal tracking
+  appealId        String?  // Link to appeal if one is filed
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([reporterId])
+  @@index([targetUserId])
+  @@index([targetType, targetId])
+  @@index([status, priority])
+  @@index([category, status])
+  @@index([status, createdAt])
+  @@index([assignedTo, status])
+  @@index([priority, status, createdAt])
+}
+
+// ============================================================================
+// APPEALS SYSTEM
+// ============================================================================
+
+model Appeal {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Appeal context
+  appealType      String   // SUSPENSION, BAN, CONTENT_REMOVAL, MONETIZATION_DECISION, REPORT_DISMISSAL
+  targetType      String?  // ACCOUNT, CONTENT, REPORT, MONETIZATION
+  targetId        String?  // ID of the action being appealed
+  reportId        String?  // If appealing a report outcome
+  
+  // Appeal details
+  reason          String
+  explanation     String?
+  evidenceUrls    String?  // JSON array
+  
+  // Status tracking
+  status          String   @default("PENDING") // PENDING, UNDER_REVIEW, APPROVED, REJECTED, ESCALATED
+  reviewedById    String?  // Admin who reviewed
+  reviewedAt      DateTime?
+  decision        String?  // APPROVED, REJECTED, PARTIALLY_APPROVED
+  decisionReason  String?
+  
+  // Escalation
+  escalatedTo     String?  // Higher authority
+  escalatedAt     DateTime?
+  escalationNote  String?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([userId, status])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([appealType, status])
+  @@index([targetType, targetId])
+  @@index([reviewedById, status])
+}
+
+// ============================================================================
+// COPYRIGHT MANAGEMENT
+// ============================================================================
+
+model CopyrightClaim {
+  id                String   @id @default(cuid())
+  
+  // Claimant info
+  claimantName      String
+  claimantEmail     String
+  claimantUserId    String?   // If registered user
+  claimant          User?     @relation(fields: [claimantUserId], references: [id], onDelete: SetNull)
+  
+  // Rights holder
+  rightsHolderName  String
+  rightsHolderContact String?
+  
+  // Original work
+  originalWorkTitle String
+  originalWorkUrl   String?
+  originalWorkDescription  String?
+  
+  // Infringing content
+  infringingUrl     String
+  infringingContentId   String?
+  infringingContentType String? // POST, VIDEO, STORY, LIVE_STREAM
+  
+  // Claim status
+  status            String   @default("PENDING") // PENDING, UNDER_REVIEW, ACTIONED, REJECTED, COUNTER_NOTICE, RESOLVED
+  actionTaken       String?  // CONTENT_REMOVED, RESTORED, NO_ACTION
+  
+  // Counter notice
+  counterNoticeId   String?
+  counterNoticeAt   DateTime?
+  
+  // Repeat infringement tracking
+  infringingUserId  String?  // User who posted the infringing content
+  infringementCount Int     @default(1)
+  
+  // Processing
+  processedById     String?
+  processedAt       DateTime?
+  decisionNote      String?
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@index([status, createdAt])
+  @@index([claimantEmail])
+  @@index([infringingUserId])
+  @@index([infringingContentType, infringingContentId])
+  @@index([status, processedById])
+}
+
+model CounterNotice {
+  id                 String   @id @default(cuid())
+  copyrightClaimId   String   @unique
+  copyrightClaim     CopyrightClaim @relation(fields: [copyrightClaimId], references: [id], onDelete: Cascade)
+  
+  // Respondent info
+  respondentName     String
+  respondentEmail    String
+  respondentUserId   String?
+  respondent         User?    @relation(fields: [respondentUserId], references: [id], onDelete: SetNull)
+  
+  // Statement
+  statement          String   // Statement under penalty of perjury
+  signature          String   // Digital signature
+  contactInfo        String?
+  
+  // Status
+  status             String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  processedById      String?
+  processedAt        DateTime?
+  decisionNote       String?
+  
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  
+  @@index([copyrightClaimId])
+  @@index([status, createdAt])
+}
+
+model RepeatInfringement {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  infringementCount Int   @default(1)
+  lastClaimId     String
+  status          String   @default("MONITORING") // MONITORING, WARNING_SENT, ACCOUNT_LOCKED, ACCOUNT_TERMINATED
+  warningSentAt   DateTime?
+  lockedAt        DateTime?
+  terminatedAt    DateTime?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@unique([userId])
+  @@index([userId])
+  @@index([status])
+  @@index([infringementCount, status])
+}
+
+// ============================================================================
+// COMMUNITY STANDARDS & POLICY
+// ============================================================================
+
+model CommunityStandard {
+  id          String   @id @default(cuid())
+  type        String   @unique // COMMUNITY_GUIDELINES, CREATOR_GUIDELINES, LIVE_STREAMING_RULES, MONETIZATION_POLICY, ANTI_SPAM, COPYRIGHT, HARASSMENT, CHILD_SAFETY, DANGEROUS_CONTENT
+  title       String
+  content     String   // Markdown content
+  version     String
+  isActive    Boolean  @default(true)
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([type, isActive])
+  @@index([version])
+}
+
+model PolicyAcceptance {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  policyType      String   // TERMS_OF_SERVICE, PRIVACY_POLICY, COMMUNITY_GUIDELINES, CREATOR_AGREEMENT, MONETIZATION_AGREEMENT, COOKIE_POLICY
+  policyVersion   String
+  accepted        Boolean  @default(true)
+  acceptedAt      DateTime @default(now())
+  ipAddress       String?
+  userAgent       String?
+  
+  @@unique([userId, policyType])
+  @@index([userId])
+  @@index([policyType, policyVersion])
+  @@index([acceptedAt])
+}
+
+model PolicyVersion {
+  id          String   @id @default(cuid())
+  policyType  String   // TERMS_OF_SERVICE, PRIVACY_POLICY, COMMUNITY_GUIDELINES, CREATOR_AGREEMENT, MONETIZATION_AGREEMENT, COOKIE_POLICY
+  version     String
+  title       String
+  content     String   // Markdown content
+  publishedAt DateTime @default(now())
+  effectiveAt DateTime
+  isCurrent   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  
+  @@unique([policyType, version])
+  @@index([policyType, isCurrent])
+  @@index([policyType, effectiveAt])
+}
+
+// ============================================================================
+// TRANSPARENCY CENTER
+// ============================================================================
+
+model TransparencyMetric {
+  id              String   @id @default(cuid())
+  metricType      String   // ENFORCEMENT_ACTIONS, REPORT_VOLUME, APPEAL_OUTCOMES, CONTENT_REMOVALS, GOVERNMENT_REQUESTS, DATA_REQUESTS
+  period          String   // DAILY, WEEKLY, MONTHLY, QUARTERLY, YEARLY
+  periodStart     DateTime
+  periodEnd       DateTime
+  totalCount      Int      @default(0)
+  actionBreakdown String?  // JSON breakdown by category
+  notes           String?
+  publishedAt     DateTime?
+  createdAt       DateTime @default(now())
+  
+  @@unique([metricType, period, periodStart])
+  @@index([metricType, period, periodStart])
+  @@index([period, periodStart])
+}
+
+// ============================================================================
+// CONNECTED DEVICES & SESSIONS
+// ============================================================================
+
+model ConnectedDevice {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceName    String?
+  deviceType    String?  // MOBILE, TABLET, DESKTOP, WEB
+  os            String?  // iOS, Android, Windows, macOS
+  browser       String?
+  ipAddress     String?
+  location      String?  // Approximate location
+  isTrusted     Boolean  @default(false)
+  lastActiveAt  DateTime @default(now())
+  createdAt     DateTime @default(now())
+  
+  @@index([userId])
+  @@index([userId, lastActiveAt])
+  @@index([userId, isTrusted])
+}
+
+model LoginHistory {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ipAddress   String?
+  userAgent   String?
+  deviceInfo  String?
+  location    String?
+  isSuccessful Boolean @default(true)
+  loginMethod String   @default("PASSWORD") // PASSWORD, OAUTH, TWO_FACTOR, MAGIC_LINK, SSO
+  failReason  String?
+  createdAt   DateTime @default(now())
+  
+  @@index([userId, createdAt])
+  @@index([userId, isSuccessful, createdAt])
+  @@index([ipAddress, createdAt])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// AUDIT TRAIL
+// ============================================================================
+
+model ComplianceAuditLog {
+  id          String   @id @default(cuid())
+  userId      String?  // User who performed the action (null for system actions)
+  action      String   // CONSENT_CHANGE, PRIVACY_REQUEST, APPEAL_FILED, APPEAL_DECIDED, MODERATION_ACTION, ADMIN_ACTION, POLICY_ACCEPTANCE, DATA_EXPORT, ACCOUNT_DELETION, COPYRIGHT_ACTION
+  resourceType String  // USER, REPORT, APPEAL, COPYRIGHT_CLAIM, CONSENT, POLICY, SETTINGS
+  resourceId  String?  // ID of the affected resource
+  details     String?  // JSON payload with action details
+  ipAddress   String?
+  userAgent   String?
+  severity    String   @default("INFO") // INFO, WARNING, ERROR, CRITICAL
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@index([resourceType, resourceId])
+  @@index([severity, createdAt])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// ACCOUNT DEACTIVATION / DELETION EXTENDED
+// ============================================================================
+
+model AccountDeactivation {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deactivationType String  // TEMPORARY, PERMANENT, SCHEDULED
+  reason          String?  // privacy_concerns, security, platform_migration, other
+  reasonDetail    String?
+  status          String   @default("ACTIVE") // ACTIVE, DEACTIVATED, SCHEDULED_FOR_DELETION, DELETED, RECOVERED
+  deactivatedAt   DateTime?
+  scheduledFor    DateTime?
+  recoveryPeriodEnd DateTime?
+  recoveryToken   String?  // Token for account recovery
+  recoveredAt     DateTime?
+  permanentlyDeletedAt DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([status, scheduledFor])
+  @@index([status, recoveryPeriodEnd])
+  @@index([deactivatedAt])
+}
+
+// ============================================================================
+// CHILD SAFETY
+// ============================================================================
+
+model ChildSafetyFlag {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  flagType        String   // UNDERAGE_ACCOUNT, SUSPECTED_CONTENT, REPORTED_BY_USER, AI_DETECTED
+  status          String   @default("PENDING_REVIEW") // PENDING_REVIEW, APPROVED, DISMISSED, ESCALATED
+  ageEstimate     Int?
+  declaredAge     Int?
+  actionTaken     String?  // account_restricted, content_removed, reported_to_authorities, monitoring
+  actionDetail    String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+  escalationLevel String   @default("NORMAL") // NORMAL, HIGH, URGENT
+  notes           String?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([status, escalationLevel])
+  @@index([flagType, status])
+  @@index([status, createdAt])
+}
+
+// ============================================================================
+// NOTIFICATION PREFERENCES FOR COMPLIANCE
+// ============================================================================
+
+model ComplianceNotification {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String   // POLICY_UPDATE, SECURITY_EVENT, PRIVACY_CHANGE, CONSENT_REQUEST, ACCOUNT_ACTION, APPEAL_DECISION, DATA_EXPORT_READY, DATA_EXPORT_FAILED, DELETION_CONFIRMATION, COPYRIGHT_NOTICE
+  title           String
+  message         String
+  actionUrl       String?
+  read            Boolean  @default(false)
+  emailed         Boolean  @default(false)
+  pushed          Boolean  @default(false)
+  metadata        String?  // JSON
+  
+  createdAt       DateTime @default(now())
+  
+  @@index([userId, read, createdAt])
+  @@index([userId, type, createdAt])
+  @@index([type, createdAt])
+  @@index([createdAt])
+}

@@ -1,0 +1,11 @@
+{
+  "app": "vanta-backend",
+  "buildCommand": "npm --prefix backend install && npm --prefix backend run build",
+  "startCommand": "node backend/dist/index.js",
+  "framework": "nodejs",
+  "nodeVersion": "24.x",
+  "regions": ["us-east-1"],
+  "environment": {
+    "NODE_ENV": "production"
+  }
+}

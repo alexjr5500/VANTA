@@ -1,0 +1,297 @@
+/* =============================================================================
+ * VANTA RTL CSS Module
+ * Direction-aware utilities for Right-to-Left language support
+ * All selectors use [dir="rtl"] prefix for automatic activation
+ * ============================================================================= */
+
+/* CSS Custom Properties for RTL-aware spacing */
+[dir="rtl"] {
+  --margin-start: 0;
+  --margin-end: 0;
+  --padding-start: 0;
+  --padding-end: 0;
+  --rounded-start: 0;
+  --rounded-end: 0;
+}
+
+/* =============================================================================
+ * Layout Mirroring
+ * ============================================================================= */
+
+/* Flip horizontal transforms */
+[dir="rtl"] .mirror-rtl,
+[dir="rtl"] .rtl-flip {
+  transform: scaleX(-1);
+}
+
+[dir="rtl"] .rtl-flip-children > * {
+  transform: scaleX(-1);
+}
+
+[dir="rtl"] .rtl-flip-children {
+  transform: scaleX(-1);
+}
+
+[dir="rtl"] .rtl-flip-children:hover {
+  transform: scaleX(-1);
+}
+
+/* Flex direction reversal */
+[dir="rtl"] .rtl-flex-row {
+  flex-direction: row-reverse !important;
+}
+
+[dir="rtl"] .rtl-flex-row-reverse {
+  flex-direction: row !important;
+}
+
+/* =============================================================================
+ * Text Alignment
+ * ============================================================================= */
+
+[dir="rtl"] .rtl-text-left {
+  text-align: right !important;
+}
+
+[dir="rtl"] .rtl-text-right {
+  text-align: left !important;
+}
+
+[dir="rtl"] .rtl-text-start {
+  text-align: right !important;
+}
+
+[dir="rtl"] .rtl-text-end {
+  text-align: left !important;
+}
+
+/* =============================================================================
+ * Float
+ * ============================================================================= */
+
+[dir="rtl"] .rtl-float-left {
+  float: right !important;
+}
+
+[dir="rtl"] .rtl-float-right {
+  float: left !important;
+}
+
+[dir="rtl"] .rtl-float-start {
+  float: right !important;
+}
+
+[dir="rtl"] .rtl-float-end {
+  float: left !important;
+}
+
+/* =============================================================================
+ * Border Radius
+ * ============================================================================= */
+
+[dir="rtl"] .rtl-rounded-l {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-top-right-radius: inherit;
+  border-bottom-right-radius: inherit;
+}
+
+[dir="rtl"] .rtl-rounded-r {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-top-left-radius: inherit;
+  border-bottom-left-radius: inherit;
+}
+
+[dir="rtl"] .rtl-rounded-tl {
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: inherit;
+}
+
+[dir="rtl"] .rtl-rounded-tr {
+  border-top-right-radius: 0 !important;
+  border-top-left-radius: inherit;
+}
+
+[dir="rtl"] .rtl-rounded-bl {
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: inherit;
+}
+
+[dir="rtl"] .rtl-rounded-br {
+  border-bottom-right-radius: 0 !important;
+  border-bottom-left-radius: inherit;
+}
+
+/* =============================================================================
+ * Direction-aware Padding
+ * (Bootstrap-style: ps-* = padding-inline-start, pe-* = padding-inline-end)
+ * ============================================================================= */
+
+[dir="rtl"] .ps-0 { padding-right: 0 !important; padding-left: unset !important; }
+[dir="rtl"] .pe-0 { padding-left: 0 !important; padding-right: unset !important; }
+[dir="rtl"] .ps-1 { padding-right: 0.25rem !important; padding-left: unset !important; }
+[dir="rtl"] .pe-1 { padding-left: 0.25rem !important; padding-right: unset !important; }
+[dir="rtl"] .ps-2 { padding-right: 0.5rem !important; padding-left: unset !important; }
+[dir="rtl"] .pe-2 { padding-left: 0.5rem !important; padding-right: unset !important; }
+[dir="rtl"] .ps-3 { padding-right: 1rem !important; padding-left: unset !important; }
+[dir="rtl"] .pe-3 { padding-left: 1rem !important; padding-right: unset !important; }
+[dir="rtl"] .ps-4 { padding-right: 1.5rem !important; padding-left: unset !important; }
+[dir="rtl"] .pe-4 { padding-left: 1.5rem !important; padding-right: unset !important; }
+[dir="rtl"] .ps-5 { padding-right: 3rem !important; padding-left: unset !important; }
+[dir="rtl"] .pe-5 { padding-left: 3rem !important; padding-right: unset !important; }
+
+/* =============================================================================
+ * Direction-aware Margin
+ * (Bootstrap-style: ms-* = margin-inline-start, me-* = margin-inline-end)
+ * ============================================================================= */
+
+[dir="rtl"] .ms-0 { margin-right: 0 !important; margin-left: unset !important; }
+[dir="rtl"] .me-0 { margin-left: 0 !important; margin-right: unset !important; }
+[dir="rtl"] .ms-1 { margin-right: 0.25rem !important; margin-left: unset !important; }
+[dir="rtl"] .me-1 { margin-left: 0.25rem !important; margin-right: unset !important; }
+[dir="rtl"] .ms-2 { margin-right: 0.5rem !important; margin-left: unset !important; }
+[dir="rtl"] .me-2 { margin-left: 0.5rem !important; margin-right: unset !important; }
+[dir="rtl"] .ms-3 { margin-right: 1rem !important; margin-left: unset !important; }
+[dir="rtl"] .me-3 { margin-left: 1rem !important; margin-right: unset !important; }
+[dir="rtl"] .ms-4 { margin-right: 1.5rem !important; margin-left: unset !important; }
+[dir="rtl"] .me-4 { margin-left: 1.5rem !important; margin-right: unset !important; }
+[dir="rtl"] .ms-5 { margin-right: 3rem !important; margin-left: unset !important; }
+[dir="rtl"] .me-5 { margin-left: 3rem !important; margin-right: unset !important; }
+[dir="rtl"] .ms-auto { margin-right: auto !important; margin-left: unset !important; }
+[dir="rtl"] .me-auto { margin-left: auto !important; margin-right: unset !important; }
+
+/* =============================================================================
+ * Position / Inset
+ * ============================================================================= */
+
+[dir="rtl"] .rtl-left-0 { left: unset !important; right: 0 !important; }
+[dir="rtl"] .rtl-right-0 { right: unset !important; left: 0 !important; }
+[dir="rtl"] .rtl-inset-x-0 { right: 0 !important; left: 0 !important; }
+
+/* =============================================================================
+ * Transform / Translate
+ * ============================================================================= */
+
+[dir="rtl"] .rtl-translate-x-0 { transform: translateX(0) !important; }
+[dir="rtl"] .rtl-translate-x-2 { transform: translateX(0.5rem) scaleX(-1) !important; }
+[dir="rtl"] .rtl-translate-x-neg-2 { transform: translateX(-0.5rem) scaleX(-1) !important; }
+[dir="rtl"] .rtl-rotate-180 { transform: rotate(180deg) !important; }
+
+/* =============================================================================
+ * Animation Flips for RTL
+ * ============================================================================= */
+
+@keyframes rtl-slide-in-start {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes rtl-slide-in-end {
+  from {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes rtl-slide-out-start {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes rtl-slide-out-end {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+}
+
+[dir="rtl"] .animate-slide-in-start {
+  animation: rtl-slide-in-start 0.3s ease-out forwards;
+}
+
+[dir="rtl"] .animate-slide-in-end {
+  animation: rtl-slide-in-end 0.3s ease-out forwards;
+}
+
+[dir="rtl"] .animate-slide-out-start {
+  animation: rtl-slide-out-start 0.3s ease-in forwards;
+}
+
+[dir="rtl"] .animate-slide-out-end {
+  animation: rtl-slide-out-end 0.3s ease-in forwards;
+}
+
+/* =============================================================================
+ * RTL SVG/Icon Mirroring
+ * ============================================================================= */
+
+[dir="rtl"] svg.rtl-icon,
+[dir="rtl"] .rtl-icon svg,
+[dir="rtl"] .rtl-icon img {
+  transform: scaleX(-1);
+}
+
+[dir="rtl"] .rtl-icon-chevron,
+[dir="rtl"] .rtl-icon-arrow,
+[dir="rtl"] .rtl-icon-caret {
+  transform: rotate(180deg);
+}
+
+/* =============================================================================
+ * Input / Form Direction
+ * ============================================================================= */
+
+[dir="rtl"] input,
+[dir="rtl"] textarea,
+[dir="rtl"] select {
+  text-align: start;
+}
+
+[dir="rtl"] input[type="text"],
+[dir="rtl"] input[type="email"],
+[dir="rtl"] input[type="search"],
+[dir="rtl"] input[type="tel"],
+[dir="rtl"] input[type="url"],
+[dir="rtl"] textarea {
+  direction: rtl;
+}
+
+/* =============================================================================
+ * List / Timeline Flips
+ * ============================================================================= */
+
+[dir="rtl"] .rtl-list {
+  padding-right: 0;
+  padding-left: unset;
+}
+
+[dir="rtl"] .rtl-timeline {
+  border-right: 2px solid;
+  border-left: none;
+}
+
+[dir="rtl"] .rtl-timeline-item::before {
+  right: -6px;
+  left: unset;
+}

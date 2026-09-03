@@ -1,0 +1,170 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment variables
+.env
+.env.*
+!.env.example
+.env.local
+.env.*.local
+.env.production.local
+.env.development.local
+backend/.env
+frontend/.env.local
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+.vercel/
+backend/dist/
+frontend/.next/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+backend/backend.log
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.vim/
+.project
+.classpath
+*.sublime-project
+*.sublime-workspace
+
+# Local browser profiles and exports (may contain cookies/login data)
+.edge-*/
+
+# Testing
+coverage/
+.nyc_output/
+jest.config.js.map
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+backend/dev.db
+
+# Uploads & temporary files
+backend/public/uploads/*
+!backend/public/uploads/.gitkeep
+public/uploads/*
+!public/uploads/.gitkeep
+tmp/
+temp/
+
+# Electron
+electron/dist/
+electron/build/
+
+# System
+.cache/
+.turbo/
+dist-ssr/
+
+# Optional npm cache directory
+.npm
+
+# Misc
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+.cache
+.eslintcache
+
+# Local authentication/test tokens
+*.token
+*.token.*
+.notification-test-token.tmp
+
+# Backend
+backend/backups/*
+backend/backend.err
+backend/coverage/
+
+# Frontend temp files
+frontend/_tmp_*
+frontend/*.bak
+frontend/*.tmp
+
+# Infrastructure
+infrastructure/backup/*
+
+# Temporary root files
+_step*.js
+_pre*.js
+_tr*.js
+_run*.js
+_append.ts
+_base.js
+_class_content.txt
+translation.service.ts
+dGVzdA==
+
+# Prisma migrations
+prisma/migrations/
+
+# Next.js
+frontend/.next/
+frontend/out/
+
+# Backend build
+backend/dist/
+
+# DOTENV files (ALL environments)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Supabase types
+frontend/supabase/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+terraform/.terraform/
+
+# Portable Git (development convenience)
+git-portable/
+
+# Temporary/backup files
+*.bak
+*.tgz
+task-progress-log.md
+
+# Temporary install artifacts
+backend/tmp_install/
+
+# Broken/null files
+nul)
+backend/prisma/backend/prisma/dev.db
+backend/prisma/backend/prisma/dev.db-journal

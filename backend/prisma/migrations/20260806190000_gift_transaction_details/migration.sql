@@ -1,0 +1,3 @@
+ALTER TABLE "GiftTransaction" ADD COLUMN "quantity" INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE "GiftTransaction" ADD COLUMN "message" TEXT;
+ALTER TABLE "GiftTransaction" ADD COLUMN "status" TEXT NOT NULL DEFAULT 'COMPLETED';
