@@ -62,6 +62,73 @@ function formatUserLabel(user: { username: string; displayName: string }): strin
   return `@${user.username}`;
 }
 
+/**
+ * Canonical realtime gift-event payload. The GiftTransaction + message are
+ * persisted independently — this object only drives the animated
+ * overlay and is deliberately rich (artwork slug, tier/rarity, impact, glow,
+ * particles, animation asset/duration) so every viewer renders the exact gift
+ * artwork with its gift-specific effects. One shape is shared by the stream
+ * room, the receiver's user room and the sender's user room.
+ */
+function buildGiftRealtimeEvent(
+  gift: {
+    id: string;
+    slug?: string | null;
+    name?: string | null;
+    thumbnailUrl?: string | null;
+    animationUrl?: string | null;
+    animationType?: string | null;
+    glowColor?: string | null;
+    particleColor?: string | null;
+    animationDuration?: number | null;
+    isLegendary?: boolean | null;
+  },
+  transaction: GiftTransaction,
+  senderInfo: { id: string; username: string },
+  options: { quantity?: number; isAnon?: boolean; isSuper?: boolean },
+  streamId?: string,
+) {
+  // Keep realtime payloads compatible with deployments whose generated Prisma
+  // client is regenerated separately from the application build.
+  const premium = gift as typeof gift & {
+    artworkType?: string | null;
+    rarity?: string | null;
+    tier?: string | null;
+    impactLevel?: number | null;
+    effectProfile?: string | null;
+  };
+  const now = new Date().toISOString();
+  return {
+    id: transaction.id,
+    streamId: streamId || transaction.streamId || null,
+    senderId: senderInfo.id,
+    senderName: options.isAnon ? 'Anonymous' : senderInfo.username,
+    receiverId: transaction.receiverId,
+    giftId: gift.id,
+    giftSlug: gift.slug || null,
+    giftName: gift.name || 'a gift',
+    amount: transaction.amount,
+    quantity: transaction.quantity || Math.max(1, Math.trunc(options.quantity || 1)),
+    comboCount: 1,
+    isAnon: Boolean(options.isAnon),
+    isSuper: Boolean(options.isSuper),
+    isLegendary: Boolean(gift.isLegendary),
+    artworkType: premium.artworkType || null,
+    rarity: premium.rarity || null,
+    tier: premium.tier || null,
+    impactLevel: premium.impactLevel ?? null,
+    effectProfile: premium.effectProfile || null,
+    thumbnailUrl: gift.thumbnailUrl,
+    animationUrl: gift.animationUrl,
+    animationType: gift.animationType,
+    glowColor: gift.glowColor,
+    particleColor: gift.particleColor,
+    animationDuration: gift.animationDuration,
+    createdAt: transaction.createdAt instanceof Date ? transaction.createdAt.toISOString() : now,
+    timestamp: now,
+  };
+}
+
 export class GiftService {
   private catalogSync: Promise<void> | null = null;
 
@@ -391,41 +458,27 @@ export class GiftService {
     ]);
     emitSocialEventToUser(senderId, 'social:wallet-updated', { coinBalance: result.updatedSender.coinBalance, transaction: result.transaction });
     emitSocialEventToUser(receiverId, 'social:wallet-updated', { coinBalance: result.updatedReceiver.coinBalance, recipientCoins, autoConverted: true, transaction: result.transaction });
+    // Real-time animated overlay delivery. The transaction/message above is
+    // persisted independently; this ephemeral `gift_received` broadcast makes
+    // the ENTIRE app react: the stream room (live viewers), the recipient's
+    // personal room (they see the overlay on whatever page they happen to be
+    // on) and the sender's own room (they see the confirmation overlay too).
+    const giftRealtimeEvent = buildGiftRealtimeEvent(
+      gift,
+      result.transaction,
+      senderInfo,
+      { quantity, isAnon: Boolean(options.isAnon), isSuper: (options as { isSuper?: boolean }).isSuper },
+      streamId,
+    );
     if (streamId) {
-      // Keep realtime payloads compatible with deployments whose generated
-      // Prisma client is regenerated separately from the application build.
-      const premiumGift = gift as typeof gift & {
-        artworkType?: string;
-        rarity?: string;
-        tier?: string;
-        impactLevel?: number;
-        effectProfile?: string;
-      };
-      emitSocialEventToRoom(`stream_${streamId}`, 'gift_received', {
-        streamId,
-        transaction: {
-          ...result.transaction,
-          giftName: gift.name,
-           giftSlug: gift.slug,
-           thumbnailUrl: gift.thumbnailUrl,
-          animationUrl: gift.animationUrl,
-           animationType: gift.animationType,
-          glowColor: gift.glowColor,
-           particleColor: gift.particleColor,
-          animationDuration: gift.animationDuration,
-           isLegendary: gift.isLegendary,
-          artworkType: premiumGift.artworkType,
-          rarity: premiumGift.rarity,
-          tier: premiumGift.tier,
-          impactLevel: premiumGift.impactLevel,
-          effectProfile: premiumGift.effectProfile,
-          senderName: options.isAnon ? 'Anonymous' : senderInfo.username,
-        },
-      });
+      emitSocialEventToRoom(`stream_${streamId}`, 'gift_received', giftRealtimeEvent);
     }
+    emitSocialEventToUser(receiverId, 'gift_received', giftRealtimeEvent);
+    emitSocialEventToUser(senderId, 'gift_received', giftRealtimeEvent);
 
     return {
       transaction: result.transaction,
+      giftEvent: giftRealtimeEvent,
       remainingBalance: result.updatedSender.coinBalance,
       amount: totalCost,
       coins: totalCost,

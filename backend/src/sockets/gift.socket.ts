@@ -28,6 +28,9 @@ export function handleGiftSocket(io: Server) {
     const userId = socket.data.userId;
     const username = socket.data.username;
 
+    // Personal room for real-time gift delivery wherever the user is in the app.
+    socket.join(`user_${userId}`);
+
     // Join stream room for live gift events
     socket.on('join:stream', (streamId: string) => {
       socket.join(`stream:${streamId}`);
@@ -51,46 +54,64 @@ export function handleGiftSocket(io: Server) {
       try {
         const { receiverId, giftId, streamId, isAnon, isSuper, requestId } = data;
         if (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{16,80}$/.test(requestId)) throw new Error('A valid requestId is required');
-        const result = await giftService.sendGift(userId, receiverId, giftId, streamId, { isAnon: Boolean(isAnon), requestId });
+        const result = await giftService.sendGift(userId, receiverId, giftId, streamId, {
+          isAnon: Boolean(isAnon),
+          isSuper: Boolean(isSuper),
+          requestId,
+        });
         const { transaction, gift } = result;
 
-        // Emit gift event to all viewers in the stream
-        const giftEvent = {
+        // `sendGift` is the single publisher of the canonical `gift_received`
+        // event (stream room + recipient/sender user rooms). Reuse that rich
+        // payload on the /gifts namespace so every consumer animates the actual
+        // gift artwork with tier-specific effects — never a degraded,
+        // message-only form. Fall back to a basic payload for replayed requests.
+        const giftEvent: any = (result as any).giftEvent || {
           id: transaction.id,
+          streamId,
           senderId: userId,
           senderName: isAnon ? 'Anonymous' : username,
           receiverId,
           giftId: gift.id,
           giftName: gift.name,
-          giftEmoji: gift.emoji,
           amount: transaction.amount,
-          isLegendary: gift.isLegendary,
-          isCombo: false,
-          comboCount: result.quantity,
-          isAnon: isAnon || false,
-          isSuper: isSuper || false,
+          comboCount: result.quantity || 1,
+          isAnon: Boolean(isAnon),
+          isSuper: Boolean(isSuper),
+          isLegendary: Boolean(gift.isLegendary),
+          giftSlug: gift.slug,
+          thumbnailUrl: gift.thumbnailUrl,
+          animationUrl: gift.animationUrl,
+          animationType: gift.animationType,
           glowColor: gift.glowColor,
           particleColor: gift.particleColor,
           animationDuration: gift.animationDuration,
           timestamp: new Date().toISOString(),
         };
 
-        // Send to all users in stream
-        giftNamespace.to(`stream:${streamId}`).emit('gift:received', giftEvent);
+        if (giftEvent?.id) {
+          // Send to all users in stream
+          giftNamespace.to(`stream:${streamId}`).emit('gift:received', giftEvent);
 
-        // Also send to the streamer specifically
-        giftNamespace.to(`user_${receiverId}`).emit('gift:notification', {
-          ...giftEvent,
-          message: `${isAnon ? 'Someone' : username} sent ${gift.name}!`,
-        });
+          // Also surface the animation to the sender + recipient user rooms
+          // (the global overlay host picks this up on any page).
+          giftNamespace.to(`user_${userId}`).emit('gift:received', giftEvent);
+          giftNamespace.to(`user_${receiverId}`).emit('gift:received', giftEvent);
 
-        // If legendary, trigger cinematic event
-        if (gift.isLegendary) {
-          giftNamespace.to(`stream:${streamId}`).emit('gift:legendary', {
+          // Also send to the streamer specifically
+          giftNamespace.to(`user_${receiverId}`).emit('gift:notification', {
             ...giftEvent,
-            duration: gift.animationDuration || 8,
-            cinematic: true,
+            message: `${isAnon ? 'Someone' : username} sent ${gift.name}!`,
           });
+
+          // If legendary, also trigger the cinematic event
+          if (gift.isLegendary) {
+            giftNamespace.to(`stream:${streamId}`).emit('gift:legendary', {
+              ...giftEvent,
+              duration: gift.animationDuration || 8,
+              cinematic: true,
+            });
+          }
         }
 
         // Emit updated leaderboard

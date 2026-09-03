@@ -37,6 +37,7 @@ import { useChatUnread } from '@/context/ChatUnreadContext';
 import { useCalls } from '@/context/CallContext';
 import IncomingCallBanner from '@/components/messages/IncomingCallBanner';
 import ChatCallOverlay from '@/components/messages/ChatCallOverlay';
+import GlobalGiftAnimations from '@/components/gifts/GlobalGiftAnimations';
 
 const notificationDestination = (notification: any) => {
   let data: any = notification?.data;
@@ -320,6 +321,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </motion.div>
           </div>
         </main>
+
+        {/* Global gift overlay — recipient/sender sees animated gifts on every
+            page in real time (live pages mount their own overlay). */}
+        <GlobalGiftAnimations />
 
         {/* ── Global call UI (any page) ─────────────────────────────────────
             Incoming calls are surfaced as a compact top banner while the user
