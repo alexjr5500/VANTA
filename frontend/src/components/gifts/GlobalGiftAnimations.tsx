@@ -66,7 +66,7 @@ export default function GlobalGiftAnimations() {
 
   useEffect(() => {
     if (!canListen) return;
-    const socket = createSocket(token, undefined, 'global-gift-animations');
+    const socket = createSocket(token ?? undefined, undefined, 'global-gift-animations');
     const handle = (payload: any) => {
       const event = toGiftEvent(payload);
       if (event) enqueueGiftAnimation(event);
