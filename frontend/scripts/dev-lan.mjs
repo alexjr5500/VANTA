@@ -52,6 +52,27 @@ console.log('  Phone must trust the mkcert root CA: frontend/.certs-dev/rootCA.p
 console.log('');
 
 // ---------------------------------------------------------------------------
+// Client endpoint injection (phone never sees `localhost`)
+// ---------------------------------------------------------------------------
+// The phone's own `localhost` is the phone, not this laptop, so every
+// client-side endpoint the browser inlines must point at THIS machine's LAN IP.
+// Env vars set in the launching shell still win (pinning is possible); otherwise
+// the values below are derived from the detected LAN IP at startup and take
+// precedence over frontend/.env* so a DHCP address change can never silently
+// leave the app pointing at a stale IP. The LIVEKIT URL intentionally uses the
+// WSS bridge (port 7443) which terminates TLS with the same mkcert certs.
+const effectiveApiUrl   = process.env.NEXT_PUBLIC_API_URL     || `https://${lanIp}:5000`;
+const effectiveSockUrl  = process.env.NEXT_PUBLIC_SOCKET_URL  || `https://${lanIp}:5000`;
+const effectiveAppUrl   = process.env.NEXT_PUBLIC_APP_URL     || `https://${lanIp}:3000`;
+const effectiveLivekit  = process.env.NEXT_PUBLIC_LIVEKIT_URL || `wss://${lanIp}:7443`;
+console.log('  Endpoints injected into the browser build:');
+console.log(`    NEXT_PUBLIC_API_URL       ${effectiveApiUrl}`);
+console.log(`    NEXT_PUBLIC_SOCKET_URL    ${effectiveSockUrl}`);
+console.log(`    NEXT_PUBLIC_APP_URL       ${effectiveAppUrl}`);
+console.log(`    NEXT_PUBLIC_LIVEKIT_URL   ${effectiveLivekit}`);
+console.log('');
+
+// ---------------------------------------------------------------------------
 // Certificate validation (fail fast instead of silently serving broken HTTPS)
 // ---------------------------------------------------------------------------
 const certDir = path.join(frontendRoot, '.certs-dev');
@@ -91,6 +112,11 @@ const child = spawn(process.execPath, args, {
   env: {
     ...process.env,
     NEXT_TELEMETRY_DISABLED: process.env.NEXT_TELEMETRY_DISABLED || '1',
+    // Phone-reachable client endpoints (see injection comment above).
+    NEXT_PUBLIC_API_URL: effectiveApiUrl,
+    NEXT_PUBLIC_SOCKET_URL: effectiveSockUrl,
+    NEXT_PUBLIC_APP_URL: effectiveAppUrl,
+    NEXT_PUBLIC_LIVEKIT_URL: effectiveLivekit,
   },
 });
 

@@ -2,7 +2,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import GiftArtwork from './GiftArtwork';
 
-export type GiftEvent = { id?: string; giftId?: string; giftName?: string; giftSlug?: string; artworkType?: string; amount?: number; quantity?: number; comboCount?: number; animationDuration?: number; animationType?: string; effectProfile?: string; impactLevel?: number; tier?: string; rarity?: string; glowColor?: string; particleColor?: string; animationUrl?: string; thumbnailUrl?: string; senderId?: string; senderName?: string; isLegendary?: boolean; createdAt?: string; receivedAt?: number };
+export type GiftEvent = { id?: string; giftId?: string; giftName?: string; giftSlug?: string; streamId?: string; artworkType?: string; amount?: number; quantity?: number; comboCount?: number; animationDuration?: number; animationType?: string; effectProfile?: string; impactLevel?: number; tier?: string; rarity?: string; glowColor?: string; particleColor?: string; animationUrl?: string; thumbnailUrl?: string; senderId?: string; senderName?: string; receiverId?: string; isAnon?: boolean; isSuper?: boolean; isLegendary?: boolean; createdAt?: string; receivedAt?: number };
 
 export type GiftTier = 'normal' | 'premium' | 'luxury';
 

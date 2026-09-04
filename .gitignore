@@ -165,6 +165,7 @@ task-progress-log.md
 backend/tmp_install/
 
 # Broken/null files
-nul)
+# Deployment secrets (generated locally by scripts/prepare-prod-env.ps1; NEVER commit)
+deploy/.env.production
 backend/prisma/backend/prisma/dev.db
 backend/prisma/backend/prisma/dev.db-journal
