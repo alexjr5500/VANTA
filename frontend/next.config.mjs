@@ -1,5 +1,19 @@
 // @ts-check
 
+import { createRequire } from 'node:module';
+
+// `allowedDevOrigins` (the dev-server origin allow-list used for physical-phone
+// LAN testing) was added in Next.js 15.0.0. Setting it on Next 14.2.x logs:
+//   "Unsupported allowedDevOrigins option detected ..."
+// Read the installed Next version and only set the option when it is actually
+// supported, so the 14.2.23 build stays warning-free while Wi-Fi phone testing
+// keeps working automatically after a future Next.js upgrade.
+const require = createRequire(import.meta.url);
+const nextMajorVersion = Number.parseInt(
+  require('next/package.json').version.split('.')[0] ?? '0',
+  10,
+);
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
@@ -14,7 +28,9 @@ const nextConfig = {
   // lock the dev server to known origins (localhost by default) and read this
   // allow-list; Next 14.2.x ignores it harmlessly. Keep it so upgrades keep
   // phone testing working.
-  allowedDevOrigins: ['10.174.123.177'],
+  ...(nextMajorVersion >= 15
+    ? { allowedDevOrigins: ['10.174.123.177'] }
+    : {}),
   
   // Image optimization configuration
   images: {
