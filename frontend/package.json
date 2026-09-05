@@ -2,6 +2,9 @@
   "name": "vanta-frontend",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.18.0 <24"
+  },
   "scripts": {
     "dev": "next dev",
     "dev:lan": "node scripts/dev-lan.mjs",

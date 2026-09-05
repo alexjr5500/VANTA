@@ -34,6 +34,12 @@ const nextConfig = {
   productionBrowserSourceMaps: false,
   
   experimental: {
+    // Vercel Hobby build machines cap at 8 GB with no swap; a cold `next build`
+    // of this app was getting OOM-killed silently during the compile phase.
+    // Next 14.2 forks 4 static-generation workers by default (each loads the
+    // whole app graph e.g. three.js) - limiting to 1 keeps peak memory well
+    // below the cap. This machine reports 2 cores, so no parallelism is lost.
+    cpus: 1,
     optimizePackageImports: [
       'lucide-react',
       'socket.io-client',
