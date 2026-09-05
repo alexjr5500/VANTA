@@ -21,6 +21,8 @@ import {
   uploadChannelAvatar,
   uploadCommunityAvatar,
   uploadCommunityBanner,
+  uploadEntityAvatar,
+  linkUploadedFile,
   uploadVerificationDocument,
   uploadMessageAttachment,
   deleteUploadedFile,
@@ -72,6 +74,18 @@ router.post("/banner", uploadBannerMulter.single("banner"), uploadBanner);
 
 // Profile media upload
 router.post("/profile-media", uploadImage.single("media"), uploadProfileMedia);
+
+// ============================================================================
+// TEMPORARY ENTITY AVATAR (CREATE GROUP / CREATE CHANNEL)
+// ============================================================================
+
+// Temporary Group/Channel photo while the create modal is open. NEVER touches
+// the user's profile picture — it is an isolated, non-profile asset that is
+// either linked to the created Group/Channel (POST /link) or deleted on cancel.
+router.post("/entity-avatar", uploadAvatarMulter.single("avatar"), uploadEntityAvatar);
+
+// Bind a temporary entity avatar to the Group/Channel it was created for.
+router.post("/link", linkUploadedFile);
 
 // ============================================================================
 // LIVE STREAM UPLOADS

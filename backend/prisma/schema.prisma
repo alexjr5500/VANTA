@@ -849,6 +849,7 @@ model LiveStream {
   duration          Int               @default(0) // in seconds
   startedAt         DateTime?
   endedAt           DateTime?
+  lastHostHeartbeat DateTime?
   chatPaused        Boolean           @default(false)
   slowMode          Boolean           @default(false)
   slowModeInterval  Int               @default(3) // seconds between messages
@@ -875,6 +876,7 @@ model LiveStream {
   @@index([categoryName, active])
   @@index([active, createdAt])
   @@index([active, categoryName, viewerCount])
+  @@index([active, status, lastHostHeartbeat])
   @@index([hostId, active, createdAt])
   @@index([title])
   @@index([status])

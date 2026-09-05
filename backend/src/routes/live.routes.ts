@@ -31,6 +31,7 @@ import {
   getStreamFollowing,
   getGuests,
   getGuestToken,
+  heartbeatStream,
 } from '../controllers/live.controller';
 import { authenticateJWT } from '../middleware/auth.middleware';
 
@@ -70,6 +71,7 @@ router.post('/:streamId/like', likeStream);
 router.post('/:streamId/report', reportStream);
 router.post('/:streamId/end', endStream);
 router.put('/:streamId/end', endStream);
+router.post('/:streamId/heartbeat', heartbeatStream);
 router.patch('/:streamId', updateStream);
 router.delete('/:streamId', deleteStream);
 

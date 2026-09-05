@@ -22,6 +22,8 @@ import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/utils';
 import { apiUpload } from '@/lib/apiClient';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
+import VideoTrimModal from '@/components/video/VideoTrimModal';
+import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 import {
   createFundraiserDraft,
   getFundraiserCategories,
@@ -104,6 +106,7 @@ export default function StartFundraiserPage() {
   const [deadline, setDeadline] = useState('');
   const [cover, setCover] = useState<CoverDraft | null>(null);
   const [coverUploading, setCoverUploading] = useState(false);
+  const [coverTrimFile, setCoverTrimFile] = useState<File | null>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
   // Step 2 — Story
@@ -258,12 +261,36 @@ const toSubmission = useCallback((): FundraiserDraftSubmission => ({
       setError('The cover must be an image or a video.');
       return;
     }
+    if (isVideo) {
+      // Video covers pass through the shared VANTA trimmer so only the
+      // selected time range is uploaded to the fundraiser.
+      setCoverTrimFile(file);
+      return;
+    }
     setCoverUploading(true);
     setError('');
     try {
       const result = await uploadMedia(file, token, { fieldName: 'file', path: '/api/upload', category: 'fundraiser-cover' });
       if (result.error || !result.url) throw new Error(result.error || 'Cover upload failed.');
-      setCover({ type: isVideo ? 'VIDEO' : 'IMAGE', url: result.url, thumbnailUrl: result.url });
+      setCover({ type: 'IMAGE', url: result.url, thumbnailUrl: result.url });
+      toast.success('Cover uploaded');
+    } catch (reason: any) {
+      setError(reason?.message || 'Cover upload failed. Please try a smaller file.');
+    } finally {
+      setCoverUploading(false);
+      if (coverInputRef.current) coverInputRef.current.value = '';
+    }
+  };
+
+  const handleCoverTrimConfirm = async (result: VideoTrimResult) => {
+    setCoverTrimFile(null);
+    if (!token) return;
+    setCoverUploading(true);
+    setError('');
+    try {
+      const uploadResult = await uploadMedia(result.file, token, { fieldName: 'file', path: '/api/upload', category: 'fundraiser-cover' });
+      if (uploadResult.error || !uploadResult.url) throw new Error(uploadResult.error || 'Cover upload failed.');
+      setCover({ type: 'VIDEO', url: uploadResult.url, thumbnailUrl: uploadResult.url });
       toast.success('Cover uploaded');
     } catch (reason: any) {
       setError(reason?.message || 'Cover upload failed. Please try a smaller file.');
@@ -794,6 +821,18 @@ return (
           )}
         </div>
       )}
+
+      {/* Shared VANTA video trimmer — same UI used by Reels, Posts, Stories and Chat */}
+      <VideoTrimModal
+        open={Boolean(coverTrimFile)}
+        file={coverTrimFile}
+        onClose={() => setCoverTrimFile(null)}
+        onConfirm={(result) => void handleCoverTrimConfirm(result)}
+        title="Trim Cover Video"
+        subtitle="Preview and trim the timeline before using it as the cover"
+        confirmLabel="Use as Cover"
+        trimActionLabel="Trim & Preview"
+      />
     </div>
   );
 }

@@ -50,6 +50,7 @@ import {
 import { ConnectionState } from 'livekit-client';
 import { useAuth } from '@/context/AuthContext';
 import { apiGet, apiPost, apiPut } from '@/lib/apiClient';
+import { API_BASE_URL, authHeaders } from '@/lib/api';
 import { createSocket, type Socket } from '@/lib/socketClient';
 import { useMediaDevices } from '@/lib/hooks/useMediaDevices';
 import { useLiveKit, getLiveKitToken } from '@/lib/hooks/useLiveKit';
@@ -261,6 +262,10 @@ export default function StudioPage() {
   const [chatPinned, setChatPinned] = useState<{ id: string; username: string | null; message: string } | null>(null);
   const [modOpen, setModOpen] = useState(false);
   const [chatConnState, setChatConnState] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
+  // LIVE heartbeat UI feedback. The BACKEND is authoritative — if no heartbeat
+  // reaches the server for 30s it auto-ends the session (browser closed, laptop
+  // closed, network lost, crash). This state only mirrors what the client sees.
+  const [heartbeatState, setHeartbeatState] = useState<'healthy' | 'reconnecting' | 'ended'>('healthy');
   const [actionTarget, setActionTarget] = useState<{ type: 'message' | 'viewer'; id: string; username?: string } | null>(null);
   const [viewerRoster, setViewerRoster] = useState<{ id: string; username: string; avatar?: string | null }[]>([]);
   const [reactionCount, setReactionCount] = useState(0);
@@ -268,6 +273,7 @@ export default function StudioPage() {
   const [liveFollowerDelta, setLiveFollowerDelta] = useState(0);
   const hostSocketRef = useRef<Socket | null>(null);
   const studioGiftSocketRef = useRef<Socket | null>(null);
+  const endLiveRef = useRef<() => void>(() => undefined);
   const { giftAnimations, enqueueGiftAnimation } = useGiftAnimationQueue();
 
   // Multi-guest stage + real-time system activity.
@@ -283,6 +289,10 @@ export default function StudioPage() {
   const stoppedRef = useRef(false);
   const thumbnailRef = useRef<string | null>(null);
   const hasChosenCategoryRef = useRef(false);
+  const streamIdRef = useRef<string | null>(null);
+  const endedRef = useRef(false);
+
+  useEffect(() => { streamIdRef.current = streamData?.id ?? null; }, [streamData?.id]);
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { titleRef.current = title; }, [title]);
@@ -362,6 +372,14 @@ export default function StudioPage() {
     });
     sock.on('disconnect', () => alive && setChatConnState('disconnected'));
     sock.on('reconnect', () => sock.emit('host_room', rid));
+
+    // The backend auto-ended this session (30s heartbeat timeout or another
+    // tab ended it). Reflect that locally so a ghost Live can't linger.
+    sock.on('stream_ended', (d: any) => {
+      if (!alive || d?.streamId !== rid) return;
+      setHeartbeatState('ended');
+      endLiveRef.current();
+    });
 
     sock.on('host_chat_history', (d: any) => {
       if (alive && d?.streamId === rid && Array.isArray(d?.messages)) setHostMessages((d.messages as StudioChatMessage[]).slice(-100));
@@ -651,6 +669,7 @@ export default function StudioPage() {
     if (!token || !streamData?.id) return;
     const current = phaseRef.current;
     if (current !== 'LIVE' && current !== 'CONNECTING') return;
+    endedRef.current = true;
     setPhase('ENDING');
     setConfirmEnd(false);
     try {
@@ -671,6 +690,87 @@ export default function StudioPage() {
     loadAnalytics();
     toast.success('Live ended');
   }, [token, streamData?.id, disconnect, stopMedia, loadAnalytics, toast]);
+
+  // Keep a stable ref to the latest `endLive` for socket handlers declared
+  // earlier in the component (React hooks ordering).
+  useEffect(() => { endLiveRef.current = endLive; }, [endLive]);
+
+  // -------------------------------------------------------------------------
+  // Host heartbeat (10s cadence) + 30-second backend timeout.
+  // -------------------------------------------------------------------------
+  // The BACKEND enforces the 30s timeout — this timer is only for UI feedback.
+  // Every ~10s we POST /api/live/:id/heartbeat. If the network drops, the
+  // backend gives the host up to 30s to reconnect; a heartbeat received before
+  // then simply continues the Live. If the server reports the session already
+  // ended (HTTP 410) we tear down locally so a ghost Live can never keep the
+  // studio mounted.
+  useEffect(() => {
+    if (phase !== 'LIVE' || !streamData?.id || !token) return;
+    const sid = streamData.id;
+    let lastAck = Date.now();
+    setHeartbeatState('healthy');
+
+    const beat = async () => {
+      try {
+        const res = await apiPost<any>(`/api/live/${sid}/heartbeat`, {}, token);
+        if (res && res.ended === true) {
+          setHeartbeatState('ended');
+          void endLive();
+          return;
+        }
+        lastAck = Date.now();
+        setHeartbeatState('healthy');
+      } catch (err: any) {
+        const status = err?.statusCode ?? err?.response?.status;
+        if (status === 410) {
+          setHeartbeatState('ended');
+          void endLive();
+          return;
+        }
+        // Transient network blip — the server allows up to 30s to recover.
+        setHeartbeatState((prev) => (Date.now() - lastAck > 15_000 ? 'reconnecting' : prev));
+      }
+    };
+
+    void beat();
+    const hbTimer = window.setInterval(() => void beat(), 10_000);
+    // UI-only reminder: warn once heartbeats have not succeeded for ~15s.
+    const warnTimer = window.setInterval(() => {
+      setHeartbeatState((prev) => {
+        if (Date.now() - lastAck > 15_000) return 'reconnecting';
+        if (prev === 'reconnecting') return 'healthy';
+        return prev;
+      });
+    }, 5_000);
+
+    return () => {
+      window.clearInterval(hbTimer);
+      window.clearInterval(warnTimer);
+    };
+  }, [phase, streamData?.id, token, endLive]);
+
+  // Best-effort teardown when the host leaves the page. NOT the source of
+  // truth — the backend heartbeat timeout always catches abandoned sessions
+  // even when this never fires (closed laptop, crashed tab, killed process).
+  useEffect(() => {
+    const onPageHide = () => {
+      const sid = streamIdRef.current;
+      if (phaseRef.current !== 'LIVE' || !sid || endedRef.current) return;
+      try {
+        hostSocketRef.current?.emit('end_stream', { streamId: sid });
+      } catch { /* noop */ }
+      try {
+        void fetch(`${API_BASE_URL}/api/live/${sid}/end`, {
+          method: 'PUT',
+          headers: authHeaders(token),
+          credentials: 'include',
+          keepalive: true,
+        });
+      } catch { /* noop */ }
+    };
+    window.addEventListener('pagehide', onPageHide);
+    return () => window.removeEventListener('pagehide', onPageHide);
+  }, [token]);
 
   /** Persist updated stream info while live (PATCH). */
   const saveStreamInfo = useCallback(async () => {
@@ -992,6 +1092,12 @@ export default function StudioPage() {
                 <span className="rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium text-white/80 backdrop-blur-sm">
                   {category}
                 </span>
+                {phase === 'LIVE' && heartbeatState === 'reconnecting' && (
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-400/40 bg-black/75 px-2 py-1 text-[10px] font-medium text-amber-200 backdrop-blur-sm">
+                    <Loader2 size={11} className="animate-spin" />
+                    Reconnecting
+                  </span>
+                )}
               </div>
               <span className="rounded-md bg-black/70 px-2 py-1 text-[10px] font-medium tabular-nums text-white/80 backdrop-blur-sm">
                 {fmtDuration(duration)}

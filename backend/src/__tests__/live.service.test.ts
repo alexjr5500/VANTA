@@ -1,4 +1,5 @@
 import { LiveService } from '../services/live.service';
+import { liveKitService } from '../services/livekit.service';
 import { prisma } from '../prisma';
 
 jest.mock('../prisma', () => ({
@@ -61,6 +62,7 @@ describe('LiveService', () => {
     thumbnailUrl: null,
     streamKey: 'key123',
     playbackUrl: 'http://localhost:3000/stream/test-stream/abc.m3u8',
+    liveKitRoom: 'vanta_room_live',
     allowGifts: true,
     allowPK: false,
     active: true,
@@ -223,6 +225,121 @@ describe('LiveService', () => {
       (prisma.streamCategory.findMany as jest.Mock).mockResolvedValue([{ id: 'cat1', name: 'Gaming' }]);
       const result = await liveService.getCategories();
       expect(result).toHaveLength(1);
+    });
+  });
+
+  // LIVE HEARTBEAT / 30-SECOND STALE-SESSION TIMEOUT
+  describe('recordHeartbeat', () => {
+    const activeStream = { id: 'stream1', hostId: 'host1', active: true, status: 'LIVE' };
+
+    test('records the heartbeat for an active session', async () => {
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue(activeStream);
+      (prisma.liveStream.update as jest.Mock).mockResolvedValue({ ...activeStream, lastHostHeartbeat: new Date() });
+
+      const result = await liveService.recordHeartbeat('stream1', 'host1');
+      expect(result).toBe(true);
+      expect(prisma.liveStream.update).toHaveBeenCalledWith({
+        where: { id: 'stream1' },
+        data: { lastHostHeartbeat: expect.any(Date) },
+      });
+    });
+
+    test('rejects heartbeats from a non-host', async () => {
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue(activeStream);
+      await expect(liveService.recordHeartbeat('stream1', 'viewer1')).rejects.toThrow('Unauthorized');
+    });
+
+    test('rejects unknown streams', async () => {
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue(null);
+      await expect(liveService.recordHeartbeat('missing', 'host1')).rejects.toThrow('Stream not found');
+    });
+
+    test('returns false when the session has already ended', async () => {
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue({ ...activeStream, active: false, status: 'ENDED' });
+      const result = await liveService.recordHeartbeat('stream1', 'host1');
+      expect(result).toBe(false);
+      expect(prisma.liveStream.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('endStaleStream / sweepStaleLiveStreams', () => {
+    test('endStaleStream ends an abandoned session and closes the LiveKit room', async () => {
+      const stale = { ...mockStream, startedAt: new Date(Date.now() - 120_000) };
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue(stale);
+      (prisma.liveStream.update as jest.Mock).mockResolvedValue({ ...stale, active: false, status: 'ENDED' });
+
+      const result = await liveService.endStaleStream('stream1');
+      expect(result?.active).toBe(false);
+      expect(result?.reason).toBe('host_timeout');
+      expect(liveKitService.closeRoom).toHaveBeenCalledWith(mockStream.liveKitRoom);
+    });
+
+    test('endStaleStream is a no-op for already-ended sessions', async () => {
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue({ ...mockStream, active: false, status: 'ENDED' });
+      await expect(liveService.endStaleStream('stream1')).resolves.toBeNull();
+    });
+
+    test('sweeper ends only sessions whose heartbeat is older than 30 seconds', async () => {
+      const stale = { id: 'stream-stale', hostId: 'host1', liveKitRoom: 'vanta_room_stale' };
+      (prisma.liveStream.findMany as jest.Mock).mockResolvedValue([stale]);
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue({
+        id: 'stream-stale', hostId: 'host1', liveKitRoom: 'vanta_room_stale', active: true, status: 'LIVE',
+        startedAt: new Date(Date.now() - 300_000),
+      });
+      (prisma.liveStream.update as jest.Mock).mockResolvedValue({ id: 'stream-stale', active: false, status: 'ENDED' });
+
+      const result = await liveService.sweepStaleLiveStreams();
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('stream-stale');
+      expect(prisma.liveStream.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ active: false, status: 'ENDED' }) })
+      );
+    });
+
+    test('sweeper queries with a 30-second cutoff for authoritative cleanup', async () => {
+      (prisma.liveStream.findMany as jest.Mock).mockResolvedValue([]);
+      await liveService.sweepStaleLiveStreams();
+      const where = (prisma.liveStream.findMany as jest.Mock).mock.calls[0][0].where;
+      expect(where.active).toBe(true);
+      expect(where.status).toBe('LIVE');
+      expect(where.OR[0].lastHostHeartbeat.lt).toBeInstanceOf(Date);
+      expect(where.OR[1].lastHostHeartbeat).toBeNull();
+    });
+  });
+
+  // Never permanently block a host because of a stale/abandoned previous Live.
+  describe('startStream stale-session guard', () => {
+    test('still blocks when the previous session is genuinely active (fresh heartbeat)', async () => {
+      (prisma.liveStream.findFirst as jest.Mock).mockResolvedValue({
+        id: 'stream1',
+        lastHostHeartbeat: new Date(),
+        startedAt: new Date(),
+      });
+      await expect(liveService.startStream('host1', 'Test', 'Just Chatting')).rejects.toThrow('You already have an active livestream');
+      expect(prisma.liveStream.create).not.toHaveBeenCalled();
+    });
+
+    test('auto-cleans an expired session and then starts the new Live', async () => {
+      const staleExisting = {
+        id: 'stream1',
+        lastHostHeartbeat: new Date(Date.now() - 60_000),
+        startedAt: new Date(Date.now() - 180_000),
+      };
+      (prisma.liveStream.findFirst as jest.Mock).mockResolvedValue(staleExisting);
+      // The stale session is looked up + ended first.
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValueOnce({
+        id: 'stream1', hostId: 'host1', liveKitRoom: 'vanta_ghost', active: true, status: 'LIVE', startedAt: staleExisting.startedAt,
+      });
+      (prisma.liveStream.update as jest.Mock).mockResolvedValueOnce({ id: 'stream1', active: false, status: 'ENDED' });
+      // Then the brand-new Live is created.
+      (prisma.liveStream.create as jest.Mock).mockResolvedValue(mockStream);
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(mockStream.host);
+
+      const result = await liveService.startStream('host1', 'Fresh Live', 'Just Chatting');
+      expect(result.active).toBe(true);
+      // The ghost session was closed and the host can immediately go Live again.
+      expect(liveKitService.closeRoom).toHaveBeenCalledWith('vanta_ghost');
+      expect(prisma.liveStream.create).toHaveBeenCalledTimes(1);
     });
   });
 });

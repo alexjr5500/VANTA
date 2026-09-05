@@ -272,6 +272,118 @@ export const uploadCommunityAvatar = async (req: AuthRequest, res: Response): Pr
   }
 };
 
+// ============================================================================
+// TEMPORARY ENTITY AVATAR — GROUP / CHANNEL CREATION
+// ============================================================================
+
+/**
+ * Upload a photo for a Group or Channel that is still being created.
+ *
+ * The asset is persisted as an `UploadedFile` owned by the user with a
+ * non-profile category (`group-avatar` / `channel-avatar`) and NO record
+ * binding yet. This handler intentionally NEVER touches the user's profile
+ * picture, avatar column, or personal media:
+ *
+ *   - It does not call userService.updateProfileImage
+ *   - It does not call uploadService.deletePreviousForUser("avatar")
+ *   - It does not link the file to the User record
+ *
+ * Lifecycle:
+ *   1. User uploads a photo here while the create modal is open.
+ *   2. If they press Create, the frontend links the file to the new
+ *      Group/Channel via POST /api/upload/link (record owner).
+ *   3. If they cancel, the frontend deletes it via DELETE /api/upload/files/:id
+ *      and the user's profile picture stays untouched.
+ */
+export const uploadEntityAvatar = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (!req.file) { res.status(400).json({ error: "Image file is required" }); return; }
+
+    const entityType = req.body.entityType === "channel" ? "channel" : "group";
+    const category = entityType === "channel" ? "channel-avatar" : "group-avatar";
+
+    const result = await uploadService.uploadFile(req, req.file, {
+      category,
+      recordType: undefined,
+      recordId: undefined,
+      optimize: true,
+    });
+
+    res.status(201).json({
+      message: "Entity avatar uploaded",
+      id: result.id,
+      url: result.url,
+      file: result,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Entity avatar upload failed";
+    res.status(400).json({ error: message });
+  }
+};
+
+/**
+ * Bind a temporary entity avatar to the Group/Channel it was created for.
+ *
+ * Only the owner of the target record may link, and the file must be an
+ * unlinked `group-avatar` / `channel-avatar` asset owned by the same user.
+ * After linking the file is managed by the owning feature (avatar replacement
+ * cleanup, group/channel deletion) just like the direct upload endpoints.
+ */
+export const linkUploadedFile = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+
+    const { fileId, recordType, recordId } = req.body || {};
+    if (!fileId || !recordType || !recordId) {
+      res.status(400).json({ error: "fileId, recordType and recordId are required" });
+      return;
+    }
+    if (recordType !== "Group" && recordType !== "Channel") {
+      res.status(400).json({ error: "Unsupported record type" });
+      return;
+    }
+
+    const file = await prisma.uploadedFile.findUnique({ where: { id: fileId } });
+    if (!file || file.deletedAt || file.userId !== userId) {
+      res.status(404).json({ error: "Uploaded file was not found or is not owned by you" });
+      return;
+    }
+    if (file.recordType || file.recordId) {
+      res.status(409).json({ error: "This file is already linked to a record" });
+      return;
+    }
+
+    const allowedCategories = recordType === "Group" ? ["group-avatar"] : ["channel-avatar"];
+    if (!allowedCategories.includes(file.category)) {
+      res.status(400).json({ error: "This file cannot be linked to the requested record" });
+      return;
+    }
+
+    if (recordType === "Group") {
+      const group = await prisma.group.findUnique({ where: { id: recordId } });
+      if (!group) { res.status(404).json({ error: "Group not found" }); return; }
+      if (group.ownerId !== userId) { res.status(403).json({ error: "You cannot link an avatar to this group" }); return; }
+    } else {
+      const channel = await prisma.channel.findUnique({ where: { id: recordId } });
+      if (!channel) { res.status(404).json({ error: "Channel not found" }); return; }
+      if (channel.ownerId !== userId) { res.status(403).json({ error: "You cannot link an avatar to this channel" }); return; }
+    }
+
+    await prisma.uploadedFile.update({
+      where: { id: fileId },
+      data: { recordType, recordId },
+    });
+
+    res.status(200).json({ message: "File linked successfully", fileId: file.id });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "File linking failed";
+    res.status(400).json({ error: message });
+  }
+};
+
 export const uploadCommunityBanner = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;

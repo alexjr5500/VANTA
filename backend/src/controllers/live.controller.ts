@@ -233,6 +233,38 @@ export const endStream = async (req: AuthRequest, res: Response): Promise<void> 
   }
 };
 
+/**
+ * Host heartbeat — a lightweight "I am still broadcasting" ping.
+ *
+ * The host client sends this roughly every 10 seconds while the Live is
+ * running. The backend records `lastHostHeartbeat` on the session and the
+ * server-side sweeper auto-ends any session whose heartbeat is more than
+ * 30 seconds old (browser closed, laptop closed, network lost, crash…).
+ * The response also tells the client whether the session is still actually
+ * active so the studio UI can reflect a stale/ended session.
+ */
+export const heartbeatStream = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const hostId = req.user?.userId;
+    const streamId = getParamString(req.params.streamId);
+
+    if (!hostId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const active = await liveService.recordHeartbeat(streamId, hostId);
+    if (!active) {
+      res.status(410).json({ error: 'This live session has already ended', ended: true });
+      return;
+    }
+    res.status(200).json({ ok: true, streamId, at: new Date().toISOString() });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
 export const getStreamHistory = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const hostId = req.user?.userId;

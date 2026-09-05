@@ -211,13 +211,13 @@ return (
           <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_50%_35%,#1a1712_0%,#08080a_70%)]">
             <div className="flex flex-col items-center gap-5 text-center">
               <div className="relative">
-                <span className="absolute inset-0 -m-3 animate-ping rounded-full bg-[#d6a83f]/20" aria-hidden="true" />
+                <span className="absolute -inset-1 animate-ping rounded-full border-2 border-[#d6a83f]/25" aria-hidden="true" />
                 <Avatar
                   src={peerAvatar}
                   alt={peerName || 'Caller'}
                   size="2xl"
                   className={cn(
-                    'ring-4 ring-white/[0.08]',
+                    'ring-2 ring-white/[0.12]',
                     (status === 'outgoing' || status === 'ringing' || status === 'incoming') && 'animate-pulse'
                   )}
                 />

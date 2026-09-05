@@ -11,7 +11,7 @@ import {
   Loader2, Users, Hash, ArrowLeft, X, UserPlus, Camera, BellOff,
   Pin, Image as ImageIcon, FileText, Info, ChevronRight, Flag, Ban, Pencil, RefreshCw,
   Shield, Trash2, Crown, Globe2, Lock, UserMinus, Copy, Forward, Smile, MoreVertical,
-  Mic, Square, Play, Pause, Phone, Video,
+  Mic, Square, Phone, Video,
 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
@@ -23,6 +23,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { useCalls } from '@/context/CallContext';
 import { useChatUnread } from '@/context/ChatUnreadContext';
+import VideoTrimModal from '@/components/video/VideoTrimModal';
+import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
+import { VoiceNotePlayer, VideoMessagePreview, VideoFullscreenPlayer } from '@/components/messages/ChatMediaPlayer';
 
 interface Conversation {
   id: string;
@@ -146,71 +149,6 @@ const formatVoiceTime = (seconds: number): string => {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
 
-/** Inline voice-note player used for AUDIO message attachments. */
-function VoiceNotePlayer({ src, name }: { src: string; name?: string }) {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const label = isPlaying ? 'Pause voice note' : `Play voice note${name ? `: ${name.replace(/\.[a-z0-9]+$/i, '')}` : ''}`;
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const onTime = () => setProgress(audio.currentTime);
-    const onMeta = () => { if (Number.isFinite(audio.duration)) setDuration(audio.duration); };
-    const onEnd = () => { setIsPlaying(false); setProgress(0); };
-    const onPlay = () => setIsPlaying(true);
-    const onPause = () => setIsPlaying(false);
-    audio.addEventListener('timeupdate', onTime);
-    audio.addEventListener('loadedmetadata', onMeta);
-    audio.addEventListener('durationchange', onMeta);
-    audio.addEventListener('ended', onEnd);
-    audio.addEventListener('play', onPlay);
-    audio.addEventListener('pause', onPause);
-    return () => {
-      audio.removeEventListener('timeupdate', onTime);
-      audio.removeEventListener('loadedmetadata', onMeta);
-      audio.removeEventListener('durationchange', onMeta);
-      audio.removeEventListener('ended', onEnd);
-      audio.removeEventListener('play', onPlay);
-      audio.removeEventListener('pause', onPause);
-    };
-  }, [src]);
-
-  const togglePlay = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (audio.paused) void audio.play().catch(() => undefined);
-    else audio.pause();
-  };
-
-  const pct = duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;
-
-  return (
-    <div className="flex items-center gap-2.5 min-w-[200px] max-w-full py-0.5 select-none">
-      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-      <audio ref={audioRef} src={src} preload="metadata" className="hidden" />
-      <button
-        type="button"
-        onClick={togglePlay}
-        aria-label={label}
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#d6a83f]/15 text-[#f2c75c] transition hover:bg-[#d6a83f]/25 active:scale-90"
-      >
-        {isPlaying ? <Pause size={13} /> : <Play size={13} className="ml-0.5" />}
-      </button>
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="h-1 w-full overflow-hidden rounded-full bg-white/[0.08]">
-          <div className="h-full rounded-full bg-[#d6a83f] transition-[width] duration-150" style={{ width: `${pct}%` }} />
-        </div>
-        <span className="text-[9px] text-white/40">
-          {isPlaying || duration === 0 ? formatVoiceTime(progress) : formatVoiceTime(duration)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 export default function MessagesPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -232,6 +170,9 @@ export default function MessagesPage() {
   const [createHandle, setCreateHandle] = useState('');
   const [createVisibility, setCreateVisibility] = useState<'PUBLIC' | 'PRIVATE'>('PUBLIC');
   const [createAvatar, setCreateAvatar] = useState<string | null>(null);
+  const [createAvatarFileId, setCreateAvatarFileId] = useState<string | null>(null);
+  const [createAvatarError, setCreateAvatarError] = useState<string | null>(null);
+  const [createValidationError, setCreateValidationError] = useState<string | null>(null);
   const [memberSearch, setMemberSearch] = useState('');
   const [memberSearchResults, setMemberSearchResults] = useState<any[]>([]);
   const [selectedMembers, setSelectedMembers] = useState<any[]>([]);
@@ -249,6 +190,9 @@ const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
 const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  // Source of truth for the temporary create-modal image so cleanup (cancel /
+  // create success / failure) always targets the correct server file.
+  const createAvatarFileIdRef = useRef<string | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const activeConversationRef = useRef<string | null>(null);
@@ -271,6 +215,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [attachmentDraft, setAttachmentDraft] = useState<{ file: File; previewUrl: string; fileType: 'IMAGE' | 'VIDEO'; progress: number; status: 'ready' | 'uploading' | 'sending' | 'failed'; error?: string } | null>(null);
   const uploadAbortRef = useRef<AbortController | null>(null);
+  const [trimVideoFile, setTrimVideoFile] = useState<File | null>(null);
   const [editEntityOpen, setEditEntityOpen] = useState(false);
   const [editEntityId, setEditEntityId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -947,9 +892,29 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       showToast?.({ type: 'error', title: 'File too large', message: `${file.type.startsWith('video/') ? 'Videos' : 'Images'} must be ${limit / 1024 / 1024} MB or smaller.` });
       return;
     }
+    if (file.type.startsWith('video/')) {
+      // Videos pass through the shared VANTA trimmer so the recipient gets the
+      // real trimmed clip, not a timestamp over the full original.
+      setTrimVideoFile(file);
+      return;
+    }
     setAttachmentDraft(previous => {
       if (previous) URL.revokeObjectURL(previous.previewUrl);
-      return { file, previewUrl: URL.createObjectURL(file), fileType: file.type.startsWith('image/') ? 'IMAGE' : 'VIDEO', progress: 0, status: 'ready' };
+      return { file, previewUrl: URL.createObjectURL(file), fileType: 'IMAGE', progress: 0, status: 'ready' };
+    });
+  };
+
+  const handleTrimVideoConfirm = (result: VideoTrimResult) => {
+    setTrimVideoFile(null);
+    setAttachmentDraft(previous => {
+      if (previous) URL.revokeObjectURL(previous.previewUrl);
+      return {
+        file: result.file,
+        previewUrl: URL.createObjectURL(result.file),
+        fileType: 'VIDEO',
+        progress: 0,
+        status: 'ready',
+      };
     });
   };
 
@@ -1054,7 +1019,20 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     } finally { setMessageContextId(null); }
   };
 
-  const resetCreateModal = () => {
+  const resetCreateModal = (options?: { discardImage?: boolean }) => {
+    const discardImage = options?.discardImage ?? true;
+    const pendingFileId = createAvatarFileIdRef.current;
+
+    // Cancel/back must discard the temporary uploaded image so it can NEVER
+    // become anyone's profile picture or linger unattached on the server.
+    if (discardImage && pendingFileId) {
+      createAvatarFileIdRef.current = null;
+      setCreateAvatarFileId(null);
+      if (token) {
+        apiDelete<any>(`/api/upload/files/${pendingFileId}`, token).catch(() => undefined);
+      }
+    }
+
     setCreateModalOpen(false);
     setCreateType(null);
     setCreateName('');
@@ -1062,6 +1040,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setCreateHandle('');
     setCreateVisibility('PUBLIC');
     setCreateAvatar(null);
+    setCreateAvatarError(null);
+    setCreateValidationError(null);
     setMemberSearch('');
     setMemberSearchResults([]);
     setSelectedMembers([]);
@@ -1070,6 +1050,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const handleOpenCreateModal = (type: 'group' | 'channel') => {
     setCreateType(type);
     setCreateModalOpen(true);
+    setCreateAvatar(null);
+    setCreateAvatarError(null);
+    setCreateValidationError(null);
     setSelectedMembers(
       user?.id
         ? [{
@@ -1100,30 +1083,74 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
   }, [token, user?.id, selectedMembers]);
 
-  const handleUploadAvatar = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  /**
+   * Create Group / Create Channel image upload.
+   *
+   * This intentionally uses the dedicated TEMP ENTITY endpoint
+   * (`POST /api/upload/entity-avatar`), which stores the asset as an isolated
+   * `group-avatar` / `channel-avatar` file owned by the user. It never calls
+   * the profile avatar endpoint (`/api/upload/avatar`) and can never change
+   * the user's personal profile picture. If the flow is cancelled the file is
+   * deleted again; if the flow completes it is linked to the new record.
+   */
+  const handleCreateImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file || !token) return;
+    if (!file || !token || !createType) return;
 
+    const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'];
+    const MAX_SIZE = 5 * 1024 * 1024;
+    if (!ACCEPTED.includes(file.type)) {
+      setCreateAvatarError('Please choose a JPG, PNG, WebP, GIF or AVIF image.');
+      return;
+    }
+    if (file.size > MAX_SIZE) {
+      setCreateAvatarError('This image is larger than 5MB. Please choose a smaller file.');
+      return;
+    }
+
+    setCreateAvatarError(null);
     setIsUploadingAvatar(true);
     try {
       const formData = new FormData();
       formData.append('avatar', file);
-      const uploadResult = await apiUpload<{ url: string }>('/api/upload/avatar', formData, token);
-      setCreateAvatar(uploadResult.url);
-      showToast?.({ type: 'success', title: 'Avatar ready', message: 'Your avatar is attached to the new conversation.' });
-    } catch {
-      showToast?.({ type: 'error', title: 'Upload failed', message: 'The avatar could not be uploaded right now.' });
+      formData.append('entityType', createType === 'group' ? 'group' : 'channel');
+      const uploadResult = await apiUpload<{ url: string; id?: string; file?: { id?: string } }>(
+        '/api/upload/entity-avatar',
+        formData,
+        token
+      );
+      const url = uploadResult.url;
+      const fileId = uploadResult.id ?? uploadResult.file?.id ?? null;
+      setCreateAvatar(url);
+      createAvatarFileIdRef.current = fileId;
+      setCreateAvatarFileId(fileId);
+    } catch (error: any) {
+      setCreateAvatarError(error?.message || 'The image could not be uploaded right now.');
     } finally {
       setIsUploadingAvatar(false);
       if (avatarInputRef.current) avatarInputRef.current.value = '';
     }
   };
 
+  /** Remove the temporary create image — both from the UI and the server. */
+  const removeCreateAvatar = async () => {
+    const fileId = createAvatarFileIdRef.current;
+    createAvatarFileIdRef.current = null;
+    setCreateAvatarFileId(null);
+    setCreateAvatar(null);
+    setCreateAvatarError(null);
+    if (fileId && token) {
+      apiDelete<any>(`/api/upload/files/${fileId}`, token).catch(() => undefined);
+    }
+  };
+
   const handleCreateEntity = async () => {
-    if (!token || !createType || !createName.trim()) {
-      showToast?.({ type: 'error', title: 'Missing details', message: 'Please provide a name for your new conversation.' });
+    if (!token || !createType) return;
+    if (!createName.trim()) {
+      setCreateValidationError(`Please give your new ${createType} a name.`);
       return;
     }
+    setCreateValidationError(null);
 
     setIsCreatingEntity(true);
     try {
@@ -1137,6 +1164,22 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       };
 
       const created = await apiPost<any>(endpoint, payload, token);
+      const entityId = created.id ?? created.group?.id ?? created.channel?.id ?? created.conversationId;
+
+      // Bind the temporary group/channel photo to the NEW record — it belongs
+      // to the Group/Channel avatar, NEVER to the user's profile.
+      const pendingFileId = createAvatarFileIdRef.current;
+      if (pendingFileId && entityId) {
+        createAvatarFileIdRef.current = null;
+        setCreateAvatarFileId(null);
+        apiPost<any>('/api/upload/link', {
+          fileId: pendingFileId,
+          recordType: createType === 'group' ? 'Group' : 'Channel',
+          recordId: entityId,
+          category: createType === 'group' ? 'group-avatar' : 'channel-avatar',
+        }, token).catch(() => undefined);
+      }
+
       const newConversation = {
         id: created.conversationId ?? created.id ?? created.conversation?.id,
         type: createType,
@@ -1148,13 +1191,21 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
       setConversations(prev => [newConversation, ...prev]);
       handleSelectConversation(newConversation.id);
-      resetCreateModal();
+      resetCreateModal({ discardImage: false });
       showToast?.({
         type: 'success',
         title: createType === 'group' ? 'Group created' : 'Channel created',
         message: `${createName.trim()} is now ready for conversation.`,
       });
     } catch (error: any) {
+      // The group/channel was never created — discard the temporary image so
+      // it can never become anyone's profile picture.
+      const pendingFileId = createAvatarFileIdRef.current;
+      if (pendingFileId && token) {
+        createAvatarFileIdRef.current = null;
+        setCreateAvatarFileId(null);
+        apiDelete<any>(`/api/upload/files/${pendingFileId}`, token).catch(() => undefined);
+      }
       showToast?.({
         type: 'error',
         title: 'Create failed',
@@ -1489,7 +1540,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   <ArrowLeft size={18} />
                 </button>
                 <button onClick={openConversationInfo} className="flex min-w-0 items-center gap-3 text-left" aria-label={`Open ${activeConv.name} information`}>
-                 <span className="rounded-full border border-[#d6a83f]/20 p-0.5"><Avatar src={activeConv.avatar} alt={activeConv.name} size="sm" /></span>
+                 <Avatar src={activeConv.avatar} alt={activeConv.name} size="sm" className="ring-2 ring-[#d6a83f]/20" />
                 <div className="min-w-0">
                    <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-[#f5f5f5]">{activeConv.name}{activeConv.verified && <VerificationBadge verified size="sm" className="shrink-0" />}</p>
                   <p className="truncate text-[10px] text-white/40">
@@ -1545,8 +1596,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   const showDate = !previousDate || currentDate.toDateString() !== previousDate.toDateString();
                   const dateLabel = currentDate.toDateString() === new Date().toDateString() ? 'Today' : currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
                   const senderRole = activeConv.participants?.find((participant: any) => participant.id === msg.sender.id)?.role;
-                  const hasImageAttachment = (msg.attachments || []).some(attachment => attachment.fileType === 'IMAGE');
-                  const isMediaOnly = hasImageAttachment && !msg.replyTo && !visibleMessageText(msg).trim();
+                  const hasMediaAttachment = (msg.attachments || []).some(attachment => attachment.fileType === 'IMAGE' || attachment.fileType === 'VIDEO');
+                  const isMediaOnly = hasMediaAttachment && !msg.replyTo && !visibleMessageText(msg).trim();
                   return <div key={msg.id}>{showDate && <div className="my-5 flex justify-center"><span className="rounded-full border border-white/[0.06] bg-[#0d0d0f] px-3 py-1 text-[9px] text-white/35">{dateLabel}</span></div>}{msg.id === firstUnreadId && <div className="my-4 flex items-center gap-3"><span className="h-px flex-1 bg-[#d6a83f]/25"/><span className="rounded-full border border-[#d6a83f]/30 bg-[#d6a83f]/10 px-3 py-1 text-[9px] font-semibold uppercase tracking-[.14em] text-[#f2c75c]">New messages</span><span className="h-px flex-1 bg-[#d6a83f]/25"/></div>}
                   <div
                     id={`message-${msg.id}`}
@@ -1587,10 +1638,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                               src={attachment.url}
                               alt={attachment.fileName || 'Image attachment'}
                               loading="lazy"
+                              decoding="async"
                               className="block max-h-[440px] w-auto max-w-full rounded-[15px] object-contain"
                             /></button>
-                            : attachment.fileType === 'VIDEO' ? <button key={attachment.id || index} type="button" onClick={() => openMediaViewer(attachment)} className="mb-2 block max-w-full overflow-hidden rounded-[15px] bg-black text-left" aria-label={`Open ${attachment.fileName || 'video'} in media viewer`}><video src={attachment.url} muted playsInline preload="metadata" className="max-h-72 max-w-full" /></button>
-                            : attachment.fileType === 'AUDIO' ? <div key={attachment.id || index} className="mb-1.5 rounded-xl border border-white/[0.07] bg-black/20 px-3 py-2.5"><VoiceNotePlayer src={attachment.url} name={attachment.fileName} /></div>
+                            : attachment.fileType === 'VIDEO' ? <span key={attachment.id || index} className={cn('block min-w-0 max-w-full', visibleMessageText(msg) && 'mb-1.5')}><VideoMessagePreview attachment={attachment} onOpen={openMediaViewer} /></span>
+                            : attachment.fileType === 'AUDIO' ? <div key={attachment.id || index} className={cn('min-w-0', visibleMessageText(msg) && 'mb-1.5')}><VoiceNotePlayer src={attachment.url} name={attachment.fileName} /></div>
                             : <a key={attachment.id || index} href={attachment.url} target="_blank" rel="noreferrer" className="mb-2 block underline">{attachment.fileName || 'Download attachment'}</a>)}
                           {visibleMessageText(msg)}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}
                         </>)}
@@ -1778,16 +1830,24 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       )}
 
       <AnimatePresence>
-        {mediaViewer && <motion.div role="dialog" aria-modal="true" aria-label={mediaViewer.fileName || 'Media viewer'} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex h-[var(--chat-viewport-height,100dvh)] w-screen flex-col overflow-hidden bg-black">
-          <header className="flex shrink-0 items-center gap-3 border-b border-white/[0.08] bg-black/90 px-3 pb-3 pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-xl">
-            <button type="button" onClick={() => closeChatSubview(() => setMediaViewer(null))} className="grid h-10 w-10 place-items-center rounded-full text-[#c8c8cc] transition hover:bg-white/[0.08] hover:text-white" aria-label="Close media viewer"><ArrowLeft size={19}/></button>
-            <p className="min-w-0 flex-1 truncate text-xs font-medium text-[#f5f5f5]">{mediaViewer.fileName || 'Shared media'}</p>
-            <a href={mediaViewer.url} download={mediaViewer.fileName} target="_blank" rel="noreferrer" className="rounded-lg border border-white/[0.1] px-3 py-2 text-[10px] font-medium text-[#c8c8cc] transition hover:bg-white/[0.06] hover:text-white">Download</a>
-          </header>
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 pb-[max(12px,env(safe-area-inset-bottom))]">
-            {mediaViewer.fileType === 'VIDEO' ? <video src={mediaViewer.url} controls autoPlay playsInline preload="metadata" className="max-h-full max-w-full object-contain"/> : <img src={mediaViewer.url} alt={mediaViewer.fileName || 'Shared image'} className="max-h-full max-w-full object-contain"/>}
-          </div>
-        </motion.div>}
+        {mediaViewer && (mediaViewer.fileType === 'VIDEO' ? (
+          <VideoFullscreenPlayer
+            key={mediaViewer.url}
+            attachment={mediaViewer}
+            onClose={() => closeChatSubview(() => setMediaViewer(null))}
+          />
+        ) : (
+          <motion.div role="dialog" aria-modal="true" aria-label={mediaViewer.fileName || 'Media viewer'} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex h-[var(--chat-viewport-height,100dvh)] w-screen flex-col overflow-hidden bg-black">
+            <header className="flex shrink-0 items-center gap-3 border-b border-white/[0.08] bg-black/90 px-3 pb-3 pt-[max(12px,env(safe-area-inset-top))] backdrop-blur-xl">
+              <button type="button" onClick={() => closeChatSubview(() => setMediaViewer(null))} className="grid h-10 w-10 place-items-center rounded-full text-[#c8c8cc] transition hover:bg-white/[0.08] hover:text-white" aria-label="Close media viewer"><ArrowLeft size={19}/></button>
+              <p className="min-w-0 flex-1 truncate text-xs font-medium text-[#f5f5f5]">{mediaViewer.fileName || 'Shared media'}</p>
+              <a href={mediaViewer.url} download={mediaViewer.fileName} target="_blank" rel="noreferrer" className="rounded-lg border border-white/[0.1] px-3 py-2 text-[10px] font-medium text-[#c8c8cc] transition hover:bg-white/[0.06] hover:text-white">Download</a>
+            </header>
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 pb-[max(12px,env(safe-area-inset-bottom))]">
+              <img src={mediaViewer.url} alt={mediaViewer.fileName || 'Shared image'} className="max-h-full max-w-full object-contain"/>
+            </div>
+          </motion.div>
+        ))}
         {messageContextId && (() => {
           const selected = messages.find(message => message.id === messageContextId);
           if (!selected) return null;
@@ -1834,72 +1894,156 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               initial={{ scale: 0.96, y: 12 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.96, y: 12 }}
-              className="h-full w-full max-w-[720px] overflow-y-auto bg-[#0d0d0f] p-5 pb-[max(20px,env(safe-area-inset-bottom))] pt-[max(20px,env(safe-area-inset-top))]"
+              className="flex h-full w-full max-w-[720px] flex-col overflow-hidden bg-[#0d0d0f]"
             >
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-white/30">Create {createType}</p>
-                  <h3 className="text-lg font-semibold text-white">{createType === 'group' ? 'New Group' : 'New Channel'}</h3>
-                </div>
-
-                {createType === 'channel' && <div className="grid grid-cols-1 gap-3 "><div><label className="block text-xs text-white/40 mb-1">Username / handle</label><input value={createHandle} onChange={e => setCreateHandle(e.target.value)} placeholder="@vanta-news" className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none" /></div><div><label className="block text-xs text-white/40 mb-1">Access</label><select value={createVisibility} onChange={e => setCreateVisibility(e.target.value as 'PUBLIC' | 'PRIVATE')} className="w-full rounded-lg border border-white/[0.08] bg-[#161616] px-3 py-2 text-sm text-white outline-none"><option value="PUBLIC">Public</option><option value="PRIVATE">Private</option></select></div></div>}
-                <button onClick={resetCreateModal} className="btn-icon w-9 h-9"><X size={16} /></button>
-              </div>
-
-              <div className="grid gap-4">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => avatarInputRef.current?.click()}
-                    className="relative h-16 w-16 rounded-2xl bg-white/[0.04] border border-white/[0.08] overflow-hidden flex items-center justify-center"
-                  >
-                    {createAvatar ? <Avatar src={createAvatar} alt="avatar preview" size="lg" /> : <Camera size={18} className="text-white/30" />}
-                  </button>
-                  <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleUploadAvatar} />
-                  <div className="flex-1">
-                    <label className="block text-xs text-white/40 mb-1">Name</label>
-                    <input
-                      value={createName}
-                      onChange={e => setCreateName(e.target.value)}
-                      placeholder={createType === 'group' ? 'Team workspace' : 'Announcements hub'}
-                      className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none"
-                    />
+              <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.06] px-5 pb-4 pt-[max(16px,env(safe-area-inset-top))]">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl border', createType === 'group' ? 'border-emerald-500/25 bg-emerald-500/10' : 'border-amber-500/25 bg-amber-500/10')}>
+                    {createType === 'group' ? <Users size={18} className="text-emerald-400" /> : <Hash size={18} className="text-amber-400" />}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/30">{createType === 'group' ? 'Group' : 'Channel'}</p>
+                    <h3 className="truncate text-lg font-semibold text-white">{createType === 'group' ? 'Create a group' : 'Create a channel'}</h3>
                   </div>
                 </div>
+                <button onClick={() => resetCreateModal()} className="btn-icon h-9 w-9 shrink-0" aria-label="Close creation"><X size={16} /></button>
+              </header>
+
+              <div className="flex-1 overflow-y-auto px-5 py-5 pb-[max(20px,env(safe-area-inset-bottom))] scrollbar-hide">
+                <div className="grid gap-5">
+                  <div>
+                    <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-white/35">{createType === 'group' ? 'Group photo' : 'Channel photo'}</label>
+                    <div className="flex items-center gap-4">
+                      <button
+                        type="button"
+                        onClick={() => avatarInputRef.current?.click()}
+                        disabled={isUploadingAvatar}
+                        className="relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl border border-dashed border-white/15 bg-white/[0.03] transition hover:border-white/30 hover:bg-white/[0.05] disabled:opacity-60"
+                        aria-label="Choose an image"
+                      >
+                        {isUploadingAvatar ? (
+                          <span className="absolute inset-0 grid place-items-center"><Loader2 size={20} className="animate-spin text-white/60" /></span>
+                        ) : createAvatar ? (
+                          <Avatar src={createAvatar} alt="Image preview" size="xl" className="!h-full !w-full" />
+                        ) : (
+                          <span className="grid h-full w-full place-items-center"><Camera size={20} className="text-white/30" /></span>
+                        )}
+                        {createAvatar && !isUploadingAvatar && (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            aria-label="Remove image"
+                            onClick={(e) => { e.stopPropagation(); void removeCreateAvatar(); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void removeCreateAvatar(); } }}
+                            className="absolute -right-1.5 -top-1.5 grid h-6 w-6 cursor-pointer place-items-center rounded-full border border-white/10 bg-[#1a1a1d] text-white/70 shadow transition hover:text-white"
+                          >
+                            <X size={12} />
+                          </span>
+                        )}
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-white">{createType === 'group' ? 'Group photo' : 'Channel photo'}</p>
+                        <p className="mt-0.5 text-[11px] leading-relaxed text-white/35">JPG, PNG, WebP or GIF up to 5MB. Tagged to the {createType} — never your profile picture.</p>
+                        {createAvatar && !isUploadingAvatar && (
+                          <button type="button" onClick={() => void removeCreateAvatar()} className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-red-300 transition hover:text-red-200">
+                            <Trash2 size={11} /> Remove photo
+                          </button>
+                        )}
+                        {createAvatarFileId && !isUploadingAvatar && (
+                          <span className="mt-2 inline-flex items-center gap-1 text-[10px] text-emerald-400/80"><Check size={10} /> Uploaded</span>
+                        )}
+                      </div>
+                    </div>
+                    <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" className="hidden" onChange={handleCreateImageUpload} />
+                    {createAvatarError && (
+                      <p className="mt-2 flex items-center gap-1.5 text-[11px] text-red-300"><Info size={11} /> {createAvatarError}</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-white/35">{createType === 'group' ? 'Group name' : 'Channel name'}</label>
+                    <input
+                      value={createName}
+                      onChange={e => { setCreateName(e.target.value); if (createValidationError) setCreateValidationError(null); }}
+                      placeholder={createType === 'group' ? 'e.g. Weekend Explorers' : 'e.g. Product Announcements'}
+                      maxLength={60}
+                      className={cn('w-full rounded-xl border bg-white/[0.04] px-3.5 py-2.5 text-sm text-white outline-none transition placeholder:text-white/25', createValidationError ? 'border-red-400/60 focus:border-red-400' : 'border-white/[0.08] focus:border-white/25')}
+                    />
+                    <div className="mt-1.5 flex items-start justify-between gap-3">
+                      {createValidationError ? (
+                        <p className="flex items-center gap-1.5 text-[11px] text-red-300"><Info size={11} /> {createValidationError}</p>
+                      ) : (
+                        <p className="text-[10px] text-white/25">Visible in conversation lists.</p>
+                      )}
+                      <span className="shrink-0 text-[10px] tabular-nums text-white/25">{createName.length}/60</span>
+                    </div>
+                  </div>
 
                 <div>
-                  <label className="block text-xs text-white/40 mb-1">Description</label>
+                  <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-white/35">Description</label>
                   <textarea
                     value={createDescription}
                     onChange={e => setCreateDescription(e.target.value)}
-                    placeholder="Give your conversation a short description"
+                    placeholder={createType === 'group' ? 'What is this group about?' : 'Set expectations for your channel'}
                     rows={3}
-                    className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none"
+                    maxLength={500}
+                    className="w-full resize-none rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 py-2.5 text-sm leading-relaxed text-white outline-none transition placeholder:text-white/25 focus:border-white/25"
                   />
                 </div>
 
+                {createType === 'channel' && (
+                  <div className="grid gap-4 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.14em] text-white/35">Handle</label>
+                      <div className="flex items-center rounded-xl border border-white/[0.08] bg-white/[0.04] px-3.5 focus-within:border-white/25">
+                        <span className="text-sm text-white/30">@</span>
+                        <input value={createHandle} onChange={e => setCreateHandle(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))} placeholder="vanta-news" maxLength={30} className="w-full bg-transparent py-2.5 text-sm text-white outline-none placeholder:text-white/25" />
+                      </div>
+                      <p className="mt-1 text-[10px] text-white/25">A unique handle for your channel.</p>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.14em] text-white/35">Access</label>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {(['PUBLIC', 'PRIVATE'] as const).map((vis) => (
+                          <button key={vis} type="button" onClick={() => setCreateVisibility(vis)} className={cn('flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-left transition', createVisibility === vis ? 'border-amber-400/50 bg-amber-400/10' : 'border-white/[0.08] bg-white/[0.03] hover:border-white/20')}>
+                            {vis === 'PUBLIC' ? <Globe2 size={16} className={createVisibility === vis ? 'text-amber-300' : 'text-white/40'} /> : <Lock size={16} className={createVisibility === vis ? 'text-amber-300' : 'text-white/40'} />}
+                            <div>
+                              <p className="text-xs font-medium text-white">{vis === 'PUBLIC' ? 'Public' : 'Private'}</p>
+                              <p className="text-[10px] text-white/35">{vis === 'PUBLIC' ? 'Open to everyone' : 'Only invited people'}</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div>
-                  <label className="block text-xs text-white/40 mb-1">Invite members</label>
+                  <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-white/35">Invite members <span className="normal-case text-white/30">· {Math.max(0, selectedMembers.length - 1)} invited</span></label>
                   <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-2">
                     <div className="flex flex-wrap gap-2 mb-2">
                       {selectedMembers.map((member) => (
                         <button
                           key={member.id}
                           onClick={() => toggleMemberSelection(member)}
-                          className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1 text-xs text-white hover:border-white/30"
+                          className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1 text-xs text-white transition hover:border-white/30"
                         >
                           <Avatar src={member.avatar} alt={member.username || member.fullName} size="xs" />
                           <span>{member.id === user?.id ? 'You' : member.username || member.fullName}</span>
                         </button>
                       ))}
                     </div>
-                    <input
-                      value={memberSearch}
-                      onChange={e => handleSearchMembers(e.target.value)}
-                      placeholder="Search users to add"
-                      className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm text-white outline-none"
-                    />
+                    <div className="relative">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+                      <input
+                        value={memberSearch}
+                        onChange={e => handleSearchMembers(e.target.value)}
+                        placeholder="Search users to add"
+                        className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] py-2 pr-3 pl-9 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-white/25"
+                      />
+                    </div>
                   </div>
-                  <div className="mt-3 space-y-1 max-h-40 overflow-y-auto pr-1">
+                  <div className="mt-3 max-h-40 space-y-1 overflow-y-auto pr-1">
                     {memberSearchResults.map((item: any) => (
                       <button
                         key={item.id}
@@ -1917,26 +2061,47 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                       </button>
                     ))}
                     {memberSearch && memberSearchResults.length === 0 && (
-                      <p className="text-xs text-white/30">No matching users found.</p>
+                      <div className="rounded-2xl border border-dashed border-white/[0.08] px-4 py-6 text-center">
+                        <Search size={16} className="mx-auto mb-1.5 text-white/20" />
+                        <p className="text-xs text-white/35">No users found for “{memberSearch}”.</p>
+                        <p className="text-[10px] text-white/25">Try a different name or username.</p>
+                      </div>
                     )}
                   </div>
                 </div>
               </div>
+              </div>
 
-              <div className="flex justify-end gap-2 mt-5">
-                <button onClick={resetCreateModal} className="btn-secondary text-sm">Cancel</button>
+              <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4 pb-[max(16px,env(safe-area-inset-bottom))]">
+                <button onClick={() => resetCreateModal()} className="btn-secondary text-sm">Cancel</button>
                 <button
-                  onClick={handleCreateEntity}
-                  disabled={isCreatingEntity || isUploadingAvatar || !createName.trim()}
+                  onClick={() => void handleCreateEntity()}
+                  disabled={isCreatingEntity || isUploadingAvatar}
                   className="btn-primary text-sm disabled:opacity-50"
                 >
-                  {isCreatingEntity ? 'Creating...' : `Create ${createType}`}
+                  {isCreatingEntity ? (
+                    <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Creating…</span>
+                  ) : (
+                    <span className="flex items-center gap-2">{createType === 'group' ? <Users size={14} /> : <Hash size={14} />} Create {createType}</span>
+                  )}
                 </button>
-              </div>
+              </footer>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Shared VANTA video trimmer — same UI everywhere (Reel, Post, Story, Chat) */}
+      <VideoTrimModal
+        open={Boolean(trimVideoFile)}
+        file={trimVideoFile}
+        onClose={() => setTrimVideoFile(null)}
+        onConfirm={handleTrimVideoConfirm}
+        title="Trim Video"
+        subtitle="Preview and trim the timeline before sending"
+        confirmLabel="Send with this clip"
+        trimActionLabel="Trim & Preview"
+      />
 
     </motion.div>
   );

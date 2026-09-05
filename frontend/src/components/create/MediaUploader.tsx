@@ -8,6 +8,8 @@ import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { useAuth } from '@/context/AuthContext';
 import { apiUpload } from '@/lib/apiClient';
 import { apiDelete } from '@/lib/apiClient';
+import VideoTrimModal from '@/components/video/VideoTrimModal';
+import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif'];
 const ACCEPTED_VIDEO_TYPES = ['video/mp4', 'video/webm'];
@@ -51,6 +53,8 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
   const filesRef = useRef<MediaFile[]>([]);
   const abortControllers = useRef(new Map<string, AbortController>());
   const pickerOpenedRef = useRef(false);
+  const [pendingTrimQueue, setPendingTrimQueue] = useState<File[]>([]);
+  const pendingTrimFile = pendingTrimQueue[0] ?? null;
 
   useEffect(() => {
     if (!openPickerOnMount || pickerOpenedRef.current) return;
@@ -89,16 +93,90 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
     return null;
   };
 
+  const uploadFileToServer = useCallback(
+    async (mediaFile: MediaFile) => {
+      const fd = new FormData();
+      fd.append('file', mediaFile.file);
+      fd.append('category', storyMode ? 'story' : mediaFile.type === 'video' ? 'post-video' : 'post-image');
+      const controller = new AbortController();
+      abortControllers.current.set(mediaFile.id, controller);
+
+      setMediaFiles((prev) =>
+        prev.map((f) =>
+          f.id === mediaFile.id ? { ...f, uploading: true, progress: 0, error: undefined } : f
+        )
+      );
+
+      try {
+        const result = await apiUpload<{ id: string; url: string }>(
+          '/api/upload',
+          fd,
+          token ?? undefined,
+          'POST',
+          (percent) => {
+            setMediaFiles((prev) =>
+              prev.map((f) =>
+                f.id === mediaFile.id ? { ...f, progress: percent } : f
+              )
+            );
+          },
+          controller.signal
+        );
+        setMediaFiles((prev) =>
+          prev.map((f) =>
+            f.id === mediaFile.id
+              ? { ...f, progress: 100, uploading: false, uploadedUrl: result.url, uploadedId: result.id }
+              : f
+          )
+        );
+        abortControllers.current.delete(mediaFile.id);
+      } catch (err) {
+        setMediaFiles((prev) =>
+          prev.map((f) =>
+            f.id === mediaFile.id
+              ? { ...f, uploading: false, error: err instanceof Error ? err.message : 'Upload failed' }
+              : f
+          )
+        );
+        abortControllers.current.delete(mediaFile.id);
+      }
+    },
+    [token, storyMode]
+  );
+
   const processFiles = useCallback((files: FileList | File[]) => {
     const newFiles: MediaFile[] = [];
     const existingCount = mediaFiles.length;
+    const videosForTrim: File[] = [];
 
     for (let i = 0; i < files.length; i++) {
       if (existingCount + newFiles.length >= maxFiles) break;
       const file = files[i];
-      const error = validateFile(file);
       const type = ACCEPTED_IMAGE_TYPES.includes(file.type) ? 'image' : 'video';
 
+      if (type === 'video') {
+        const error = validateFile(file);
+        if (error) {
+          // Surface invalid videos immediately with a VANTA-style error badge.
+          newFiles.push({
+            id: `media_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 7)}`,
+            file,
+            type,
+            url: URL.createObjectURL(file),
+            name: file.name,
+            size: file.size,
+            progress: 0,
+            uploading: false,
+            error,
+          });
+        } else {
+          // Valid videos go through the shared time-trimmer before publishing.
+          videosForTrim.push(file);
+        }
+        continue;
+      }
+
+      const error = validateFile(file);
       newFiles.push({
         id: `media_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 7)}`,
         file,
@@ -110,61 +188,16 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
         uploading: false,
         error: error ?? undefined,
       });
-
     }
 
     const updated = [...mediaFiles, ...newFiles];
     updateFiles(updated);
     newFiles.filter(file => !file.error).forEach(file => void uploadFileToServer(file));
-  }, [mediaFiles, maxFiles, updateFiles]);
 
-  const uploadFileToServer = async (mediaFile: MediaFile) => {
-    const fd = new FormData();
-    fd.append('file', mediaFile.file);
-    fd.append('category', storyMode ? 'story' : mediaFile.type === 'video' ? 'post-video' : 'post-image');
-    const controller = new AbortController();
-    abortControllers.current.set(mediaFile.id, controller);
-
-    setMediaFiles((prev) =>
-      prev.map((f) =>
-        f.id === mediaFile.id ? { ...f, uploading: true, progress: 0, error: undefined } : f
-      )
-    );
-
-    try {
-      const result = await apiUpload<{ id: string; url: string }>(
-        '/api/upload',
-        fd,
-        token ?? undefined,
-        'POST',
-        (percent) => {
-          setMediaFiles((prev) =>
-            prev.map((f) =>
-              f.id === mediaFile.id ? { ...f, progress: percent } : f
-            )
-          );
-        },
-        controller.signal
-      );
-      setMediaFiles((prev) =>
-        prev.map((f) =>
-          f.id === mediaFile.id
-            ? { ...f, progress: 100, uploading: false, uploadedUrl: result.url, uploadedId: result.id }
-            : f
-        )
-      );
-      abortControllers.current.delete(mediaFile.id);
-    } catch (err) {
-      setMediaFiles((prev) =>
-        prev.map((f) =>
-          f.id === mediaFile.id
-            ? { ...f, uploading: false, error: err instanceof Error ? err.message : 'Upload failed' }
-            : f
-        )
-      );
-      abortControllers.current.delete(mediaFile.id);
+    if (videosForTrim.length > 0) {
+      setPendingTrimQueue((queue) => [...queue, ...videosForTrim]);
     }
-  };
+  }, [mediaFiles, maxFiles, updateFiles, uploadFileToServer]);
 
   const retryUpload = useCallback((id: string) => {
     const target = mediaFiles.find((f) => f.id === id);
@@ -172,6 +205,42 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
       uploadFileToServer(target);
     }
   }, [mediaFiles]);
+
+  // ---- Shared video trimming -----------------------------------------------
+  // Videos selected by the user aren't uploaded as-is: they pass through the
+  // reusable <VideoTrimModal /> (which powers Reels, Posts, Stories, Chat and
+  // Fundraiser covers with the exact same trimmer UI + real re-encode engine).
+  // Only the trimmed file is uploaded, so what is published actually contains
+  // the selected time range — never timestamps over the full original.
+
+  const handleTrimConfirm = useCallback(
+    (result: VideoTrimResult) => {
+      const target = pendingTrimQueue[0];
+      if (!target) return;
+      setPendingTrimQueue((queue) => queue.slice(1));
+      const trimmed: MediaFile = {
+        id: `media_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        file: result.file,
+        type: 'video',
+        url: URL.createObjectURL(result.file),
+        name: result.file.name,
+        size: result.file.size,
+        progress: 0,
+        uploading: false,
+      };
+      setMediaFiles((prev) => {
+        const next = [...prev, trimmed];
+        filesRef.current = next;
+        return next;
+      });
+      void uploadFileToServer(trimmed);
+    },
+    [pendingTrimQueue, uploadFileToServer]
+  );
+
+  const handleTrimCancel = useCallback(() => {
+    setPendingTrimQueue((queue) => queue.slice(1));
+  }, []);
 
   const removeFile = useCallback((id: string) => {
     abortControllers.current.get(id)?.abort();
@@ -421,6 +490,18 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
           {mediaFiles.length} file{mediaFiles.length !== 1 ? 's' : ''} uploaded successfully
         </p>
       )}
+
+      {/* Shared video trimmer — same UI for Posts and Stories */}
+      <VideoTrimModal
+        open={pendingTrimQueue.length > 0}
+        file={pendingTrimFile}
+        onClose={handleTrimCancel}
+        onConfirm={handleTrimConfirm}
+        title={storyMode ? 'Trim Story Video' : 'Trim Video'}
+        subtitle="Preview and trim the timeline before it's added"
+        confirmLabel="Use this video"
+        trimActionLabel="Trim & Preview"
+      />
     </div>
   );
 });

@@ -58,6 +58,12 @@ desktop.ini
 # Local browser profiles and exports (may contain cookies/login data)
 .edge-*/
 
+# Local visual-checking artifacts (headless-browser profile, screenshots, scripts)
+tmp-vischeck/
+
+# Temporary test marker files
+backend/jest-*-done.txt
+
 # Testing
 coverage/
 .nyc_output/

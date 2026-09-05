@@ -574,6 +574,15 @@ async function startServer() {
 
     await prisma.$connect();
 
+    // Immediately clean up any Live sessions abandoned by a previous process
+    // (heartbeat older than 30s), so a host is never blocked by a stale "active".
+    try {
+      const { liveService } = await import('./services/live.service');
+      await liveService.sweepStaleLiveStreams();
+    } catch (sweepError) {
+      console.warn('[LiveSweep] Startup sweep skipped:', sweepError);
+    }
+
     // Ensure the configurable VANTA Give category catalog exists.
     try {
       await ensureDefaultCategories();

@@ -4,6 +4,21 @@ import { dbPerformanceTracker } from "./monitoring.service";
 import { liveKitService } from "./livekit.service";
 import { notificationService } from "./notification.service";
 
+// ---------------------------------------------------------------------------
+// Live session heartbeat / stale-session timeout
+// ---------------------------------------------------------------------------
+// The BACKEND is the source of truth for "is this Live actually alive". While a
+// host is broadcasting they must refresh `lastHostHeartbeat` at least every
+// 30 seconds. If the server sees no heartbeat for this long the session is
+// treated as abandoned (browser closed, laptop shut down, network lost,
+// process killed) and automatically ended:
+//   * the session is marked ENDED / inactive
+//   * the LiveKit room is closed
+//   * the host can immediately start a new Live afterwards
+export const LIVE_HEARTBEAT_TIMEOUT_MS = 30_000;
+/** How often the server-side sweeper looks for expired sessions. */
+export const LIVE_SESSION_SWEEP_INTERVAL_MS = 10_000;
+
 export class LiveService {
   async getActiveStreams(cursor?: string, limit: number = 20) {
     return cacheService.getOrSet(CACHE_KEYS.LIVE_STREAMS, async () => {
@@ -62,9 +77,20 @@ export class LiveService {
   ) {
     const existing = await prisma.liveStream.findFirst({
       where: { hostId, active: true, status: 'LIVE' },
-      select: { id: true },
+      select: { id: true, lastHostHeartbeat: true, startedAt: true },
     });
-    if (existing) throw new Error('You already have an active livestream');
+    if (existing) {
+      // Never trust a bare `active = true` flag: if the previous session's
+      // heartbeat has expired it is a stale/abandoned session and must be
+      // cleaned up first, otherwise the host would be permanently blocked
+      // from going Live again after a crash / disconnect.
+      const heartbeat = existing.lastHostHeartbeat || existing.startedAt || new Date(0);
+      if (Date.now() - new Date(heartbeat).getTime() > LIVE_HEARTBEAT_TIMEOUT_MS) {
+        await this.endStaleStream(existing.id);
+      } else {
+        throw new Error('You already have an active livestream');
+      }
+    }
 
     // Create LiveKit room
     const roomName = liveKitService.generateRoomName(hostId);
@@ -106,6 +132,7 @@ export class LiveService {
         status: 'LIVE',
         active: true,
         startedAt: new Date(),
+        lastHostHeartbeat: new Date(),
         viewerCount: 0,
         peakViewers: 0,
         totalViewers: 0,
@@ -145,31 +172,116 @@ export class LiveService {
     if (!stream) throw new Error("Stream not found");
     if (stream.hostId !== hostId) throw new Error("Unauthorized");
 
+    return this.finishStream(stream);
+  }
+
+  /**
+   * Internal teardown shared by host-initiated ends and the server-side
+   * stale-session sweeper. Marks the session ended, closes the LiveKit room
+   * (if any) and invalidates the active-streams caches.
+   */
+  private async finishStream(stream: { id: string; startedAt?: Date | null; liveKitRoom?: string | null }) {
     // Calculate duration
-    const duration = stream.startedAt 
-      ? Math.floor((Date.now() - stream.startedAt.getTime()) / 1000) 
+    const duration = stream.startedAt
+      ? Math.floor((Date.now() - stream.startedAt.getTime()) / 1000)
       : 0;
 
     // Close LiveKit room
     if (stream.liveKitRoom) {
-      await liveKitService.closeRoom(stream.liveKitRoom);
+      await liveKitService.closeRoom(stream.liveKitRoom).catch(() => undefined);
     }
 
     const updated = await prisma.liveStream.update({
-      where: { id: streamId },
-      data: { 
-        active: false, 
+      where: { id: stream.id },
+      data: {
+        active: false,
         status: 'ENDED',
         endedAt: new Date(),
+        lastHostHeartbeat: new Date(),
         duration,
       },
     });
 
     // Invalidate caches
     await cacheService.del(CACHE_KEYS.LIVE_STREAMS);
-    await cacheService.del(CACHE_KEYS.LIVE_STREAM(streamId));
-    
+    await cacheService.del(CACHE_KEYS.LIVE_STREAM(stream.id));
+
     return updated;
+  }
+
+  /**
+   * End a live session that is no longer heartbeating (host abandoned it).
+   * Idempotent and safe to call from the periodic sweeper or from `startStream`
+   * when the host is trying to go Live again.
+   */
+  async endStaleStream(streamId: string) {
+    const stream = await prisma.liveStream.findUnique({
+      where: { id: streamId },
+    });
+    if (!stream || !stream.active || stream.status !== 'LIVE') return null;
+    const ended = await this.finishStream(stream);
+    return { ...ended, reason: 'host_timeout' as const };
+  }
+
+  /**
+   * Record a host heartbeat for the given stream. Returns true when the
+   * session is still genuinely active, false when it has already been ended.
+   */
+  async recordHeartbeat(streamId: string, hostId: string) {
+    const stream = await prisma.liveStream.findUnique({
+      where: { id: streamId },
+      select: { id: true, hostId: true, active: true, status: true },
+    });
+    if (!stream) throw new Error("Stream not found");
+    if (stream.hostId !== hostId) throw new Error("Unauthorized");
+    if (!stream.active || stream.status !== 'LIVE') return false;
+
+    await prisma.liveStream.update({
+      where: { id: streamId },
+      data: { lastHostHeartbeat: new Date() },
+    });
+    await cacheService.del(CACHE_KEYS.LIVE_STREAM(streamId));
+    return true;
+  }
+
+  /**
+   * Server-side authoritative sweep. Finds every session that is still marked
+   * active but whose host heartbeat is older than the 30-second timeout and
+   * ends it. Used by the socket layer on a fixed interval and once at server
+   * startup, so an abandoned Live can never stay "active" forever — even if
+   * the client never told us it left.
+   */
+  async sweepStaleLiveStreams() {
+    const cutoff = new Date(Date.now() - LIVE_HEARTBEAT_TIMEOUT_MS);
+    const stale = await prisma.liveStream.findMany({
+      where: {
+        active: true,
+        status: 'LIVE',
+        OR: [
+          { lastHostHeartbeat: { lt: cutoff } },
+          { lastHostHeartbeat: null, startedAt: { lt: cutoff } },
+        ],
+      },
+      select: { id: true, hostId: true, liveKitRoom: true },
+      take: 200,
+    });
+
+    if (stale.length === 0) return [];
+
+    const ended: Array<{ id: string; hostId: string; liveKitRoom?: string | null }> = [];
+    for (const stream of stale) {
+      try {
+        const result = await this.endStaleStream(stream.id);
+        if (result) ended.push(stream);
+      } catch (error) {
+        console.error(`[LiveSweep] Failed to end stale stream ${stream.id}:`, error);
+      }
+    }
+
+    if (ended.length > 0) {
+      console.info(`[LiveSweep] Automatically ended ${ended.length} stale live session(s) (no heartbeat for >30s)`);
+    }
+    return ended;
   }
 
   async joinStream(streamId: string, userId: string) {

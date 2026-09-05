@@ -2,6 +2,7 @@ import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../prisma';
 import { liveService, giftService } from '../services';
+import { LIVE_SESSION_SWEEP_INTERVAL_MS } from '../services/live.service';
 import { liveKitService } from '../services/livekit.service';
 
 // In-process stream → hostId cache (set when a host opens the control room). Used
@@ -171,6 +172,26 @@ export const handleLiveSocket = (io: Server) => {
         }
       } catch (err) {
         console.error('Error ending stream:', err);
+      }
+    });
+
+    // Host heartbeat — the studio sends this every ~10s while broadcasting.
+    // The backend records `lastHostHeartbeat`; the server-side sweeper ends any
+    // session whose heartbeat is missing for more than 30 seconds. This is the
+    // fallback that catches closed tabs, crashed processes and lost networks.
+    socket.on('live_heartbeat', async (data) => {
+      const { streamId } = data || {};
+      if (typeof streamId !== 'string' || streamId.length > 128) return;
+      try {
+        const active = await liveService.recordHeartbeat(streamId, userId);
+        if (!active) {
+          socket.emit('stream_ended', { streamId, reason: 'session_expired' });
+          socket.emit('stream_state', { streamId, state: 'ENDED' });
+        } else {
+          socket.emit('live_heartbeat_ack', { streamId, at: new Date().toISOString() });
+        }
+      } catch (err) {
+        console.error('Error recording live heartbeat:', err);
       }
     });
 
@@ -464,4 +485,30 @@ export const handleLiveSocket = (io: Server) => {
       await leaveCurrentStream();
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Server-side stale-session sweeper (30-second heartbeat timeout).
+  // ---------------------------------------------------------------------------
+  // Runs on a fixed interval and is the AUTHORITATIVE cleanup path for a Live
+  // whose host vanished without calling end_stream (browser closed, laptop
+  // closed, network lost, process killed). Any session still marked active but
+  // without a heartbeat for >30s is ended and viewers in the stream room are
+  // told the Live is over. `beforeunload`/`pagehide` are explicitly NOT relied
+  // on — they are unreliable, but the heartbeat timeout never is.
+  const sweepTimer = setInterval(async () => {
+    try {
+      const ended = await liveService.sweepStaleLiveStreams();
+      for (const stream of ended) {
+        streamHosts.delete(stream.id);
+        io.to(`stream_${stream.id}`).emit('stream_ended', { streamId: stream.id, reason: 'host_timeout' });
+        io.to(`stream_${stream.id}`).emit('stream_state', { streamId: stream.id, state: 'ENDED' });
+        io.to(`user_${stream.hostId}`).emit('stream_ended', { streamId: stream.id, reason: 'host_timeout' });
+        // Notify the host (if they come back) with a copy of the live activity feed.
+        emitActivity(io, stream.id, 'ended', { reason: 'host_timeout' });
+      }
+    } catch (err) {
+      console.error('[LiveSweep] Sweep failed:', err);
+    }
+  }, LIVE_SESSION_SWEEP_INTERVAL_MS);
+  sweepTimer.unref?.();
 };
