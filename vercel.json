@@ -1,4 +1,0 @@
-{
-  "installCommand": "npm run install:all",
-  "buildCommand": "npm run build"
-}
