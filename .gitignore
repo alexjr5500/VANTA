@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
-package-lock.json
+# The root package-lock.json is tracked for deterministic Railway/Vercel installs.
+# Nested lockfiles are not used (npm workspaces consolidate at the root).
+/frontend/package-lock.json
+/backend/package-lock.json
 yarn.lock
 pnpm-lock.yaml
 

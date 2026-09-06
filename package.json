@@ -2,6 +2,9 @@
   "name": "vanta",
   "private": true,
   "main": "backend/src/server.js",
+  "workspaces": [
+    "frontend"
+  ],
   "scripts": {
     "build": "npm --prefix frontend run build",
     "dev": "npm --prefix frontend run dev:https",
