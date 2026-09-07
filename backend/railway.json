@@ -1,7 +1,7 @@
 {
   "app": "vanta-backend",
-  "buildCommand": "npm install && (sed -i 's/provider = \"sqlite\"/provider = \"postgresql\"/' prisma/schema.prisma || true) && npx prisma generate && npm run build && npx prisma db push --accept-data-loss",
-  "startCommand": "node dist/index.js",
+  "buildCommand": "npm install && npx prisma generate && npm run build",
+  "startCommand": "(i=1; until npx prisma db push; do i=$((i+1)); if [ $i -gt 10 ]; then echo 'prisma db push failed after retries - aborting start'; exit 1; fi; echo \"Database not ready, retrying prisma db push ($i/10)\"; sleep 5; done) && node dist/index.js",
   "healthcheckPath": "/health",
   "framework": "nodejs",
   "nodeVersion": "24.x",
