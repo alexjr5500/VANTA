@@ -1,12 +1,13 @@
 {
-  "app": "vanta-backend",
-  "buildCommand": "npm install && npx prisma generate && npm run build",
-  "startCommand": "(i=1; until npx prisma db push; do i=$((i+1)); if [ $i -gt 10 ]; then echo 'prisma db push failed after retries - aborting start'; exit 1; fi; echo \"Database not ready, retrying prisma db push ($i/10)\"; sleep 5; done) && node dist/index.js",
-  "healthcheckPath": "/health",
-  "framework": "nodejs",
-  "nodeVersion": "24.x",
-  "regions": ["us-east-1"],
-  "environment": {
-    "NODE_ENV": "production"
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "buildCommand": "npm install && npx prisma generate && npm run build"
+  },
+  "deploy": {
+    "startCommand": "(i=1; until npx prisma db push; do i=$((i+1)); if [ $i -gt 10 ]; then echo 'prisma db push failed after retries - aborting start'; exit 1; fi; echo \"Database not ready, retrying prisma db push ($i/10)\"; sleep 5; done) && node dist/index.js",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 300,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
   }
 }

@@ -11,6 +11,7 @@ import { createServer as createHttpsServer } from 'https';
 import compression from 'compression';
 import { Server } from 'socket.io';
 import { prisma } from './prisma';
+import { provisionDatabaseSchema } from './provision-db';
 import { initializeSecurity, config, rateLimiter, botProtection, auditLog } from './security';
 import { authenticateSocket, handleConnect, handleDisconnect } from './security';
 import authRoutes from './routes/auth.routes';
@@ -571,6 +572,12 @@ async function startServer() {
     if (!process.env.DATABASE_URL) {
       throw new Error('DATABASE_URL is not set. Set it in .env or environment.');
     }
+
+    // Provision the PostgreSQL schema (production only, retried, never
+    // --accept-data-loss). railway.json runs `prisma db push` in its start
+    // command; this in-app step guarantees the schema exists even if a
+    // deployment platform setting ever overrides that start command.
+    provisionDatabaseSchema();
 
     await prisma.$connect();
 
