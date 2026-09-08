@@ -182,7 +182,7 @@ export default function SecuritySettingsPage() {
   );
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-8 pb-24">
       <PageHeader title="Security" back="/settings" />
 
       <div className="-mt-2">

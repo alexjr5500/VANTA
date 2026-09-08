@@ -93,7 +93,7 @@ export default function AppearanceSettingsPage() {
   ];
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-8 pb-24">
       <PageHeader title="Appearance" back="/settings" />
 
       <div className="-mt-2">

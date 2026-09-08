@@ -77,7 +77,7 @@ export default function SettingsPage() {
   const privacyValue = privacy.privacyProfile === 'private' ? 'Private' : 'Public';
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-8 pb-24">
       <PageHeader title="Settings" back="/profile" />
 
       {loading ? (

@@ -84,7 +84,7 @@ export default function VerificationPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--background)]">
+    <div className="min-h-screen bg-[var(--background)] pb-24">
       <div className="w-full">
         {/* Header */}
         <PageHeader title="Verification" back="/settings" />

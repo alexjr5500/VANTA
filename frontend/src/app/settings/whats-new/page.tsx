@@ -38,7 +38,7 @@ const UPDATES = [
 
 export default function WhatsNewPage() {
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-8 pb-24">
       <PageHeader title="What's New" back="/settings" />
 
       <div className="-mt-2">

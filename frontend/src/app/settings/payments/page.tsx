@@ -12,7 +12,7 @@ import { SettingsGroup } from '@/components/settings/SettingsUI';
 
 export default function PaymentsSettingsPage() {
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-8 pb-24">
       <PageHeader title="Payments" back="/settings" />
 
       <div className="-mt-2">

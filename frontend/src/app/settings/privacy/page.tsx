@@ -206,7 +206,7 @@ export default function PrivacySettingsPage() {
     }
   };
 return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-8 pb-24">
       <PageHeader title="Privacy" back="/settings" />
 
       <div className="-mt-2">

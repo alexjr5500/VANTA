@@ -133,7 +133,7 @@ export default function NotificationSettingsPage() {
   const paused = !backend.pushAlerts;
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-8 pb-24">
       <PageHeader title="Notifications" back="/settings" />
 
       {/* Intro */}

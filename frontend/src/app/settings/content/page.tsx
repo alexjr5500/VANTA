@@ -35,7 +35,7 @@ export default function ContentMediaSettingsPage() {
   const toggle = (key: LocalKey, value: boolean) => set(key, value);
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-8 pb-24">
       <PageHeader title="Content & Media" back="/settings" />
 
       <div className="-mt-2">

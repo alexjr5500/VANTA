@@ -218,6 +218,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     setIsClient(true);
   }, []);
 
+  // Pages now scroll inside the app's single [data-vanta-scroll] container
+  // (the Chat scrolling model) instead of the document. Next.js resets the
+  // document scroll on navigation, so we reset the container here — otherwise
+  // a tall page would leave the next page starting mid-scroll. The Settings
+  // "return and keep my place" feature intentionally re-applies its saved
+  // offset after this reset (it runs on the child's mount + a 0ms timer).
+  useEffect(() => {
+    const container = document.querySelector('[data-vanta-scroll]');
+    container?.scrollTo({ top: 0 });
+  }, [pathname]);
+
   useEffect(() => {
     if (!notificationToast) return;
     const timer = window.setTimeout(dismissLatestNotification, 5000);
@@ -248,6 +259,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // The Story/Status viewer is a full-screen surface like Reels / the Live
   // viewer: it must occupy exactly the viewport so the page never scrolls.
   const isStoryPage = pathname?.startsWith('/stories');
+  const isReelsFeed = pathname === '/reels';
+  // Admin and Creator Studio are desktop-style consoles that previously relied
+  // on the shell padding; keep their classic low bottom inset so their layout
+  // is byte-for-byte unchanged while they gain the standard scroll container.
+  const isConsolePage = pathname?.startsWith('/admin') || pathname?.startsWith('/creator');
+  // Immersive surfaces own the entire viewport and manage their own scrolling
+  // (Chat is the reference implementation). Every other page is a standard
+  // scroll page: the shell owns the dynamic viewport (100dvh), <main> fills it
+  // exactly, and the page content scrolls inside a single container — the same
+  // scrolling model Chat uses. The Live viewer/studio stay full-bleed but are
+  // given the scroll fallback so a short viewport (keyboard, address bar)
+  // can never clip their controls.
+  const isImmersiveSurface = isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed;
+  const isScrollPage = !isImmersiveSurface;
 
   const handleLogout = useCallback(() => {
     logout();
@@ -260,14 +285,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={cn(
-      'vanta-app-shell relative mx-auto min-h-[100dvh] w-full max-w-[480px] bg-[#050505] text-white',
-      isChatPage && 'h-[100dvh] max-w-none overflow-hidden',
-      (isHomePage || isDiscoverPage) && 'h-[100dvh] overflow-hidden',
-      isStoryPage && 'h-[100dvh] overflow-hidden'
+      // The shell owns the full dynamic viewport for EVERY page (Chat's model).
+      // The phone-frame max-width only applies on desktop; on a phone the shell
+      // is exactly the device width. Chat widens past the frame for its desktop
+      // split layout.
+      'vanta-app-shell relative mx-auto h-[100dvh] w-full max-w-[480px] overflow-hidden bg-[#050505] text-white',
+      isChatPage && 'max-w-none'
     )}>
       {!isChatPage && <BackgroundEffects />}
 
-      <div className={cn('relative z-10 flex min-h-screen', isChatPage && 'h-full min-h-0 overflow-hidden', (isHomePage || isDiscoverPage) && 'h-full min-h-0 overflow-hidden', isStoryPage && 'h-full min-h-0 overflow-hidden')}>
+      <div className="relative z-10 flex h-full min-h-0 flex-col overflow-hidden">
         <AnimatePresence>
           {notificationToast && !isChatPage && (
             <motion.button
@@ -293,36 +320,37 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             cards, stats) would inherit that inflated width. min-w-0 keeps
             <main> equal to the available shell width so children stay contained
             and their own overflow-x-auto/hidden scroll regions work correctly. */}
-        <main className={cn(
-          'min-w-0 flex-1 min-h-screen',
-          isChatPage && 'h-full min-h-0 overflow-hidden',
-          (isHomePage || isDiscoverPage) && 'h-full min-h-0 overflow-hidden',
-          isReelsPage && 'ml-0',
-          isStoryPage && 'h-full min-h-0 overflow-hidden'
-        )}>
+        <main className="min-w-0 min-h-0 w-full flex-1 overflow-hidden">
 
-          <div className={cn(
-            !isLiveViewer && !isChatPage && !isHomePage && !isDiscoverPage && !isStoryPage && 'pb-24',
-            isChatPage && 'h-full min-h-0 overflow-hidden',
-            (isHomePage || isDiscoverPage) && 'h-full min-h-0 overflow-hidden',
-            !isChatPage && !isReelsPage && !isHomePage && !isDiscoverPage && !isStoryPage && 'px-4 py-5',
-            isChatPage && '',
-            isReelsPage && 'px-0 py-0',
-            isHomePage && 'px-0 py-0',
-            isDiscoverPage && 'px-0 py-0',
-            isLiveViewer && 'px-0 py-0',
-            isStoryPage && 'px-0 py-0'
-          )}>
+          <div
+            data-vanta-scroll
+            className={cn(
+              // Standard scroll pages: the page scrolls inside this single
+              // container (the Chat scrolling model) instead of the document.
+              // overflow-x-hidden prevents any page from creating its own
+              // horizontal scrollbar inside the shell.
+              'relative h-full min-h-0 w-full',
+              isScrollPage && 'overflow-y-auto overflow-x-hidden overscroll-contain scrollbar-hide [-webkit-overflow-scrolling:touch]',
+              !isScrollPage && 'overflow-hidden',
+              // Reels renders its own full-bleed surface on every sub-route
+              // (the feed owns the viewport; a single-Reel page owns its own
+              // page-level inset and does not receive a shared one).
+              isReelsPage && 'px-0 py-0',
+              // Home / Discover / Stories are full-bleed immersive surfaces.
+              (isHomePage || isDiscoverPage || isStoryPage) && 'px-0 py-0',
+              // Live viewer + studio are full-bleed playback surfaces.
+              isLiveViewer && 'px-0 py-0',
+              // Standard user pages keep the classic page inset (px-4 py-5).
+              // Console surfaces (Admin / Creator Studio) keep their classic
+              // low bottom inset so their desktop layouts stay unchanged.
+              isScrollPage && !isLiveViewer && !isConsolePage && !isReelsPage && 'px-4 py-5',
+              isScrollPage && isConsolePage && 'px-4 pt-5 pb-24'
+            )}>
             <motion.div
               key={isClient ? pathname : 'initial'}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2, ease: 'easeOut' }}
-              className={cn(
-                isChatPage && 'h-full min-h-0 overflow-hidden',
-                (isHomePage || isDiscoverPage) && 'h-full min-h-0 overflow-hidden',
-                isStoryPage && 'h-full min-h-0 overflow-hidden'
-              )}
             >
               {children}
             </motion.div>

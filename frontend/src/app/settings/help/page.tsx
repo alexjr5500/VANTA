@@ -35,7 +35,7 @@ export default function HelpCenterPage() {
   const [openIndex, setOpenIndex] = useState<number | null>(0);
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-8 pb-24">
       <PageHeader title="Help Center" back="/settings" />
 
       <div className="-mt-2">

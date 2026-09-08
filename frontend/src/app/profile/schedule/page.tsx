@@ -63,7 +63,7 @@ export default function SchedulePage() {
   };
 
   return (
-    <div className="w-full">
+    <div className="w-full pb-24">
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}

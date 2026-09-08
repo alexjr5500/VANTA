@@ -33,7 +33,7 @@ export default function ChatSettingsPage() {
   const toggle = (key: LocalKey, value: boolean) => set(key, value);
 
   return (
-    <div className="space-y-8 pb-10">
+    <div className="space-y-8 pb-24">
       <PageHeader title="Chat" back="/settings" />
 
       <div className="-mt-2">

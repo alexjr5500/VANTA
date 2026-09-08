@@ -57,7 +57,7 @@ export default function PostDetailPage({ params }: { params: { id: string } }) {
   const media = mediaSrc(post.mediaUrl);
   const video = /\.(mp4|webm|mov)(\?|$)/i.test(media);
 
-  return <main className="min-h-[100dvh] w-full bg-[#050505] text-white">
+  return <main className="min-h-[100dvh] w-full bg-[#050505] pb-24 text-white">
     <PageHeader back="/home" title="Post" className="mb-4" />
     <article className="w-full min-w-0 rounded-2xl border border-white/10 bg-[#101010]">
       <header className="flex items-center gap-3 p-4"><Avatar src={post.author.avatar} alt={post.author.username} size="md"/><div className="min-w-0"><Link href={`/profile/${post.author.username}`} className="flex items-center gap-1.5 truncate font-semibold"><span className="truncate">{post.author.fullName || post.author.username}</span>{post.author.verified && <VerificationBadge verified size="sm" />}</Link><p className="truncate text-xs text-white/45">@{post.author.username}</p></div></header>

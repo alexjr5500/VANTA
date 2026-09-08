@@ -43,11 +43,19 @@ type IconComponent = React.ComponentType<{
 
 const SCROLL_KEY = 'vanta_settings_scroll';
 
+/** The app's single mobile scroll container (see AppLayout [data-vanta-scroll]). */
+function findScrollContainer(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  return document.querySelector('[data-vanta-scroll]');
+}
+
 export function useScrollRestore() {
   const save = useCallback(() => {
     if (typeof window === 'undefined') return;
     try {
-      sessionStorage.setItem(SCROLL_KEY, String(Math.max(0, window.scrollY)));
+      const container = findScrollContainer();
+      const offset = container ? container.scrollTop : Math.max(0, window.scrollY);
+      sessionStorage.setItem(SCROLL_KEY, String(offset));
     } catch {
       /* private mode — ignore */
     }
@@ -62,7 +70,12 @@ export function useScrollRestore() {
       /* ignore */
     }
     if (target > 0) {
-      const t = window.setTimeout(() => window.scrollTo(0, target), 0);
+      // Runs after AppLayout's route-change reset so the saved position wins.
+      const t = window.setTimeout(() => {
+        const container = findScrollContainer();
+        if (container) container.scrollTo({ top: target });
+        else window.scrollTo(0, target);
+      }, 0);
       try {
         sessionStorage.removeItem(SCROLL_KEY);
       } catch {
