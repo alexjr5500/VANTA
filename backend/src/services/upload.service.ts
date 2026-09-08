@@ -99,6 +99,97 @@ const verifyFileContent = (file: Express.Multer.File): void => {
 /** Exported for flows that persist upload metadata without the public URL helper. */
 export { verifyFileContent };
 
+// ============================================================================
+// STORAGE DIAGNOSTICS
+// ============================================================================
+// Production Reel/media failures ("Unable to load Reel — MEDIA_ELEMENT_ERROR")
+// have repeatedly been caused by LOCAL storage pointing at an EPHEMERAL
+// container filesystem (e.g. Railway without a persistent volume or without
+// UPLOAD_STORAGE_DIR set): uploads write to the container disk, Postgres keeps
+// the row, then the next restart/redeploy wipes the bytes. /api/reels keeps
+// returning /uploads/... URLs that 404 as JSON, and <video> reports
+// "server returned no playable video source".
+//
+// This diagnostic compares the uploadedFile rows the API actually serves
+// against the files present on disk so the condition is visible in /health
+// and at startup before a single Reel breaks.
+
+export interface MediaStorageDiagnostics {
+  /** "local" (backend disk /uploads) or "cloudinary" (CDN autodetect). */
+  mode: "local" | "cloudinary";
+  cloudinaryConfigured: boolean;
+  /** Directory the /uploads static mount serves (local mode). */
+  uploadStorageDir: string;
+  /** True when UPLOAD_STORAGE_DIR is explicitly configured. */
+  storageDirEnvConfigured: boolean;
+  /** Raw UPLOAD_STORAGE_DIR value (may be a relative path). */
+  storageDirEnv: string | null;
+  /** Newest non-deleted uploadedFile rows inspected (bounded). */
+  dbReferencedUploads: number;
+  /** Of the inspected rows, how many files exist on disk. */
+  presentOnDisk: number;
+  /** Of the inspected rows, how many files are missing from disk. */
+  missingOnDisk: number;
+  /** Total non-optimized files found in uploadStorageDir. */
+  filesOnDisk: number | null;
+  /** true when every referenced file is present (or Cloudinary is used). */
+  healthy: boolean;
+}
+
+export const STORAGE_DIAGNOSIS_SAMPLE_LIMIT = 500;
+
+export async function getStorageDiagnostics(): Promise<MediaStorageDiagnostics> {
+  let referenced = 0;
+  let present = 0;
+  let missing = 0;
+  try {
+    const rows = await prisma.uploadedFile.findMany({
+      where: { deletedAt: null },
+      select: { filename: true },
+      orderBy: { createdAt: "desc" },
+      take: STORAGE_DIAGNOSIS_SAMPLE_LIMIT,
+    });
+    referenced = rows.length;
+    for (const row of rows) {
+      const assetPath = path.join(uploadStorageDir, path.basename(row.filename));
+      if (fs.existsSync(assetPath)) present += 1;
+      else missing += 1;
+    }
+  } catch (error) {
+    // Database may be unavailable (pre-provision, first boot). Report what we can.
+    console.warn("[StorageDiagnostics] Could not inspect uploadedFile rows:", error);
+  }
+
+  let diskCount: number | null = null;
+  try {
+    diskCount = fs
+      .readdirSync(uploadStorageDir)
+      .filter((name: string) => {
+        try {
+          return fs.statSync(path.join(uploadStorageDir, name)).isFile();
+        } catch {
+          return false;
+        }
+      }).length;
+  } catch (error) {
+    console.warn("[StorageDiagnostics] Could not list upload storage dir:", error);
+  }
+
+  const mode = useCloudinary ? "cloudinary" : "local";
+  return {
+    mode,
+    cloudinaryConfigured: useCloudinary,
+    uploadStorageDir,
+    storageDirEnvConfigured: Boolean(process.env.UPLOAD_STORAGE_DIR),
+    storageDirEnv: process.env.UPLOAD_STORAGE_DIR || null,
+    dbReferencedUploads: referenced,
+    presentOnDisk: present,
+    missingOnDisk: missing,
+    filesOnDisk: diskCount,
+    healthy: mode === "cloudinary" || missing === 0,
+  };
+}
+
 const removeLocalFile = (filePath?: string): void => {
   if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
 };

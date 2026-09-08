@@ -61,3 +61,27 @@ Fundraiser evidence videos are intentionally **not** passed through the trimmer 
 ## Verification
 
 Run `npm --prefix backend run build`, `npm --prefix backend test -- --runInBand src/__tests__/upload.service.test.ts`, and `npx --prefix frontend tsc -p frontend/tsconfig.json --noEmit`. Manual smoke tests should cover profile avatar/banner replace/delete, post image/video, story, reel, live thumbnail, message attachment, group/channel/community images, verification documents, invalid MIME/signature, limits, unauthenticated requests, retry, and storage persistence after restart.
+
+## Production persistence (Reel playback failures)
+
+Every media URL the API returns (`/uploads/...`) is served by the backend's local
+disk unless Cloudinary is configured. Container platforms (notably Railway)
+default to an **ephemeral** filesystem: uploads succeed, Postgres keeps the row,
+and the next restart/redeploy wipes the bytes. The API then returns URLs that
+404 as JSON, which browsers report as `Unable to load Reel — MEDIA_ELEMENT_ERROR`
+(and silently break avatars/post images/attachments).
+
+Requirements for production local storage:
+
+- Attach a **persistent volume** to the backend service (Railway: mount at `/data`) and set
+  `UPLOAD_STORAGE_DIR=/data/uploads` so uploads never touch the container disk.
+- Alternatively set all of `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` /
+  `CLOUDINARY_API_SECRET`; the backend auto-detects them and stores on Cloudinary instead.
+
+The backend exposes `mediaStorage` on `GET /health` (`mode`, `dbReferencedUploads`,
+`presentOnDisk`, `missingOnDisk`, `healthy`) and logs a loud startup beacon when
+referenced files are missing, so a wiped volume is caught before users hit broken
+Reels. Regression coverage: `backend/src/__tests__/media-serving.test.ts`,
+`backend/src/__tests__/storage-diagnostics.test.ts`,
+`frontend/src/lib/mediaUrl.test.ts`. End-to-end production probe:
+`node scripts/prod-reel-probe.mjs <api-url>` (see `deploy/PROD_ENV_GUIDE.md`).

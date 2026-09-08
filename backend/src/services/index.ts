@@ -31,6 +31,7 @@ export {
   buildUploadUrl,
   getFileType,
   getMediaType,
+  getStorageDiagnostics,
   UPLOAD_LIMITS,
   ALLOWED_IMAGE_TYPES,
   ALLOWED_VIDEO_TYPES,

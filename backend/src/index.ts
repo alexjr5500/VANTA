@@ -48,7 +48,7 @@ import { handleGiftSocket } from './sockets/gift.socket';
 import { setNotificationIO } from './services/notification.service';
 import { setSocialEventsIO } from './services/social-events.service';
 import { apiLatencyMiddleware, healthStatus, metricsCollector, cacheService, setupDefaultAlerts } from './services';
-import { uploadStorageDir } from './services/upload.service';
+import { uploadStorageDir, getStorageDiagnostics } from './services/upload.service';
 
 const app: Express = express();
 
@@ -365,13 +365,18 @@ app.use(express.static(publicDir, {
 // API ROUTES
 // ============================================================================
 
-// Health check (no auth required)
-app.get('/health', (req: Request, res: Response) => {
-  res.status(200).json({ 
-    status: 'ok', 
+// Health check (no auth required).
+// Includes a media-storage diagnostic so a redeploy that wipes an ephemeral
+// uploads directory (Reel/"Unable to load Reel" MEDIA_ELEMENT_ERROR root cause)
+// is visible instantly instead of surfacing only as broken <video> loads.
+app.get('/health', async (req: Request, res: Response) => {
+  const mediaStorage = await getStorageDiagnostics();
+  res.status(200).json({
+    status: 'ok',
     message: 'VANTA API is running',
     version: process.env.npm_package_version || '1.0.0',
     timestamp: new Date().toISOString(),
+    mediaStorage,
   });
 });
 
@@ -565,6 +570,34 @@ async function startServer() {
     provisionDatabaseSchema();
 
     await prisma.$connect();
+
+    // Media-storage persistence beacon: production Reels/"Unable to load Reel"
+    // failures happen when LOCAL storage points at an EPHEMERAL container disk
+    // (no Railway volume / UPLOAD_STORAGE_DIR unset): uploads work, rows persist,
+    // then the next restart wipes the bytes and every stored URL 404s as JSON.
+    // Log loudly at boot so the broken state is caught before users hit it.
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        const { getStorageDiagnostics } = await import('./services/upload.service');
+        const storage = await getStorageDiagnostics();
+        if (storage.mode === 'local' && !storage.healthy) {
+          console.error(
+            `[MediaStorage] UNHEALTHY: ${storage.missingOnDisk} of ${storage.dbReferencedUploads} uploaded files are ` +
+            `MISSING from the uploads directory (${storage.uploadStorageDir}). This is usually an EPHEMERAL storage ` +
+            `misconfiguration: attach a persistent Railway volume and set UPLOAD_STORAGE_DIR to a path inside it ` +
+            `(e.g. UPLOAD_STORAGE_DIR=/data/uploads with a volume mounted at /data). ` +
+            `Media URLs returned by the API will 404 and browsers report "Unable to load Reel".`
+          );
+        } else if (storage.mode === 'local' && !storage.storageDirEnvConfigured) {
+          console.warn(
+            `[MediaStorage] UPLOAD_STORAGE_DIR is not set; uploads go to ${storage.uploadStorageDir}. ` +
+            `If this container filesystem is ephemeral (e.g. Railway without a volume), files are lost on restart.`
+          );
+        }
+      } catch (storageError) {
+        console.warn('[MediaStorage] Startup diagnostics skipped:', storageError);
+      }
+    }
 
     // Immediately clean up any Live sessions abandoned by a previous process
     // (heartbeat older than 30s), so a host is never blocked by a stale "active".

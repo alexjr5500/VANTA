@@ -62,15 +62,36 @@ class JobQueue {
 
   constructor(options: Partial<QueueOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
-    this.startProcessingInterval();
+    // The 1s processing interval is started LAZILY — only while jobs are queued
+    // — and stopped as soon as the queue drains. Importing the queue (e.g. via
+    // upload.service) therefore never leaves an open handle behind in unit
+    // tests, and production behaviour is unchanged (the interval only ran an
+    // empty cleanup loop anyway).
     this.restorePersistedJobs();
   }
 
   private startProcessingInterval(): void {
-    // Process delayed jobs every second
+    if (this.processingInterval) return;
+    // Process delayed jobs every second; stop as soon as nothing is left so the
+    // timer never keeps the process (or Jest) alive.
     this.processingInterval = setInterval(() => {
       this.processDelayedJobs();
+      if (this.queue.length === 0 && this.delayedQueue.size === 0) {
+        this.stopProcessingInterval();
+      }
     }, 1000);
+  }
+
+  private stopProcessingInterval(): void {
+    if (this.processingInterval) {
+      clearInterval(this.processingInterval);
+      this.processingInterval = null;
+    }
+  }
+
+  /** Release the background processing timer (graceful shutdown / tests). */
+  stop(): void {
+    this.stopProcessingInterval();
   }
 
   private async restorePersistedJobs(): Promise<void> {
@@ -83,6 +104,7 @@ class JobQueue {
         }
         console.log(`[Queue] Restored ${persisted.length} jobs from persistence`);
         if (this.queue.length > 0 && !this.isProcessing) {
+          this.startProcessingInterval();
           this.processQueue();
         }
       }
@@ -154,6 +176,9 @@ class JobQueue {
         return existingDuplicate.id; // Return existing job ID instead of creating duplicate
       }
     }
+
+    // Keep the processing loop alive while this job is pending (started lazily).
+    this.startProcessingInterval();
 
     // If job is scheduled for later, add to delayed queue
     if (options?.delay || options?.scheduledAt) {

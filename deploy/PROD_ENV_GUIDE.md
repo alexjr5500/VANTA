@@ -127,6 +127,53 @@ Open `https://<your-frontend>.vercel.app` from the phone: register, profile, upl
 - [ ] LiveKit API key/secret are prod values (not `devkey`/`secret`)。.
 - [ ] Postgres DB backed up periodically (Railway has backups on paid plans; enable)。
 
+---
+
+## 8. Troubleshooting: "Unable to load Reel — MEDIA_ELEMENT_ERROR"
+
+**Symptom:** the Reels feed/detail page shows *"Unable to load Reel — The server
+returned no playable video source: MEDIA_ELEMENT_ERROR"* in the browser.
+
+**Root cause (verified 2026-09-08 against the production backend):** Reel videos
+are served by the backend from `/uploads` (local disk). If uploads land on an
+**EPHEMERAL container filesystem** (Railway without a volume, or without
+`UPLOAD_STORAGE_DIR` pointing into one), the file is wiped on the next
+restart/redeploy while the Postgres row survives. `/api/reels` keeps returning
+`/uploads/<file>.mp4`, the browser `<video>` GETs it and receives a **JSON 404**
+(`Content-Type: application/json`) — browsers cannot demux JSON and report
+`MEDIA_ELEMENT_ERROR`. Avatars, post images, chat attachments etc. break the
+same way (silently).
+
+**Verify (2 minutes):**
+```powershell
+# 1. What URL does the API return for a Reel?
+curl https://<your-backend>.up.railway.app/api/reels?limit=3
+# 2. Open the returned videoUrl directly — it must be HTTP 200 video/mp4:
+curl -I https://<your-backend>.up.railway.app/uploads/<returned-file>.mp4
+# 3. /health now reports a mediaStorage diagnostic (mode, missingOnDisk, healthy):
+curl https://<your-backend>.up.railway.app/health
+# 4. Fully automated probe (registers + uploads + verifies + cleans up):
+node scripts/prod-reel-probe.mjs https://<your-backend>.up.railway.app
+```
+
+**Fix (pick ONE — Railway volume is the documented default):**
+
+| Option | What to change on Railway | Result |
+|---|---|---|
+| **Railway Volume (recommended)** | 1. Backend service → **Settings → Volumes → New Volume**, mount path **`/data`**<br>2. Backend **Variables**: **`UPLOAD_STORAGE_DIR`** = **`/data/uploads`** | Files persist across deploys; `/uploads` URLs keep working; already-existing URL shapes are unchanged |
+| **Cloudinary CDN (optional)** | Backend **Variables**: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | Uploads go to Cloudinary (code already auto-detects the 3 vars); stored URLs become CDN links that never 404 on deploy |
+
+Existing rows whose files were already wiped cannot be restored (the bytes are
+gone) — re-upload those Reels/avatars after the fix. After deploying the fix,
+redeploy once and re-run `node scripts/prod-reel-probe.mjs` (or open a Reel):
+new uploads must keep playing across subsequent deploys.
+
+**Code help:** the backend `/health` endpoint and startup logs now surface this
+exact condition (`mediaStorage.healthy === false`, `missingOnDisk > 0`), and
+regression tests in `backend/src/__tests__/media-serving.test.ts` +
+`storage-diagnostics.test.ts` plus `frontend/src/lib/mediaUrl.test.ts` pin the
+media delivery + URL resolution contract.
+
 
 
 ---
