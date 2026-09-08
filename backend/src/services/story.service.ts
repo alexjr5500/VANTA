@@ -180,6 +180,23 @@ export class StoryService {
     return { success: true };
   }
 
+  /**
+   * Delete a comment on the caller's story (or their own comment). The story
+   * owner may remove comments from their story; ADMIN/MODERATOR can moderate.
+   */
+  async deleteStoryComment(storyId: string, commentId: string, userId: string, role = "USER") {
+    const existing = await prisma.storyComment.findUnique({ where: { id: commentId } });
+    if (!existing || existing.storyId !== storyId) throw new Error("Comment not found");
+    const story = await prisma.story.findUnique({ where: { id: storyId }, select: { userId: true } });
+    const isOwner = Boolean(story && story.userId === userId);
+    const canModerate = ["ADMIN", "MODERATOR"].includes(role);
+    if (existing.userId !== userId && !isOwner && !canModerate) throw new Error("Unauthorized");
+
+    await prisma.storyComment.delete({ where: { id: commentId } });
+    const commentCount = await prisma.storyComment.count({ where: { storyId } });
+    return { deleted: true, commentCount };
+  }
+
   async getStoryViewers(storyId: string, ownerId: string) {
     return contentViewService.storyViewers(storyId, ownerId);
   }

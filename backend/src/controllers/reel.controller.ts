@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { prisma } from "../prisma";
+import { uploadService } from "../services";
 import { contentViewService } from "../services/content-view.service";
 
 const parseLimit = (value: unknown, defaultLimit = 20) => {
@@ -289,6 +290,13 @@ export const deleteReel = async (req: AuthRequest, res: Response): Promise<void>
       res.status(403).json({ error: "Unauthorized to delete this reel" });
       return;
     }
+
+    // Remove the uploaded media rows + physical files first so a deleted Reel
+    // never leaves broken media references behind.
+    const files = await prisma.uploadedFile.findMany({
+      where: { recordType: "Video", recordId: reelId, deletedAt: null },
+    });
+    await Promise.all(files.map(file => uploadService.deleteFile(file.filename, file.id)));
 
     await prisma.video.delete({ where: { id: reelId } });
     res.status(200).json({ message: "Reel deleted" });

@@ -12,6 +12,7 @@ import {
   unlikeStory,
   getStoryComments,
   addStoryComment,
+  deleteStoryComment,
   getStoryViewers,
 } from "../controllers/story.controller";
 import { upload } from "../services";
@@ -31,6 +32,7 @@ router.post("/:id/like", authenticateJWT, likeStory);
 router.delete("/:id/like", authenticateJWT, unlikeStory);
 router.get("/:id/comments", authenticateJWT, getStoryComments);
 router.post("/:id/comments", authenticateJWT, addStoryComment);
+router.delete("/:id/comments/:commentId", authenticateJWT, deleteStoryComment);
 router.get("/:id/viewers", authenticateJWT, getStoryViewers);
 
 export default router;

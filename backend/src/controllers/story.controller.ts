@@ -159,6 +159,17 @@ export const addStoryComment = async (req: AuthRequest, res: Response): Promise<
   }
 };
 
+export const deleteStoryComment = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    res.status(200).json(await storyService.deleteStoryComment(req.params.id, req.params.commentId, userId, req.user?.role));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(message === "Unauthorized" ? 403 : message === "Comment not found" ? 404 : 400).json({ error: message });
+  }
+};
+
 export const getStoryViewers = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
