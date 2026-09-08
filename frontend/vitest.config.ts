@@ -3,7 +3,11 @@ import path from "path";
 
 export default defineConfig({
   test: {
-    environment: "jsdom",
+    // Default to the `node` environment: the curated unit tests here (media URL
+    // resolution, upload helpers) are pure logic. If a DOM is ever needed,
+    // install jsdom and switch this to "jsdom" (or annotate the file with
+    // `// @vitest-environment jsdom`).
+    environment: "node",
     globals: true,
     setupFiles: ["./src/__tests__/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],

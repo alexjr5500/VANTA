@@ -63,6 +63,7 @@ desktop.ini
 
 # Local visual-checking artifacts (headless-browser profile, screenshots, scripts)
 tmp-vischeck/
+tmp-cdp/
 
 # Temporary test marker files
 backend/jest-*-done.txt
@@ -176,3 +177,5 @@ backend/tmp_install/
 deploy/.env.production
 backend/prisma/backend/prisma/dev.db
 backend/prisma/backend/prisma/dev.db-journal
+
+.env-backup/

@@ -233,7 +233,12 @@
   html {
     scroll-behavior: smooth;
     max-width: 100%;
-    overflow-x: clip;
+    /* NOTE: do NOT set overflow-x on the root element. Any non-visible
+       overflow-x value (clip or hidden) on <html> creates a scroll container
+       that breaks `position: sticky` for every sticky element in the app
+       (Edit Profile header, profile tabs, admin header, …). Horizontal
+       clipping is already handled by `body { overflow-x: hidden }`, which
+       propagates to the viewport without disabling sticky. */
   }
 
   /* Prevent text selection on interactive elements */

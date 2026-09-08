@@ -11,7 +11,8 @@
     "dev:https": "node scripts/dev-lan.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node ../node_modules/vitest/vitest.mjs run"
   },
   "dependencies": {
     "@livekit/components-react": "^2.9.23",
