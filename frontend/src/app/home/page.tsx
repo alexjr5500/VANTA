@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   Bell, Bookmark, ChevronRight, Eye, Gift, Heart, Image as ImageIcon, Loader2,
   MessageCircle, MoreHorizontal, Plus, Radio, RefreshCw, Search, Share2,
-  Sparkles, Users, Video, Volume2, VolumeX, WifiOff, X,
+  Sparkles, Trash2, Users, Video, Volume2, VolumeX, WifiOff, X,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
@@ -156,6 +156,7 @@ export default function HomePage() {
   const [giftFor, setGiftFor] = useState<Item>();
   const [shareFor, setShareFor] = useState<Item>();
   const [moreFor, setMoreFor] = useState<Item>();
+  const [deletePostFor, setDeletePostFor] = useState<Item>();
   const [gifts, setGifts] = useState<GiftCatalogItem[]>([]);
   const [balance, setBalance] = useState(0);
   const [giftLoading, setGiftLoading] = useState(false);
@@ -195,6 +196,29 @@ export default function HomePage() {
     return () => { socket.off('social:post-updated', update); socket.off('social:comment-created', update); socket.disconnect(); };
   }, [token]);
   useEffect(() => { const element = sentinel.current; if (!element) return; const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting && hasMore && !loadingMore) void fetchFeed(false, cursor); }, { rootMargin: '500px' }); observer.observe(element); return () => observer.disconnect(); }, [cursor, fetchFeed, hasMore, loadingMore]);
+
+  // Delete a post/reel from the ••• menu (own content only). Removes the item
+  // from the local feed immediately after the server confirms.
+  const confirmDeletePost = async () => {
+    if (!token || !deletePostFor) return;
+    const item = deletePostFor;
+    setDeletePostFor(undefined);
+    const endpoint = isVideoItem(item) ? `/api/reels/${cleanId(item)}` : `/api/feed/${cleanId(item)}`;
+    try {
+      await apiDelete(endpoint, token);
+      setItems(previous => previous.filter(entry => entry.id !== item.id));
+      setStories(previous => previous.filter(story => story.id !== item.id));
+      setLive(previous => previous.filter(stream => stream.id !== item.id));
+      setTrending(previous => previous.filter(entry => entry.id !== item.id));
+      toast.success(isVideoItem(item) ? 'Reel deleted' : 'Post deleted');
+    } catch (reason: any) {
+      toast.error('Content not deleted', reason?.message);
+    }
+  };
+
+  const openShare = (item: Item) => setShareFor(item);
+  const openPostMore = (item: Item) => setMoreFor(item);
+  const requestDelete = (item: Item) => setDeletePostFor(item);
 
   const optimistic = async (item: Item, mode: 'like' | 'save') => {
     if (!token || item.type === 'live') return;
@@ -245,7 +269,7 @@ export default function HomePage() {
       </main>
       </div>
     </div>
-    <AnimatePresence>{commentsFor && token && <CommentPanel postId={cleanId(commentsFor)} postAuthor={getAuthor(commentsFor)} initialCount={commentsFor.comments || 0} token={token} currentUser={user} onClose={() => setCommentsFor(undefined)} onCountChange={count => setItems(previous => previous.map(item => item.id === commentsFor.id ? { ...item, comments: count } : item))}/>} {giftFor && token && <GiftPickerBoundary onClose={() => setGiftFor(undefined)}><GiftPicker gifts={gifts} balance={balance} recipient={getAuthor(giftFor)} token={token} streamId={giftFor.type === 'live' ? cleanId(giftFor) : undefined} loading={giftLoading} loadError={giftError} onRetry={() => void loadGiftData()} onClose={() => setGiftFor(undefined)} onSent={(remaining, _amount, gift) => { setBalance(remaining); toast.success('Gift sent', `You sent ${gift.name} to ${getAuthor(giftFor).fullName || getAuthor(giftFor).username}`); }}/></GiftPickerBoundary>} {shareFor && <ShareSheet close={() => setShareFor(undefined)} share={share}/>} {moreFor && <MoreSheet item={moreFor} isOwn={getAuthor(moreFor).id === user?.id} close={() => setMoreFor(undefined)} openProfile={() => { const creator = getAuthor(moreFor); setMoreFor(undefined); router.push(creator.username ? `/profile/${creator.username}` : '/profile'); }} save={() => { void optimistic(moreFor, 'save'); setMoreFor(undefined); }}/>}</AnimatePresence>
+    <AnimatePresence>{commentsFor && token && <CommentPanel postId={cleanId(commentsFor)} postAuthor={getAuthor(commentsFor)} initialCount={commentsFor.comments || 0} token={token} currentUser={user} onClose={() => setCommentsFor(undefined)} onCountChange={count => setItems(previous => previous.map(item => item.id === commentsFor.id ? { ...item, comments: count } : item))}/>} {giftFor && token && <GiftPickerBoundary onClose={() => setGiftFor(undefined)}><GiftPicker gifts={gifts} balance={balance} recipient={getAuthor(giftFor)} token={token} streamId={giftFor.type === 'live' ? cleanId(giftFor) : undefined} loading={giftLoading} loadError={giftError} onRetry={() => void loadGiftData()} onClose={() => setGiftFor(undefined)} onSent={(remaining, _amount, gift) => { setBalance(remaining); toast.success('Gift sent', `You sent ${gift.name} to ${getAuthor(giftFor).fullName || getAuthor(giftFor).username}`); }}/></GiftPickerBoundary>} {shareFor && <ShareSheet close={() => setShareFor(undefined)} share={share}/>} {moreFor && <MoreSheet item={moreFor} isOwn={getAuthor(moreFor).id === user?.id} close={() => setMoreFor(undefined)} openProfile={() => { const creator = getAuthor(moreFor); setMoreFor(undefined); router.push(creator.username ? `/profile/${creator.username}` : '/profile'); }} save={() => { void optimistic(moreFor, 'save'); setMoreFor(undefined); }} remove={() => requestDelete(moreFor)} />}{deletePostFor && <DeleteConfirmation item={deletePostFor} onCancel={() => setDeletePostFor(undefined)} onConfirm={() => void confirmDeletePost()} />}</AnimatePresence>
   </div>;
 }
 
@@ -261,4 +285,8 @@ function SmallEmpty({ text }: { text: string }) { return <p className="px-1 py-4
 function ErrorState({ retry }: { retry: () => void }) { return <div className="border-y border-white/[.08] px-4 py-16 text-center"><RefreshCw className="mx-auto text-[#666]"/><h2 className="mt-4 text-base font-semibold">Couldn&apos;t load your feed.</h2><p className="mt-2 text-sm text-[#666]">VANTA could not reach the feed service.</p><button type="button" onClick={retry} className="mt-5 rounded-lg bg-[#f5f5f5] px-4 py-2.5 text-sm font-semibold text-black">Try again</button></div>; }
 function EmptyFeed({ discover }: { discover: () => void }) { return <div className="border-y border-white/[.08] px-4 py-16 text-center"><Sparkles className="mx-auto text-[#8a8a8a]"/><h2 className="mt-4 text-lg font-semibold">Nothing here yet.</h2><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#666]">Discover creators and communities to start building your VANTA feed.</p><button type="button" onClick={discover} className="mt-5 rounded-lg bg-[#f5f5f5] px-4 py-2.5 text-sm font-semibold text-black">Discover</button></div>; }
 function ShareSheet({ close, share }: any) { return <><motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close} aria-label="Close share options" className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm"/><motion.section role="dialog" aria-modal="true" aria-label="Share post" initial={{ opacity: 0, y: 18, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18, scale: .98 }} className="fixed bottom-0 left-0 right-0 z-50 mx-auto max-w-lg rounded-t-xl border border-white/[.1] bg-[#161616] p-5 shadow-2xl    "><div className="mb-4 flex items-center justify-between"><h2 className="font-semibold">Share post</h2><button type="button" onClick={close} aria-label="Close" className="flex h-9 w-9 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><X size={18}/></button></div><div className="grid grid-cols-3 gap-2">{[['COPY_LINK', 'Copy link'], ['NATIVE', 'Share'], ['MESSAGE', 'Message']].map(([id, label]) => <button key={id} type="button" onClick={() => share(id)} className="rounded-lg border border-white/[.08] p-4 text-xs text-[#b8b8b8] hover:bg-white/[.05]"><Share2 size={19} className="mx-auto mb-2 text-white"/>{label}</button>)}</div></motion.section></>; }
-function MoreSheet({ item, isOwn, close, openProfile, save }: any) { return <><motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close} aria-label="Close post options" className="fixed inset-0 z-50 bg-black/70"/><motion.section role="dialog" aria-modal="true" aria-label="Post options" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} className="fixed bottom-0 left-0 right-0 z-50 mx-auto max-w-md rounded-t-xl border border-white/[.1] bg-[#161616] p-3    "><button type="button" onClick={save} className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-sm text-[#d8d8d8] hover:bg-white/[.05]"><Bookmark size={18}/>{item.saved ? 'Remove from saved' : 'Save post'}</button><button type="button" onClick={openProfile} className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-sm text-[#d8d8d8] hover:bg-white/[.05]"><Users size={18}/>{isOwn ? 'Open your profile' : 'View creator profile'}</button><button type="button" onClick={close} className="mt-2 min-h-12 w-full rounded-lg border border-white/[.08] text-sm text-[#8a8a8a] hover:bg-white/[.05]">Cancel</button></motion.section></>; }
+function MoreSheet({ item, isOwn, close, openProfile, save, remove }: any) { return <><motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close} aria-label="Close post options" className="fixed inset-0 z-50 bg-black/70"/><motion.section role="dialog" aria-modal="true" aria-label="Post options" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} className="fixed bottom-0 left-0 right-0 z-50 mx-auto max-w-md rounded-t-xl border border-white/[.1] bg-[#161616] p-3    "><button type="button" onClick={save} className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-sm text-[#d8d8d8] hover:bg-white/[.05]"><Bookmark size={18}/>{item.saved ? 'Remove from saved' : 'Save post'}</button><button type="button" onClick={openProfile} className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-sm text-[#d8d8d8] hover:bg-white/[.05]"><Users size={18}/>{isOwn ? 'Open your profile' : 'View creator profile'}</button>{isOwn && <button type="button" onClick={remove} className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-sm text-rose-300 hover:bg-white/[.05]"><Trash2 size={18}/>Delete</button>}<button type="button" onClick={close} className="mt-2 min-h-12 w-full rounded-lg border border-white/[.08] text-sm text-[#8a8a8a] hover:bg-white/[.05]">Cancel</button></motion.section></>; }
+function DeleteConfirmation({ item, onCancel, onConfirm }: any) {
+  const kind = isVideoItem(item) ? 'Reel' : 'Post';
+  return <><motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onCancel} aria-label="Cancel delete" className="fixed inset-0 z-[60] bg-black/70"/><motion.section role="alertdialog" aria-modal="true" aria-label={`Delete ${kind}`} initial={{ opacity: 0, scale: .97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: .97 }} className="fixed left-1/2 top-1/2 z-[65] w-[min(400px,calc(100%-24px))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-white/[.1] bg-[#161616] p-5 shadow-2xl"><header className="mb-3 flex items-center justify-between"><h2 className="font-semibold">Delete this {kind.toLowerCase()}?</h2><button type="button" onClick={onCancel} aria-label="Close" className="grid h-9 w-9 place-items-center rounded-full text-[#8a8a8a] hover:bg-white/[.05]"><X size={18}/></button></header><p className="mb-5 text-sm leading-6 text-[#c8c8cc]/60">This cannot be undone. The {kind.toLowerCase()} will be removed from VANTA immediately.</p><div className="flex items-center justify-end gap-2"><button type="button" onClick={onCancel} className="min-h-11 rounded-lg border border-white/[.08] px-4 text-sm text-[#d8d8d8] hover:bg-white/[.05]">Cancel</button><button type="button" onClick={onConfirm} className="min-h-11 rounded-lg bg-[#b4232f] px-4 text-sm font-semibold text-white transition hover:bg-[#9f1d2a]">Delete {kind.toLowerCase()}</button></div></motion.section></>;
+}

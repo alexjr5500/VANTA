@@ -111,6 +111,8 @@ export default function ReelsPage() {
   const [commentsFor, setCommentsFor] = useState<Reel | null>(null);
   const [shareFor, setShareFor] = useState<Reel | null>(null);
   const [moreFor, setMoreFor] = useState<Reel | null>(null);
+  const [deleteReelFor, setDeleteReelFor] = useState<Reel | null>(null);
+  const [deleteReelSending, setDeleteReelSending] = useState(false);
   const [reportFor, setReportFor] = useState<Reel | null>(null);
   const [giftFor, setGiftFor] = useState<Reel | null>(null);
   const [gifts, setGifts] = useState<GiftCatalogItem[]>([]);
@@ -225,6 +227,24 @@ export default function ReelsPage() {
   const patch = useCallback((id: string, changes: Partial<Reel>) => {
     setReels(items => items.map(item => item.id === id ? { ...item, ...changes } : item));
   }, []);
+
+  const confirmDeleteReel = async () => {
+    if (!token || !deleteReelFor || deleteReelSending) return;
+    const reel = deleteReelFor;
+    setDeleteReelSending(true);
+    try {
+      await apiDelete(`/api/reels/${reel.id}`, token);
+      setDeleteReelFor(null);
+      setReels(items => items.filter(item => item.id !== reel.id));
+      setActive(0);
+      setPaused(false);
+      toast.success('Reel deleted');
+    } catch (reason: any) {
+      toast.error('Reel not deleted', reason?.message);
+    } finally {
+      setDeleteReelSending(false);
+    }
+  };
 
   const toggle = async (reel: Reel, action: 'like' | 'save') => {
     if (!token) { toast.error('Sign in required'); return; }
@@ -433,7 +453,8 @@ export default function ReelsPage() {
       <AnimatePresence>
         {commentsFor && <CommentsPanel reel={commentsFor} items={comments} loading={commentsLoading} text={commentText} sending={commentSending} currentUserId={user?.id} setText={setCommentText} submit={submitComment} remove={deleteComment} close={() => setCommentsFor(null)} />}
         {shareFor && <SharePanel reel={shareFor} share={share} close={() => setShareFor(null)} />}
-        {moreFor && <MorePanel reel={moreFor} save={() => { void toggle(moreFor, 'save'); setMoreFor(null); }} follow={() => { void follow(moreFor); setMoreFor(null); }} profile={() => router.push(`/profile/${moreFor.author.username}`)} report={() => { setReportFor(moreFor); setMoreFor(null); }} close={() => setMoreFor(null)} />}
+        {moreFor && <MorePanel reel={moreFor} isOwn={moreFor.author.id === user?.id} save={() => { void toggle(moreFor, 'save'); setMoreFor(null); }} follow={() => { void follow(moreFor); setMoreFor(null); }} profile={() => router.push(`/profile/${moreFor.author.username}`)} report={() => { setReportFor(moreFor); setMoreFor(null); }} remove={() => { setDeleteReelFor(moreFor); setMoreFor(null); }} close={() => setMoreFor(null)} />}
+        {deleteReelFor && <DeleteReelDialog reel={deleteReelFor} sending={deleteReelSending} onCancel={() => setDeleteReelFor(null)} onConfirm={() => void confirmDeleteReel()} />}
         {reportFor && <ReportPanel reel={reportFor} pending={!!pending[`report:${reportFor.id}`]} submit={category => void report(reportFor, category)} close={() => setReportFor(null)} />}
         {giftFor && token && <GiftPickerBoundary onClose={() => setGiftFor(null)}><GiftPicker gifts={gifts} balance={giftBalance} recipient={giftFor.author} token={token} loading={giftLoading} loadError={giftError} onRetry={() => void loadGiftData()} onClose={() => setGiftFor(null)} onSent={(remaining, _amount, gift) => { setGiftBalance(remaining); toast.success('Gift sent', `You sent ${gift.name} to ${giftFor.author.fullName || giftFor.author.username}`); }} /></GiftPickerBoundary>}
       </AnimatePresence>
@@ -692,9 +713,13 @@ function SharePanel({ reel, share, close }: { reel: Reel; share: (reel: Reel, mo
   return <Dialog title="Share Reel" close={close}><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => share(reel, 'copy')} className="rounded-lg border border-white/10 p-4 text-sm text-white/70 hover:bg-white/[.05]"><Copy className="mx-auto mb-2" size={20} />Copy link</button>{native && <button type="button" onClick={() => share(reel, 'native')} className="rounded-lg border border-white/10 p-4 text-sm text-white/70 hover:bg-white/[.05]"><ExternalLink className="mx-auto mb-2" size={20} />Share via device</button>}</div></Dialog>;
 }
 
-function MorePanel({ reel, save, follow, profile, report, close }: { reel: Reel; save: () => void; follow: () => void; profile: () => void; report: () => void; close: () => void }) {
+function MorePanel({ reel, isOwn, save, follow, profile, report, remove, close }: { reel: Reel; isOwn: boolean; save: () => void; follow: () => void; profile: () => void; report: () => void; remove: () => void; close: () => void }) {
   const followed = !!(reel.author.following || reel.author.isFollowing || reel.isFollowing);
-  return <Dialog title="Reel options" close={close}><div className="space-y-1"><MenuButton icon={<User size={17} />} label="View creator profile" onClick={profile} /><MenuButton icon={<Bookmark size={17} />} label={reel.isSaved ? 'Remove save' : 'Save Reel'} onClick={save} /><MenuButton icon={followed ? <X size={17} /> : <Check size={17} />} label={followed ? 'Unfollow creator' : 'Follow creator'} onClick={follow} /><MenuButton icon={<Flag size={17} />} label="Report Reel" onClick={report} /></div></Dialog>;
+  return <Dialog title="Reel options" close={close}><div className="space-y-1"><MenuButton icon={<User size={17} />} label="View creator profile" onClick={profile} /><MenuButton icon={<Bookmark size={17} />} label={reel.isSaved ? 'Remove save' : 'Save Reel'} onClick={save} />{isOwn ? <MenuButton icon={<Trash2 size={17} />} label="Delete Reel" onClick={remove} /> : <MenuButton icon={followed ? <X size={17} /> : <Check size={17} />} label={followed ? 'Unfollow creator' : 'Follow creator'} onClick={follow} />}<MenuButton icon={<Flag size={17} />} label="Report Reel" onClick={report} /></div></Dialog>;
+}
+
+function DeleteReelDialog({ reel, sending, onCancel, onConfirm }: { reel: Reel; sending: boolean; onCancel: () => void; onConfirm: () => void }) {
+  return <Dialog title="Delete Reel" close={onCancel}><p className="mb-3 text-sm text-white/50">This cannot be undone. The Reel will be removed from VANTA immediately.</p><div className="flex items-center justify-end gap-2"><button type="button" disabled={sending} onClick={onCancel} className="min-h-11 rounded-lg border border-white/10 px-4 text-sm text-white/70 hover:bg-white/[.05]">Cancel</button><button type="button" disabled={sending} onClick={onConfirm} className="min-h-11 rounded-lg bg-[#b4232f] px-4 text-sm font-semibold text-white transition hover:bg-[#9f1d2a] disabled:opacity-40">{sending ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}Delete Reel</button></div></Dialog>;
 }
 
 function ReportPanel({ reel, pending, submit, close }: { reel: Reel; pending: boolean; submit: (category: string) => void; close: () => void }) {

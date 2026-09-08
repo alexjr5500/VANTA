@@ -245,6 +245,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // so it must not be inset by the default `px-4 py-5` page padding.
   const isDiscoverPage = pathname === '/discover';
   const isLiveViewer = /^\/live\/[^/]+$/.test(pathname || '');
+  // The Story/Status viewer is a full-screen surface like Reels / the Live
+  // viewer: it must occupy exactly the viewport so the page never scrolls.
+  const isStoryPage = pathname?.startsWith('/stories');
 
   const handleLogout = useCallback(() => {
     logout();
@@ -259,11 +262,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className={cn(
       'vanta-app-shell relative mx-auto min-h-[100dvh] w-full max-w-[480px] bg-[#050505] text-white',
       isChatPage && 'h-[100dvh] max-w-none overflow-hidden',
-      (isHomePage || isDiscoverPage) && 'h-[100dvh] overflow-hidden'
+      (isHomePage || isDiscoverPage) && 'h-[100dvh] overflow-hidden',
+      isStoryPage && 'h-[100dvh] overflow-hidden'
     )}>
       {!isChatPage && <BackgroundEffects />}
 
-      <div className={cn('relative z-10 flex min-h-screen', isChatPage && 'h-full min-h-0 overflow-hidden', (isHomePage || isDiscoverPage) && 'h-full min-h-0 overflow-hidden')}>
+      <div className={cn('relative z-10 flex min-h-screen', isChatPage && 'h-full min-h-0 overflow-hidden', (isHomePage || isDiscoverPage) && 'h-full min-h-0 overflow-hidden', isStoryPage && 'h-full min-h-0 overflow-hidden')}>
         <AnimatePresence>
           {notificationToast && !isChatPage && (
             <motion.button
@@ -293,19 +297,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           'min-w-0 flex-1 min-h-screen',
           isChatPage && 'h-full min-h-0 overflow-hidden',
           (isHomePage || isDiscoverPage) && 'h-full min-h-0 overflow-hidden',
-          isReelsPage && 'ml-0'
+          isReelsPage && 'ml-0',
+          isStoryPage && 'h-full min-h-0 overflow-hidden'
         )}>
 
           <div className={cn(
-            !isLiveViewer && !isChatPage && !isHomePage && !isDiscoverPage && 'pb-24',
+            !isLiveViewer && !isChatPage && !isHomePage && !isDiscoverPage && !isStoryPage && 'pb-24',
             isChatPage && 'h-full min-h-0 overflow-hidden',
             (isHomePage || isDiscoverPage) && 'h-full min-h-0 overflow-hidden',
-            !isChatPage && !isReelsPage && !isHomePage && !isDiscoverPage && 'px-4 py-5',
+            !isChatPage && !isReelsPage && !isHomePage && !isDiscoverPage && !isStoryPage && 'px-4 py-5',
             isChatPage && '',
             isReelsPage && 'px-0 py-0',
             isHomePage && 'px-0 py-0',
             isDiscoverPage && 'px-0 py-0',
-            isLiveViewer && 'px-0 py-0'
+            isLiveViewer && 'px-0 py-0',
+            isStoryPage && 'px-0 py-0'
           )}>
             <motion.div
               key={isClient ? pathname : 'initial'}
@@ -314,7 +320,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               transition={{ duration: 0.2, ease: 'easeOut' }}
               className={cn(
                 isChatPage && 'h-full min-h-0 overflow-hidden',
-                (isHomePage || isDiscoverPage) && 'h-full min-h-0 overflow-hidden'
+                (isHomePage || isDiscoverPage) && 'h-full min-h-0 overflow-hidden',
+                isStoryPage && 'h-full min-h-0 overflow-hidden'
               )}
             >
               {children}
@@ -373,7 +380,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         />
 
         <AnimatePresence initial={false}>
-          {!isChatPage && !isReelsPage && !isLiveViewer && (
+          {!isChatPage && !isReelsPage && !isLiveViewer && !isStoryPage && (
           <motion.nav
             initial={{ y: 64, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}

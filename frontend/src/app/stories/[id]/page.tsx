@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Check, Eye, Heart, Link2, Loader2, MessageCircle, Pause, Play, Repeat, Send, Share2, X } from 'lucide-react';
+import { ArrowLeft, Check, Eye, Heart, Link2, Loader2, MessageCircle, Repeat, Send, Share2, Trash2, X } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import { useAuth } from '@/context/AuthContext';
@@ -84,6 +84,13 @@ export default function StoryViewerPage({ params }: { params: { id: string } }) 
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [replySending, setReplySending] = useState(false);
+  // Own-story deletion + comment deletion. Deletion removes the story/comment on
+  // the server and then pops it out of the local viewer state.
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteSending, setDeleteSending] = useState(false);
+  // Where to resume an IMAGE story's progress after the comment/reply composer
+  // pauses it — keeps the "resume from where it stopped" behavior smooth.
+  const resumeOffsetRef = useRef(0);
   const toast = useToast();
 
   // Read the ?start=<storyId> hint once on mount (client side, avoids SSR params).
@@ -130,6 +137,7 @@ const flat = useMemo(
   const isOwner = Boolean(current && user && current.story.userId === user.id);
 
   const advance = useCallback(() => {
+    resumeOffsetRef.current = 0;
     setPosition(prev => {
       if (prev === null) return prev;
       if (prev + 1 >= flat.length) {
@@ -143,6 +151,7 @@ const flat = useMemo(
   }, [flat.length, router]);
 
   const retreat = useCallback(() => {
+    resumeOffsetRef.current = 0;
     setPosition(prev => (prev === null || prev <= 0 ? prev : prev - 1));
     setTick(0);
     setPaused(false);
@@ -161,12 +170,16 @@ const flat = useMemo(
       .catch(() => undefined);
   }, [current, token]);
 
-  // Automatic progression for IMAGE stories.
+  // Automatic progression for IMAGE stories. When the story resumes after the
+  // comment/reply composer paused it, the timer seeds from the saved offset so
+  // playback continues from where it stopped instead of restarting.
   useEffect(() => {
     if (paused || !current) return;
     if (current.story.mediaType?.toUpperCase() === 'VIDEO') return;
     const duration = Number(current.story.duration) > 0 ? Number(current.story.duration) : DEFAULT_DURATION;
-    const startedAt = Date.now();
+    const seed = Math.min(Math.max(0, resumeOffsetRef.current), duration);
+    resumeOffsetRef.current = 0;
+    const startedAt = Date.now() - seed;
     const timer = window.setInterval(() => {
       const elapsed = Date.now() - startedAt;
       setTick(elapsed);
@@ -177,12 +190,29 @@ const flat = useMemo(
     }, 100);
     return () => window.clearInterval(timer);
   }, [advance, current, paused]);
-const togglePause = () => {
-    setPaused(prev => !prev);
-    if (videoRef.current) {
-      if (!paused) videoRef.current.pause();
-      else void videoRef.current.play().catch(() => undefined);
+
+  // Pause the current story — used automatically when the comment/reply composer
+  // opens. Videos stop in-place; image stories remember their elapsed progress.
+  const pauseProgression = () => {
+    if (!current) return;
+    if (isVideo) {
+      videoRef.current?.pause();
+    } else {
+      const duration = Number(current.story.duration) > 0 ? Number(current.story.duration) : DEFAULT_DURATION;
+      resumeOffsetRef.current = Math.min(Math.max(0, tick), duration);
     }
+    setPaused(true);
+  };
+
+  // Resume the current story automatically once the composer is submitted or
+  // closed. No manual Play press is required.
+  const resumeProgression = () => {
+    if (!current) return;
+    if (isVideo) {
+      const video = videoRef.current;
+      if (video && video.paused) void video.play().catch(() => undefined);
+    }
+    setPaused(false);
   };
 
   const handleMediaTap = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -190,7 +220,8 @@ const togglePause = () => {
     const x = event.clientX - rect.left;
     if (x < rect.width * 0.33) retreat();
     else if (x > rect.width * 0.66) advance();
-    else togglePause();
+    // Center taps intentionally do nothing — the story auto-plays and there is no
+    // manual pause control anymore.
   };
 
   // Keyboard navigation.
@@ -282,6 +313,7 @@ const creator = current.group.user || {};
   const openComments = async () => {
     if (!current || !token) return;
     setCommentsOpen(true);
+    pauseProgression();
     setCommentsLoading(true);
     try {
       const items = await apiGet<StoryComment[]>(`/api/stories/${encodeURIComponent(current.story.id)}/comments`, token, { skipCache: true });
@@ -290,6 +322,23 @@ const creator = current.group.user || {};
       setComments([]);
     } finally {
       setCommentsLoading(false);
+    }
+  };
+
+  const deleteStoryComment = async (comment: StoryComment) => {
+    if (!current || !token || !comment?.id) return;
+    const storyId = current.story.id;
+    try {
+      const result = await apiDelete<{ deleted: boolean; commentCount: number }>(`/api/stories/${encodeURIComponent(storyId)}/comments/${encodeURIComponent(comment.id)}`, token);
+      setComments(items => items.filter(item => item.id !== comment.id));
+      if (typeof result?.commentCount === 'number') {
+        setGroups(groups => groups.map(group => ({
+          ...group,
+          stories: group.stories.map(story => story.id === storyId ? { ...story, commentCount: result.commentCount } : story),
+        })));
+      }
+    } catch (reason: any) {
+      toast.error('Comment not deleted', reason?.message);
     }
   };
 
@@ -305,6 +354,7 @@ const creator = current.group.user || {};
         ...group,
         stories: group.stories.map(story => story.id === storyId ? { ...story, commentCount: (story.commentCount || 0) + 1 } : story),
       })));
+      resumeProgression();
     } catch (reason: any) {
       toast.error('Could not add comment', reason?.message);
     } finally {
@@ -388,6 +438,7 @@ const creator = current.group.user || {};
       await apiPost(`/api/messages/send`, { conversationId, content: replyText.trim(), type: 'TEXT' }, token);
       setReplyText('');
       setReplyOpen(false);
+      resumeProgression();
       toast.success('Reply sent');
     } catch (reason: any) {
       toast.error('Reply failed', reason?.message);
@@ -395,6 +446,39 @@ const creator = current.group.user || {};
       setReplySending(false);
     }
   };
+  // Delete the current story (owner only). Confirmed in a dialog, then removed
+  // from the viewer immediately after the server confirms — no page refresh.
+  const confirmDeleteStory = async () => {
+    if (!token || !current || deleteSending) return;
+    const storyId = current.story.id;
+    const deletedAt = position ?? 0;
+    setDeleteSending(true);
+    try {
+      await apiDelete(`/api/stories/${encodeURIComponent(storyId)}`, token);
+      setDeleteConfirmOpen(false);
+      const nextGroups = groups
+        .map(group => ({ ...group, stories: group.stories.filter(story => story.id !== storyId) }))
+        .filter(group => group.stories.length > 0);
+      const remaining = nextGroups.flatMap(group => group.stories);
+      if (remaining.length === 0) {
+        router.replace('/home');
+        return;
+      }
+      setGroups(nextGroups);
+      resumeOffsetRef.current = 0;
+      setTick(0);
+      setPaused(false);
+      setCommentsOpen(false);
+      setReplyOpen(false);
+      setPosition(Math.min(deletedAt, remaining.length - 1));
+      toast.success('Story deleted');
+    } catch (reason: any) {
+      toast.error('Story not deleted', reason?.message);
+    } finally {
+      setDeleteSending(false);
+    }
+  };
+
   return (
     <main className="relative h-[100dvh] overflow-hidden bg-[#050505] text-white">
       {/* Media */}
@@ -467,9 +551,11 @@ const creator = current.group.user || {};
           <button type="button" onClick={() => setShareOpen(true)} aria-label="Share story" className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white/80 backdrop-blur">
             <Share2 size={16}/>
           </button>
-          <button type="button" onClick={togglePause} aria-label={paused ? 'Play story' : 'Pause story'} className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white/80 backdrop-blur">
-            {paused ? <Play size={16}/> : <Pause size={16}/>}
-          </button>
+          {isOwner && (
+            <button type="button" onClick={() => setDeleteConfirmOpen(true)} aria-label="Delete story" className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white/80 backdrop-blur">
+              <Trash2 size={16}/>
+            </button>
+          )}
           <button type="button" onClick={() => router.replace('/home')} aria-label="Close story" className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white/80 backdrop-blur"><X size={18}/></button>
         </div>
       </header>
@@ -635,7 +721,7 @@ const creator = current.group.user || {};
       {/* Comments sheet — real story comments */}
       {commentsOpen && current && (
         <>
-          <button type="button" onClick={() => setCommentsOpen(false)} aria-label="Close comments" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm" />
+          <button type="button" onClick={() => { setCommentsOpen(false); resumeProgression(); }} aria-label="Close comments" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm" />
           <section role="dialog" aria-modal="true" aria-label="Story comments" className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[72dvh] w-full max-w-md flex-col rounded-t-3xl border border-white/10 bg-[#151517] pb-[env(safe-area-inset-bottom)]">
             <header className="flex min-h-16 items-center justify-between border-b border-white/[.08] px-5">
               <div>
@@ -646,7 +732,7 @@ const creator = current.group.user || {};
                 <button type="button" onClick={() => { setCommentsOpen(false); setReplyOpen(true); }} className="rounded-full px-3 py-2 text-xs text-[#c8c8cc] transition hover:bg-white/[0.06] hover:text-white" aria-label="Message the story owner">
                   Message @{creator.username || 'owner'}
                 </button>
-                <button type="button" onClick={() => setCommentsOpen(false)} className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={20}/></button>
+                <button type="button" onClick={() => { setCommentsOpen(false); resumeProgression(); }} className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={20}/></button>
               </div>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto px-5">
@@ -660,6 +746,11 @@ const creator = current.group.user || {};
                       <p className="text-sm"><b className="mr-1">@{comment.user.username}</b><span className="break-words text-white/90">{comment.content}</span></p>
                       <time className="text-[11px] text-[#c8c8cc]/45">{new Date(comment.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time>
                     </div>
+                    {(comment.user.id === user?.id || isOwner) && (
+                      <button type="button" onClick={() => void deleteStoryComment(comment)} aria-label="Delete comment" className="-mr-1 grid h-8 w-8 shrink-0 place-items-center self-center rounded-lg text-[#c8c8cc]/50 transition hover:bg-white/[0.06] hover:text-white">
+                        <Trash2 size={14}/>
+                      </button>
+                    )}
                   </article>
                 ))
               ) : (
@@ -694,14 +785,14 @@ const creator = current.group.user || {};
       {/* Reply composer — sends the story owner a direct message */}
       {replyOpen && (
         <>
-          <button type="button" onClick={() => setReplyOpen(false)} aria-label="Close reply composer" className="fixed inset-0 z-40 bg-black/65" />
+          <button type="button" onClick={() => { setReplyOpen(false); resumeProgression(); }} aria-label="Close reply composer" className="fixed inset-0 z-40 bg-black/65" />
           <section role="dialog" aria-modal="true" aria-label="Reply to story" className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-md rounded-t-3xl border border-white/10 bg-[#151517] p-5 pb-[env(safe-area-inset-bottom)]">
             <header className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="font-semibold">Reply to @{creator.username || 'story'}</h2>
                 <p className="text-xs text-[#c8c8cc]/55">Sent as a direct message to {creator.fullName || creator.username || 'the story owner'}</p>
               </div>
-              <button type="button" onClick={() => setReplyOpen(false)} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]"><X size={20}/></button>
+              <button type="button" onClick={() => { setReplyOpen(false); resumeProgression(); }} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]"><X size={20}/></button>
             </header>
             <form
               onSubmit={event => { event.preventDefault(); void sendStoryReply(); }}
@@ -725,6 +816,24 @@ const creator = current.group.user || {};
                 {replySending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
               </button>
             </form>
+          </section>
+        </>
+      )}
+
+      {/* Delete story confirmation (owner only) */}
+      {deleteConfirmOpen && (
+        <>
+          <button type="button" onClick={() => setDeleteConfirmOpen(false)} aria-label="Cancel delete" className="fixed inset-0 z-[70] bg-black/65 backdrop-blur-sm" />
+          <section role="alertdialog" aria-modal="true" aria-label="Delete story" className="fixed z-[80] top-1/2 left-1/2 w-[min(400px,calc(100%-24px))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-white/10 bg-[#151517] p-5 shadow-2xl">
+            <header className="mb-3 flex items-center justify-between">
+              <h2 className="font-semibold">Delete this story?</h2>
+              <button type="button" onClick={() => setDeleteConfirmOpen(false)} className="grid h-9 w-9 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={18}/></button>
+            </header>
+            <p className="mb-5 text-sm text-[#c8c8cc]/65">This cannot be undone. The story will be removed from your Status immediately.</p>
+            <div className="flex items-center justify-end gap-2">
+              <button type="button" disabled={deleteSending} onClick={() => setDeleteConfirmOpen(false)} className="min-h-11 rounded-lg border border-white/10 px-4 text-sm text-[#c8c8cc] transition hover:bg-white/[0.05]">Cancel</button>
+              <button type="button" disabled={deleteSending} onClick={() => void confirmDeleteStory()} className="min-h-11 rounded-lg bg-[#b4232f] px-4 text-sm font-semibold text-white transition hover:bg-[#9f1d2a] disabled:opacity-40">{deleteSending ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}Delete story</button>
+            </div>
           </section>
         </>
       )}

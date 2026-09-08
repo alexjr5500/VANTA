@@ -240,6 +240,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [conversationCursor, setConversationCursor] = useState<string | null>(null);
   const [messageContextId, setMessageContextId] = useState<string | null>(null);
+  const [deleteConfirmMessage, setDeleteConfirmMessage] = useState<Message | null>(null);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [filter, setFilter] = useState<'all' | 'direct' | 'group' | 'channel' | 'unread'>('all');
@@ -977,14 +978,21 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     finally { setEditingMessage(null); setMessageInput(''); }
   };
 
-  const deleteExistingMessage = async (message: Message) => {
-    if (!token || (!message.isOwn && activeConv?.type === 'direct') || !window.confirm('Delete this message for everyone?')) return;
+  const deleteExistingMessage = (message: Message) => {
+    if (!token || (!message.isOwn && activeConv?.type === 'direct')) return;
+    setDeleteConfirmMessage(message);
+    setMessageContextId(null);
+  };
+
+  const confirmDeleteMessage = async () => {
+    const message = deleteConfirmMessage;
+    if (!token || !message) return;
+    setDeleteConfirmMessage(null);
     try {
       const result = await apiDelete<any>(`/api/messages/message/${message.id}?forEveryone=true`, token);
       const deleted = normalizeMessage(result.data ?? result);
       setMessages(previous => previous.map(item => item.id === deleted.id ? deleted : item));
     } catch (err: any) { showToast?.({ type: 'error', title: 'Delete failed', message: err?.message || 'Could not delete this message.' }); }
-    finally { setMessageContextId(null); }
   };
 
   const startMessageLongPress = (message: Message, event?: React.PointerEvent) => {
@@ -1869,6 +1877,19 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             </motion.section>
           </motion.div>;
         })()}
+        {deleteConfirmMessage && (
+          <motion.div className="fixed inset-0 z-[95] bg-black/65 backdrop-blur-[2px]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDeleteConfirmMessage(null)} aria-label="Cancel delete" />
+        )}
+        {deleteConfirmMessage && (
+          <motion.section role="alertdialog" aria-modal="true" aria-label="Delete message" initial={{ opacity: 0, scale: .97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: .97 }} className="fixed left-1/2 top-1/2 z-[96] w-[min(380px,calc(100%-24px))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-white/[0.09] bg-[#151517] p-5 shadow-2xl">
+            <header className="mb-3 flex items-center justify-between"><h2 className="font-semibold">Delete this message for everyone?</h2><button type="button" onClick={() => setDeleteConfirmMessage(null)} className="grid h-9 w-9 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={18} /></button></header>
+            <p className="mb-5 text-sm leading-6 text-[#c8c8cc]/65">This cannot be undone. The message will be removed for everyone in this conversation.</p>
+            <div className="flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setDeleteConfirmMessage(null)} className="min-h-11 rounded-lg border border-white/10 px-4 text-sm text-[#c8c8cc] transition hover:bg-white/[0.05]">Cancel</button>
+              <button type="button" onClick={() => void confirmDeleteMessage()} className="min-h-11 rounded-lg bg-[#b4232f] px-4 text-sm font-semibold text-white transition hover:bg-[#9f1d2a]">Delete for everyone</button>
+            </div>
+          </motion.section>
+        )}
         {editEntityOpen && activeConv && activeConv.type !== 'direct' && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] h-[var(--chat-viewport-height,100dvh)] bg-[#050505]"><motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 320 }} className="mx-auto flex h-full w-full max-w-[720px] flex-col bg-[#0d0d0f]">
           <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/[0.08] px-4"><button onClick={() => closeChatSubview(() => setEditEntityOpen(false))} className="btn-icon h-9 w-9" aria-label="Close management"><ArrowLeft size={18}/></button><div className="text-center"><h2 className="text-sm font-semibold text-[#f5f5f5]">{activeConv.type === 'group' ? 'Group' : 'Channel'} Management</h2><p className="text-[9px] uppercase tracking-[.14em] text-[#d6a83f]">{isManagedOwner ? 'Owner controls' : 'Administrator controls'}</p></div><button onClick={saveEntityChanges} disabled={isSavingEntity || isUploadingAvatar || !editName.trim()} className="min-w-9 text-xs font-semibold text-[#f2c75c] disabled:text-white/25">{isSavingEntity ? <Loader2 size={15} className="animate-spin"/> : 'Save'}</button></header>
           <div className="flex-1 overflow-y-auto pb-10 scrollbar-hide">

@@ -15,7 +15,7 @@ import ProfileContent from './ProfileContent';
 import ProfileHeader from './ProfileHeader';
 import ActiveFundraiserSection from '@/components/give/ActiveFundraiserSection';
 import type { ProfileData, ProfileItem, ProfileTab } from './profileTypes';
-import { cleanPostId, finite, postOnly, unwrap } from './profileTypes';
+import { cleanPostId, finite, isVideoPost, postOnly, unwrap } from './profileTypes';
 
 const TABS: Array<{ id: ProfileTab; label: string; icon: typeof Film; ownOnly?: boolean }> = [
   { id: 'posts', label: 'Posts', icon: MessageCircle },
@@ -143,18 +143,24 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     if (!token || !deletePostFor) return;
     const item = deletePostFor;
     setDeletePostFor(undefined);
+    const id = cleanPostId(item);
+    const isReel = tab === 'reels' || isVideoPost(item);
+    const endpoint = isReel ? `/api/reels/${id}` : `/api/feed/${id}`;
     try {
-      await apiDelete(`/api/feed/${cleanPostId(item)}`, token);
-      setContent(current => ({ ...current, posts: current.posts.filter(post => cleanPostId(post) !== cleanPostId(item)) }));
-      setProfile(current => current ? {
-        ...current,
-        counts: { ...current.counts, posts: Math.max(0, finite(current.counts?.posts ?? current.stats?.totalPosts) - 1) },
-        stats: { ...current.stats, totalPosts: Math.max(0, finite(current.stats?.totalPosts ?? current.counts?.posts) - 1) },
-      } : current);
-      window.dispatchEvent(new CustomEvent('vanta:profile-counts-updated', { detail: { userId: profile?.id, delta: { posts: -1 } } }));
-      toast.success('Post deleted');
+      await apiDelete(endpoint, token);
+      const bucket = isReel ? 'reels' : 'posts';
+      setContent(current => ({ ...current, [bucket]: current[bucket].filter(post => cleanPostId(post) !== id) }));
+      if (!isReel) {
+        setProfile(current => current ? {
+          ...current,
+          counts: { ...current.counts, posts: Math.max(0, finite(current.counts?.posts ?? current.stats?.totalPosts) - 1) },
+          stats: { ...current.stats, totalPosts: Math.max(0, finite(current.stats?.totalPosts ?? current.counts?.posts) - 1) },
+        } : current);
+        window.dispatchEvent(new CustomEvent('vanta:profile-counts-updated', { detail: { userId: profile?.id, delta: { posts: -1 } } }));
+      }
+      toast.success(isReel ? 'Reel deleted' : 'Post deleted');
     }
-    catch (reason: any) { toast.error('Post not deleted', reason?.message); }
+    catch (reason: any) { toast.error(isReel ? 'Reel not deleted' : 'Post not deleted', reason?.message); }
   };
   const openGift = async (item: ProfileItem) => {
     if (!token) return; setGiftFor(item);
@@ -174,7 +180,7 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     <AnimatePresence>{commentFor && token && <CommentPanel postId={cleanPostId(commentFor)} initialCount={finite(commentFor.comments ?? commentFor._count?.comments)} token={token} currentUser={user} onClose={() => setCommentFor(undefined)} onCountChange={value => updatePost(cleanPostId(commentFor), { comments: value })} />}{giftFor && token && <GiftPicker gifts={gifts} balance={balance} recipient={{ id: profile.id, username: profile.username, fullName: profile.fullName || profile.displayName || profile.username, avatar }} token={token} initialGift={null} onClose={() => setGiftFor(undefined)} onSent={remaining => { setBalance(remaining); setGiftFor(undefined); toast.success('Gift sent'); }} />}</AnimatePresence>
     {people && <PeopleDialog kind={people} own={own} username={profile.username} token={token || undefined} currentUserId={user?.id} close={() => setPeople(null)} />}
     {unfollowOpen && <ConfirmDialog username={profile.username} onCancel={() => setUnfollowOpen(false)} onConfirm={() => { void follow(); }} />}
-    {deletePostFor && <DeleteDialog onCancel={() => setDeletePostFor(undefined)} onConfirm={() => { void confirmDeletePost(); }} />}
+    {deletePostFor && <DeleteDialog label={tab === 'reels' ? 'Reel' : 'Post'} onCancel={() => setDeletePostFor(undefined)} onConfirm={() => { void confirmDeletePost(); }} />}
   </main>;
 }
 
@@ -198,6 +204,6 @@ function ConfirmDialog({ username, onCancel, onConfirm }: { username: string; on
   return <><button className="dialog-backdrop" aria-label="Cancel unfollow" onClick={onCancel} /><section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="unfollow-title"><header><h2 id="unfollow-title">Unfollow @{username}?</h2><button className="profile-icon" aria-label="Close" onClick={onCancel}><X size={18} /></button></header><p>Their posts will no longer appear in your following feed.</p><footer><button className="profile-button" onClick={onCancel}>Cancel</button><button className="profile-button danger-action" onClick={onConfirm}>Unfollow</button></footer></section></>;
 }
 
-function DeleteDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
-  return <><button className="dialog-backdrop" aria-label="Cancel delete" onClick={onCancel} /><section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><header><h2 id="delete-title">Delete this post?</h2><button className="profile-icon" aria-label="Close" onClick={onCancel}><X size={18} /></button></header><p>This cannot be undone. The post will be removed from your profile.</p><footer><button className="profile-button" onClick={onCancel}>Cancel</button><button className="profile-button danger-action" onClick={onConfirm}>Delete post</button></footer></section></>;
+function DeleteDialog({ label, onCancel, onConfirm }: { label: string; onCancel: () => void; onConfirm: () => void }) {
+  return <><button className="dialog-backdrop" aria-label="Cancel delete" onClick={onCancel} /><section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><header><h2 id="delete-title">Delete this {label.toLowerCase()}?</h2><button className="profile-icon" aria-label="Close" onClick={onCancel}><X size={18} /></button></header><p>This cannot be undone. The {label.toLowerCase()} will be removed from your profile.</p><footer><button className="profile-button" onClick={onCancel}>Cancel</button><button className="profile-button danger-action" onClick={onConfirm}>Delete {label.toLowerCase()}</button></footer></section></>;
 }
