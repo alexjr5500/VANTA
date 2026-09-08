@@ -14,6 +14,7 @@ import { prisma } from './prisma';
 import { provisionDatabaseSchema } from './provision-db';
 import { initializeSecurity, config, rateLimiter, botProtection, auditLog } from './security';
 import { authenticateSocket, handleConnect, handleDisconnect } from './security';
+import { buildAllowedOrigins, isOriginAllowed } from './security/cors';
 import authRoutes from './routes/auth.routes';
 import profileRoutes from './routes/profile.routes';
 import settingsRoutes from './routes/settings.routes';
@@ -98,44 +99,29 @@ app.use(helmet({
   permittedCrossDomainPolicies: { permittedPolicies: 'none' },
 }));
 
-// CORS with strict origin validation
-const normalizeOrigin = (origin: string): string => origin.replace(/\/$/, '');
-const frontendOrigin = normalizeOrigin(process.env.FRONTEND_URL || 'http://localhost:3000');
-const electronOrigin = normalizeOrigin(process.env.ELECTRON_URL || 'app://.');
-const allowedOrigins = [...config.cors.allowedOrigins, frontendOrigin, electronOrigin, 'http://127.0.0.1:3000'];
-
-const isAllowedLocalOrigin = (origin: string): boolean => {
-  try {
-    const normalizedOrigin = normalizeOrigin(origin);
-    const url = new URL(normalizedOrigin);
-    const hostname = url.hostname.toLowerCase();
-    const port = url.port || (url.protocol === 'https:' ? '443' : '80');
-    const localHostnames = ['localhost', '127.0.0.1', '::1', '0.0.0.0'];
-    if (localHostnames.includes(hostname) && port === '3000') return true;
-    // Private LAN origins are valid in development so a physical phone can
-    // reach the laptop-hosted frontend. Production still uses allowedOrigins.
-    if (process.env.NODE_ENV !== 'production' && port === '3000' && (
-      /^10\./.test(hostname) ||
-      /^192\.168\./.test(hostname) ||
-      /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)
-    )) return true;
-    return false;
-  } catch {
-    return false;
-  }
-};
+// CORS with strict origin validation.
+// Registered BEFORE every route below, so preflight OPTIONS requests are
+// answered by this middleware for POST /api/auth/login and every other /api/*
+// endpoint. The allow list is exact origins only (never "*") so VANTA's
+// cookie/Bearer-authenticated requests stay cross-origin safe. The production
+// Vercel origin is always included (see security/cors.ts) and extra origins
+// can be added via CORS_ALLOWED_ORIGINS and FRONTEND_URL.
+const isProduction = process.env.NODE_ENV === 'production';
+const corsAllowedOrigins = buildAllowedOrigins();
 
 app.use(cors({
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    const normalizedOrigin = origin ? normalizeOrigin(origin) : undefined;
-    if (!normalizedOrigin || allowedOrigins.includes(normalizedOrigin) || normalizedOrigin.startsWith('app://') || (normalizedOrigin && isAllowedLocalOrigin(normalizedOrigin))) {
+    if (isOriginAllowed(origin, corsAllowedOrigins, isProduction)) {
       callback(null, true);
       return;
     }
     callback(new Error('Not allowed by CORS'));
   },
   credentials: config.cors.credentials,
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   maxAge: config.cors.maxAge,
+  optionsSuccessStatus: 204, // complete preflight OPTIONS cleanly for all /api routes
+  preflightContinue: false,
 }));
 
 // Performance optimization: Response compression
@@ -451,8 +437,7 @@ app.use('/api/analytics', analyticsRouter);
 const io = new Server(httpServer, {
   cors: {
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-      const normalizedOrigin = origin ? normalizeOrigin(origin) : undefined;
-      if (!normalizedOrigin || allowedOrigins.includes(normalizedOrigin) || normalizedOrigin.startsWith('app://') || (normalizedOrigin && isAllowedLocalOrigin(normalizedOrigin))) {
+      if (isOriginAllowed(origin, corsAllowedOrigins, isProduction)) {
         callback(null, true);
         return;
       }
