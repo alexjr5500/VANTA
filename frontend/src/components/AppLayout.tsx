@@ -256,6 +256,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // so it must not be inset by the default `px-4 py-5` page padding.
   const isDiscoverPage = pathname === '/discover';
   const isLiveViewer = /^\/live\/[^/]+$/.test(pathname || '');
+  // Go-Live is a full-screen immersive capture surface — it owns the whole
+  // viewport (camera fills the screen) and must not show the app navigation.
+  const isGoLivePage = pathname === '/live/go-live';
   // The Story/Status viewer is a full-screen surface like Reels / the Live
   // viewer: it must occupy exactly the viewport so the page never scrolls.
   const isStoryPage = pathname?.startsWith('/stories');
@@ -270,8 +273,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // exactly, and the page content scrolls inside a single container — the same
   // scrolling model Chat uses. The Live viewer/studio stay full-bleed but are
   // given the scroll fallback so a short viewport (keyboard, address bar)
-  // can never clip their controls.
-  const isImmersiveSurface = isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed;
+  // can never clip their controls. Go-Live is a true immersive surface: the
+  // camera feed owns the viewport and the page manages its own layers.
+  const isImmersiveSurface = isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isGoLivePage;
   const isScrollPage = !isImmersiveSurface;
 
   const handleLogout = useCallback(() => {
@@ -408,7 +412,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         />
 
         <AnimatePresence initial={false}>
-          {!isChatPage && !isReelsPage && !isLiveViewer && !isStoryPage && (
+          {!isChatPage && !isReelsPage && !isLiveViewer && !isStoryPage && !isGoLivePage && (
           <motion.nav
             initial={{ y: 64, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}

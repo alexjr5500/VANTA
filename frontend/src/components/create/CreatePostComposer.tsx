@@ -30,7 +30,7 @@ export default function CreatePostComposer() {
       case 'live':
         // Open the same LIVE Studio flow the "Go Live" button on the /live
         // page uses, so every Live entry behaves identically.
-        router.push('/live/studio');
+        router.push('/live/go-live');
         break;
       default:
         openPostModal();

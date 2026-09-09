@@ -3,12 +3,13 @@
 /**
  * VANTA Live Viewer
  * -----------------
- * Opens an active live stream. Real video is pulled from the LiveKit room the
- * host is publishing to (via a scoped viewer token). Live comments, viewer
- * counts and stream-lifecycle events arrive over the existing live socket.
- * Gifts reuse the VANTA GiftPicker + coin economy; Following reuses the
- * existing live follow endpoint. On leaving, the socket and LiveKit room are
- * torn down so no media connection is left active.
+ * Opens an active live stream as a full-screen mobile experience.
+ *
+ * The real host video (LiveKit) fills the entire viewport; all controls float
+ * over it: top-left streamer card + Fan Club, top-right viewer count + exit,
+ * bottom-right circular rail (Chat / Gift / Share / More). Comments, gifts,
+ * reactions and viewer-join notices stream in as live overlays through the
+ * existing live Socket.IO channels — nothing here is mocked.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -16,23 +17,22 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useParams, useRouter } from 'next/navigation';
 import {
   AlertTriangle,
-  ArrowLeft,
   Check,
+  Crown,
+  Ellipsis,
   Eye,
+  Flag,
   Gift,
   Loader2,
+  MessageCircle,
   Mic,
+  MicOff,
+  Pin,
   Radio,
   RefreshCw,
   Send,
   Share2,
   UserPlus,
-  Heart,
-  MessageSquare,
-  Pin,
-  Trash2,
-  Flag,
-  Ban,
   Users,
   X,
 } from 'lucide-react';
@@ -53,6 +53,7 @@ import { useGiftAnimationQueue } from '@/components/gifts/useGiftAnimationQueue'
 import LiveParticipantGrid, { type StageParticipant } from '@/components/live/LiveParticipantGrid';
 
 type ViewerPhase = 'LOADING' | 'LIVE' | 'ENDED' | 'ERROR';
+type SheetId = 'none' | 'chat' | 'viewers' | 'more' | 'gift';
 
 interface Host {
   id: string;
@@ -87,34 +88,31 @@ interface ChatMessage {
   user?: { id: string; username: string; avatar?: string | null; verified?: boolean } | null;
 }
 
-/** Turn a real-time `live_event` payload into a lightweight system-chat line. */
 function viewerEventLine(d: any): string | null {
   const u = d?.user;
   const name = u?.username ? `@${u.username}` : 'Someone';
   switch (d?.type) {
     case 'joined': return `${name} joined the live`;
     case 'left': return `${name} left the live`;
-    // A LIKE is an ephemeral interaction rendered by the floating-heart overlay,
-    // NOT a chat message. Backend no longer emits `live_event` for likes, but
-    // keep this guard so a stale event can never become a chat line.
     case 'liked': return '';
     case 'shared': return `${name} shared the live`;
     case 'followed': return `${name} started following`;
     case 'gift': return `${name} sent ${d.giftName || 'a gift'}${d.quantity && d.quantity > 1 ? ` × ${d.quantity}` : ''}`;
-    case 'guest_request': return `${name} wants to join`;
-    case 'guest_joined': return `${name} joined the stage`;
-    case 'guest_left': return `${name} left the stage`;
-    case 'guest_removed': return `${name} was removed from the stage`;
-    case 'guest_rejected': return `${name}'s request was declined`;
     default: return '';
   }
 }
 
-interface GiftRecipient {
-  id: string;
-  username: string;
-  fullName?: string;
-  avatar?: string;
+function toChatMessage(raw: any): ChatMessage {
+  const user = raw?.user
+    ? { id: raw.user.id || String(raw.user._id), username: raw.user.username || 'user', avatar: raw.user.avatar, verified: !!raw.user.verified }
+    : { id: raw?.userId || 'user', username: raw?.username || 'user', avatar: raw?.avatar, verified: false };
+  return {
+    id: raw?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    message: raw?.message || raw?.text || '',
+    createdAt: raw?.createdAt,
+    kind: 'comment',
+    user,
+  };
 }
 
 /** Attaches a MediaStream (remote host video) to a <video>. */
@@ -153,8 +151,9 @@ export default function LiveViewerPage() {
   const [sendingComment, setSendingComment] = useState(false);
   const [following, setFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
+  const [sheet, setSheet] = useState<SheetId>('none');
+  const [chatPaused, setChatPaused] = useState(false);
 
-  const [giftOpen, setGiftOpen] = useState(false);
   const [giftGifts, setGiftGifts] = useState<GiftCatalogItem[]>([]);
   const [giftBalance, setGiftBalance] = useState(0);
   const [giftLoading, setGiftLoading] = useState(false);
@@ -163,139 +162,66 @@ export default function LiveViewerPage() {
   const { giftAnimations, enqueueGiftAnimation } = useGiftAnimationQueue();
   const giftSocketRef = useRef<Socket | null>(null);
 
-  // Guest request → stage overlay state.
+  // Guest stage (kept functional — opened via the More sheet).
   const [guestStatus, setGuestStatus] = useState<'idle' | 'pending' | 'live' | 'denied'>('idle');
   const [guestRoster, setGuestRoster] = useState<{ id: string; username: string; avatar?: string | null }[]>([]);
   const [guestCapacity, setGuestCapacity] = useState({ count: 0, limit: 4 });
+  const [myStream, setMyStream] = useState<MediaStream | null>(null);
 
-  // Reactions (floating burst) + viewer roster + join notifications + pin.
+  // Reactions + viewer roster + join notices + pin + report.
   const [reactions, setReactions] = useState<{ id: string; emoji: string }[]>([]);
   const [viewersList, setViewersList] = useState<{ id: string; username: string; avatar?: string | null }[]>([]);
-  const [viewerPanelOpen, setViewerPanelOpen] = useState(false);
   const [joinNotice, setJoinNotice] = useState<{ id: string; username: string; joined: boolean } | null>(null);
   const [pinnedMessage, setPinnedMessage] = useState<{ id: string; username: string | null; message: string } | null>(null);
   const [actionFor, setActionFor] = useState<ChatMessage | null>(null);
   const [reportBusy, setReportBusy] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
-  const joinedRef = useRef(false);
-  const cleanupRef = useRef<(() => void) | null>(null);
+  const cleanupRef = useRef<() => void>(() => undefined);
   const streamIdRef = useRef(streamId);
+  const phaseRef = useRef<ViewerPhase>('LOADING');
+  const guestStatusRef = useRef(guestStatus);
+  const loadStreamRef = useRef<() => Promise<void>>(async () => undefined);
+
+  const REACTIONS_LIST = ['❤️', '🔥', '👏', '😂', '😍', '🎉'];
+
   useEffect(() => { streamIdRef.current = streamId; }, [streamId]);
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
+  useEffect(() => { guestStatusRef.current = guestStatus; }, [guestStatus]);
 
-  const recipient = useMemo<GiftRecipient | null>(
-    () => (stream?.host ? { id: stream.host.id, username: stream.host.username, fullName: stream.host.fullName || undefined, avatar: stream.host.avatar || undefined } : null),
-    [stream],
-  );
-
-  const isOwn = Boolean(stream && user && stream.host.id === (user as any)?.id);
-
-  const appendMessage = useCallback((msg: ChatMessage) => {
-    setMessages((prev) => [...prev.slice(-59), msg]);
-  }, []);
-
-  /** Push a floating reaction and auto-remove it after its animation. */
   const burstReaction = useCallback((emoji: string) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setReactions((prev) => [...prev.slice(-14), { id, emoji }]);
-    window.setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== id)), 2400);
+    window.setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== id)), 2600);
   }, []);
 
-  const emitReaction = useCallback((emoji: string) => {
-    if (!socketRef.current) return;
-    socketRef.current.emit('reaction', { streamId: streamIdRef.current, emoji });
+  const sendReaction = useCallback((emoji: string) => {
     burstReaction(emoji);
+    socketRef.current?.emit('reaction', { streamId: streamIdRef.current, emoji });
   }, [burstReaction]);
 
-  /** Show a transient "X joined / left" notice. */
   const noticeJoin = useCallback((username: string, joined: boolean) => {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     setJoinNotice({ id, username, joined });
-    window.setTimeout(() => setJoinNotice((cur) => (cur?.id === id ? null : cur)), 2200);
+    window.setTimeout(() => setJoinNotice((n) => (n && n.id === id ? null : n)), 2600);
   }, []);
 
-  // Auto-fade the pinned message when the host unpins.
-  useEffect(() => {
-    if (pinnedMessage) {
-      const t = window.setTimeout(() => setPinnedMessage(null), 15000);
-      return () => window.clearTimeout(t);
-    }
-  }, [pinnedMessage]);
-
-  /** Open the native share sheet or copy the live link. Also emits a real-time share event. */
-  const shareStream = useCallback(async () => {
-    const url = stream?.id ? `${window.location.origin}/live/${stream.id}` : window.location.href;
-    try {
-      if (typeof navigator !== 'undefined' && navigator.share) {
-        await navigator.share({ title: stream?.title ? `Watch ${stream.title} live on VANTA` : 'VANTA Live', url });
-      } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(url);
-        toast.success('Link copied', 'Paste it anywhere to share this live.');
-      }
-      socketRef.current?.emit('live_share', { streamId: streamIdRef.current });
-    } catch {
-      /* user dismissed the share sheet */
-      socketRef.current?.emit('live_share', { streamId: streamIdRef.current });
-    }
-  }, [stream, toast]);
-
-  const reconnecting = connectionState === ConnectionState.Reconnecting;
-
-  // Build the live-stage tiles (host + guests). For a solo spectator we keep the
-  // full-screen host video; when the viewer is a guest (or guests are present) we
-  // show the adaptive participant grid.
-  const myStream = useMemo<MediaStream | null>(() => {
-    if (!room) return null;
-    const vids: MediaStreamTrack[] = [];
-    (room as any).localParticipant?.videoTrackPublications?.forEach((pub: any) => { if (pub?.track?.mediaStreamTrack) vids.push(pub.track.mediaStreamTrack); });
-    return vids.length ? new MediaStream(vids) : null;
-  }, [room]);
-
-  const stageTiles = useMemo<StageParticipant[]>(() => {
-    if (phase !== 'LIVE') return [];
-    const tiles: StageParticipant[] = [];
-    (room as any)?.remoteParticipants?.forEach((p: any) => {
-      const vids: MediaStreamTrack[] = [];
-      (p.videoTrackPublications || new Set())?.forEach((pub: any) => { if (pub?.track?.mediaStreamTrack) vids.push(pub.track.mediaStreamTrack); });
-      const isHost = p.identity === stream?.host?.id;
-      const rosterGuest = guestRoster.find((g) => g.id === p.identity);
-      tiles.push({
-        id: p.identity,
-        username: isHost ? (stream?.host?.username || 'Host') : (rosterGuest?.username || p.identity),
-        avatar: isHost ? stream?.host?.avatar : rosterGuest?.avatar,
-        verified: isHost ? !!stream?.host?.verified : false,
-        isHost,
-        stream: vids.length ? new MediaStream(vids) : null,
-        cameraOn: vids.length > 0,
-        micOn: (p.audioTrackPublications?.size || 0) > 0,
-      });
+  const appendMessage = useCallback((raw: any) => {
+    setMessages((prev) => {
+      const next = [...prev, toChatMessage(raw)];
+      return next.length > 80 ? next.slice(-80) : next;
     });
-    if (guestStatus === 'live') {
-      tiles.push({ id: (user as any)?.id || 'me', username: (user as any)?.username || 'You', avatar: undefined, verified: false, stream: myStream, cameraOn: true, micOn: true });
-    }
-    // Ensure the host is always the first (prioritized) tile.
-    const hostIndex = tiles.findIndex((t) => t.isHost);
-    if (hostIndex > 0) { const [host] = tiles.splice(hostIndex, 1); tiles.unshift(host); }
-    return tiles.slice(0, 5);
-  }, [phase, room, stream, guestRoster, guestStatus, user, myStream]);
-
-  const stageActive = guestStatus === 'live' || stageTiles.filter((t) => t.isHost).length > 0 && stageTiles.length > 1;
+  }, []);
 
   const handleStreamEnded = useCallback(() => {
-    if (streamIdRef.current && socketRef.current) {
-      socketRef.current.emit('leave_stream', streamIdRef.current);
-    }
+    if (streamIdRef.current && socketRef.current) socketRef.current.emit('leave_stream', streamIdRef.current);
     disconnect();
     setPhase('ENDED');
   }, [disconnect]);
 
-  // ---- Guest stage (viewer request → accept → publish as guest) ----
-  const guestStatusRef = useRef(guestStatus);
-  useEffect(() => { guestStatusRef.current = guestStatus; }, [guestStatus]);
-
+  // ---- Guest stage (request → accept → publish as guest) ----
   const requestToJoin = useCallback(() => {
-    if (!socketRef.current) return;
-    socketRef.current.emit('request_join', { streamId: streamIdRef.current });
+    socketRef.current?.emit('request_join', { streamId: streamIdRef.current });
   }, []);
 
   const cancelJoin = useCallback(() => {
@@ -315,8 +241,6 @@ export default function LiveViewerPage() {
     }
   }, [connect, disconnect, toast]);
 
-  const loadStreamRef = useRef<() => Promise<void>>(async () => undefined);
-
   const leaveStage = useCallback(() => {
     socketRef.current?.emit('guest_leave', { streamId: streamIdRef.current });
     setGuestStatus('idle');
@@ -331,19 +255,27 @@ export default function LiveViewerPage() {
     try {
       const socket = createSocket(t);
       socket.connect();
-      socket.on('connect', () => {
-        socket.emit('join_stream', rid);
-      });
+      socketRef.current = socket;
+      socket.on('connect', () => socket.emit('join_stream', rid));
       socket.on('new_comment', (d: any) => {
-        if (d?.streamId !== rid || !d?.message) return;
-        appendMessage(d.message);
+        if (d?.streamId === rid && d?.message) appendMessage(d.message);
       });
-      // Gifts sent via the REST economy path publish `gift_received` on this main
-      // socket room — trigger the cinematic overlay here (queue de-dupes by id).
+      socket.on('chat_paused', (d: any) => {
+        if (d?.streamId === rid) setChatPaused(Boolean(d.paused));
+      });
+      // Gifts via the REST economy publish `gift_received` here — animate it.
       socket.on('gift_received', (payload: any) => {
         if (payload?.streamId !== rid) return;
         const tx = payload?.transaction || payload;
-        enqueueGiftAnimation({ ...tx, senderId: tx?.senderId || payload?.senderId, senderName: tx?.senderName || payload?.senderName, giftId: tx?.giftId || payload?.giftId, giftName: tx?.giftName || payload?.giftName, amount: payload?.amount ?? tx?.amount, quantity: tx?.quantity || payload?.quantity || 1, thumbnailUrl: tx?.thumbnailUrl, animationUrl: tx?.animationUrl, animationType: tx?.animationType, glowColor: tx?.glowColor, particleColor: tx?.particleColor, animationDuration: tx?.animationDuration, isLegendary: tx?.isLegendary, tier: tx?.tier, rarity: tx?.rarity, impactLevel: tx?.impactLevel, artworkType: tx?.artworkType, id: tx?.id });
+        enqueueGiftAnimation({
+          ...tx, senderId: tx?.senderId || payload?.senderId, senderName: tx?.senderName || payload?.senderName,
+          giftId: tx?.giftId || payload?.giftId, giftName: tx?.giftName || payload?.giftName,
+          amount: payload?.amount ?? tx?.amount, quantity: tx?.quantity || payload?.quantity || 1,
+          thumbnailUrl: tx?.thumbnailUrl, animationUrl: tx?.animationUrl, animationType: tx?.animationType,
+          glowColor: tx?.glowColor, particleColor: tx?.particleColor, animationDuration: tx?.animationDuration,
+          isLegendary: tx?.isLegendary, tier: tx?.tier, rarity: tx?.rarity, impactLevel: tx?.impactLevel,
+          artworkType: tx?.artworkType, id: tx?.id,
+        });
       });
       socket.on('viewer_count', (d: any) => {
         if (d?.streamId === rid && Number.isFinite(Number(d?.viewers))) setViewers(Number(d.viewers));
@@ -357,14 +289,24 @@ export default function LiveViewerPage() {
       socket.on('reaction', (d: any) => {
         if (d?.streamId === rid && d?.emoji) burstReaction(d.emoji);
       });
-      // Real-time typed system activity (joined/liked/shared/followed/gift/guest).
       socket.on('live_event', (d: any) => {
         if (d?.streamId !== rid) return;
         const line = viewerEventLine(d);
         if (!line) return;
-        appendMessage({ id: `ev-${d.at}-${d.type}-${Math.random().toString(36).slice(2, 6)}`, message: line, kind: 'system', meta: { type: d.type }, createdAt: d.at });
+        setMessages((prev) => [...prev.slice(-79), { id: `ev-${d.at}-${d.type}-${Math.random().toString(36).slice(2, 6)}`, message: line, kind: 'system', meta: { type: d.type }, createdAt: d.at }]);
       });
-      // Guest request round-trip.
+      socket.on('message_pinned', (d: any) => {
+        if (d?.streamId === rid && d?.pinned) setPinnedMessage({ id: d.pinned.id, username: d.pinned.username, message: d.pinned.message });
+      });
+      socket.on('message_unpinned', (d: any) => {
+        if (d?.streamId === rid) setPinnedMessage(null);
+      });
+      socket.on('message_deleted', (d: any) => {
+        if (d?.streamId === rid && d?.messageId) setMessages((prev) => prev.filter((m) => m.id !== d.messageId));
+      });
+      socket.on('chat_cleared', (d: any) => {
+        if (d?.streamId === rid) setMessages([]);
+      });
       socket.on('guest_request_sent', () => setGuestStatus('pending'));
       socket.on('guest_error', (d: any) => {
         setGuestStatus('idle');
@@ -376,17 +318,15 @@ export default function LiveViewerPage() {
           toast.info('Request declined', 'The host declined your request to join.');
         }
       });
-      socket.on('guest_state', (d: any) => {
+socket.on('guest_state', (d: any) => {
         if (d?.streamId !== rid) return;
-        setGuestRoster(Array.isArray(d.guests) ? d.guests.map((g: unknown) => ({ id: (g as any).id, username: (g as any).username, avatar: (g as any).avatar })) : []);
+        setGuestRoster((Array.isArray(d.guests) ? d.guests : []).map((g: any) => ({ id: g.id, username: g.username, avatar: g.avatar })));
         setGuestCapacity({ count: Number(d.guestCount) || 0, limit: Number(d.guestLimit) || 4 });
       });
-      // Host accepted my request — I become a publishing guest on the stage.
       socket.on('guest_accepted', (d: any) => {
         if (d?.streamId !== rid || !d?.token || !d?.roomName) return;
         void joinStageRef.current(d.token, d.roomName);
       });
-      // Host removed me (or my session ended) — leave the stage.
       socket.on('guest_removed', (d: any) => {
         if (d?.streamId === rid && guestStatusRef.current !== 'idle') {
           setGuestStatus('idle');
@@ -398,46 +338,30 @@ export default function LiveViewerPage() {
         if (d?.streamId !== rid) return;
         if (Number.isFinite(Number(d?.viewers))) setViewers(Number(d.viewers));
         if (d?.username && d?.userId !== (user as any)?.id) noticeJoin(d.username, true);
-        if (d?.userId && d?.username) setViewersList((prev) => (prev.some((v) => v.id === d.userId) ? prev : [...prev, { id: d.userId, username: d.username, avatar: d.avatar }]).slice(-250));
       });
       socket.on('viewer_left', (d: any) => {
         if (d?.streamId !== rid) return;
         if (Number.isFinite(Number(d?.viewers))) setViewers(Number(d.viewers));
-        if (d?.username && d?.userId !== (user as any)?.id) noticeJoin(d.username, false);
-        if (d?.userId) setViewersList((prev) => prev.filter((v) => v.id !== d.userId));
       });
       socket.on('viewers_list', (d: any) => {
-        if (d?.streamId === rid && Array.isArray(d?.viewers)) setViewersList(d.viewers.slice(-250));
+        if (d?.streamId === rid && Array.isArray(d?.viewers)) setViewersList(d.viewers);
       });
-      socket.on('message_deleted', (d: any) => {
-        if (d?.streamId === rid && d?.messageId) setMessages((prev) => prev.filter((m) => m.id !== d.messageId));
-      });
-      socket.on('chat_cleared', (d: any) => {
-        if (d?.streamId === rid) {
-          setMessages([]);
-          setPinnedMessage(null);
-          toast.info('Chat cleared', 'The host cleared this chat.');
-        }
-      });
-      socket.on('message_pinned', (d: any) => {
-        if (d?.streamId === rid && d?.pinned) setPinnedMessage({ id: d.pinned.id, username: d.pinned.username, message: d.pinned.message });
-      });
-      socket.on('message_unpinned', (d: any) => {
-        if (d?.streamId === rid) setPinnedMessage(null);
-      });
-      socket.on('chat_error', (d: any) => {
-        toast.error('Message not sent', d?.error || 'Unable to send your message.');
-      });
-      // Banned by the host — leave the room.
       socket.on('banned_from_stream', (d: any) => {
         if (d?.streamId === rid) {
-          toast.error('Banned', 'You have been banned from this stream.');
+          toast.error('You were removed', 'You can no longer chat in this live.');
           handleStreamEnded();
         }
       });
-      socketRef.current = socket;
+      socket.on('chat_error', (d: any) => {
+        if (d?.error) toast.error('Chat', d.error);
+      });
 
-      // Gift events arrive on the /gifts socket namespace.
+      cleanupRef.current = () => {
+        try { socket.emit('leave_stream', rid); } catch { /* noop */ }
+        socket.disconnect();
+      };
+
+      // Dedicated /gifts namespace channel (queue de-dupes by id).
       try {
         const giftSocket = createSocket(t, '/gifts');
         giftSocket.connect();
@@ -448,21 +372,18 @@ export default function LiveViewerPage() {
           }
         });
         giftSocketRef.current = giftSocket;
+        const prevCleanup = cleanupRef.current;
         cleanupRef.current = () => {
-          try {
-            giftSocket.emit('leave:stream', rid);
-            giftSocket.disconnect();
-          } catch { /* noop */ }
+          prevCleanup();
+          try { giftSocket.emit('leave:stream', rid); } catch { /* noop */ }
+          giftSocket.disconnect();
         };
-      } catch (err) {
-        console.error('Gift socket setup failed:', err);
-      }
+      } catch { /* gift channel is optional */ }
     } catch (err) {
       console.error('Socket setup failed:', err);
     }
   }, [appendMessage, handleStreamEnded, toast, burstReaction, noticeJoin, user, enqueueGiftAnimation]);
-
-  // Load stream, view as LiveKit viewer, load chat + follow status, join socket.
+// Load stream, view as LiveKit viewer, load chat + follow status, join socket.
   const loadStream = useCallback(async () => {
     if (!token || !streamIdRef.current) return;
     loadStreamRef.current = loadStream;
@@ -486,7 +407,7 @@ export default function LiveViewerPage() {
             (Array.isArray(d?.messages) ? d.messages : undefined) ??
             (Array.isArray(d?.messages?.items) ? d.messages.items : undefined) ??
             [];
-          setMessages((messagesRaw as any[]).map((m: any) => ({ id: m.id, message: m.message, user: m.user })).reverse().slice(-60));
+          setMessages((messagesRaw as any[]).map(toChatMessage).reverse().slice(-60));
         })
         .catch(() => undefined);
 
@@ -494,11 +415,10 @@ export default function LiveViewerPage() {
         .then((d) => setFollowing(!!d?.following))
         .catch(() => undefined);
 
-      // Seed the guest stage roster + capacity so the Join button reflects reality.
       apiGet<any>(`/api/live/${streamIdRef.current}/guests`, token, { skipCache: true })
         .then((d) => {
           if (!d) return;
-          setGuestRoster(Array.isArray(d.guests) ? d.guests.map((g: unknown) => ({ id: (g as any).id, username: (g as any).username, avatar: (g as any).avatar })) : []);
+          setGuestRoster((Array.isArray(d.guests) ? d.guests : []).map((g: any) => ({ id: g.id, username: g.username, avatar: g.avatar })));
           setGuestCapacity({ count: Number(d.guestCount) || 0, limit: Number(d.guestLimit) || 4 });
         })
         .catch(() => undefined);
@@ -511,6 +431,10 @@ export default function LiveViewerPage() {
       setPhase('ERROR');
     }
   }, [token, connect, setupSocket]);
+
+  useEffect(() => {
+    void loadStream();
+  }, [loadStream]);
 
   // Attach the host's remote video track(s) once the room is connected.
   useEffect(() => {
@@ -530,7 +454,6 @@ export default function LiveViewerPage() {
     lkRoom.on('trackUnsubscribed', onSub);
     lkRoom.on('participantDisconnected', onSub);
     collect();
-    // Some tracks subscribe slightly after connect — poll briefly.
     const timer = window.setInterval(collect, 500);
     window.setTimeout(() => window.clearInterval(timer), 8000);
     return () => {
@@ -539,38 +462,26 @@ export default function LiveViewerPage() {
       lkRoom.off('trackUnsubscribed', onSub);
       lkRoom.off('participantDisconnected', onSub);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room, phase]);
 
-  useEffect(() => {
-    void loadStream();
-  }, [loadStream]);
-
-  // Cleanup on unmount: leave the socket room and disconnect from LiveKit.
+  // Cleanup on unmount.
   useEffect(() => {
     return () => {
       cleanupRef.current?.();
       if (socketRef.current) {
-        try {
-          socketRef.current.emit('leave_stream', streamIdRef.current);
-          socketRef.current.disconnect();
-        } catch {
-          /* noop */
-        }
+        try { socketRef.current.emit('leave_stream', streamIdRef.current); } catch { /* noop */ }
+        try { socketRef.current.disconnect(); } catch { /* noop */ }
       }
       if (giftSocketRef.current) {
-        try {
-          giftSocketRef.current.emit('leave:stream', streamIdRef.current);
-          giftSocketRef.current.disconnect();
-        } catch {
-          /* noop */
-        }
+        try { giftSocketRef.current.emit('leave:stream', streamIdRef.current); } catch { /* noop */ }
+        try { giftSocketRef.current.disconnect(); } catch { /* noop */ }
       }
       disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const sendComment = useCallback(async () => {
+const sendComment = useCallback(() => {
     const text = comment.trim();
     if (!text || sendingComment || !socketRef.current) return;
     setSendingComment(true);
@@ -600,7 +511,7 @@ export default function LiveViewerPage() {
 
   const openGift = useCallback(async () => {
     if (!token) return;
-    setGiftOpen(true);
+    setSheet('gift');
     if (giftGifts.length) return;
     setGiftLoading(true);
     setGiftLoadError(null);
@@ -619,9 +530,8 @@ export default function LiveViewerPage() {
     }
   }, [token, giftGifts.length]);
 
-  const closeGift = useCallback(() => setGiftOpen(false), []);
+  const closeGift = useCallback(() => setSheet('none'), []);
 
-  /** Report a chat message (viewer moderation). */
   const reportMessage = useCallback(async (msg: ChatMessage) => {
     if (!token || reportBusy) return;
     setReportBusy(true);
@@ -637,58 +547,86 @@ export default function LiveViewerPage() {
     }
   }, [token, reportBusy, toast]);
 
-  const REACTIONS = ['❤️', '🔥', '👏', '😂', '😍', '🎉'];
-
   const handleLeave = useCallback(() => {
     if (socketRef.current) {
-      try {
-        socketRef.current.emit('leave_stream', streamIdRef.current);
-        socketRef.current.disconnect();
-      } catch {
-        /* noop */
-      }
+      try { socketRef.current.emit('leave_stream', streamIdRef.current); } catch { /* noop */ }
+      try { socketRef.current.disconnect(); } catch { /* noop */ }
     }
     if (giftSocketRef.current) {
-      try {
-        giftSocketRef.current.emit('leave:stream', streamIdRef.current);
-        giftSocketRef.current.disconnect();
-      } catch {
-        /* noop */
-      }
+      try { giftSocketRef.current.emit('leave:stream', streamIdRef.current); } catch { /* noop */ }
+      try { giftSocketRef.current.disconnect(); } catch { /* noop */ }
       giftSocketRef.current = null;
     }
     disconnect();
     router.replace('/live');
   }, [disconnect, router]);
 
-  const viewerCount = viewers || stream?.viewerCount || stream?._count?.viewers || 0;
+  const shareLive = useCallback(async () => {
+    const url = `${window.location.origin}/live/${streamIdRef.current}`;
+    const body = `Join ${stream?.host?.username || 'this'} live on VANTA!`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'VANTA Live', text: body, url });
+        socketRef.current?.emit('live_share', { streamId: streamIdRef.current });
+      } catch { /* user cancelled */ }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success('Link copied', 'Share it with your friends.');
+    } catch {
+      toast.error('Could not share');
+    }
+  }, [stream?.host?.username, toast]);
 
-if (!token) {
+  // Guest stage tiles for the multi-participant grid view.
+  const stageTiles = useMemo(() => {
+    const items: StageParticipant[] = [];
+    (room as any)?.remoteParticipants?.forEach((p: any) => {
+      const vids: MediaStreamTrack[] = [];
+      (p.videoTrackPublications || new Set())?.forEach((pub: any) => {
+        if (pub?.track?.mediaStreamTrack) vids.push(pub.track.mediaStreamTrack);
+      });
+      const isHost = p.identity === stream?.host?.id;
+      const rosterGuest = guestRoster.find((g) => g.id === p.identity);
+      items.push({
+        id: p.identity,
+        username: isHost ? (stream?.host?.username || 'Host') : (rosterGuest?.username || p.identity),
+        avatar: isHost ? stream?.host?.avatar : rosterGuest?.avatar,
+        verified: isHost ? !!stream?.host?.verified : false,
+        isHost,
+        stream: vids.length ? new MediaStream(vids) : null,
+        cameraOn: vids.length > 0,
+        micOn: (p.audioTrackPublications?.size || 0) > 0,
+      });
+    });
+    if (guestStatus === 'live') {
+      items.push({ id: (user as any)?.id || 'me', username: (user as any)?.username || 'You', avatar: undefined, verified: false, stream: myStream, cameraOn: true, micOn: true });
+    }
+    const hostIndex = items.findIndex((t) => t.isHost);
+    if (hostIndex > 0) { const host = items[hostIndex]; items.splice(hostIndex, 1); items.unshift(host); }
+    return items.slice(0, 5);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room, stream, guestRoster, guestStatus, myStream]);
+
+  const stageActive = guestStatus === 'live' || stageTiles.length > 1;
+
+  if (!token) {
     return (
-      <main className="flex min-h-dvh flex-col bg-[#050505] text-white">
-        <header className="flex min-h-14 shrink-0 items-center gap-2 border-b border-white/[0.08] bg-[#080808]/90 px-4 pt-[env(safe-area-inset-top)]">
-          <button type="button" onClick={handleLeave} aria-label="Back to Live" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#8a8a8a] transition hover:bg-white/[0.05] hover:text-white">
-            <ArrowLeft size={19} />
-          </button>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-lg font-semibold text-[#F5F5F5]">Live</h1>
-          </div>
-        </header>
-        <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
-          <AlertTriangle className="text-[#D6A83F]" size={26} />
-          <h2 className="mt-3 text-base font-semibold text-white">Sign in to watch live</h2>
-          <p className="mt-1 max-w-xs text-sm text-white/50">Create an account or sign in to join this live stream.</p>
-          <button type="button" onClick={() => router.push('/login')} className="mt-5 rounded-full bg-[#F5F5F5] px-6 py-3 text-sm font-bold text-black transition hover:bg-white">
-            Sign in
-          </button>
-        </div>
+      <main className="fixed inset-0 z-40 flex flex-col items-center justify-center bg-[#050505] px-6 text-center text-white">
+        <AlertTriangle className="text-[#D6A83F]" size={26} />
+        <h2 className="mt-3 text-base font-semibold text-white">Sign in to watch live</h2>
+        <p className="mt-1 max-w-xs text-sm text-white/50">Create an account or sign in to join this live stream.</p>
+        <button type="button" onClick={() => router.push('/login')} className="mt-5 rounded-full bg-[#F5F5F5] px-6 py-3 text-sm font-bold text-black transition hover:bg-white">
+          Sign in
+        </button>
       </main>
     );
   }
 
   if (phase === 'LOADING') {
     return (
-      <main className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-[#050505] text-white">
+      <main className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-[#050505] text-white">
         <Loader2 size={28} className="animate-spin text-[#F2C75C]" />
         <p className="text-sm text-white/50">Opening live stream…</p>
       </main>
@@ -697,29 +635,19 @@ if (!token) {
 
   if (phase === 'ERROR') {
     return (
-      <main className="flex min-h-dvh flex-col bg-[#050505] text-white">
-        <header className="flex min-h-14 shrink-0 items-center gap-2 border-b border-white/[0.08] bg-[#080808]/90 px-4 pt-[env(safe-area-inset-top)]">
-          <button type="button" onClick={handleLeave} aria-label="Back to Live" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#8a8a8a] transition hover:bg-white/[0.05] hover:text-white">
-            <ArrowLeft size={19} />
+      <main className="fixed inset-0 z-40 flex flex-col items-center justify-center bg-[#050505] px-6 text-center text-white">
+        <div className="grid h-14 w-14 place-items-center rounded-full bg-rose-500/15">
+          <AlertTriangle size={26} className="text-rose-400" />
+        </div>
+        <h2 className="mt-4 text-lg font-semibold text-white">Unable to connect to the live stream</h2>
+        <p className="mt-1 max-w-xs text-sm text-white/50">{connectError || 'The stream may have ended or connection was lost.'}</p>
+        <div className="mt-6 flex items-center gap-3">
+          <button type="button" onClick={() => void loadStream()} className="inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-white/[0.04] px-5 py-3 text-sm font-medium text-white transition hover:bg-white/[0.08]">
+            <RefreshCw size={15} /> Retry
           </button>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-lg font-semibold text-[#F5F5F5]">Live</h1>
-          </div>
-        </header>
-        <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
-          <div className="grid h-14 w-14 place-items-center rounded-full bg-rose-500/15">
-            <AlertTriangle size={26} className="text-rose-400" />
-          </div>
-          <h2 className="mt-4 text-lg font-semibold text-white">Unable to connect to the live stream</h2>
-          <p className="mt-1 max-w-xs text-sm text-white/50">{connectError || 'The stream may have ended or connection was lost.'}</p>
-          <div className="mt-6 flex items-center gap-3">
-            <button type="button" onClick={() => void loadStream()} className="inline-flex items-center gap-2 rounded-full border border-white/[0.12] bg-white/[0.04] px-5 py-3 text-sm font-medium text-white transition hover:bg-white/[0.08]">
-              <RefreshCw size={15} /> Retry
-            </button>
-            <button type="button" onClick={() => router.replace('/live')} className="rounded-full bg-[#F5F5F5] px-6 py-3 text-sm font-bold text-black transition hover:bg-white">
-              Back to Live
-            </button>
-          </div>
+          <button type="button" onClick={() => router.replace('/live')} className="rounded-full bg-[#F5F5F5] px-6 py-3 text-sm font-bold text-black transition hover:bg-white">
+            Back to Live
+          </button>
         </div>
       </main>
     );
@@ -727,352 +655,206 @@ if (!token) {
 
   if (phase === 'ENDED' || !stream) {
     return (
-      <main className="flex min-h-dvh flex-col bg-[#050505] text-white">
-        <header className="flex min-h-14 shrink-0 items-center gap-2 border-b border-white/[0.08] bg-[#080808]/90 px-4 pt-[env(safe-area-inset-top)]">
-          <button type="button" onClick={handleLeave} aria-label="Back to Live" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#8a8a8a] transition hover:bg-white/[0.05] hover:text-white">
-            <ArrowLeft size={19} />
-          </button>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-lg font-semibold text-[#F5F5F5]">Live</h1>
-          </div>
-        </header>
-        <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
-          <div className="grid h-14 w-14 place-items-center rounded-full bg-emerald-500/15">
-            <Check size={26} className="text-emerald-400" />
-          </div>
-          <h2 className="mt-4 text-lg font-semibold text-white">This live has ended</h2>
-          <p className="mt-1 max-w-xs text-sm text-white/50">{stream?.title || 'The stream you were watching has ended.'}</p>
-          <button type="button" onClick={() => router.replace('/live')} className="mt-6 rounded-full bg-[#F5F5F5] px-6 py-3 text-sm font-bold text-black transition hover:bg-white">
-            Return to Live
-          </button>
+      <main className="fixed inset-0 z-40 flex flex-col items-center justify-center bg-[#050505] px-6 text-center text-white">
+        <div className="grid h-14 w-14 place-items-center rounded-full bg-emerald-500/15">
+          <Check size={26} className="text-emerald-400" />
         </div>
+        <h2 className="mt-4 text-lg font-semibold text-white">This live has ended</h2>
+        <p className="mt-1 max-w-xs text-sm text-white/50">{stream?.title || 'The stream you were watching has ended.'}</p>
+        <button type="button" onClick={() => router.replace('/live')} className="mt-6 rounded-full bg-[#F5F5F5] px-6 py-3 text-sm font-bold text-black transition hover:bg-white">
+          Return to Live
+        </button>
       </main>
     );
   }
 
-return (
-    <main className="relative flex min-h-dvh flex-col bg-black text-white">
-      {/* Video */}
+  const viewerCount = viewers || stream?.viewerCount || stream?._count?.viewers || 0;
+  const isOwn = user?.id === stream.host.id;
+  const isConnecting = connectionState === ConnectionState.Reconnecting;
+  const started = stream?.startedAt ? new Date(stream.startedAt).getTime() : null;
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (phase !== 'LIVE' || !started) return;
+    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)));
+    tick();
+    const t = window.setInterval(tick, 1000);
+    return () => window.clearInterval(t);
+  }, [phase, started]);
+  const eSecs = elapsed % 60;
+  const eMins = Math.floor(elapsed / 60) % 60;
+  const eHrs = Math.floor(elapsed / 3600);
+  const streamClock = `${eHrs > 0 ? `${eHrs}:` : ''}${String(eMins).padStart(2, '0')}:${String(eSecs).padStart(2, '0')}`;
+
+  return (
+    <main className="fixed inset-0 z-40 overflow-hidden bg-black text-white">
+      {/* The live video is the primary interface — full screen. */}
       <div className="absolute inset-0">
-        {stageActive && stageTiles.length > 0 ? (
+        {stageActive ? (
           <LiveParticipantGrid participants={stageTiles} />
         ) : remoteVideo ? (
           <ViewerVideo stream={remoteVideo} />
         ) : (
-          <div className="flex h-full w-full items-center justify-center bg-[#0D0D0F]">
+          <div className="flex h-full w-full items-center justify-center bg-[#050505]">
             <Loader2 size={26} className="animate-spin text-[#F2C75C]" />
           </div>
         )}
       </div>
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40" />
 
-      {/* Top bar */}
-      <header className="relative z-10 flex items-center gap-2 p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
-        <button
-          type="button"
-          onClick={handleLeave}
-          aria-label="Leave stream"
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-black/50 text-white backdrop-blur-md transition hover:bg-black/70"
-        >
-          <X size={19} />
-        </button>
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-bold tracking-[0.12em] shadow-lg',
-              reconnecting ? 'bg-amber-500 text-black' : 'bg-red-600 text-white',
-            )}
-          >
-            <motion.span
-              className={cn('h-1.5 w-1.5 rounded-full', reconnecting ? 'bg-black' : 'bg-white')}
-              animate={{ opacity: [1, 0.3, 1] }}
-              transition={{ duration: reconnecting ? 0.7 : 1.5, repeat: Infinity }}
-            />
-            {reconnecting ? 'RECONNECTING' : 'LIVE'}
-          </span>
-          <span className="inline-flex items-center gap-1 rounded-md bg-black/55 px-2 py-1 text-[11px] text-white/85 backdrop-blur-md">
-            <Eye size={11} />
-            <span className="tabular-nums">{formatNumber(viewerCount)}</span>
-          </span>
-        </div>
-        <span className="shrink-0 rounded-md bg-black/55 px-2 py-1 text-[10px] font-medium text-white/70 backdrop-blur-md">
-          {stream.categoryName || 'General'}
-        </span>
-        <button
-          type="button"
-          onClick={() => void shareStream()}
-          aria-label="Share live"
-          className="shrink-0 rounded-md bg-black/55 p-1.5 text-white/80 backdrop-blur-md transition hover:bg-black/70 hover:text-white"
-        >
-          <Share2 size={14} />
-        </button>
-      </header>
+      {/* Legibility gradient */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/65" />
 
-      {/* Creator row + chat */}
-      <div className="relative z-10 mt-auto flex min-h-0 flex-col p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
-        <div className="mb-3 flex items-center gap-2.5">
-          <button type="button" onClick={() => router.push(`/profile/${stream.host.username}`)} className="flex shrink-0 flex-col items-center gap-1">
-            <Avatar src={stream.host.avatar} alt={stream.host.username} size="lg" />
-            <span className="flex min-w-0 max-w-[64px] items-center justify-center gap-0.5">
-              <span className="truncate text-[9px] font-medium text-white/80">{stream.host.username}</span>
-              {stream.host.verified && <VerificationBadge verified size="xs" />}
-            </span>
-          </button>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-semibold text-[#F5F5F5]">{stream.title}</h1>
-            <div className="flex items-center gap-1 text-[11px] text-white/60">
-              <span className="truncate">@{stream.host.username}</span>
-              {stream.host.fullName && <span className="truncate text-white/35">· {stream.host.fullName}</span>}
-            </div>
-            {stream.description && (
-              <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-white/50">{stream.description}</p>
-            )}
-          </div>
-          {!isOwn && (
-            <button
-              type="button"
-              onClick={() => void toggleFollow()}
-              disabled={followBusy}
-              className={cn(
-                'inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-4 text-xs font-bold transition',
-                following ? 'border border-white/[0.14] bg-white/[0.08] text-white' : 'bg-[#D6A83F] text-black hover:bg-[#F2C75C]',
-              )}
-            >
-              {followBusy ? <Loader2 size={14} className="animate-spin" /> : following ? <Check size={14} /> : <UserPlus size={14} />}
-              {following ? 'Following' : 'Follow'}
-            </button>
-          )}
-          {isOwn && (
-            <button
-              type="button"
-              onClick={() => router.push('/live/studio')}
-              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-[#D6A83F]/40 bg-[#D6A83F]/10 px-4 text-xs font-semibold text-[#F2C75C] transition hover:bg-[#D6A83F]/20"
-            >
-              Studio
-            </button>
-          )}
-          {!isOwn && guestStatus === 'idle' && (
-            <button
-              type="button"
-              onClick={() => void requestToJoin()}
-              disabled={guestCapacity.count >= guestCapacity.limit}
-              title={guestCapacity.count >= guestCapacity.limit ? 'Guest stage is full' : 'Request to join the live stage'}
-              aria-label="Request to join"
-              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-[#D6A83F]/40 bg-[#D6A83F]/10 px-4 text-xs font-semibold text-[#F2C75C] transition hover:bg-[#D6A83F]/20 disabled:opacity-40"
-            >
-              <Mic size={13} /> Join
-            </button>
-          )}
-          {guestStatus === 'pending' && (
-            <button
-              type="button"
-              onClick={() => void cancelJoin()}
-              aria-label="Cancel request to join"
-              title="Cancel request to join"
-              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-white/[0.12] bg-white/[0.06] px-4 text-xs font-semibold text-white/80 transition hover:bg-white/[0.1]"
-            >
-              <Loader2 size={13} className="animate-spin" /> Requested
-            </button>
-          )}
-          {guestStatus === 'live' && (
-            <button
-              type="button"
-              onClick={() => void leaveStage()}
-              aria-label="Leave stage"
-              title="Leave the guest stage"
-              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-rose-500/40 bg-rose-500/15 px-4 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/25"
-            >
-              <Radio size={13} /> Leave stage
-            </button>
-          )}
-        </div>
-
-        {/* Pinned message */}
-        <AnimatePresence>
-          {pinnedMessage && (
-            <motion.div
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              className="mb-2 flex items-start gap-2 rounded-xl border border-[#D6A83F]/25 bg-black/55 px-3 py-2 backdrop-blur-md"
-            >
-              <Pin size={13} className="mt-0.5 shrink-0 text-[#D6A83F]" />
-              <div className="min-w-0 flex-1 text-[11px] leading-snug">
-                <span className="font-semibold text-[#F2C75C]">{pinnedMessage.username || 'host'}</span>
-                <span className="text-white/90"> {pinnedMessage.message}</span>
-              </div>
-              <button type="button" onClick={() => setPinnedMessage(null)} aria-label="Dismiss pinned message" className="shrink-0 text-white/50 hover:text-white">
-                <X size={13} />
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Chat messages */}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-xl bg-black/30 px-3 py-2 backdrop-blur-sm [scrollbar-width:none]">
-          {messages.length === 0 ? (
-            <p className="py-3 text-center text-xs text-white/40">No messages yet — say something!</p>
-          ) : (
-            messages.map((m) =>
-              m.kind === 'system' ? (
-                <div key={m.id} className="my-1 flex justify-center">
-                  <span className="max-w-full truncate rounded-full bg-white/[0.05] px-2.5 py-1 text-[10.5px] text-white/55">
-                    {m.message}
-                  </span>
-                </div>
-              ) : (
-                <div key={m.id} className="group mb-1.5 flex items-start gap-1.5 text-[12px] leading-snug">
-                  <span className="shrink-0 font-semibold text-[#D6A83F]">{m.user?.username || 'user'}:</span>
-                  <span className="min-w-0 break-words text-white/90">{m.message}</span>
-                  <button
-                    type="button"
-                    onClick={() => setActionFor(m)}
-                    aria-label={`Report message from ${m.user?.username || 'user'}`}
-                    className="ml-auto shrink-0 rounded p-0.5 text-white/0 transition hover:bg-white/10 hover:text-white/80 group-hover:text-white/45"
-                  >
-                    <Flag size={11} />
-                  </button>
-                </div>
-              ),
-            )
-          )}
-        </div>
-
-        {/* Input row */}
-        <div className="mt-2 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setViewerPanelOpen((v) => !v)}
-            aria-label="Viewers"
-            className="grid h-11 w-11 shrink-0 place-items-center gap-0.5 rounded-full bg-black/55 text-white/85 backdrop-blur-md transition hover:bg-black/70"
-          >
-            <Users size={18} />
-            <span className="text-[9px] font-semibold tabular-nums">{formatNumber(viewerCount)}</span>
-          </button>
-          {/* Reaction quick-fire */}
-          {REACTIONS.slice(0, 3).map((emoji) => (
-            <button
-              key={emoji}
-              type="button"
-              onClick={() => emitReaction(emoji)}
-              aria-label={`React ${emoji}`}
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-black/55 text-lg backdrop-blur-md transition hover:bg-black/70 active:scale-90"
-            >
-              {emoji}
-            </button>
-          ))}
-          {stream.allowGifts !== false && (
-            <button
-              type="button"
-              onClick={() => void openGift()}
-              aria-label="Send a gift"
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-black/55 text-[#D6A83F] backdrop-blur-md transition hover:bg-black/70"
-            >
-              <Gift size={20} />
-            </button>
-          )}
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-white/[0.1] bg-black/55 px-4 py-1.5 backdrop-blur-md">
-            <input
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void sendComment(); }}
-              placeholder="Say something…"
-              maxLength={500}
-              className="h-9 w-full min-w-0 bg-transparent text-sm text-white outline-none placeholder:text-white/35"
-            />
-            <button
-              type="button"
-              onClick={() => void sendComment()}
-              disabled={sendingComment || !comment.trim()}
-              aria-label="Send comment"
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#F5F5F5] text-black transition hover:bg-white disabled:opacity-40"
-            >
-              {sendingComment ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Gift picker */}
+      {/* Floating join notice */}
       <AnimatePresence>
-        {giftOpen && recipient && (
-          <GiftPickerBoundary onClose={closeGift}>
-            <GiftPicker
-              gifts={giftGifts}
-              balance={giftBalance}
-              recipient={recipient}
-              token={token}
-              streamId={stream.id}
-              loading={giftLoading}
-              loadError={giftLoadError || undefined}
-              onRetry={() => void openGift()}
-              onClose={closeGift}
-              onSent={(_b, _a) => undefined}
-            />
-          </GiftPickerBoundary>
+        {joinNotice && (
+          <motion.div
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="pointer-events-none absolute left-1/2 top-[calc(env(safe-area-inset-top)+64px)] z-20 -translate-x-1/2 rounded-full border border-white/15 bg-black/55 px-3.5 py-1.5 text-[11px] font-semibold text-white/90 backdrop-blur-md"
+          >
+            {joinNotice.joined ? <><span className="text-emerald-300">●</span> {joinNotice.username} joined</> : <><span className="text-white/40">○</span> {joinNotice.username} left</>}
+          </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Floating reactions */}
+      <div className="pointer-events-none absolute inset-0 z-[70]">
+        <AnimatePresence>
+          {reactions.map((r) => (
+            <motion.span
+              key={r.id}
+              initial={{ opacity: 0, y: 0, scale: 0.5 }}
+              animate={{ opacity: [0, 1, 1, 0], y: -170, scale: [0.5, 1.2, 1.4, 1.2] }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 2.2, times: [0, 0.15, 0.7, 1] }}
+              className="absolute bottom-[36%] left-1/2 -ml-3 text-3xl drop-shadow-lg"
+              aria-hidden
+            >
+              {r.emoji}
+            </motion.span>
+          ))}
+        </AnimatePresence>
+      </div>
 
       {/* Gift animations from any viewer */}
       <GiftAnimationOverlay events={giftAnimations} />
 
-      {/* Floating reactions */}
-      <div className="pointer-events-none fixed inset-0 z-[60] overflow-hidden" aria-live="polite">
-        {reactions.map((r) => (
-          <motion.div
-            key={r.id}
-            initial={{ opacity: 0, scale: 0.4, y: 0 }}
-            animate={{ opacity: [0, 1, 1, 0], scale: [0.4, 1.25, 1.1, 1.3], y: [-0, -70, -130, -200] }}
-            transition={{ duration: 2.3, ease: 'easeOut' }}
-            className="absolute bottom-40 text-3xl"
-            style={{ left: `${20 + Math.random() * 60}%` }}
-          >
-            {r.emoji}
-          </motion.div>
-        ))}
+      {/* Top-left: streamer card + Fan Club */}
+      <div className="absolute left-3 top-[calc(env(safe-area-inset-top)+8px)] z-20 flex items-center gap-2">
+        <button type="button" onClick={() => router.push(`/profile/${stream.host.username}`)} aria-label="Host profile" className="shrink-0">
+          <Avatar src={stream.host.avatar} alt={stream.host.username} size="md" wrapperClassName="ring-2 ring-white/20" />
+        </button>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <p className="max-w-[120px] truncate text-sm font-bold text-white drop-shadow">{stream.host.username}</p>
+            {stream.host.verified && <VerificationBadge size="xs" />}
+{/* Top-right: viewer count + exit */}
+      <div className="absolute right-3 top-[calc(env(safe-area-inset-top)+8px)] z-20 flex items-center gap-2">
+        {isConnecting && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/20 px-2.5 py-1 text-[10px] font-bold text-amber-300 backdrop-blur-md">
+            <Loader2 size={11} className="animate-spin" /> Syncing
+          </span>
+        )}
+        <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/15 bg-black/45 px-3 text-xs font-bold text-white backdrop-blur-md tabular-nums">
+          <Eye size={13} className="text-[#F2C75C]" /> {formatNumber(viewerCount)}
+        </span>
+        <button type="button" onClick={handleLeave} aria-label="Leave live" className="grid h-9 w-9 place-items-center rounded-full border border-white/20 bg-black/50 text-white backdrop-blur-md transition active:scale-95 hover:bg-black/70">
+          <X size={17} strokeWidth={2.6} />
+        </button>
       </div>
 
-      {/* Join / leave notice */}
+      {/* Pinned message (compact overlay above chat) */}
       <AnimatePresence>
-        {joinNotice && (
+        {pinnedMessage && (
           <motion.div
-            key={joinNotice.id}
-            initial={{ opacity: 0, y: -12 }}
+            initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -12 }}
-            className="pointer-events-none fixed left-1/2 top-[4.5rem] z-[60] -translate-x-1/2 rounded-full border border-white/12 bg-black/70 px-3 py-1.5 text-[11px] text-white/90 backdrop-blur-md"
+            exit={{ opacity: 0, y: -6 }}
+            className="absolute bottom-[104px] left-3 z-20 mr-20 max-w-[70%] rounded-xl border border-[#D6A83F]/25 bg-black/55 px-3 py-1.5 backdrop-blur-md"
           >
-            <span className="font-semibold text-[#F2C75C]">{joinNotice.username}</span>{' '}
-            {joinNotice.joined ? 'joined the stream' : 'left the stream'}
+            <span className="flex items-start gap-1.5 text-[11px] leading-snug">
+              <Pin size={11} className="mt-0.5 shrink-0 text-[#D6A83F]" />
+              <span><b className="text-[#F2C75C]">{pinnedMessage.username || 'host'}</b> <span className="text-white/90">{pinnedMessage.message}</span></span>
+            </span>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Viewer roster */}
-      <AnimatePresence>
-        {viewerPanelOpen && (
-          <motion.div
-            className="fixed inset-0 z-[70] flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setViewerPanelOpen(false)}
+      {/* Bottom-left: live comment overlay */}
+      <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 mr-16">
+        {messages.slice(-4).map((m) =>
+          m.kind === 'system' ? (
+            <p key={m.id} className="text-[11px] font-medium text-white/60 drop-shadow">{m.message}</p>
+          ) : (
+            <p key={m.id} className="truncate text-[12px] leading-snug text-white/95 drop-shadow-md">
+              <span className="font-bold text-[#F2C75C]">{m.user?.username || 'Viewer'}: </span>
+              <span className="text-white/90">{m.message}</span>
+            </p>
+          ),
+        )}
+      </div>
+
+      {/* Bottom-right: circular control rail */}
+      <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+16px)] right-3 z-20 flex flex-col items-center gap-3">
+        <RailButton onPress={() => setSheet('chat')} label="Chat" badge={messages.filter((m) => m.kind !== 'system').length}>
+          <MessageCircle size={20} />
+        </RailButton>
+        <RailButton onPress={() => void openGift()} label="Gift" active>
+          <Gift size={20} />
+        </RailButton>
+        <RailButton onPress={() => void shareLive()} label="Share">
+          <Share2 size={20} />
+        </RailButton>
+        <RailButton onPress={() => setSheet('more')} label="More">
+          <Ellipsis size={20} />
+        </RailButton>
+      </div>
+
+      {/* Bottom-center: quick reactions */}
+      <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+20px)] left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full border border-white/10 bg-black/40 px-1.5 py-1 backdrop-blur-lg">
+        {REACTIONS_LIST.slice(0, 4).map((emoji) => (
+          <button key={emoji} type="button" onClick={() => sendReaction(emoji)} aria-label={`React ${emoji}`} className="grid h-8 w-8 place-items-center rounded-full text-base transition active:scale-125">
+            {emoji}
+          </button>
+        ))}
+      </div>
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 rounded-full bg-[#D6A83F]/90 px-1.5 py-0.5 text-[8px] font-extrabold uppercase tracking-wide text-black">
+              <Radio size={8} fill="currentColor" /> LIVE
+            </span>
+            <span className="text-[10px] font-semibold text-white/85 tabular-nums">{streamClock || '0:00'}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => void toggleFollow()}
+            disabled={followBusy}
+            className="mt-1 inline-flex h-6 items-center gap-1 rounded-full bg-gradient-to-r from-[#D6A83F] to-[#F2C75C] px-2.5 text-[10px] font-extrabold text-black shadow transition active:scale-95 disabled:opacity-60"
           >
+            <Crown size={11} fill="currentColor" />
+            {following ? 'Fan Club ✓' : 'Join Fan Club'}
+          </button>
+        </div>
+      </div>
+{/* Viewers sheet */}
+      <AnimatePresence>
+        {sheet === 'viewers' && (
+          <div className="absolute inset-0 z-[80] flex items-end" onClick={() => setSheet('none')}>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60" />
             <motion.div
-              className="max-h-[70vh] w-full max-w-md overflow-hidden rounded-t-2xl bg-[#0E0E10] sm:rounded-2xl"
-              initial={{ y: 40, opacity: 0 }}
+              initial={{ y: 40, opacity: 0.6 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 40, opacity: 0 }}
-              transition={{ type: 'spring', damping: 26, stiffness: 300 }}
               onClick={(e) => e.stopPropagation()}
+              className="relative max-h-[55vh] w-full rounded-t-3xl border-t border-white/10 bg-[#101013]/95 pb-[calc(env(safe-area-inset-bottom)+12px)] text-white backdrop-blur-2xl"
             >
-              <div className="flex items-center justify-between border-b border-white/[0.08] px-4 py-3">
-                <h2 className="text-sm font-semibold text-white">Viewers <span className="text-white/40">({formatNumber(viewerCount)})</span></h2>
-                <button type="button" onClick={() => setViewerPanelOpen(false)} aria-label="Close viewers" className="rounded-lg p-1 text-white/60 hover:bg-white/10 hover:text-white">
-                  <X size={17} />
-                </button>
+              <div className="mx-auto mb-1 mt-2 h-1 w-10 rounded-full bg-white/20" />
+              <div className="flex items-center justify-between px-4 py-2">
+                <h2 className="text-sm font-bold">Viewers <span className="text-white/40">({formatNumber(viewerCount)})</span></h2>
+                <button type="button" onClick={() => setSheet('none')} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full bg-white/[0.06] text-white/60"><X size={15} /></button>
               </div>
-              <div className="max-h-[52vh] overflow-y-auto p-2">
+              <div className="max-h-[42vh] overflow-y-auto px-2 pb-2">
                 {viewersList.length === 0 ? (
                   <p className="py-10 text-center text-sm text-white/40">No viewers yet.</p>
                 ) : (
@@ -1080,22 +862,103 @@ return (
                     <div key={`${v.id}-${v.username}`} className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-white/[0.04]">
                       <Avatar src={v.avatar} alt={v.username} size="sm" />
                       <span className="truncate text-sm text-white/90">{v.username}</span>
-                      {v.id === stream.host.id && (
-                        <span className="ml-auto rounded-full bg-[#D6A83F]/15 px-2 py-0.5 text-[10px] font-semibold text-[#F2C75C]">Host</span>
-                      )}
+                      {v.id === stream.host.id && <span className="ml-auto rounded-full bg-[#D6A83F]/15 px-2 py-0.5 text-[10px] font-semibold text-[#F2C75C]">Host</span>}
                     </div>
                   ))
                 )}
               </div>
             </motion.div>
-          </motion.div>
+          </div>
         )}
       </AnimatePresence>
+{/* Chat sheet */}
+      <AnimatePresence>
+        {sheet === 'chat' && (
+          <div className="absolute inset-0 z-[80] flex items-end" onClick={() => setSheet('none')}>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" />
+            <motion.div
+              initial={{ y: 60, opacity: 0.6 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 60, opacity: 0 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative flex h-[62vh] min-h-[320px] w-full flex-col rounded-t-3xl border-t border-white/10 bg-[#0d0d0f]/97 pb-[calc(env(safe-area-inset-bottom)+10px)] text-white backdrop-blur-2xl"
+            >
+              <div className="mx-auto mb-1 mt-2 h-1 w-10 rounded-full bg-white/20" />
+              <div className="flex items-center justify-between px-4 pb-2">
+                <h2 className="text-sm font-bold">Live chat {chatPaused && <span className="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-300">Paused</span>}</h2>
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => setSheet('viewers')} aria-label="Viewers" className="grid h-8 w-8 place-items-center rounded-full bg-white/[0.06] text-white/70"><Users size={15} /></button>
+                  <button type="button" onClick={() => setSheet('none')} aria-label="Close chat" className="grid h-8 w-8 place-items-center rounded-full bg-white/[0.06] text-white/70"><X size={15} /></button>
+                </div>
+              </div>
 
-      {/* Message action menu (viewer report) */}
+              <AnimatePresence>
+                {pinnedMessage && (
+                  <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} className="mx-3 mb-2 flex items-start gap-2 rounded-xl border border-[#D6A83F]/25 bg-black/55 px-3 py-2">
+                    <Pin size={13} className="mt-0.5 shrink-0 text-[#D6A83F]" />
+                    <div className="min-w-0 flex-1 text-[11px] leading-snug">
+                      <span className="font-semibold text-[#F2C75C]">{pinnedMessage.username || 'host'}</span>
+                      <span className="text-white/90"> {pinnedMessage.message}</span>
+                    </div>
+                    <button type="button" onClick={() => setPinnedMessage(null)} aria-label="Dismiss pinned message" className="shrink-0 text-white/50 hover:text-white"><X size={13} /></button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-2 [scrollbar-width:none]">
+                {messages.length === 0 ? (
+                  <p className="py-8 text-center text-xs text-white/40">No messages yet — say something!</p>
+                ) : (
+                  messages.map((m) =>
+                    m.kind === 'system' ? (
+                      <div key={m.id} className="my-1 flex justify-center">
+                        <span className="max-w-full truncate rounded-full bg-white/[0.05] px-2.5 py-1 text-[10.5px] text-white/55">{m.message}</span>
+                      </div>
+                    ) : (
+                      <div key={m.id} className="group mb-1.5 flex items-start gap-2 text-[12px] leading-snug">
+                        <Avatar src={m.user?.avatar} alt={m.user?.username || 'u'} size="xs" />
+                        <div className="min-w-0 flex-1">
+                          <span className="inline-flex items-center gap-1 font-semibold text-[#D6A83F]">
+                            {m.user?.username || 'user'}
+                            {m.user?.id === stream.host.id && <span className="rounded bg-[#D6A83F]/20 px-1 text-[8px] font-bold uppercase tracking-wide text-[#F2C75C]">Streamer</span>}
+                            {m.user?.verified && <VerificationBadge size="xs" />}
+                          </span>
+                          <span className="ml-1 break-words text-white/90">{m.message}</span>
+                        </div>
+                        <button type="button" onClick={() => setActionFor(m)} aria-label={`Report message from ${m.user?.username || 'user'}`} className="shrink-0 rounded p-0.5 text-white/0 transition hover:bg-white/10 hover:text-white/80 group-hover:text-white/45">
+                          <Flag size={11} />
+                        </button>
+                      </div>
+                    ),
+                  )
+                )}
+              </div>
+
+              <div className="mt-2 flex items-center gap-2 px-3">
+                <button type="button" onClick={() => sendReaction('❤️')} aria-label="Send heart" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-black/55 text-lg backdrop-blur-md transition active:scale-110">❤️</button>
+                <input
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') sendComment(); }}
+                  disabled={chatPaused}
+                  placeholder={chatPaused ? 'Chat is paused' : 'Say something…'}
+                  autoFocus
+                  aria-label="Comment"
+                  className="min-w-0 flex-1 rounded-full border border-white/12 bg-white/[0.05] px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/35 focus:border-[#D6A83F]/50"
+                />
+                <button type="button" onClick={sendComment} disabled={!comment.trim() || chatPaused} aria-label="Send comment" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#D6A83F] text-black transition active:scale-95 disabled:opacity-40">
+                  <Send size={16} />
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+{/* Report message dialog */}
       <AnimatePresence>
         {actionFor && (
-          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" onClick={() => setActionFor(null)}>
+          <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 p-4" onClick={() => setActionFor(null)}>
             <motion.div
               className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-[#161618] p-4"
               initial={{ opacity: 0, scale: 0.96 }}
@@ -1106,19 +969,10 @@ return (
               <p className="text-sm font-semibold text-white">Report this message?</p>
               <p className="mt-1 line-clamp-2 text-xs text-white/55">“{actionFor.message}”</p>
               <div className="mt-4 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActionFor(null)}
-                  className="h-10 flex-1 rounded-lg border border-white/[0.1] bg-white/[0.04] text-sm font-medium text-white transition hover:bg-white/[0.08]"
-                >
+                <button type="button" onClick={() => setActionFor(null)} className="h-10 flex-1 rounded-lg border border-white/[0.1] bg-white/[0.04] text-sm font-medium text-white transition hover:bg-white/[0.08]">
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void reportMessage(actionFor)}
-                  disabled={reportBusy}
-                  className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg bg-rose-500/90 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-50"
-                >
+                <button type="button" onClick={() => void reportMessage(actionFor)} disabled={reportBusy} className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg bg-rose-500/90 text-sm font-semibold text-white transition hover:bg-rose-500 disabled:opacity-50">
                   {reportBusy ? <Loader2 size={14} className="animate-spin" /> : <Flag size={14} />}
                   Report
                 </button>
@@ -1127,6 +981,128 @@ return (
           </div>
         )}
       </AnimatePresence>
+
+      {/* More sheet */}
+      <AnimatePresence>
+        {sheet === 'more' && (
+          <div className="absolute inset-0 z-[80] flex items-end" onClick={() => setSheet('none')}>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/55 backdrop-blur-[2px]" />
+            <motion.div
+              initial={{ y: 60, opacity: 0.6 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 60, opacity: 0 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative w-full rounded-t-3xl border-t border-white/10 bg-[#101013]/95 px-4 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-2 text-white shadow-2xl backdrop-blur-2xl"
+            >
+              <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-white/20" />
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold">More options</h2>
+                <button type="button" onClick={() => setSheet('none')} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full bg-white/[0.06] text-white/70"><X size={15} /></button>
+              </div>
+              <div className="mt-3 space-y-1.5">
+                {!isOwn && (
+                  <button type="button" onClick={() => void toggleFollow()} disabled={followBusy} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90 transition active:scale-[0.99]">
+                    <span className="grid h-9 w-9 place-items-center rounded-full bg-[#D6A83F]/15 text-[#F2C75C]"><Crown size={16} /></span>
+                    <span className="flex-1 text-left">
+                      <span className="block text-sm font-semibold">{following ? 'Leave Fan Club' : 'Join Fan Club'}</span>
+                      <span className="block text-[11px] text-white/50">Support {stream.host.username} with exclusive perks</span>
+                    </span>
+                  </button>
+                )}
+                {!isOwn && guestStatus === 'idle' && (
+                  <button type="button" onClick={requestToJoin} disabled={guestCapacity.count >= guestCapacity.limit} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90 transition active:scale-[0.99] disabled:opacity-50">
+                    <span className="grid h-9 w-9 place-items-center rounded-full border border-[#D6A83F]/40 bg-[#D6A83F]/10 text-[#F2C75C]"><Mic size={16} /></span>
+                    <span className="flex-1 text-left">
+                      <span className="block text-sm font-semibold">Join the live stage</span>
+                      <span className="block text-[11px] text-white/50">{guestCapacity.count >= guestCapacity.limit ? 'Guest stage is full' : 'Request to speak on camera with the host'}</span>
+                    </span>
+                  </button>
+                )}
+                {!isOwn && guestStatus === 'pending' && (
+                  <button type="button" onClick={cancelJoin} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90">
+                    <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-500/15 text-amber-300"><Loader2 size={16} className="animate-spin" /></span>
+                    <span className="flex-1 text-left text-sm font-semibold">Request sent — waiting for {stream.host.username}…</span>
+                  </button>
+                )}
+                {!isOwn && guestStatus === 'live' && (
+                  <button type="button" onClick={leaveStage} className="flex w-full items-center gap-3 rounded-2xl bg-rose-500/10 px-3 py-2.5 text-sm text-rose-300">
+                    <span className="grid h-9 w-9 place-items-center rounded-full bg-rose-500/15"><MicOff size={16} /></span>
+                    <span className="flex-1 text-left text-sm font-semibold">Leave the stage</span>
+                  </button>
+                )}
+<button type="button" onClick={() => setSheet('chat')} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90 transition active:scale-[0.99]">
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-white/70"><MessageCircle size={16} /></span>
+                  <span className="flex-1 text-left text-sm font-semibold">Open full chat</span>
+                </button>
+                <button type="button" onClick={() => setSheet('viewers')} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90 transition active:scale-[0.99]">
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-white/70"><Users size={16} /></span>
+                  <span className="flex-1 text-left text-sm font-semibold">Viewers ({formatNumber(viewerCount)})</span>
+                </button>
+                <button type="button" onClick={() => void shareLive()} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90 transition active:scale-[0.99]">
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-white/70"><Share2 size={16} /></span>
+                  <span className="flex-1 text-left text-sm font-semibold">Share this live</span>
+                </button>
+                <button type="button" onClick={() => router.push(`/profile/${stream.host.username}`)} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90 transition active:scale-[0.99]">
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-white/70"><UserPlus size={16} /></span>
+                  <span className="flex-1 text-left text-sm font-semibold">View {stream.host.username}’s profile</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Gift picker */}
+      <AnimatePresence>
+        {sheet === 'gift' && (
+          <GiftPickerBoundary onClose={closeGift}>
+            <GiftPicker
+              gifts={giftGifts}
+              balance={giftBalance}
+              recipient={{ id: stream.host.id, username: stream.host.username, avatar: stream.host.avatar || undefined }}
+              token={token}
+              streamId={streamId}
+              loading={giftLoading}
+              loadError={giftLoadError || undefined}
+              onRetry={() => void openGift()}
+              onClose={closeGift}
+              onSent={(sentBalance, sentAmount) => {
+                setGiftBalance(sentBalance);
+                closeGift();
+                toast.success('Gift sent!', `${stream.host.username} loved your gift (+${sentAmount} coins).`);
+              }}
+            />
+          </GiftPickerBoundary>
+        )}
+      </AnimatePresence>
     </main>
+  );
+}
+
+/* -------------------------------------------------------------------------
+ * Small presentational helpers
+ * ------------------------------------------------------------------------- */
+function RailButton({ onPress, label, badge, active, children }: { onPress: () => void; label: string; badge?: number; active?: boolean; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <button
+        type="button"
+        onClick={onPress}
+        aria-label={label}
+        className={cn(
+          'relative grid h-12 w-12 place-items-center rounded-full border shadow-lg backdrop-blur-md transition active:scale-95',
+          active ? 'border-[#D6A83F]/60 bg-[#D6A83F]/25 text-white' : 'border-white/15 bg-black/45 text-white/90 hover:bg-black/60',
+        )}
+      >
+        {children}
+        {!!badge && badge > 0 && (
+          <span className="absolute -right-0.5 -top-0.5 grid h-5 min-w-[18px] place-items-center rounded-full bg-[#D6A83F] px-1 text-[9px] font-extrabold text-black tabular-nums">
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )}
+      </button>
+      <span className="text-[9px] font-semibold uppercase tracking-wide text-white/75 drop-shadow">{label}</span>
+    </div>
   );
 }

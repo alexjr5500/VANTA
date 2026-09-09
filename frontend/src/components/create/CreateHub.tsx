@@ -105,7 +105,7 @@ export default function CreateHub({ open, onClose }: CreateHubProps) {
       case 'livestream':
         // Open the same LIVE Studio flow the "Go Live" button on the /live
         // page uses (reached from the menu). All Go Live entries stay in sync.
-        router.push('/live/studio');
+        router.push('/live/go-live');
         break;
       case 'fundraiser':
         if (fundraiserAllowed) router.push('/give/start');

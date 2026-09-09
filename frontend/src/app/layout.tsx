@@ -90,6 +90,9 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: "#050505",
+  // Cover the whole Android screen (including the status-bar cutout) so the
+  // Go-Live camera and Live room can draw edge-to-edge behind the system UI.
+  viewportFit: "cover",
 };
 
 export default async function RootLayout({
