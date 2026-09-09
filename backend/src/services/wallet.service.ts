@@ -4,6 +4,7 @@ import { notificationService } from "./notification.service";
 import * as crypto from "crypto";
 import * as bcrypt from "bcryptjs";
 import { calculateTransferFee, coinsToUsd, VANTA_COINS_PER_USD, WITHDRAWAL_FEE_RATE, MIN_WITHDRAWAL_AMOUNT } from "../config/wallet.config";
+import { COIN_PAYMENT_ORDER_TTL_SECONDS, isCoinPaymentTestMode, verifyCoinPaymentSimulateToken } from "../config/coin-payments.config";
 
 // ============================================================================
 // TRANSACTION TYPE CONSTANTS
@@ -354,6 +355,155 @@ export class WalletService {
     );
 
     return result.updatedWallet;
+  }
+
+  // ============================================================
+  // COIN PURCHASE COMPLETION (atomic, idempotent)
+  // ============================================================
+
+  /**
+   * Completes a coin purchase order and credits the buyer's wallet exactly once.
+   *
+   * This is the single path that turns a confirmed payment into coins:
+   *  - `mode === 'test'`: the backend's test payment gateway confirms a
+   *    *simulated* payment. The caller must present the order's HMAC simulate
+   *    token (issued at order-initialization time). Test mode is blocked in
+   *    production (see config/coin-payments.config.ts).
+   *  - other modes: callers should only invoke this after the payment provider
+   *    has independently verified the payment (webhook); the method itself stays
+   *    provider-agnostic.
+   *
+   * The completion is guarded by a conditional UPDATE (`status: 'PENDING'`), so
+   * a repeated webhook/callback or a double-tap on "complete payment" can never
+   * credit the same order twice.
+   */
+  async completeCoinPurchase(
+    userId: string,
+    orderId: string,
+    options: {
+      mode: string;
+      simulateToken?: string;
+      ipAddress?: string;
+    } = { mode: "live" }
+  ) {
+    const order = await prisma.purchaseOrder.findFirst({ where: { id: orderId, userId } });
+    if (!order) throw new Error("Purchase order not found.");
+    if (order.status === "COMPLETED") {
+      // Idempotent replay — already credited, return the existing result.
+      return { order, coins: order.coins, alreadyCompleted: true };
+    }
+    if (order.status !== "PENDING") {
+      throw new Error(`This purchase order cannot be completed (status: ${order.status}).`);
+    }
+    if (COIN_PAYMENT_ORDER_TTL_SECONDS > 0) {
+      const createdAt = new Date(order.createdAt).getTime();
+      if (Date.now() - createdAt > COIN_PAYMENT_ORDER_TTL_SECONDS * 1000) {
+        throw new Error("This payment session has expired. Please start a new purchase.");
+      }
+    }
+
+    if (options.mode === "test") {
+      // A production deployment can never be in test mode, and the client must
+      // present the token the backend signed when the order was created.
+      if (!isCoinPaymentTestMode()) {
+        throw new Error("Test payment mode is disabled in this environment.");
+      }
+      if (!(options.simulateToken && verifyCoinPaymentSimulateToken(order, options.simulateToken))) {
+        throw new Error("Invalid test payment confirmation. Please start a new purchase.");
+      }
+    }
+
+    const wallet = await this.ensureWallet(userId);
+    if (wallet.isFrozen) {
+      throw new Error("Wallet is frozen. Contact support.");
+    }
+
+    const providerOrderId = `${options.mode}:${orderId}`;
+
+    // Conditional status flip makes the completion idempotent under concurrency:
+    // a second request finds 0 rows updated and cannot credit twice.
+    const result = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.purchaseOrder.updateMany({
+        where: { id: orderId, userId, status: "PENDING" },
+        data: {
+          status: "COMPLETED",
+          providerOrderId,
+          paymentMethod: order.paymentMethod,
+        },
+      });
+
+      if (claimed.count === 0) {
+        const current = await tx.purchaseOrder.findUnique({ where: { id: orderId } });
+        if (current?.status === "COMPLETED") return null;
+        throw new Error("This purchase order was already processed.");
+      }
+
+      const updatedWallet = await tx.wallet.update({
+        where: { userId },
+        data: {
+          coinBalance: { increment: order.coins },
+          totalCoinsPurchased: { increment: order.coins },
+        },
+      });
+
+      await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          userId,
+          type: TX_TYPES.PURCHASE,
+          amount: order.coins,
+          fee: 0,
+          balance: updatedWallet.coinBalance,
+          status: "COMPLETED",
+          description: `Purchased ${order.coins.toLocaleString()} VANTA Coins for $${order.amount.toFixed(2)}`,
+          reference: orderId,
+          metadata: JSON.stringify({
+            paymentMethod: order.paymentMethod,
+            provider: order.provider,
+            mode: options.mode,
+            providerOrderId,
+          }),
+        },
+      });
+
+      await tx.walletAuditLog.create({
+        data: {
+          userId,
+          action: "COIN_PURCHASE_COMPLETED",
+          details: JSON.stringify({
+            orderId,
+            amount: order.amount,
+            coins: order.coins,
+            mode: options.mode,
+            ipAddress: options.ipAddress,
+          }),
+          ipAddress: options.ipAddress,
+        },
+      });
+
+      return { updatedWallet, order: { ...order, status: "COMPLETED" } };
+    });
+
+    if (result === null) {
+      const existing = await prisma.purchaseOrder.findUnique({ where: { id: orderId } });
+      return { order: existing || order, coins: order.coins, alreadyCompleted: true };
+    }
+
+    // Notification runs outside the transaction — a notification failure must
+    // never roll back a successful, idempotently-completed purchase.
+    try {
+      await notificationService.createNotification(
+        userId,
+        "WALLET_DEPOSIT",
+        "Deposit Successful",
+        `${order.coins.toLocaleString()} VANTA Coins have been added to your Balance.`,
+        { coins: order.coins, amount: order.amount }
+      );
+    } catch {
+      // Ignore: the purchase itself already succeeded.
+    }
+
+    return { order: result.order, coins: order.coins, wallet: result.updatedWallet, alreadyCompleted: false };
   }
 
   // ============================================================

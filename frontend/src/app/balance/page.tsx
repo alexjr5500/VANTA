@@ -280,11 +280,14 @@ export default function BalancePage() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="mx-auto min-h-[calc(100dvh-5rem)] w-full min-w-0 space-y-3 overflow-x-hidden pb-[calc(5rem+env(safe-area-inset-bottom))]"
+      className="mx-auto min-h-[calc(100dvh-5rem)] w-full min-w-0 space-y-3 pb-[calc(5rem+env(safe-area-inset-bottom))]"
     >
-      {/* Header */}
+      {/* Header — sticky: stays fixed at the top while the balance and transaction
+          content scroll beneath it. Matches the canonical VANTA sticky header
+          styling (blur surface + mobile safe-area inset). */}
       <PageHeader
         back
+        sticky
         title="Balance"
         eyebrow="VANTA"
         actions={

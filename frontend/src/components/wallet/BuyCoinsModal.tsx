@@ -77,6 +77,11 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
   const [paymentAddress, setPaymentAddress] = useState<string>('');
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [orderId, setOrderId] = useState<string>('');
+  // Payment mode returned by the backend at order initialization:
+  // 'test' = sandbox payment gateway (no real money, simulate token required),
+  // 'live' = real crypto payment (client tx hash is never proof of payment).
+  const [paymentMode, setPaymentMode] = useState<string>('');
+  const [simulateToken, setSimulateToken] = useState<string>('');
 
   // Fetch packages from backend
   useEffect(() => {
@@ -87,6 +92,8 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
     setSelectedPackage(null);
     setSelectedNetwork(null);
     setOrderId('');
+    setPaymentMode('');
+    setSimulateToken('');
     
     apiGet<any>('/api/wallets/packages', token)
       .then(data => {
@@ -116,9 +123,14 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
   const handleSelectNetwork = async (network: PaymentNetwork) => {
     setSelectedNetwork(network);
     setError(null);
-    
+
     if (!token || !selectedPackage) return;
-    
+
+    setPaymentAddress('');
+    setOrderId('');
+    setPaymentMode('');
+    setSimulateToken('');
+
     try {
       const data = await apiPost<any>('/api/wallets/payment-address', {
         packageId: selectedPackage.id,
@@ -129,10 +141,14 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
       if (!data?.address || !data?.orderId) throw new Error('The payment provider did not return complete payment details.');
       setPaymentAddress(data.address);
       setOrderId(data.orderId);
+      setPaymentMode(data.mode);
+      setSimulateToken(data.simulateToken || '');
     } catch (err: any) {
       setSelectedNetwork(null);
       setPaymentAddress('');
       setOrderId('');
+      setPaymentMode('');
+      setSimulateToken('');
       setError(err?.message || 'This payment network is temporarily unavailable. Choose another network or try again.');
     }
   };
@@ -146,15 +162,27 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
   };
 
   const handleConfirmPayment = async () => {
-    if (!token || !selectedPackage || !selectedNetwork || !orderId || !txHash?.trim()) return;
+    const isTestMode = paymentMode === 'test';
+    if (!token || !selectedPackage || !selectedNetwork || !orderId) return;
+    const enteredTxHash = txHash?.trim() || '';
+    // Live mode still requires a real transaction hash from the user.
+    if (!isTestMode && !enteredTxHash) return;
+
     setConfirming(true);
     setError(null);
     setStep('confirming');
-    
+
+    // In test/sandbox mode the backend's test payment gateway is confirming a
+    // *simulated* payment signed with the HMAC simulate token it issued when
+    // this order was created. No real money moves.
+    const effectiveTxHash = isTestMode && !enteredTxHash ? `0xTEST-${orderId}-${Date.now()}` : enteredTxHash;
+
     try {
       const result = await apiPost<any>('/api/wallets/verify-payment', {
         orderId,
-        txHash: txHash.trim(),
+        txHash: effectiveTxHash,
+        testConfirmation: isTestMode,
+        simulateToken: isTestMode ? simulateToken : undefined,
       }, token);
 
       if (!result?.success) {
@@ -163,7 +191,7 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
         return;
       }
       setStep('success');
-      
+
       if (onSuccess) {
         onSuccess(selectedPackage.coins + (selectedPackage.bonusCoins || 0));
       }
@@ -182,6 +210,8 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
     setError(null);
     setTxHash(null);
     setOrderId('');
+    setPaymentMode('');
+    setSimulateToken('');
     setConfirming(false);
     onClose();
   };
@@ -374,20 +404,60 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
                         </div>
                       </div>
 
-                      {/* Transaction Hash Input */}
-                      <div>
-                        <p className="text-[10px] text-white/30 mb-1.5">Transaction Hash (after sending):</p>
-                        <input
-                          value={txHash || ''}
-                          onChange={e => setTxHash(e.target.value)}
-                          placeholder="0x..."
-                          className="w-full rounded-xl border border-white/[0.06] bg-black/40 px-3 py-2.5 text-xs text-white placeholder-gray-600 font-mono outline-none focus:border-emerald-500/30 transition-all"
-                        />
-                      </div>
+                      {/* Payment mode banner */}
+                      {paymentMode === 'test' && (
+                        <div className="flex items-start gap-2 rounded-xl border border-amber-400/25 bg-amber-400/[0.08] px-3 py-2.5 text-[11px] text-amber-300">
+                          <Shield size={12} className="shrink-0 mt-0.5" />
+                          <span>
+                            <strong className="font-semibold">Test payment mode.</strong>{' '}
+                            No real money is involved — this is a sandbox payment
+                            for development. The address above is a placeholder.
+                            Complete the <em>simulated</em> payment below to test
+                            the purchase flow end-to-end.
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Transaction Hash Input (live payments only) */}
+                      {paymentMode !== 'test' && (
+                        <div>
+                          <p className="text-[10px] text-white/30 mb-1.5">Transaction Hash (after sending):</p>
+                          <input
+                            value={txHash || ''}
+                            onChange={e => setTxHash(e.target.value)}
+                            placeholder="0x..."
+                            className="w-full rounded-xl border border-white/[0.06] bg-black/40 px-3 py-2.5 text-xs text-white placeholder-gray-600 font-mono outline-none focus:border-emerald-500/30 transition-all"
+                          />
+                        </div>
+                      )}
+
+                      {/* Simulate payment (test mode only) */}
+                      {paymentMode === 'test' && (
+                        <motion.button
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          onClick={handleConfirmPayment}
+                          disabled={confirming}
+                          whileTap={{ scale: 0.97 }}
+                          className={cn(
+                            'w-full flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold transition-all',
+                            !confirming
+                              ? 'bg-emerald-500/15 border border-emerald-500/25 text-emerald-300'
+                              : 'bg-white/[0.05] text-gray-500 cursor-not-allowed'
+                          )}
+                        >
+                          {confirming ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                          {confirming ? 'Completing simulated payment…' : 'Simulate successful payment'}
+                        </motion.button>
+                      )}
 
                       <div className="flex items-start gap-2 text-[10px] text-white/30">
                         <AlertCircle size={10} className="shrink-0 mt-0.5" />
-                        <p>Send exactly ${paymentAmount.toFixed(2)} worth of {selectedNetwork.token} on {selectedNetwork.network}. Your coins will be credited automatically after confirmation.</p>
+                        <p>
+                          {paymentMode === 'test'
+                            ? 'This simulated payment is verified by the VANTA test gateway and credits test coins to your Balance. No crypto is sent.'
+                            : `Send exactly ${paymentAmount.toFixed(2)} worth of ${selectedNetwork.token} on ${selectedNetwork.network}. Your coins will be credited automatically after confirmation.`}
+                        </p>
                       </div>
                     </motion.div>
                   )}
@@ -411,13 +481,17 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
                   >
                      <Loader2 size={28} className="text-[var(--vanta-gold)]" />
                   </motion.div>
-                  <h3 className="text-lg font-bold text-white mb-2">Verifying Transaction</h3>
+                  <h3 className="text-lg font-bold text-white mb-2">
+                    {paymentMode === 'test' ? 'Verifying Simulated Payment' : 'Verifying Transaction'}
+                  </h3>
                   <p className="text-sm text-white/40 max-w-xs">
-                    Please wait while we confirm your payment on the blockchain. This usually takes 1-3 minutes.
+                    {paymentMode === 'test'
+                    ? 'Please wait while the test gateway confirms your simulated payment. This usually takes a moment.'
+                    : 'Please wait while we confirm your payment on the blockchain. This usually takes 1-3 minutes.'}
                   </p>
                   <div className="mt-6 flex items-center gap-2 text-xs text-white/30">
                     <Shield size={12} />
-                    Secured by blockchain
+                    {paymentMode === 'test' ? 'Test environment — no real funds involved' : 'Secured by blockchain'}
                   </div>
                 </div>
               )}
@@ -457,7 +531,7 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
                     {selectedPackage?.coins.toLocaleString()} VANTA
                     {selectedPackage?.bonusCoins ? ` + ${selectedPackage.bonusCoins} bonus` : ''} have been added to your wallet.
                   </motion.p>
-                  {txHash && (
+                  {txHash && paymentMode !== 'test' && (
                     <motion.a
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -492,11 +566,11 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
                   </button>
                   <motion.button
                     onClick={handleConfirmPayment}
-                    disabled={confirming || !txHash}
+                    disabled={confirming || (paymentMode !== 'test' && !txHash)}
                     whileTap={{ scale: 0.97 }}
                     className={cn(
                       'flex-1 flex items-center justify-center gap-2 rounded-2xl py-2.5 text-sm font-bold transition-all',
-                      !confirming && txHash
+                      !confirming && (paymentMode === 'test' || txHash)
                          ? 'bg-[var(--vanta-gold)] text-black'
                         : 'bg-white/[0.05] text-gray-500 cursor-not-allowed'
                     )}
@@ -506,7 +580,7 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
                     ) : (
                       <>
                         <Check size={14} />
-                        Confirm Payment
+                        {paymentMode === 'test' ? 'Simulate Successful Payment' : 'Confirm Payment'}
                       </>
                     )}
                   </motion.button>
