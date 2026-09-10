@@ -1,6 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  applyContinuousAutofocus,
+  describeCapture,
+  pickPrimaryCamera,
+  pickVideoConstraints,
+} from '@/lib/cameraCapture';
 
 /**
  * useLiveCamera
@@ -35,13 +41,6 @@ export interface LiveCameraError {
 }
 
 export type PermissionState = 'prompt' | 'granted' | 'denied' | 'unavailable';
-
-const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
-  width: { ideal: 1280 },
-  height: { ideal: 720 },
-  frameRate: { ideal: 30 },
-  facingMode: 'user',
-};
 
 const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: true,
@@ -95,6 +94,7 @@ export function useLiveCamera() {
   const [error, setError] = useState<LiveCameraError | null>(null);
   const [loading, setLoading] = useState(false);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [captureInfo, setCaptureInfo] = useState<string>('');
 
   const streamRef = useRef<MediaStream | null>(null);
   const loadingRef = useRef(false);
@@ -134,6 +134,7 @@ export function useLiveCamera() {
       const facing = videoTrack.getSettings?.().facingMode;
       if (facing === 'environment' || facing === 'back') setIsFrontCamera(false);
       else if (facing === 'user' || facing === 'front') setIsFrontCamera(true);
+      setCaptureInfo(describeCapture(videoTrack));
     }
     void fetchCameras();
   }, [fetchCameras]);
@@ -148,7 +149,15 @@ export function useLiveCamera() {
       throw guard;
     }
     try {
-      const videoStream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONSTRAINTS });
+      // Wait for the device list so we can read MediaTrackCapabilities and
+      // request the highest resolution the camera hardware actually supports
+      // (up to 1080p) instead of a hard-coded 720p capture.
+      const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+      const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
+      const input = pickPrimaryCamera(videoInputs);
+      const constraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
+
+      const videoStream = await navigator.mediaDevices.getUserMedia({ video: constraints });
       const videoTrack = videoStream.getVideoTracks()[0];
       if (!videoTrack || videoTrack.readyState !== 'live') {
         videoStream.getTracks().forEach((t) => t.stop());
@@ -156,8 +165,12 @@ export function useLiveCamera() {
         setError(e);
         throw e;
       }
+      // Enable REAL continuous autofocus/exposure/white-balance where the
+      // browser exposes them (not CSS sharpening).
+      await applyContinuousAutofocus(videoTrack);
       setCameraPerm('granted');
       setError(null);
+      setCaptureInfo(describeCapture(videoTrack));
       return videoStream;
     } catch (err) {
       const mapped = mapError(err, 'camera');
@@ -256,8 +269,9 @@ export function useLiveCamera() {
     if (list.length < 2) return false;
     const next = list.find((d) => d.deviceId && d.deviceId !== currentDeviceId) || list[list.length - 1];
     try {
+      const constraints = pickVideoConstraints(next, { deviceId: next.deviceId, forceFacingMode: null });
       const replacement = await navigator.mediaDevices.getUserMedia({
-        video: { ...VIDEO_CONSTRAINTS, deviceId: { exact: next.deviceId } },
+        video: constraints,
         audio: false,
       });
       const newTrack = replacement.getVideoTracks()[0];
@@ -265,6 +279,7 @@ export function useLiveCamera() {
         replacement.getTracks().forEach((t) => t.stop());
         return false;
       }
+      await applyContinuousAutofocus(newTrack);
       if (currentTrack) {
         streamRef.current.removeTrack(currentTrack);
         currentTrack.stop();
@@ -273,6 +288,7 @@ export function useLiveCamera() {
       setStream(new MediaStream(streamRef.current.getTracks()));
       const facing = newTrack.getSettings?.().facingMode;
       setIsFrontCamera(facing === 'user' || facing === 'front');
+      setCaptureInfo(describeCapture(newTrack));
       return true;
     } catch {
       return false;
@@ -317,6 +333,7 @@ export function useLiveCamera() {
     micPerm,
     error,
     loading,
+    captureInfo,
     cameras,
     startPreview,
     addMicrophone,

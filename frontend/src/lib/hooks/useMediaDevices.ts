@@ -1,6 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  applyContinuousAutofocus,
+  pickPrimaryCamera,
+  pickVideoConstraints,
+} from '@/lib/cameraCapture';
 
 export interface MediaDeviceInfo {
   deviceId: string;
@@ -101,13 +106,16 @@ export function useMediaDevices(): UseMediaDevicesReturn {
         throw new Error('Your browser does not support camera and microphone access');
       }
 
-      // Request permissions and get stream
+      // Request permissions and get stream. Use capability-aware constraints so
+      // the camera is captured at the highest supported resolution (up to 1080p)
+      // instead of a hard-coded 720p, and continuous autofocus is requested.
+      const enumerated = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+      const videoInputs = enumerated.filter((d) => d.kind === 'videoinput');
+      const input = pickPrimaryCamera(videoInputs);
+      const videoConstraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
+
       const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: 'user',
-        },
+        video: videoConstraints,
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -133,6 +141,8 @@ export function useMediaDevices(): UseMediaDevicesReturn {
       }
       videoTrack.enabled = true;
       audioTrack.enabled = true;
+      // Enable REAL continuous autofocus/exposure/white-balance where supported.
+      await applyContinuousAutofocus(videoTrack);
       setStream(mediaStream);
       setIsVideoOn(videoTrack.enabled);
       setIsAudioOn(audioTrack.enabled);
@@ -223,8 +233,12 @@ export function useMediaDevices(): UseMediaDevicesReturn {
     if (!streamRef.current) return;
     
     try {
+      const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+      const targetDevice = devices.find((d) => d.kind === 'videoinput' && d.deviceId === deviceId);
+      const constraints = pickVideoConstraints(targetDevice, { deviceId, forceFacingMode: null });
+
       const newStream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: constraints,
         audio: false,
       });
 
@@ -238,7 +252,9 @@ export function useMediaDevices(): UseMediaDevicesReturn {
 
       streamRef.current.addTrack(newVideoTrack);
       currentVideoDeviceId.current = deviceId;
-      
+
+      await applyContinuousAutofocus(newVideoTrack);
+
       // Update the stream state to trigger re-render
       setStream(new MediaStream([...streamRef.current.getTracks()]));
     } catch (err) {

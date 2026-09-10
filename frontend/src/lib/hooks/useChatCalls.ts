@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Socket } from 'socket.io-client';
 import { apiPost } from '@/lib/apiClient';
 import type { AuthUser } from '@/lib/authApi';
+import { applyContinuousAutofocus, pickPrimaryCamera, pickVideoConstraints } from '@/lib/cameraCapture';
 
 // ============================================================================
 // VANTA private 1-to-1 voice/video calling
@@ -385,10 +386,17 @@ const startCall = useCallback(async (type: CallType) => {
 
     let stream: MediaStream;
     try {
+      const devices = type === 'video'
+        ? await navigator.mediaDevices.enumerateDevices().catch(() => [])
+        : [];
+      const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
+      const input = pickPrimaryCamera(videoInputs);
+      const videoConstraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: type === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
+        video: type === 'video' ? videoConstraints : false,
       });
+      if (type === 'video') await applyContinuousAutofocus(stream.getVideoTracks()[0]);
     } catch (mediaError) {
       setPermissionError(readPermissionError(mediaError));
       updateStatus('idle');
@@ -467,10 +475,17 @@ const startCall = useCallback(async (type: CallType) => {
 
     let stream: MediaStream;
     try {
+      const devices = session.type === 'video'
+        ? await navigator.mediaDevices.enumerateDevices().catch(() => [])
+        : [];
+      const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
+      const input = pickPrimaryCamera(videoInputs);
+      const videoConstraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: session.type === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
+        video: session.type === 'video' ? videoConstraints : false,
       });
+      if (session.type === 'video') await applyContinuousAutofocus(stream.getVideoTracks()[0]);
     } catch (mediaError) {
       setPermissionError(readPermissionError(mediaError));
       return;

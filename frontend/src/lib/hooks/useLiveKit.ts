@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Room, RoomEvent, RemoteParticipant, LocalParticipant, ConnectionState, VideoPresets } from 'livekit-client';
+import { Room, RoomEvent, RemoteParticipant, LocalParticipant, ConnectionState, VideoPresets, Track, type VideoCaptureOptions, type TrackPublishOptions } from 'livekit-client';
 import { apiGet } from '@/lib/apiClient';
+import { applyContinuousAutofocus } from '@/lib/cameraCapture';
 
 interface UseLiveKitOptions {
   token?: string;
@@ -73,16 +74,30 @@ export function useLiveKit(options: UseLiveKitOptions = {}): UseLiveKitReturn {
     try {
       // Create new room if needed
       if (!roomRef.current) {
+        // Camera tracks are published by re-acquiring the same hardware the
+        // preview used. `videoCaptureDefaults` must NOT cap at 720p: passing
+        // 1080p as an `ideal` keeps the published track at the device's native
+        // resolution while still falling back gracefully on weak webcams.
         const newRoom = new Room({
           adaptiveStream: true,
           dynacast: true,
           videoCaptureDefaults: {
-            resolution: VideoPresets.h720.resolution,
+            resolution: VideoPresets.h1080.resolution,
+            facingMode: 'user',
           },
           audioCaptureDefaults: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
+          },
+          publishDefaults: {
+            // Full bitrate for the primary layer; LiveKit's congestion control
+            // still adapts on weak links. `degradationPreference` keeps the
+            // encoder at the captured resolution (drops frames instead of
+            // blurring/downscaling) when bandwidth tightens.
+            videoEncoding: VideoPresets.h1080.encoding,
+            degradationPreference: 'maintain-resolution',
+            simulcast: true,
           },
         });
 
@@ -198,21 +213,68 @@ export function useLiveKit(options: UseLiveKitOptions = {}): UseLiveKitReturn {
         if (publish.camera && (!previewVideo || previewVideo.readyState !== 'live')) throw new Error('Camera track is not live');
         if (publish.microphone && (!previewAudio || previewAudio.readyState !== 'live')) throw new Error('Microphone track is not live');
 
+        // Build capture options from the PREVIEW track's actual device/resolution.
+        // This is what actually preserves the camera the user chose (deviceId)
+        // AND the captured resolution through publish — LiveKit would otherwise
+        // re-acquire the default front camera at 720p.
+        let cameraCaptureOptions: VideoCaptureOptions | undefined;
+        if (publish.camera && previewVideo) {
+          const settings = typeof previewVideo.getSettings === 'function' ? previewVideo.getSettings() : null;
+          const deviceId = publish.cameraDeviceId ?? settings?.deviceId;
+          // Prefer the dimensions the preview is actually capturing at; fall
+          // back to a 1080p ideal so weak webcams still publish sharply.
+          cameraCaptureOptions = {
+            deviceId: deviceId ? { ideal: deviceId } : undefined,
+            facingMode:
+              settings?.facingMode === 'environment'
+                ? 'environment'
+                : settings?.facingMode === 'user'
+                  ? 'user'
+                  : undefined,
+            resolution: {
+              width: settings?.width ?? VideoPresets.h1080.resolution.width,
+              height: settings?.height ?? VideoPresets.h1080.resolution.height,
+              frameRate: settings?.frameRate ?? VideoPresets.h1080.resolution.frameRate,
+            },
+          };
+        }
+
+        const publishOptions: TrackPublishOptions = {
+          videoEncoding: VideoPresets.h1080.encoding,
+          degradationPreference: 'maintain-resolution',
+          simulcast: true,
+        };
+
         // LiveKit acquires the same selected hardware after the verified preview
         // tracks are released. This avoids two simultaneous captures of one camera.
         publish.mediaStream?.getTracks().forEach(track => track.stop());
-        await Promise.all([
-          roomRef.current.localParticipant.setCameraEnabled(
-            publish.camera,
-            publish.cameraDeviceId ? { deviceId: publish.cameraDeviceId } : undefined
-          ),
+        const [cameraPub] = await Promise.all([
+          publish.camera
+            ? roomRef.current.localParticipant.setCameraEnabled(true, cameraCaptureOptions, publishOptions)
+            : Promise.resolve(undefined),
           roomRef.current.localParticipant.setMicrophoneEnabled(
             publish.microphone,
             publish.microphoneDeviceId ? { deviceId: publish.microphoneDeviceId } : undefined
           ),
         ]);
 
-        if (publish.camera && !roomRef.current.localParticipant.isCameraEnabled) throw new Error('Camera was not published');
+        if (publish.camera) {
+          let pub = cameraPub;
+          if (!pub) {
+            // find the camera publication (setCameraEnabled may resolve before
+            // the publication is observable through isCameraEnabled).
+            for (const publication of roomRef.current.localParticipant.videoTrackPublications.values()) {
+              if (publication.source === Track.Source.Camera) { pub = publication; break; }
+            }
+          }
+          const mt = pub?.track?.mediaStreamTrack;
+          if (!mt || mt.readyState !== 'live') throw new Error('Camera was not published');
+          if (typeof mt.getSettings === 'function') {
+            const settings = mt.getSettings();
+            console.info('[LiveKit] published camera at', settings.width, 'x', settings.height, 'fps', settings.frameRate);
+          }
+          await applyContinuousAutofocus(mt);
+        }
         if (publish.microphone && !roomRef.current.localParticipant.isMicrophoneEnabled) throw new Error('Microphone was not published');
       }
       

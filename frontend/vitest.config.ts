@@ -8,6 +8,9 @@ export default defineConfig({
     // install jsdom and switch this to "jsdom" (or annotate the file with
     // `// @vitest-environment jsdom`).
     environment: "node",
+    // The default thread pool hangs under Node ≥20 on Windows, so fork each
+    // test file in a subprocess (also isolates files from each other).
+    pool: "forks",
     globals: true,
     setupFiles: ["./src/__tests__/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],

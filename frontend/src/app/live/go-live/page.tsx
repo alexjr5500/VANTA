@@ -408,11 +408,15 @@ export default function GoLivePage() {
       // LiveKit acquires the same hardware the preview used and stops the
       // preview tracks, so the on-screen source becomes the published room feed.
       // `connect` resolves only after the room connected AND (if requested) the
-      // camera/mic channels were verified as published â€” a failed connection or
+      // camera/mic channels were verified as published — a failed connection or
       // a missing track throws inside the hook.
+      const previewDeviceId = videoTrack?.getSettings?.().deviceId;
       await lk.connect(hostToken, created.liveKitRoom, {
         camera: cam.isVideoOn,
         microphone: !!audioTrack && cam.isAudioOn,
+        // Pass the ACTUAL preview device so LiveKit re-acquires the same camera
+        // (front/rear) the user selected instead of the default front camera.
+        cameraDeviceId: previewDeviceId || undefined,
         mediaStream: state || undefined,
       });
 
