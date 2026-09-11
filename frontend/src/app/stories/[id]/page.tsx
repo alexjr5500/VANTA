@@ -618,7 +618,7 @@ const creator = current.group.user || {};
       </div>
 
       {/* Header */}
-      <header className="absolute inset-x-0 top-0 z-10 flex items-center gap-3 p-4 pt-[max(2rem,calc(env(safe-area-inset-top)+0.75rem))]">
+      <header className="absolute inset-x-0 top-0 z-10 flex items-center gap-3 px-4 pb-4 pt-[max(1.25rem,calc(env(safe-area-inset-top)+1.25rem))]">
         <button type="button" onClick={() => router.replace('/home')} aria-label="Back" className="grid h-11 w-11 place-items-center rounded-full bg-black/45 backdrop-blur"><ArrowLeft size={20}/></button>
         <Avatar src={creator.avatar} alt={creator.username || 'Story owner'} size="sm"/>
         <div className="min-w-0">

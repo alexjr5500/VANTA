@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Hash, MessageCircle, Plus, Search, Users } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
-import { cn } from '@/lib/utils';
 
 interface MessagesCreateButtonProps {
   search: string;
@@ -40,33 +39,27 @@ export default function MessagesCreateButton({
   };
 
   return (
-    <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        className={cn(
-          'flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition',
-          open
-            ? 'border-white/20 bg-white/10 text-white'
-            : 'border-white bg-[#f5f5f5] text-black hover:bg-white'
-        )}
-        aria-label={open ? 'Close new chat menu' : 'New chat'}
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        <Plus size={15} /><span className="hidden ">New Chat</span>
-      </button>
-
+    <div ref={rootRef} className="fixed bottom-[max(4.75rem,calc(env(safe-area-inset-bottom)+4rem))] right-4 z-50">
       <AnimatePresence>
         {open && (
-          <motion.div
-            role="menu"
-            initial={{ opacity: 0, scale: 0.96, y: -6 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: -6 }}
-            transition={{ duration: 0.16 }}
-            className="absolute right-0 top-12 z-50 w-[min(18rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-white/[0.08] bg-[#101010]/95 shadow-2xl backdrop-blur-2xl"
-          >
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-40 bg-black/40"
+              onClick={() => setOpen(false)}
+            />
+
+            <motion.div
+              role="menu"
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ duration: 0.16 }}
+              className="absolute right-0 bottom-16 z-50 w-[min(18rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-white/[0.08] bg-[#101010]/95 shadow-2xl backdrop-blur-2xl"
+            >
             <div className="border-b border-white/[0.06] p-3">
               <div className="mb-2 flex items-center gap-2 px-1">
                 <MessageCircle size={14} className="text-white/60" />
@@ -126,8 +119,30 @@ export default function MessagesCreateButton({
               </button>
             </div>
           </motion.div>
+          </>
         )}
       </AnimatePresence>
+
+      {/* Main FAB Button */}
+      <motion.button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.9 }}
+        className="relative z-50 grid h-14 w-14 place-items-center rounded-full bg-gradient-to-br from-[#f2c75c] via-[#d6a83f] to-[#a8842c] text-black shadow-[0_12px_28px_rgba(0,0,0,.45)] transition-transform"
+        aria-label={open ? 'Close new chat menu' : 'New chat'}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <motion.span
+          animate={{ rotate: open ? 45 : 0 }}
+          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        >
+          <Plus size={26} strokeWidth={2.5} />
+        </motion.span>
+      </motion.button>
     </div>
   );
 }
