@@ -9,12 +9,15 @@
 
 import { PrismaClient } from '@prisma/client';
 import argon2 from 'argon2';
+import {
+  ADMIN_EMAIL,
+  ADMIN_USERNAME,
+  resolveAdminPassword,
+} from './admin-credentials';
 
 const prisma = new PrismaClient();
 
-const ADMIN_EMAIL = 'ceo@vanta.app';
-const ADMIN_USERNAME = 'CEO';
-const ADMIN_PASSWORD = '2388562Ceo$';
+const ADMIN_PASSWORD = resolveAdminPassword();
 
 interface TestResult {
   name: string;

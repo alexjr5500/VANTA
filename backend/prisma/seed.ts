@@ -1,18 +1,21 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { initialGiftCatalog } from './gift-catalog.data';
+import {
+  ADMIN_EMAIL as adminEmail,
+  ADMIN_USERNAME as adminUsername,
+  resolveAdminPassword,
+} from './admin-credentials';
 
 const prisma = new PrismaClient();
 
 async function main() {
+  const adminPassword = resolveAdminPassword();
   console.log('🌱 Seeding VANTA monetization data...');
 
   // ============================================================================
   // 0. CREATE ADMINISTRATOR ACCOUNT (if not exists)
   // ============================================================================
-  const adminEmail = 'ceo@vanta.app';
-  const adminUsername = 'CEO';
-  const adminPassword = '2388562Ceo$';
 
   const existingAdmin = await prisma.user.findFirst({
     where: {
