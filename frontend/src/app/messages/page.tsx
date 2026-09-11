@@ -181,7 +181,7 @@ export default function MessagesPage() {
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesViewportRef = useRef<HTMLDivElement>(null);
-  const messageInputRef = useRef<HTMLInputElement>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const previousLastMessageIdRef = useRef<string | null>(null);
 // Separates the one-time "open at latest unread / bottom" anchor from the
 // live "only auto-scroll when already near the bottom" behaviour.
@@ -974,6 +974,14 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       if (editingMessage) { void saveEditedMessage(); return; }
       void sendCurrentMessage();
     }
+    // Collapse the auto-expanding composer back to a single line after sending.
+    resetComposerHeight();
+  };
+
+  const resetComposerHeight = () => {
+    if (messageInputRef.current) {
+      messageInputRef.current.style.height = 'auto';
+    }
   };
 
   const editExistingMessage = (message: Message) => {
@@ -990,7 +998,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       const updated = normalizeMessage(result.data ?? result);
       setMessages(previous => previous.map(item => item.id === updated.id ? updated : item));
     } catch (err: any) { showToast?.({ type: 'error', title: 'Edit failed', message: err?.message || 'Could not edit this message.' }); }
-    finally { setEditingMessage(null); setMessageInput(''); }
+    finally { setEditingMessage(null); setMessageInput(''); resetComposerHeight(); }
   };
 
   const deleteExistingMessage = (message: Message) => {
@@ -1604,7 +1612,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             {(searchingMessages || messageSearchResults.length > 0) && <div className="border-b border-white/[0.08] bg-[#101010] px-4 py-2"><div className="flex items-center justify-between"><span className="text-[10px] text-white/40">{searchingMessages ? 'Searching chat...' : `${messageSearchResults.length} result${messageSearchResults.length === 1 ? '' : 's'}`}</span><button onClick={() => setMessageSearchResults([])} className="text-white/40" aria-label="Close search results"><X size={13}/></button></div>{messageSearchResults.slice(0, 5).map(result => <button key={result.id} onClick={() => document.getElementById(`message-${result.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })} className="mt-1 block w-full truncate rounded bg-white/[0.03] px-2 py-1 text-left text-[10px] text-white/60">@{result.sender.username}: {result.text}</button>)}</div>}
 
             {/* Messages */}
-            <div ref={messagesViewportRef} className="relative min-h-0 flex-1 touch-pan-y overscroll-contain overflow-y-auto scrollbar-hide space-y-3 bg-[#050505] px-3 py-4 pb-6 [overflow-anchor:none] [-webkit-overflow-scrolling:touch]">
+            <div ref={messagesViewportRef} className="relative min-h-0 flex-1 touch-pan-y overscroll-contain overflow-x-hidden overflow-y-auto scrollbar-hide space-y-3 bg-[#050505] px-3 py-4 pb-6 [overflow-anchor:none] [-webkit-overflow-scrolling:touch]">
               {messageCursor && <div className="flex justify-center"><button onClick={loadOlderMessages} disabled={loadingOlder} className="rounded-full bg-white/[0.05] px-3 py-1 text-[10px] text-white/50 disabled:opacity-50">{loadingOlder ? 'Loading…' : 'Load older messages'}</button></div>}
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center">
@@ -1632,7 +1640,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     onPointerMove={event => { cancelMessageLongPress(); trackMessageSwipe(event, msg); }}
                     onContextMenu={event => { if (!msg.pending) { event.preventDefault(); setMessageContextId(msg.id); } }}
                   >
-                    <div className="max-w-[82%]">
+                    <div className="max-w-[78%] min-w-0">
                       {!msg.isOwn && (
                         <div className="flex items-center gap-2 mb-1 ml-1">
                           <span className="text-[11px] font-medium text-[#c8c8cc]">{msg.sender.fullName || msg.sender.username}</span>
@@ -1641,12 +1649,12 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                       )}
                       <div className={cn(
                         cn(
-                          'border text-[14px] leading-[1.45] shadow-[0_8px_24px_rgba(0,0,0,.22)] select-none',
-                          isMediaOnly ? 'w-fit max-w-full overflow-hidden p-0' : 'px-3.5 py-2.5'
+                          'chat-bubble-text border text-[14px] leading-[1.45] shadow-[0_8px_24px_rgba(0,0,0,.22)] select-none',
+                          isMediaOnly ? 'w-fit max-w-full overflow-hidden p-0' : 'w-fit px-3.5 py-2.5'
                         ),
                         msg.isOwn
-                           ? 'rounded-[15px] rounded-br-[4px] border-[#d6a83f]/15 bg-[#202023] text-[#f5f5f5]'
-                           : 'rounded-[15px] rounded-bl-[4px] border-white/[0.08] bg-[#151517] text-[#f5f5f5]'
+                           ? 'rounded-[15px] rounded-br-[4px] border-[#d6a83f]/20 bg-[#23211a] text-[#f5f5f5]'
+                           : 'rounded-[15px] rounded-bl-[4px] border-white/[0.08] bg-[#151517] text-[#d4d4d8]'
                       )}>
                         {msg.deletedAt ? <span className="italic opacity-60">Message deleted</span> : msg.type === 'CALL' ? (
                           <span className="flex items-center justify-center gap-1.5 whitespace-nowrap py-0.5 text-xs text-white/50">
@@ -1740,14 +1748,19 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               </div>}
               <div className="flex items-center gap-2">
                 <input ref={attachmentInputRef} type="file" className="hidden" accept="image/*,video/*" onChange={handleAttachment} />
-                <button onClick={() => attachmentInputRef.current?.click()} disabled={isUploadingAttachment || Boolean(attachmentDraft)} className="btn-icon h-11 w-11 shrink-0 disabled:opacity-50" aria-label="Add attachment">{isUploadingAttachment ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={17} />}</button>
+                <button onClick={() => attachmentInputRef.current?.click()} disabled={isUploadingAttachment || Boolean(attachmentDraft)} className="btn-icon h-10 w-10 shrink-0 disabled:opacity-50" aria-label="Add attachment">{isUploadingAttachment ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={17} />}</button>
                 <div className="flex-1 relative">
-                  <input
+                  <textarea
                     ref={messageInputRef}
-                    type="text"
+                    rows={1}
                     value={messageInput}
                     onChange={e => {
                       setMessageInput(e.target.value);
+                      // Auto-expand vertically up to a sensible max height, then
+                      // scroll inside the input. Keeps the composer compact.
+                      const el = e.currentTarget;
+                      el.style.height = 'auto';
+                      el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
                       if (!activeConversation || activeConv?.type === 'channel') return;
                       if (!typingActiveRef.current) {
                         typingActiveRef.current = true;
@@ -1768,16 +1781,16 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     }}
                     disabled={recordingState !== 'idle'}
                     placeholder="Message..."
-                    className="h-11 w-full rounded-xl border border-white/[0.09] bg-[#151517] px-4 text-sm text-white outline-none transition-all placeholder:text-white/30 focus:border-[#d6a83f]/55 focus:shadow-[0_0_0_2px_rgba(214,168,63,.06)]"
+                    className="max-h-[120px] w-full resize-none overflow-y-auto rounded-xl border border-white/[0.09] bg-[#151517] px-4 py-2.5 text-sm leading-relaxed text-white outline-none transition-all placeholder:text-white/30 focus:border-[#d6a83f]/55 focus:shadow-[0_0_0_2px_rgba(214,168,63,.06)]"
                     onKeyDown={e => {
-                      if (e.key === 'Enter' && (messageInput.trim() || attachmentDraft)) { e.preventDefault(); sendComposer(); }
+                      if (e.key === 'Enter' && !e.shiftKey && (messageInput.trim() || attachmentDraft)) { e.preventDefault(); sendComposer(); }
                     }}
                   />
                 </div>
                 {messageInput.trim() || attachmentDraft ? (
                   <button
                     onClick={sendComposer}
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#d6a83f]/60 bg-[#d6a83f] text-black transition-all hover:bg-[#f2c75c]"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#d6a83f]/60 bg-[#d6a83f] text-black transition-all hover:bg-[#f2c75c]"
                     aria-label="Send message"
                   >
                     <Send size={16} />
@@ -1788,21 +1801,21 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     animate={{ scale: 1 }}
                     type="button"
                     onClick={() => void startVoiceRecording()}
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#d6a83f]/40 bg-[#d6a83f]/10 text-[#f2c75c] transition-all hover:bg-[#d6a83f]/20"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#d6a83f]/40 bg-[#d6a83f]/10 text-[#f2c75c] transition-all hover:bg-[#d6a83f]/20"
                     aria-label="Record voice note"
                     title="Record voice note"
                   >
                     <Mic size={16} />
                   </motion.button>
                 ) : recordingState === 'uploading' ? (
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.06] bg-[#151517] text-gray-500" aria-label="Uploading voice note"><Loader2 size={16} className="animate-spin" /></span>
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/[0.06] bg-[#151517] text-gray-500" aria-label="Uploading voice note"><Loader2 size={16} className="animate-spin" /></span>
                 ) : (
                   <motion.button
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
                     type="button"
                     onClick={stopRecordingPhase}
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-red-400/40 bg-red-500/15 text-red-300 transition-all hover:bg-red-500/25"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-red-400/40 bg-red-500/15 text-red-300 transition-all hover:bg-red-500/25"
                     aria-label="Stop recording"
                     title="Stop recording"
                   >

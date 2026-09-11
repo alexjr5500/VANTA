@@ -1060,6 +1060,12 @@
     background: rgba(255, 255, 255, 0.15);
   }
 
+  /* Gold ring used for unviewed / active stories (VANTA identity). */
+  .story-ring-active {
+    @apply rounded-full p-[2px];
+    background: var(--gradient-gold);
+  }
+
   /* ═══ Create FAB ═══ */
   .create-fab {
     @apply w-14 h-14 rounded-full flex items-center justify-center;
@@ -1085,6 +1091,16 @@
   }
 
   /* ═══ Chat Bubbles ═══ */
+  /* Shared message-text behavior: wraps long unbroken strings (URLs, hashes,
+     IDs), keeps normal words/line-breaks readable, and never overflows the
+     bubble or the viewport. Applied to both self + other and to text-only
+     and media-with-caption bubbles. */
+  .chat-bubble-text {
+    @apply min-w-0 max-w-full whitespace-pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
   .chat-bubble-self {
     @apply rounded-2xl rounded-br-md px-4 py-2.5 max-w-[80%];
     background: var(--gradient-primary);

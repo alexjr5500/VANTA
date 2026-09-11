@@ -131,7 +131,7 @@ export default function DiscoverStories() {
               onClick={() => router.push(`/stories/${encodeURIComponent(user.id)}?start=${encodeURIComponent(opener.id)}`)}
               className="flex flex-col items-center gap-1.5 shrink-0 group"
             >
-              <StoryCircle src={user.avatar} alt={user.username || 'Story'} active={group.hasUnviewed} showDot />
+              <StoryCircle src={user.avatar} alt={user.username || 'Story'} active={group.hasUnviewed} showDot segments={(group.stories || []).map(story => ({ id: story.id, viewed: Boolean(story.viewed) }))} />
               <span className="text-[10px] text-white/50 truncate max-w-[64px]">{user.username}</span>
             </motion.button>
           );
