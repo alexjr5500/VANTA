@@ -25,6 +25,7 @@ import GiftPickerBoundary from '@/components/social/GiftPickerBoundary';
 import { normalizeGiftCatalog } from '@/lib/giftCatalog';
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
+import { cleanId, isVideoItem, actionEndpointFor, detailPathFor } from '@/lib/feedIdentity';
 import { useContentCreation } from '@/components/create/ContentCreationContext';
 
 type Item = Record<string, any>;
@@ -38,9 +39,7 @@ const relativeTime = (value?: string) => {
 };
 const unwrap = (data: any): Item[] => Array.isArray(data) ? data : data?.items || data?.data || data?.streams || data?.stories || data?.gifts || [];
 const getAuthor = (item: Item) => item.author || item.user || item.creator || item.host || {};
-const cleanId = (item: Item) => String(item.id).replace(/^(video-|live-|community-|creator-)/, '');
 const mediaUrl = (item: Item) => resolveMediaUrl(item.media || item.mediaUrl || item.image || item.thumbnail || item.coverUrl || item.playbackUrl);
-const isVideoItem = (item: Item) => item.type === 'reel' || item.type === 'video' || Boolean(item.playbackUrl || item.videoUrl);
 
 /** Compact gold unread badge for shell header icons. */
 function HeaderBadge({ value }: { value: number }) {
@@ -225,7 +224,24 @@ export default function HomePage() {
     const key = mode === 'like' ? 'liked' : 'saved'; const was = Boolean(item[key]);
     const apply = (value: boolean) => setItems(previous => previous.map(entry => entry.id === item.id ? { ...entry, [key]: value, ...(mode === 'like' ? { likes: Math.max(0, (entry.likes || 0) + (value ? 1 : -1)) } : {}) } : entry));
     apply(!was);
-    try { if (mode === 'like') await apiPost(`/api/feed/${cleanId(item)}/like`, {}, token); else if (was) await apiDelete(`/api/feed/${cleanId(item)}/save`, token); else await apiPost(`/api/feed/${cleanId(item)}/save`, {}, token); }
+    const base = actionEndpointFor(item);
+    const id = cleanId(item);
+    try {
+      if (isVideoItem(item)) {
+        // Reels are stored in the prisma.video table and must be addressed via
+        // /api/reels/:videoId. The reel save endpoint toggles save/un-save with a
+        // single POST. Keep this in lockstep with the Reels page so a Reel behaves
+        // identically no matter where it was opened.
+        if (mode === 'like') await apiPost(`${base}/${id}/like`, {}, token);
+        else await apiPost(`${base}/${id}/save`, {}, token);
+      } else if (mode === 'like') {
+        await apiPost(`${base}/${id}/like`, {}, token);
+      } else if (was) {
+        await apiDelete(`${base}/${id}/save`, token);
+      } else {
+        await apiPost(`${base}/${id}/save`, {}, token);
+      }
+    }
     catch (reason: any) { apply(was); toast.error('Could not update post', reason?.message); }
   };
   const follow = async (item: Item) => {
@@ -248,8 +264,14 @@ export default function HomePage() {
   };
   const openGift = (item: Item) => { if (!token) return; setGiftFor(item); setGifts([]); setGiftError(''); void loadGiftData(); };
   const share = async (destination: string) => {
-    if (!shareFor || !token) return; const url = `${location.origin}/post/${cleanId(shareFor)}`;
-    try { await apiPost(`/api/feed/${cleanId(shareFor)}/share`, { destination }, token); if (destination === 'COPY_LINK') await navigator.clipboard.writeText(url); else if (destination === 'NATIVE' && navigator.share) await navigator.share({ title: 'VANTA', text: shareFor.content, url }); else if (destination === 'MESSAGE') router.push(`/chat?share=${encodeURIComponent(url)}`); toast.success('Shared successfully'); setShareFor(undefined); }
+    if (!shareFor || !token) return;
+    const id = cleanId(shareFor);
+    const isReel = isVideoItem(shareFor);
+    // Reels have their own detail route and (like the Reels page) no backend
+    // share endpoint, so we just share the /reels/:id link. Posts use the feed
+    // share endpoint.
+    const url = `${location.origin}${detailPathFor(shareFor)}`;
+    try { if (!isReel) await apiPost(`/api/feed/${id}/share`, { destination }, token); if (destination === 'COPY_LINK') await navigator.clipboard.writeText(url); else if (destination === 'NATIVE' && navigator.share) await navigator.share({ title: 'VANTA', text: shareFor.content, url }); else if (destination === 'MESSAGE') router.push(`/chat?share=${encodeURIComponent(url)}`); toast.success('Shared successfully'); setShareFor(undefined); }
     catch (reason: any) { toast.error('Share failed', reason?.message); }
   };
   const visible = useMemo(() => { const base = items.filter(item => item.type !== 'suggested_creator'); if (tab === 'reels') return base.filter(isVideoItem); if (tab === 'latest') return [...base].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()); return base; }, [items, tab]);
@@ -269,7 +291,7 @@ export default function HomePage() {
       </main>
       </div>
     </div>
-    <AnimatePresence>{commentsFor && token && <CommentPanel postId={cleanId(commentsFor)} postAuthor={getAuthor(commentsFor)} initialCount={commentsFor.comments || 0} token={token} currentUser={user} onClose={() => setCommentsFor(undefined)} onCountChange={count => setItems(previous => previous.map(item => item.id === commentsFor.id ? { ...item, comments: count } : item))}/>} {giftFor && token && <GiftPickerBoundary onClose={() => setGiftFor(undefined)}><GiftPicker gifts={gifts} balance={balance} recipient={getAuthor(giftFor)} token={token} streamId={giftFor.type === 'live' ? cleanId(giftFor) : undefined} loading={giftLoading} loadError={giftError} onRetry={() => void loadGiftData()} onClose={() => setGiftFor(undefined)} onSent={(remaining, _amount, gift) => { setBalance(remaining); toast.success('Gift sent', `You sent ${gift.name} to ${getAuthor(giftFor).fullName || getAuthor(giftFor).username}`); }}/></GiftPickerBoundary>} {shareFor && <ShareSheet close={() => setShareFor(undefined)} share={share}/>} {moreFor && <MoreSheet item={moreFor} isOwn={getAuthor(moreFor).id === user?.id} close={() => setMoreFor(undefined)} openProfile={() => { const creator = getAuthor(moreFor); setMoreFor(undefined); router.push(creator.username ? `/profile/${creator.username}` : '/profile'); }} save={() => { void optimistic(moreFor, 'save'); setMoreFor(undefined); }} remove={() => requestDelete(moreFor)} />}{deletePostFor && <DeleteConfirmation item={deletePostFor} onCancel={() => setDeletePostFor(undefined)} onConfirm={() => void confirmDeletePost()} />}</AnimatePresence>
+    <AnimatePresence>{commentsFor && token && <CommentPanel kind={isVideoItem(commentsFor) ? 'reel' : 'post'} postId={cleanId(commentsFor)} postAuthor={getAuthor(commentsFor)} initialCount={commentsFor.comments || 0} token={token} currentUser={user} onClose={() => setCommentsFor(undefined)} onCountChange={count => setItems(previous => previous.map(item => item.id === commentsFor.id ? { ...item, comments: count } : item))}/>} {giftFor && token && <GiftPickerBoundary onClose={() => setGiftFor(undefined)}><GiftPicker gifts={gifts} balance={balance} recipient={getAuthor(giftFor)} token={token} streamId={giftFor.type === 'live' ? cleanId(giftFor) : undefined} loading={giftLoading} loadError={giftError} onRetry={() => void loadGiftData()} onClose={() => setGiftFor(undefined)} onSent={(remaining, _amount, gift) => { setBalance(remaining); toast.success('Gift sent', `You sent ${gift.name} to ${getAuthor(giftFor).fullName || getAuthor(giftFor).username}`); }}/></GiftPickerBoundary>} {shareFor && <ShareSheet close={() => setShareFor(undefined)} share={share}/>} {moreFor && <MoreSheet item={moreFor} isOwn={getAuthor(moreFor).id === user?.id} close={() => setMoreFor(undefined)} openProfile={() => { const creator = getAuthor(moreFor); setMoreFor(undefined); router.push(creator.username ? `/profile/${creator.username}` : '/profile'); }} save={() => { void optimistic(moreFor, 'save'); setMoreFor(undefined); }} remove={() => requestDelete(moreFor)} />}{deletePostFor && <DeleteConfirmation item={deletePostFor} onCancel={() => setDeletePostFor(undefined)} onConfirm={() => void confirmDeletePost()} />}</AnimatePresence>
   </div>;
 }
 

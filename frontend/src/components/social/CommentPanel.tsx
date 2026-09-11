@@ -11,13 +11,18 @@ import { useToast } from '@/components/ui/Toast';
 
 type User = { id: string; username: string; fullName?: string | null; avatar?: string | null; verified?: boolean; role?: string };
 export type CommentItem = { id: string; userId: string; content: string; createdAt: string; updatedAt?: string; edited?: boolean; liked?: boolean; parentId?: string | null; user: User; _count?: { likes: number; replies: number }; replies?: CommentItem[] };
-type Props = { postId: string; postAuthor?: User; initialCount: number; token: string; currentUser?: User | null; onClose: () => void; onCountChange: (count: number) => void };
+type Props = { postId: string; postAuthor?: User; initialCount: number; token: string; currentUser?: User | null; onClose: () => void; onCountChange: (count: number) => void; kind?: 'post' | 'reel' };
 
 const EMOJIS = ['😀', '😂', '😍', '🥳', '😎', '🙌', '👏', '🔥', '❤️', '💜', '✨', '🎉', '🌹', '💯', '🙏', '😅', '🤔', '😭', '🤣', '🚀', '👑', '💎', '🫶', '😮'];
 const timeAgo = (value: string) => { const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000)); if (seconds < 60) return 'now'; if (seconds < 3600) return `${Math.floor(seconds / 60)}m`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`; return `${Math.floor(seconds / 86400)}d`; };
 
-export default function CommentPanel({ postId, postAuthor, initialCount, token, currentUser, onClose, onCountChange }: Props) {
+export default function CommentPanel({ postId, postAuthor, initialCount, token, currentUser, onClose, onCountChange, kind = 'post' }: Props) {
   const toast = useToast();
+  // Reels are stored in the prisma.video table and their comments live under
+  // /api/reels; Posts live under /api/feed. Routing Reel IDs to /api/feed would
+  // look them up in the Post table and fail. Points of divergence between the
+  // two comment models (replies, like/update/report) are guarded below.
+  const base = kind === 'reel' ? '/api/reels' : '/api/feed';
   const inputRef = useRef<HTMLInputElement>(null);
   const [comments, setComments] = useState<CommentItem[]>([]);
   const [cursor, setCursor] = useState<string>();
@@ -42,12 +47,12 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
       const query = new URLSearchParams({ limit: '20', sort });
       if (!reset && cursor) query.set('cursor', cursor);
       if (search.trim()) query.set('search', search.trim());
-      const result = await apiGet<{ items: CommentItem[]; nextCursor?: string }>(`/api/feed/${postId}/comments?${query}`, token, { skipCache: true });
+      const result = await apiGet<{ items: CommentItem[]; nextCursor?: string }>(`${base}/${postId}/comments?${query}`, token, { skipCache: true });
       setComments(previous => reset ? result.items : [...previous, ...result.items.filter(item => !previous.some(existing => existing.id === item.id))]);
       setCursor(result.nextCursor);
     } catch (error: any) { toast.error('Comments unavailable', error.message); }
     finally { setLoading(false); setLoadingMore(false); }
-  }, [cursor, postId, search, sort, token, toast]);
+  }, [base, cursor, postId, search, sort, token, toast]);
 
   useEffect(() => { void load(true); inputRef.current?.focus(); }, [sort]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -75,28 +80,43 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
   }, [onCountChange, postId, token]);
 
   const loadReplies = async (comment: CommentItem, reset = true) => {
+    // Reel comments have no nested replies; the /api/reels endpoints do not
+    // expose a replies resource. Swallow early instead of firing a wrong path.
+    if (kind === 'reel') return;
     setExpanded(previous => ({ ...previous, [comment.id]: true })); setReplyLoading(comment.id);
     try {
       const query = new URLSearchParams({ limit: '20' }); const next = replyCursors[comment.id];
       if (!reset && next) query.set('cursor', next);
-      const result = await apiGet<{ items: CommentItem[]; nextCursor?: string }>(`/api/feed/${postId}/comments/${comment.id}/replies?${query}`, token, { skipCache: true });
+      const result = await apiGet<{ items: CommentItem[]; nextCursor?: string }>(`${base}/${postId}/comments/${comment.id}/replies?${query}`, token, { skipCache: true });
       setComments(previous => previous.map(item => item.id === comment.id ? { ...item, replies: reset ? result.items : [...(item.replies || []), ...result.items] } : item));
       setReplyCursors(previous => ({ ...previous, [comment.id]: result.nextCursor }));
     } catch (error: any) { toast.error('Replies unavailable', error.message); } finally { setReplyLoading(null); }
   };
 
   const toggleLike = async (comment: CommentItem) => {
+    // The /api/reels endpoints do not expose comment likes; skip silently so a
+    // Reel never fires a request to a path the backend does not implement.
+    if (kind === 'reel') return;
     const update = (items: CommentItem[]): CommentItem[] => items.map(item => item.id === comment.id ? { ...item, liked: !item.liked, _count: { likes: Math.max(0, (item._count?.likes || 0) + (item.liked ? -1 : 1)), replies: item._count?.replies || 0 }, replies: item.replies && update(item.replies) } : { ...item, replies: item.replies && update(item.replies) });
     setComments(update); setMenu(null);
-    try { await apiPost(`/api/feed/${postId}/comments/${comment.id}/like`, {}, token); } catch (error: any) { setComments(update); toast.error('Like not saved', error.message); }
+    try { await apiPost(`${base}/${postId}/comments/${comment.id}/like`, {}, token); } catch (error: any) { setComments(update); toast.error('Like not saved', error.message); }
   };
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault(); const clean = text.trim(); if (!clean || submitting) return; setSubmitting(true);
     try {
-      if (editing) { const updated = await apiPut<CommentItem>(`/api/feed/${postId}/comments/${editing.id}`, { content: clean }, token); setComments(items => items.map(item => item.id === updated.id ? { ...item, ...updated } : item)); setEditing(null); }
-      else { const result = await apiPost<{ comment: CommentItem; commentCount: number }>(`/api/feed/${postId}/comments`, { content: clean, parentId: replyTo?.id }, token); if (replyTo) setComments(items => items.map(item => item.id === replyTo.id ? { ...item, replies: [...(item.replies || []), result.comment], _count: { likes: item._count?.likes || 0, replies: (item._count?.replies || 0) + 1 } } : item)); else setComments(items => [result.comment, ...items]); onCountChange(result.commentCount); setReplyTo(null); }
-      setText(''); setEmojiOpen(false);
+      // Reel comment editing is not supported by the backend (/api/reels has no PUT).
+      if (kind === 'post' && editing) { const updated = await apiPut<CommentItem>(`${base}/${postId}/comments/${editing.id}`, { content: clean }, token); setComments(items => items.map(item => item.id === updated.id ? { ...item, ...updated } : item)); setEditing(null); setText(''); setEmojiOpen(false); return; }
+      // Reel comment creation returns the bare comment (no post-style { comment, commentCount }).
+      const result = kind === 'reel'
+        ? await apiPost<CommentItem>(`${base}/${postId}/comments`, { content: clean }, token)
+        : await apiPost<{ comment: CommentItem; commentCount: number }>(`${base}/${postId}/comments`, { content: clean, parentId: replyTo?.id }, token);
+      if (kind === 'post' && replyTo) setComments(items => items.map(item => item.id === (replyTo as CommentItem).id ? { ...item, replies: [...(item.replies || []), (result as { comment: CommentItem }).comment], _count: { likes: item._count?.likes || 0, replies: (item._count?.replies || 0) + 1 } } : item));
+      else if (kind === 'post') setComments(items => [(result as { comment: CommentItem }).comment, ...items]);
+      else setComments(items => [result as CommentItem, ...items]);
+      // For reels the backend does not echo the total; report from local state.
+      onCountChange(kind === 'reel' ? comments.length + 1 : (result as { commentCount: number }).commentCount);
+      setReplyTo(null); setText(''); setEmojiOpen(false);
     } catch (error: any) { toast.error('Comment not saved', error.message); }
     finally { setSubmitting(false); }
   };
@@ -110,9 +130,9 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
     if (!deleteConfirm) return;
     const comment = deleteConfirm;
     setDeleteConfirm(null);
-    try { const result = await apiDelete<{ commentCount: number }>(`/api/feed/${postId}/comments/${comment.id}`, token); const removeItem = (items: CommentItem[]): CommentItem[] => items.filter(item => item.id !== comment.id).map(item => ({ ...item, replies: item.replies && removeItem(item.replies) })); setComments(removeItem); onCountChange(result.commentCount); } catch (error: any) { toast.error('Comment not deleted', error.message); }
+    try { const result = await apiDelete<{ commentCount?: number }>(`${base}/${postId}/comments/${comment.id}`, token); const removeItem = (items: CommentItem[]): CommentItem[] => items.filter(item => item.id !== comment.id).map(item => ({ ...item, replies: item.replies && removeItem(item.replies) })); setComments(removeItem); onCountChange(kind === 'reel' ? comments.length - 1 : Number(result?.commentCount || comments.length - 1)); } catch (error: any) { toast.error('Comment not deleted', error.message); }
   };
-  const report = async (comment: CommentItem) => { const reason = window.prompt('Report reason: SPAM, HARASSMENT, HATE, THREATS, MISINFORMATION, or OTHER'); if (!reason) return; try { await apiPost(`/api/feed/${postId}/comments/${comment.id}/report`, { reason }, token); toast.success('Report submitted'); } catch (error: any) { toast.error('Report failed', error.message); } setMenu(null); };
+  const report = async (comment: CommentItem) => { if (kind === 'reel') return; const reason = window.prompt('Report reason: SPAM, HARASSMENT, HATE, THREATS, MISINFORMATION, or OTHER'); if (!reason) return; try { await apiPost(`${base}/${postId}/comments/${comment.id}/report`, { reason }, token); toast.success('Report submitted'); } catch (error: any) { toast.error('Report failed', error.message); } setMenu(null); };
 
   const CommentRow = ({ comment, depth = 0 }: { comment: CommentItem; depth?: number }) => <article className="group border-b border-white/[.06] py-4" style={{ marginLeft: Math.min(depth, 4) * 18 }}><div className="flex gap-3"><Avatar src={comment.user.avatar} alt={comment.user.username} size="sm" /><div className="min-w-0 flex-1"><div className="flex items-center gap-1 text-xs"><strong className="text-white">{comment.user.fullName || comment.user.username}</strong>{comment.user.verified && <VerificationBadge verified size="xs" className="align-[-1px]" />}{comment.user.role === 'CREATOR' && <span className="rounded bg-fuchsia-500/15 px-1.5 py-0.5 text-[9px] text-fuchsia-200">CREATOR</span>}<span className="text-white/35">@{comment.user.username} · {timeAgo(comment.createdAt)}</span>{comment.edited && <span className="text-white/30">· edited</span>}</div><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-white/80">{comment.content}</p><div className="mt-2 flex items-center gap-4 text-[11px] text-white/45"><button onClick={() => toggleLike(comment)} className={comment.liked ? 'text-[#f2c75c]' : 'hover:text-white'}><Heart size={13} className="mr-1 inline" fill={comment.liked ? 'currentColor' : 'none'} />Like {comment._count?.likes || 0}</button><button onClick={() => { setReplyTo(comment); inputRef.current?.focus(); }} className="hover:text-white"><Reply size={13} className="mr-1 inline" />Reply</button><button onClick={() => setMenu(menu === comment.id ? null : comment.id)} aria-label="More comment actions"><MoreHorizontal size={15} /></button></div>{menu === comment.id && <div className="mt-2 flex flex-wrap gap-2 rounded-xl border border-white/10 bg-white/[.04] p-2 text-[11px] text-white/70"><button onClick={() => { navigator.clipboard.writeText(comment.content); setMenu(null); toast.success('Comment copied'); }}><Copy size={12} className="mr-1 inline" />Copy</button>{comment.userId === currentUser?.id && <><button onClick={() => { setEditing(comment); setText(comment.content); setMenu(null); inputRef.current?.focus(); }}><Edit3 size={12} className="mr-1 inline" />Edit</button><button onClick={() => void remove(comment)} className="text-rose-300"><Trash2 size={12} className="mr-1 inline" />Delete</button></>}<button onClick={() => void report(comment)} className="text-amber-200"><Flag size={12} className="mr-1 inline" />Report</button></div>}{(comment._count?.replies || 0) > 0 && <div className="mt-3">{!expanded[comment.id] ? <button onClick={() => void loadReplies(comment)} className="text-xs font-semibold text-[#c8c8cc]">View {comment._count?.replies} {comment._count?.replies === 1 ? 'reply' : 'replies'} <ChevronDown size={13} className="inline" /></button> : <><button onClick={() => setExpanded(items => ({ ...items, [comment.id]: false }))} className="text-xs font-semibold text-[#c8c8cc]">Hide replies <ChevronUp size={13} className="inline" /></button>{replyLoading === comment.id ? <Loader2 size={14} className="ml-2 inline animate-spin" /> : comment.replies?.map(reply => <CommentRow key={reply.id} comment={reply} depth={depth + 1} />)}{replyCursors[comment.id] && <button onClick={() => void loadReplies(comment, false)} className="mt-2 text-xs text-white/50">Load more replies</button>}</>}</div>}</div></div></article>;
 
