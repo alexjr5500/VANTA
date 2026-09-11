@@ -6,6 +6,7 @@ import { Eye, Heart, Loader2, MessageCircle, Share2 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import PageHeader from '@/components/ui/PageHeader';
+import PostMedia from '@/components/social/PostMedia';
 import { useAuth } from '@/context/AuthContext';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { apiGet, apiPost } from '@/lib/apiClient';
@@ -62,7 +63,7 @@ export default function PostDetailPage({ params }: { params: { id: string } }) {
     <article className="w-full min-w-0 rounded-2xl border border-white/10 bg-[#101010]">
       <header className="flex items-center gap-3 p-4"><Avatar src={post.author.avatar} alt={post.author.username} size="md"/><div className="min-w-0"><Link href={`/profile/${post.author.username}`} className="flex items-center gap-1.5 truncate font-semibold"><span className="truncate">{post.author.fullName || post.author.username}</span>{post.author.verified && <VerificationBadge verified size="sm" />}</Link><p className="truncate text-xs text-white/45">@{post.author.username}</p></div></header>
       {post.content && <p className="whitespace-pre-wrap break-words px-4 pb-4 text-sm leading-6 text-white/85">{post.content}</p>}
-      {media && (video ? <video src={media} controls playsInline preload="metadata" className="max-h-[70dvh] w-full bg-black object-contain"/> : <img src={media} alt="Post media" className="h-auto w-full object-cover"/>)}
+      {media && <PostMedia src={media} isVideo={video} alt={post.author.username ? `Post by ${post.author.username}` : 'Post media'} autoplayOnView={false} preload="metadata"/>}
       <div className="flex items-center gap-1.5 border-t border-white/[.07] px-4 py-2 text-xs text-white/45" aria-label={`${post.views || 0} views`}><Eye size={14}/>{formatCount(post.views || 0)} views</div>
       <footer className="grid grid-cols-3 border-t border-white/10 p-2 text-sm text-white/65">
         <button onClick={toggleLike} className="flex min-h-11 items-center justify-center gap-2"><Heart size={18} fill={post.isLiked ? 'currentColor' : 'none'}/>{post.likesCount || 0}</button>

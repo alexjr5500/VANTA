@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   Bell, Bookmark, ChevronRight, Eye, Gift, Heart, Image as ImageIcon, Loader2,
   MessageCircle, MoreHorizontal, Plus, Radio, RefreshCw, Search, Share2,
-  Sparkles, Trash2, Users, Video, Volume2, VolumeX, WifiOff, X,
+  Sparkles, Trash2, Users, WifiOff, X,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
@@ -20,6 +20,7 @@ import VerificationBadge from '@/components/ui/VerificationBadge';
 import VantaLogo from '@/components/ui/VantaLogo';
 import GlobalSearch from '@/components/search/GlobalSearch';
 import CommentPanel from '@/components/social/CommentPanel';
+import PostMedia from '@/components/social/PostMedia';
 import GiftPicker, { GiftCatalogItem } from '@/components/social/GiftPicker';
 import GiftPickerBoundary from '@/components/social/GiftPickerBoundary';
 import { normalizeGiftCatalog } from '@/lib/giftCatalog';
@@ -83,33 +84,6 @@ function FeedSkeleton() {
   return <div className="divide-y divide-white/[.06]" aria-label="Loading feed">{[1, 2, 3].map(index => <div key={index} className="px-1 py-4"><div className="flex items-center gap-3"><div className="h-11 w-11 animate-pulse rounded-full bg-white/[.06]"/><div className="space-y-2"><div className="h-3 w-32 animate-pulse rounded bg-white/[.06]"/><div className="h-2.5 w-20 animate-pulse rounded bg-white/[.04]"/></div></div><div className="mt-4 aspect-[4/3] animate-pulse rounded-lg bg-white/[.035]"/></div>)}</div>;
 }
 
-function ImmersiveVideo({ item, creator, onDoubleLike }: { item: Item; creator: Item; onDoubleLike: () => void }) {
-  const frameRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [muted, setMuted] = useState(true);
-  const [playing, setPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
-
-  useEffect(() => {
-    const frame = frameRef.current;
-    const video = videoRef.current;
-    if (!frame || !video) return;
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting && entry.intersectionRatio >= .65) video.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
-      else { video.pause(); setPlaying(false); }
-    }, { threshold: [0, .65, 1] });
-    observer.observe(frame);
-    return () => { observer.disconnect(); video.pause(); };
-  }, []);
-
-  return <div ref={frameRef} className="group relative mx-auto aspect-[9/16] max-h-[720px] w-full overflow-hidden bg-black  ">
-    <video ref={videoRef} src={resolveMediaUrl(item.playbackUrl || item.videoUrl || item.media)} poster={resolveMediaUrl(item.thumbnail || item.coverUrl)} muted={muted} loop playsInline preload="metadata" onDoubleClick={onDoubleLike} onTimeUpdate={event => { const video = event.currentTarget; setProgress(video.duration ? video.currentTime / video.duration * 100 : 0); }} onClick={() => { const video = videoRef.current; if (!video) return; if (video.paused) { void video.play(); setPlaying(true); } else { video.pause(); setPlaying(false); } }} className="h-full w-full object-contain" aria-label={`Video by ${creator.username || 'creator'}`}/>
-    {!playing && <button type="button" onClick={() => void videoRef.current?.play()} aria-label="Play video" className="absolute left-1/2 top-1/2 flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white backdrop-blur"><Video size={22}/></button>}
-    <button type="button" onClick={() => setMuted(value => !value)} aria-label={muted ? 'Unmute video' : 'Mute video'} className="absolute right-3 top-3 flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-black/55 text-white backdrop-blur">{muted ? <VolumeX size={17}/> : <Volume2 size={17}/>}</button>
-    <div className="absolute inset-x-0 bottom-0 h-0.5 bg-white/15"><div className="h-full bg-[#f5f5f5]" style={{ width: `${progress}%` }}/></div>
-  </div>;
-}
-
 function PostCard({ item, currentUserId, onLike, onSave, onComment, onShare, onGift, onFollow, onMore }: any) {
   const router = useRouter();
   const creator = getAuthor(item);
@@ -127,7 +101,7 @@ function PostCard({ item, currentUserId, onLike, onSave, onComment, onShare, onG
     </header>
     {(item.content || item.description) && <p className="mb-3 whitespace-pre-wrap px-4 text-[15px] leading-6 text-[#dedede]">{item.content || item.description}</p>}
     {item.hashtags && <p className="mb-3 px-4 text-xs text-[#c9a227]">{Array.isArray(item.hashtags) ? item.hashtags.map((tag: string) => `#${tag}`).join(' ') : item.hashtags}</p>}
-    {source && <div className="overflow-hidden border-y border-white/[.07] bg-[#080808]">{isVideoItem(item) ? <ImmersiveVideo item={item} creator={creator} onDoubleLike={() => { if (!item.liked) onLike(item); }}/> : <img onDoubleClick={() => { if (!item.liked) onLike(item); }} src={source} alt={item.content || `Post by ${creator.username || 'creator'}`} loading="lazy" className="w-full object-contain max-h-[760px]"/>}</div>}
+    {source && <div className="border-y border-white/[.07] bg-[#080808]"><PostMedia src={source} isVideo={isVideoItem(item)} alt={item.content || `Post by ${creator.username || 'creator'}`} onDoubleClick={() => { if (!item.liked) onLike(item); }}/></div>}
     <footer className="flex items-center justify-between gap-1 px-2 py-1.5"><div className="flex min-w-0 items-center"><button type="button" onClick={() => onLike(item)} aria-label={item.liked ? 'Unlike post' : 'Like post'} aria-pressed={item.liked} className={cn(actionClass, item.liked && 'text-[#f2c75c]')}><Heart size={18} className={item.liked ? 'fill-current' : ''}/><span>{formatCount(item.likes)}</span></button><button type="button" onClick={() => onComment(item)} aria-label="Open comments" className={actionClass}><MessageCircle size={18}/><span>{formatCount(item.comments)}</span></button><button type="button" onClick={() => onShare(item)} aria-label="Share post" className={actionClass}><Share2 size={18}/><span>{formatCount(item.shares)}</span></button>{!isOwn && <button type="button" onClick={() => onGift(item)} aria-label="Send gift" className={cn(actionClass, 'hover:text-[#c9a227]')}><Gift size={18}/><span className="sr-only">Gift</span></button>}</div><button type="button" onClick={() => onSave(item)} aria-label={item.saved ? 'Remove saved post' : 'Save post'} aria-pressed={item.saved} className={cn(actionClass, item.saved && 'text-white')}><Bookmark size={18} className={item.saved ? 'fill-current' : ''}/><span className="sr-only">{item.saved ? 'Saved' : 'Save'}</span></button></footer>
   </motion.article>;
 }
