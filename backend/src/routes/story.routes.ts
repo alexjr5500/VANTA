@@ -4,6 +4,7 @@ import { authenticateJWT } from "../middleware/auth.middleware";
 import {
   createStory,
   getStories,
+  getStatusUsage,
   getStoryById,
   viewStory,
   deleteStory,
@@ -18,6 +19,10 @@ import {
 import { upload } from "../services";
 
 const router = Router();
+
+// NOTE: `/usage` MUST be registered before the parameterised `/:id` route so
+// Express routes `GET /usage` here instead of treating "usage" as a story id.
+router.get("/usage", authenticateJWT, getStatusUsage);
 
 // Public route for viewing individual stories
 router.get("/:id", getStoryById);

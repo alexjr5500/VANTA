@@ -27,6 +27,8 @@ import VideoTrimModal from '@/components/video/VideoTrimModal';
 import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 import { VoiceNotePlayer, VideoMessagePreview, VideoFullscreenPlayer } from '@/components/messages/ChatMediaPlayer';
 import { activeReplyFor, createReply, type ReplyState } from '@/lib/replyState';
+import { isSecureMediaContext, mapMediaError, microphoneBlockedMessage } from '@/lib/mediaPermissions';
+import { addDrafts, hasBusyDraft, readyDraftCount, removeDraft, type AttachmentDraft } from '@/lib/attachmentDrafts';
 
 interface Conversation {
   id: string;
@@ -214,7 +216,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [newChatSearch, setNewChatSearch] = useState('');
   const [newChatResults, setNewChatResults] = useState<any[]>([]);
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
-  const [attachmentDraft, setAttachmentDraft] = useState<{ file: File; previewUrl: string; fileType: 'IMAGE' | 'VIDEO'; progress: number; status: 'ready' | 'uploading' | 'sending' | 'failed'; error?: string } | null>(null);
+  const [attachmentDrafts, setAttachmentDrafts] = useState<AttachmentDraft[]>([]);
   const uploadAbortRef = useRef<AbortController | null>(null);
   const [trimVideoFile, setTrimVideoFile] = useState<File | null>(null);
   const [editEntityOpen, setEditEntityOpen] = useState(false);
@@ -555,12 +557,30 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       showToast?.({ type: 'error', title: 'Recording unavailable', message: 'Your browser does not support voice messages.' });
       return;
     }
+    // Microphone access (getUserMedia) requires a secure context (HTTPS or
+    // localhost). On a plain-HTTP LAN address navigator.mediaDevices is
+    // undefined, and on insecure origins the request would fail anyway.
+    if (!isSecureMediaContext()) {
+      setRecordingError('Voice messages require a secure connection. Please open VANTA using HTTPS (or on localhost).');
+      showToast?.({ type: 'error', title: 'Secure connection required', message: 'Open VANTA over HTTPS to record voice notes.' });
+      return;
+    }
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      setRecordingError('Microphone permission is required to record voice notes.');
-      showToast?.({ type: 'error', title: 'Microphone blocked', message: 'Allow microphone access to record a voice note.' });
+    } catch (error) {
+      // Map the raw browser error into a consistent VANTA message. This keeps
+      // raw errors (e.g. NotAllowedError) out of the UI while giving the user a
+      // precise, actionable explanation for camera/mic denial, missing hardware,
+      // contention, unsupported browsers, and insecure contexts.
+      const issue = mapMediaError(error, 'microphone');
+      setRecordingError(issue.message);
+      // technical detail is logged for developers by mapMediaError consumers.
+      showToast?.({
+        type: 'error',
+        title: issue.title,
+        message: microphoneBlockedMessage(),
+      });
       return;
     }
     recordingStreamRef.current = stream;
@@ -896,80 +916,134 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
 
   const handleAttachment = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     event.target.value = '';
-    if (!file) return;
-    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
-      showToast?.({ type: 'error', title: 'Unsupported attachment', message: 'Choose a supported image or video.' });
-      return;
+    if (files.length === 0) return;
+
+    const imageInputs: { file: File; fileType: 'IMAGE' }[] = [];
+    const videosToTrim: File[] = [];
+    for (const file of files) {
+      if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+        showToast?.({ type: 'error', title: 'Unsupported attachment', message: 'Choose supported images or videos.' });
+        continue;
+      }
+      const limit = file.type.startsWith('video/') ? 100 * 1024 * 1024 : 15 * 1024 * 1024;
+      if (file.size > limit) {
+        showToast?.({ type: 'error', title: 'File too large', message: `${file.type.startsWith('video/') ? 'Videos' : 'Images'} must be ${limit / 1024 / 1024} MB or smaller.` });
+        continue;
+      }
+      if (file.type.startsWith('video/')) {
+        // Videos pass through the shared VANTA trimmer so the recipient gets the
+        // real trimmed clip, not a timestamp over the full original. Trim them
+        // one at a time (the trimmer is modal), then append each result.
+        videosToTrim.push(file);
+      } else {
+        imageInputs.push({ file, fileType: 'IMAGE' });
+      }
     }
-    const limit = file.type.startsWith('video/') ? 100 * 1024 * 1024 : 15 * 1024 * 1024;
-    if (file.size > limit) {
-      showToast?.({ type: 'error', title: 'File too large', message: `${file.type.startsWith('video/') ? 'Videos' : 'Images'} must be ${limit / 1024 / 1024} MB or smaller.` });
-      return;
+    if (imageInputs.length) {
+      setAttachmentDrafts(previous => addDrafts(previous, imageInputs, file => URL.createObjectURL(file)));
     }
-    if (file.type.startsWith('video/')) {
-      // Videos pass through the shared VANTA trimmer so the recipient gets the
-      // real trimmed clip, not a timestamp over the full original.
-      setTrimVideoFile(file);
-      return;
-    }
-    setAttachmentDraft(previous => {
-      if (previous) URL.revokeObjectURL(previous.previewUrl);
-      return { file, previewUrl: URL.createObjectURL(file), fileType: 'IMAGE', progress: 0, status: 'ready' };
-    });
+    // Trim the first video if any; later ones are queued for trim after.
+    if (videosToTrim.length) setTrimVideoFile(videosToTrim[0]);
   };
 
   const handleTrimVideoConfirm = (result: VideoTrimResult) => {
     setTrimVideoFile(null);
-    setAttachmentDraft(previous => {
-      if (previous) URL.revokeObjectURL(previous.previewUrl);
-      return {
-        file: result.file,
-        previewUrl: URL.createObjectURL(result.file),
-        fileType: 'VIDEO',
-        progress: 0,
-        status: 'ready',
-      };
-    });
+    setAttachmentDrafts(previous => [...previous, {
+      file: result.file,
+      previewUrl: URL.createObjectURL(result.file),
+      fileType: 'VIDEO',
+      progress: 0,
+      status: 'ready',
+      id: typeof crypto !== 'undefined' && crypto?.randomUUID ? crypto.randomUUID() : `draft-legacy-${Date.now()}-${Math.random()}`,
+    }]);
   };
 
-  const cancelAttachment = () => {
+  const revokeDraftUrls = (drafts: AttachmentDraft[]) => {
+    drafts.forEach(draft => { try { URL.revokeObjectURL(draft.previewUrl); } catch { /* ignore */ } });
+  };
+
+  const cancelAttachment = (id?: string) => {
+    if (id) {
+      // Remove a single attachment without disturbing the typed caption or the
+      // remaining attachments.
+      const removed = attachmentDrafts.filter(draft => draft.id === id);
+      setAttachmentDrafts(previous => removeDraft(previous, id));
+      removed.forEach(draft => { try { URL.revokeObjectURL(draft.previewUrl); } catch { /* ignore */ } });
+      return;
+    }
     uploadAbortRef.current?.abort();
-    setAttachmentDraft(previous => { if (previous) URL.revokeObjectURL(previous.previewUrl); return null; });
+    const current = attachmentDrafts;
+    setAttachmentDrafts([]);
+    revokeDraftUrls(current);
     setIsUploadingAttachment(false);
   };
 
-  const uploadAndSendAttachment = async () => {
-    if (!attachmentDraft || !token || !activeConversation) return;
-    setIsUploadingAttachment(true);
+  /** Upload a single draft file and return the attachment metadata (no send). */
+  const uploadDraftFile = async (id: string): Promise<{ fileId: string; url: string; fileType: string; fileName: string; fileSize: number } | null> => {
+    const draft = attachmentDrafts.find(item => item.id === id);
+    if (!draft || !token || !activeConversation) return null;
     const controller = new AbortController();
     uploadAbortRef.current = controller;
-    setAttachmentDraft(previous => previous ? { ...previous, status: 'uploading', progress: 0, error: undefined } : previous);
+    setAttachmentDrafts(previous => previous.map(item => item.id === id ? { ...item, status: 'uploading', progress: 0, error: undefined } : item));
     try {
       const form = new FormData();
-      form.append('file', attachmentDraft.file);
+      form.append('file', draft.file);
       form.append('conversationId', activeConversation);
-      const uploaded = await apiUpload<any>('/api/upload/message', form, token, 'POST', progress => setAttachmentDraft(previous => previous ? { ...previous, progress } : previous), controller.signal);
+      const uploaded = await apiUpload<any>('/api/upload/message', form, token, 'POST', progress => setAttachmentDrafts(previous => previous.map(item => item.id === id ? { ...item, progress } : item)), controller.signal);
       const url = uploaded.url ?? uploaded.data?.url;
       const fileId = uploaded.fileId ?? uploaded.id ?? uploaded.data?.fileId;
       if (!url || !fileId) throw new Error('Upload did not return a usable attachment');
-      setAttachmentDraft(previous => previous ? { ...previous, status: 'sending', progress: 100 } : previous);
-      await sendCurrentMessage(messageInput.trim(), [{ fileId, url, fileType: attachmentDraft.fileType, fileName: attachmentDraft.file.name, fileSize: attachmentDraft.file.size }]);
-      setAttachmentDraft(previous => { if (previous) URL.revokeObjectURL(previous.previewUrl); return null; });
+      setAttachmentDrafts(previous => previous.map(item => item.id === id ? { ...item, status: 'sending', progress: 100 } : item));
+      return { fileId, url, fileType: draft.fileType, fileName: draft.file.name, fileSize: draft.file.size };
     } catch (err: any) {
-      if (err?.statusCode !== 499) setAttachmentDraft(previous => previous ? { ...previous, status: 'failed', error: err?.message || 'Upload failed. Please try again.' } : previous);
+      if (err?.statusCode !== 499) setAttachmentDrafts(previous => previous.map(item => item.id === id ? { ...item, status: 'failed', error: err?.message || 'Upload failed. Please try again.' } : item));
+      return null;
     } finally {
       uploadAbortRef.current = null;
-      setIsUploadingAttachment(false);
     }
   };
 
+  /**
+   * Upload every pending draft then send them as ONE message with the caption so
+   * multiple media + caption produce a single logical Message row (the backend
+   * Message model carries many Attachment children). Retry re-uses this to push
+   * a previously-failed draft alongside the rest.
+   */
+  const uploadAllAndSend = async (): Promise<void> => {
+    if (!token || !activeConversation || !attachmentDrafts.length) return;
+    const draftsToSend = attachmentDrafts.filter(item => item.status === 'ready' || item.status === 'failed');
+    if (!draftsToSend.length) return;
+    setIsUploadingAttachment(true);
+    const uploaded: { id: string; meta: any }[] = [];
+    for (const draft of draftsToSend) {
+      const meta = await uploadDraftFile(draft.id);
+      if (meta) uploaded.push({ id: draft.id, meta });
+    }
+    if (!uploaded.length) { setIsUploadingAttachment(false); return; }
+    try {
+      await sendCurrentMessage(messageInput.trim(), uploaded.map(item => item.meta));
+    } catch {
+      // sendCurrentMessage already surfaces the failure; keep drafts for retry.
+      setIsUploadingAttachment(false);
+      return;
+    }
+    const uploadedIds = new Set(uploaded.map(item => item.id));
+    const cleared = attachmentDrafts.filter(item => !uploadedIds.has(item.id));
+    revokeDraftUrls(attachmentDrafts.filter(item => uploadedIds.has(item.id)));
+    setAttachmentDrafts(cleared);
+    setIsUploadingAttachment(false);
+  };
+
   const sendComposer = () => {
-    if (!activeConversation || (!messageInput.trim() && !attachmentDraft)) return;
-    if (attachmentDraft) {
+    if (!activeConversation || (!messageInput.trim() && !attachmentDrafts.length)) return;
+    const hasReadyOrFailed = attachmentDrafts.some(item => item.status === 'ready' || item.status === 'failed');
+    if (hasReadyOrFailed) {
       if (editingMessage) return;
-      void uploadAndSendAttachment();
+      // ONE Send action: upload all selected attachments, then send them as a
+      // single message with the caption. No second send button is introduced.
+      void uploadAllAndSend();
     } else {
       if (editingMessage) { void saveEditedMessage(); return; }
       void sendCurrentMessage();
@@ -1619,8 +1693,6 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   const showDate = !previousDate || currentDate.toDateString() !== previousDate.toDateString();
                   const dateLabel = currentDate.toDateString() === new Date().toDateString() ? 'Today' : currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
                   const senderRole = activeConv.participants?.find((participant: any) => participant.id === msg.sender.id)?.role;
-                  const hasMediaAttachment = (msg.attachments || []).some(attachment => attachment.fileType === 'IMAGE' || attachment.fileType === 'VIDEO');
-                  const isMediaOnly = hasMediaAttachment && !msg.replyTo && !visibleMessageText(msg).trim();
                   return <div key={msg.id}>{showDate && <div className="my-5 flex justify-center"><span className="rounded-full border border-white/[0.06] bg-[#0d0d0f] px-3 py-1 text-[9px] text-white/35">{dateLabel}</span></div>}{msg.id === firstUnreadId && <div className="my-4 flex items-center gap-3"><span className="h-px flex-1 bg-[#d6a83f]/25"/><span className="rounded-full border border-[#d6a83f]/30 bg-[#d6a83f]/10 px-3 py-1 text-[9px] font-semibold uppercase tracking-[.14em] text-[#f2c75c]">New messages</span><span className="h-px flex-1 bg-[#d6a83f]/25"/></div>}
                   <div
                     id={`message-${msg.id}`}
@@ -1640,34 +1712,31 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                         </div>
                       )}
                       <div className={cn(
-                        cn(
-                          'chat-bubble-text border text-[14px] leading-[1.45] shadow-[0_8px_24px_rgba(0,0,0,.22)] select-none',
-                          isMediaOnly ? 'w-fit max-w-full overflow-hidden p-0' : 'w-fit px-3.5 py-2.5'
-                        ),
+                        'chat-bubble-text border text-[14px] leading-[1.45] shadow-[0_8px_24px_rgba(0,0,0,.22)] select-none w-fit max-w-[min(100%,78%)]',
                         msg.isOwn
                            ? 'rounded-[15px] rounded-br-[4px] border-[#d6a83f]/20 bg-[#23211a] text-[#f5f5f5]'
                            : 'rounded-[15px] rounded-bl-[4px] border-white/[0.08] bg-[#151517] text-[#d4d4d8]'
                       )}>
                         {msg.deletedAt ? <span className="italic opacity-60">Message deleted</span> : msg.type === 'CALL' ? (
-                          <span className="flex items-center justify-center gap-1.5 whitespace-nowrap py-0.5 text-xs text-white/50">
+                          <span className="flex items-center justify-center gap-1.5 whitespace-nowrap py-0.5 px-3 text-xs text-white/50">
                             <Phone size={12} className="text-[#d6a83f]" />
                             {msg.text || msg.content}
                           </span>
                         ) : (
                           <>
-                          {msg.replyTo && <button className="mb-2 block w-full rounded-md border-l-2 border-[#d6a83f] bg-black/25 px-2.5 py-2 text-left text-[10px] text-white/55" onClick={() => { const original = document.getElementById(`message-${msg.replyTo.id}`); original?.scrollIntoView({ behavior: 'smooth', block: 'center' }); original?.classList.add('ring-1', 'ring-[#d6a83f]/70'); window.setTimeout(() => original?.classList.remove('ring-1', 'ring-[#d6a83f]/70'), 1200); }}><strong className="mb-0.5 block text-[#f2c75c]">{msg.replyTo.sender?.fullName || `@${msg.replyTo.sender?.username || 'user'}`}</strong><span className="line-clamp-2">{msg.replyTo.content || msg.replyTo.text || 'Attachment'}</span></button>}
+                          {msg.replyTo && <div className="mt-1.5 mb-1.5 flex max-w-[min(100%,360px)] border-l-2 border-[#d6a83f] rounded-sm bg-black/20 pr-2 pl-2 pt-1 pb-1"><button type="button" className="min-w-0 max-w-full flex-1 text-left" onClick={() => { const original = document.getElementById(`message-${msg.replyTo.id}`); original?.scrollIntoView({ behavior: 'smooth', block: 'center' }); original?.classList.add('ring-1', 'ring-[#d6a83f]/70'); window.setTimeout(() => original?.classList.remove('ring-1', 'ring-[#d6a83f]/70'), 1200); }}><strong className="mb-0.5 block truncate text-[9px] text-[#f2c75c]">{msg.replyTo.sender?.fullName || `@${msg.replyTo.sender?.username || 'user'}`}</strong><span className="block truncate text-[10px] text-white/55">{msg.replyTo.content || msg.replyTo.text || 'Attachment'}</span></button></div>}
                           {msg.attachments?.map((attachment, index) => attachment.fileType === 'IMAGE'
-                            ? <button key={attachment.id || index} type="button" onClick={() => openMediaViewer(attachment)} className="block max-w-full overflow-hidden rounded-[15px] bg-transparent text-left" aria-label={`Open ${attachment.fileName || 'image'} in media viewer`}><img
+                            ? <button key={attachment.id || index} type="button" onClick={() => openMediaViewer(attachment)} className="block max-w-full overflow-hidden rounded-[8px] bg-transparent text-left" aria-label={`Open ${attachment.fileName || 'image'} in media viewer`}><img
                               src={attachment.url}
                               alt={attachment.fileName || 'Image attachment'}
                               loading="lazy"
                               decoding="async"
-                              className="block max-h-[440px] w-auto max-w-full rounded-[15px] object-contain"
+                              className="block max-h-[420px] max-w-[min(100%,420px)] w-auto h-auto rounded-[8px] object-contain"
                             /></button>
-                            : attachment.fileType === 'VIDEO' ? <span key={attachment.id || index} className={cn('block min-w-0 max-w-full', visibleMessageText(msg) && 'mb-1.5')}><VideoMessagePreview attachment={attachment} onOpen={openMediaViewer} /></span>
-                            : attachment.fileType === 'AUDIO' ? <div key={attachment.id || index} className={cn('min-w-0', visibleMessageText(msg) && 'mb-1.5')}><VoiceNotePlayer src={attachment.url} name={attachment.fileName} /></div>
-                            : <a key={attachment.id || index} href={attachment.url} target="_blank" rel="noreferrer" className="mb-2 block underline">{attachment.fileName || 'Download attachment'}</a>)}
-                          {visibleMessageText(msg)}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}
+                            : attachment.fileType === 'VIDEO' ? <span key={attachment.id || index} className={cn('block min-w-0 max-w-[min(100%,420px)] rounded-[8px]', visibleMessageText(msg) && 'mb-1.5')}><VideoMessagePreview attachment={attachment} onOpen={openMediaViewer} /></span>
+                            : attachment.fileType === 'AUDIO' ? <div key={attachment.id || index} className={cn('mt-1 min-w-0', visibleMessageText(msg) && 'mb-1.5')}><VoiceNotePlayer src={attachment.url} name={attachment.fileName} /></div>
+                            : <a key={attachment.id || index} href={attachment.url} target="_blank" rel="noreferrer" className="mb-2 block underline px-1">{attachment.fileName || 'Download attachment'}</a>)}
+                          {visibleMessageText(msg).trim() && <p className="px-3 py-2 max-w-[420px]">{visibleMessageText(msg)}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}</p>}
                         </>)}
                       </div>
                       <div className={cn('flex items-center gap-1 mt-0.5', msg.isOwn ? 'justify-end mr-1' : 'justify-start ml-1')}>
@@ -1706,7 +1775,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             {/* Message Input */}
             {canPublish ? <div className="relative z-20 shrink-0 border-t border-[#d6a83f]/10 bg-[#0d0d0f]/95 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_32px_rgba(0,0,0,.34)] backdrop-blur-xl">
               {editingMessage && <div className="mb-2 flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/70"><span>Editing message</span><button onClick={() => { setEditingMessage(null); setMessageInput(''); }} aria-label="Cancel editing"><X size={14} /></button></div>}
-              {activeReply && <div className="mb-2 flex items-start justify-between border-l-2 border-[#d6a83f] bg-[#151517] px-3 py-2.5 text-xs text-white/60"><button type="button" className="min-w-0 flex-1 text-left" onClick={() => { const original = document.getElementById(`message-${activeReply.id}`); original?.scrollIntoView({ behavior: 'smooth', block: 'center' }); original?.classList.add('ring-1', 'ring-[#d6a83f]/70'); window.setTimeout(() => original?.classList.remove('ring-1', 'ring-[#d6a83f]/70'), 1200); }}><strong className="block text-[#f2c75c]">Replying to {activeReply.sender?.fullName || `@${activeReply.sender?.username || 'user'}`}</strong><span className="mt-1 block truncate text-white/45">{activeReply.text || activeReply.content || 'Attachment'}</span></button><button className="grid h-7 w-7 shrink-0 place-items-center text-white/40" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={14} /></button></div>}
+              {activeReply && <div className="mb-1.5 flex items-center gap-2 border-l-2 border-[#d6a83f] pr-2 pl-2 py-1"><button type="button" className="min-w-0 flex-1 truncate text-left text-[11px]" onClick={() => { const original = document.getElementById(`message-${activeReply.id}`); original?.scrollIntoView({ behavior: 'smooth', block: 'center' }); original?.classList.add('ring-1', 'ring-[#d6a83f]/70'); window.setTimeout(() => original?.classList.remove('ring-1', 'ring-[#d6a83f]/70'), 1200); }}><span className="font-semibold text-[#f2c75c]">@{activeReply.sender?.username || 'user'}</span><span className="text-white/45"> · {activeReply.text || activeReply.content || 'Attachment'}</span></button><button className="grid h-6 w-6 shrink-0 place-items-center rounded text-white/40" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={12} /></button></div>}
               {(recordingState === 'recording' || recordingState === 'ready' || recordingState === 'uploading') && (
                 <div className="mb-2 flex items-center gap-3 rounded-lg border border-[#d6a83f]/25 bg-[#151517] px-3 py-2.5">
                   <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-red-500/15 text-red-300">
@@ -1731,15 +1800,26 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   )}
                 </div>
               )}
-              {attachmentDraft && <div className="mb-2 flex items-center gap-3 rounded-lg border border-white/[0.1] bg-[#101010] p-2.5">
-                <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md bg-black">{attachmentDraft.fileType === 'IMAGE' ? <img src={attachmentDraft.previewUrl} alt="Attachment preview" className="h-full w-full object-cover"/> : <video src={attachmentDraft.previewUrl} muted preload="metadata" className="h-full w-full object-cover"/>}</div>
-                <div className="min-w-0 flex-1"><p className="truncate text-xs text-white/80">{attachmentDraft.file.name}</p><p className={cn('mt-1 text-[10px]', attachmentDraft.status === 'failed' ? 'text-red-300' : 'text-white/40')}>{attachmentDraft.status === 'ready' ? 'Ready to send' : attachmentDraft.status === 'uploading' ? `Uploading... ${attachmentDraft.progress}%` : attachmentDraft.status === 'sending' ? 'Sending...' : attachmentDraft.error || 'Upload failed'}</p>{attachmentDraft.status === 'uploading' && <div className="mt-1.5 h-1 overflow-hidden rounded bg-white/[0.08]"><div className="h-full bg-[#d4af37] transition-[width]" style={{ width: `${attachmentDraft.progress}%` }}/></div>}</div>
-                {attachmentDraft.status === 'failed' ? <button onClick={uploadAndSendAttachment} className="btn-icon h-8 w-8" aria-label="Retry upload"><RefreshCw size={14}/></button> : attachmentDraft.status === 'ready' ? <button onClick={uploadAndSendAttachment} className="rounded-md bg-[#f5f5f5] px-3 py-2 text-[10px] font-semibold text-black">Send</button> : null}
-                <button onClick={cancelAttachment} className="btn-icon h-8 w-8" aria-label="Cancel attachment"><X size={14}/></button>
-              </div>}
+              {attachmentDrafts.length > 0 && (
+                <div className={cn('mb-2 flex flex-wrap gap-1.5 rounded-lg border border-white/[0.1] bg-[#101010] p-2')}>
+                  {attachmentDrafts.map((draft) => (
+                    <div key={draft.id} className="relative shrink-0">
+                      <div className={cn('h-14 w-14 overflow-hidden rounded-md bg-black', draft.fileType === 'IMAGE' ? '' : 'ring-1 ring-white/10')}>{draft.fileType === 'IMAGE' ? <img src={draft.previewUrl} alt="Attachment preview" className="h-full w-full object-cover"/> : <video src={draft.previewUrl} muted preload="metadata" className="h-full w-full object-cover"/>}</div>
+                      {draft.status === 'failed' ? (
+                        <button onClick={() => void uploadAllAndSend()} className="absolute -bottom-1 -right-1 grid h-5 w-5 place-items-center rounded-full bg-[#d6a83f]/15 text-[#f2c75c]" aria-label="Retry upload"><RefreshCw size={10}/></button>
+                      ) : (
+                        <button onClick={() => cancelAttachment(draft.id)} className="absolute -bottom-1 -right-1 grid h-5 w-5 place-items-center rounded-full bg-black/70 text-white/80" aria-label="Remove attachment"><X size={10}/></button>
+                      )}
+                      {draft.status === 'uploading' && <span className="absolute inset-0 grid place-items-center rounded-md bg-black/40 text-[9px] text-white">{draft.progress}%</span>}
+                      {draft.status === 'sending' && <span className="absolute inset-0 grid place-items-center rounded-md bg-black/40 text-white/80"><Loader2 size={12} className="animate-spin"/></span>}
+                    </div>
+                  ))}
+                  <p className="self-center pl-1 text-[10px] text-white/45">{readyDraftCount(attachmentDrafts)} attachment{attachmentDrafts.length === 1 ? '' : 's'} · tap ✕ to remove</p>
+                </div>
+              )}
               <div className="flex items-center gap-2">
-                <input ref={attachmentInputRef} type="file" className="hidden" accept="image/*,video/*" onChange={handleAttachment} />
-                <button onClick={() => attachmentInputRef.current?.click()} disabled={isUploadingAttachment || Boolean(attachmentDraft)} className="btn-icon h-10 w-10 shrink-0 disabled:opacity-50" aria-label="Add attachment">{isUploadingAttachment ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={17} />}</button>
+                <input ref={attachmentInputRef} type="file" className="hidden" accept="image/*,video/*" multiple onChange={handleAttachment} />
+                <button onClick={() => attachmentInputRef.current?.click()} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="btn-icon h-10 w-10 shrink-0 disabled:opacity-50" aria-label="Add attachment">{isUploadingAttachment ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={17} />}</button>
                 <div className="flex-1 relative">
                   <textarea
                     ref={messageInputRef}
@@ -1774,11 +1854,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     placeholder="Message..."
                     className="max-h-[120px] w-full resize-none overflow-y-auto rounded-xl border border-white/[0.09] bg-[#151517] px-4 py-2.5 text-sm leading-relaxed text-white outline-none transition-all placeholder:text-white/30 focus:border-[#d6a83f]/55 focus:shadow-[0_0_0_2px_rgba(214,168,63,.06)]"
                     onKeyDown={e => {
-                      if (e.key === 'Enter' && !e.shiftKey && (messageInput.trim() || attachmentDraft)) { e.preventDefault(); sendComposer(); }
+                      if (e.key === 'Enter' && !e.shiftKey && (messageInput.trim() || attachmentDrafts.length)) { e.preventDefault(); sendComposer(); }
                     }}
                   />
                 </div>
-                {messageInput.trim() || attachmentDraft ? (
+                {messageInput.trim() || attachmentDrafts.length ? (
                   <button
                     onClick={sendComposer}
                     className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#d6a83f]/60 bg-[#d6a83f] text-black transition-all hover:bg-[#f2c75c]"

@@ -3,21 +3,66 @@ import { contentViewService } from "./content-view.service";
 
 const STORY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+// Daily Status/Story quota for a standard (non-verified) user.
+// A "status post" is ONE published Story row. A Story is a single piece of
+// media + optional caption, so one Story with multiple media is represented as
+// multiple Story rows by the existing VANTA data model — i.e. the existing
+// semantic is one status post = one media item. The limit is therefore enforced
+// on the Story row count so the model's existing meaning is preserved.
+export const DAILY_STATUS_LIMIT = 7;
+
 export class StoryService {
-  async createStory(userId: string, mediaUrl: string, mediaType: string = "IMAGE", caption?: string) {
+  /**
+   * Enforce the daily Status/Story upload quota for a normal user (server-side,
+   * never client-supplied). Verified users have no limit.
+   *
+   * Concurrency-safe: the count + create happen inside a single transaction so
+   * a standard user cannot slip past the limit via simultaneous requests.
+   */
+  async assertCanCreateStory(tx: any, userId: string, isVerified: boolean) {
+    if (isVerified) return;
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const publishedToday = await tx.story.count({
+      where: { userId, createdAt: { gte: startOfDay } },
+    });
+    if (publishedToday >= DAILY_STATUS_LIMIT) {
+      throw new Error(`You've reached today's Status limit of ${DAILY_STATUS_LIMIT} posts.`);
+    }
+  }
+
+  /** Return today's published Status count and the remaining quota for the UI (e.g. "3/7"). */
+  async getStatusUsage(userId: string) {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const used = await prisma.story.count({
+      where: { userId, createdAt: { gte: startOfDay } },
+    });
+    return { used, limit: DAILY_STATUS_LIMIT };
+  }
+
+  async createStory(userId: string, mediaUrl: string, mediaType: string = "IMAGE", caption?: string, options?: { isVerified?: boolean }) {
+    const isVerified = Boolean(options?.isVerified);
     const expiresAt = new Date(Date.now() + STORY_TTL_MS);
-    
-    const story = await prisma.story.create({
-      data: {
-        userId,
-        mediaUrl,
-        mediaType,
-        caption,
-        expiresAt,
-      },
-      include: {
-        user: { select: { id: true, username: true, avatar: true } },
-      },
+
+    // Enforce the per-day quota atomically with the insert so concurrent uploads
+    // cannot collectively exceed the limit for a normal user. Verified users
+    // (`isVerified` is always resolved from the server-side User record — never
+    // trusted from the client) bypass the quota entirely.
+    const story = await prisma.$transaction(async tx => {
+      await this.assertCanCreateStory(tx, userId, isVerified);
+      return tx.story.create({
+        data: {
+          userId,
+          mediaUrl,
+          mediaType,
+          caption,
+          expiresAt,
+        },
+        include: {
+          user: { select: { id: true, username: true, avatar: true } },
+        },
+      });
     });
 
     return story;
@@ -29,7 +74,8 @@ export class StoryService {
    * of the original creator so attribution survives the original expiring or
    * being deleted.
    */
-  async reshareStory(userId: string, originalStoryId: string, caption?: string) {
+  async reshareStory(userId: string, originalStoryId: string, caption?: string, options?: { isVerified?: boolean }) {
+    const isVerified = Boolean(options?.isVerified);
     const original = await prisma.story.findUnique({
       where: { id: originalStoryId },
       include: { user: { select: { id: true, username: true, fullName: true, avatar: true } } },
@@ -38,20 +84,25 @@ export class StoryService {
       throw new Error("Story not found or expired");
     }
 
-    return prisma.story.create({
-      data: {
-        userId,
-        mediaUrl: original.mediaUrl,
-        mediaType: original.mediaType === "VIDEO" ? "VIDEO" : "IMAGE",
-        caption: typeof caption === "string" && caption.trim() ? caption.trim() : undefined,
-        resharedFromId: original.id,
-        resharedFromUserId: original.userId,
-        resharedFromUsername: original.user?.username || null,
-        expiresAt: new Date(Date.now() + STORY_TTL_MS),
-      },
-      include: {
-        user: { select: { id: true, username: true, avatar: true } },
-      },
+    // Resharing publishes a new Story row on the caller's Status, so it must
+    // respect the same daily quota (atomically) as any other story upload.
+    return prisma.$transaction(async tx => {
+      await this.assertCanCreateStory(tx, userId, isVerified);
+      return tx.story.create({
+        data: {
+          userId,
+          mediaUrl: original.mediaUrl,
+          mediaType: original.mediaType === "VIDEO" ? "VIDEO" : "IMAGE",
+          caption: typeof caption === "string" && caption.trim() ? caption.trim() : undefined,
+          resharedFromId: original.id,
+          resharedFromUserId: original.userId,
+          resharedFromUsername: original.user?.username || null,
+          expiresAt: new Date(Date.now() + STORY_TTL_MS),
+        },
+        include: {
+          user: { select: { id: true, username: true, avatar: true } },
+        },
+      });
     });
   }
 

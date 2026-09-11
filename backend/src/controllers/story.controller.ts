@@ -8,6 +8,14 @@ export const createStory = async (req: AuthRequest, res: Response): Promise<void
     const userId = req.user?.userId;
     if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
 
+    // Verification is always resolved from the server-side User record — never
+    // trusted from the client — so the daily Status limit cannot be bypassed by
+    // sending `verified: true` in the request body.
+    const isVerified = (await prisma.user.findUnique({
+      where: { id: userId },
+      select: { verified: true },
+    }))?.verified === true;
+
     const existingFileId = typeof req.body.mediaFileId === "string" ? req.body.mediaFileId : undefined;
     if (!req.file && !existingFileId) { res.status(400).json({ error: "Media file is required" }); return; }
 
@@ -32,7 +40,7 @@ export const createStory = async (req: AuthRequest, res: Response): Promise<void
     }
     const caption = typeof req.body.caption === "string" ? req.body.caption.trim() : undefined;
 
-    const story = await storyService.createStory(userId, mediaUrl, mediaType, caption);
+    const story = await storyService.createStory(userId, mediaUrl, mediaType, caption, { isVerified });
 
     // Link file to story
     await prisma.uploadedFile.update({
@@ -41,6 +49,22 @@ export const createStory = async (req: AuthRequest, res: Response): Promise<void
     });
 
     res.status(201).json(story);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(400).json({ error: message });
+  }
+};
+
+export const getStatusUsage = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    const isVerified = (await prisma.user.findUnique({
+      where: { id: userId },
+      select: { verified: true },
+    }))?.verified === true;
+    const usage = await storyService.getStatusUsage(userId);
+    res.status(200).json({ success: true, ...usage, unlimited: isVerified });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
     res.status(400).json({ error: message });
@@ -102,9 +126,17 @@ export const reshareStory = async (req: AuthRequest, res: Response): Promise<voi
     const userId = req.user?.userId;
     if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
 
+    // Also resolve verification server-side (resharing publishes a new Story row
+    // that must respect the daily Status quota for non-verified users).
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { verified: true },
+    });
+    const isVerified = user?.verified === true;
+
     if (!req.params.id) { res.status(400).json({ error: "Story id is required" }); return; }
     const caption = typeof req.body?.caption === "string" ? req.body.caption : undefined;
-    const story = await storyService.reshareStory(userId, req.params.id, caption);
+    const story = await storyService.reshareStory(userId, req.params.id, caption, { isVerified });
     res.status(201).json(story);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";

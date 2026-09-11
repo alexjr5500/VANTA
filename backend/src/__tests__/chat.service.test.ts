@@ -63,6 +63,42 @@ describe('ChatService security and persistence', () => {
     }));
   });
 
+  it('stores multiple media attachments + caption as ONE logical message', async () => {
+    (db.conversation.findUnique as jest.Mock).mockResolvedValue({
+      id: 'conversation', type: 'DIRECT', participants: [{ userId: 'sender', role: 'MEMBER' }],
+    });
+    const files = [
+      { id: 'f1', userId: 'sender', url: 'https://cdn/a.jpg', fileType: 'IMAGE', originalName: 'a.jpg', size: 11 },
+      { id: 'f2', userId: 'sender', url: 'https://cdn/b.jpg', fileType: 'IMAGE', originalName: 'b.jpg', size: 22 },
+      { id: 'f3', userId: 'sender', url: 'https://cdn/c.mp4', fileType: 'VIDEO', originalName: 'c.mp4', size: 33 },
+    ];
+    (db.uploadedFile.findMany as jest.Mock).mockResolvedValue(files);
+    (db.message.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: 'msg-1', ...data }));
+    (db.conversation.update as jest.Mock).mockResolvedValue({});
+
+    await service.sendMessage('conversation', 'sender', 'Look at these', 'TEXT', [
+      { fileId: 'f1' }, { fileId: 'f2' }, { fileId: 'f3' },
+    ]);
+
+    // One Message row carrying the caption + 3 attachment children.
+    expect(db.message.create).toHaveBeenCalledTimes(1);
+    expect(db.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        content: 'Look at these',
+        attachments: {
+          create: [
+            { url: 'https://cdn/a.jpg', fileType: 'IMAGE', fileName: 'a.jpg', fileSize: 11 },
+            { url: 'https://cdn/b.jpg', fileType: 'IMAGE', fileName: 'b.jpg', fileSize: 22 },
+            { url: 'https://cdn/c.mp4', fileType: 'VIDEO', fileName: 'c.mp4', fileSize: 33 },
+          ],
+        },
+      }),
+    }));
+    expect(db.conversation.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'conversation' }, data: expect.objectContaining({ updatedAt: expect.any(Date) }) })
+    );
+  });
+
   it('rejects a reply target from another conversation', async () => {
     (db.conversation.findUnique as jest.Mock).mockResolvedValue({
       id: 'conversation', type: 'GROUP', participants: [{ userId: 'sender', role: 'MEMBER' }],

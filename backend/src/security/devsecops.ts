@@ -18,7 +18,7 @@ export class DevSecOps {
       'X-Frame-Options': 'DENY',
       'X-XSS-Protection': '1; mode=block',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
-      'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+      'Permissions-Policy': 'camera=(self), microphone=(self), display-capture=(self), geolocation=(), interest-cohort=()',
       'Cache-Control': 'no-store, max-age=0',
       'Pragma': 'no-cache',
       'Cross-Origin-Embedder-Policy': 'require-corp',
