@@ -11,24 +11,28 @@ export const MIN_WITHDRAWAL_AMOUNT = 10;
  * VANTA purchase packages.
  *
  * This is the approved customer-facing purchase catalog. Keep package IDs,
- * quantities, bonuses, and prices aligned with the frontend fallback.
+ * quantities, and prices aligned with the frontend fallback.
+ *
+ * NOTE: Coins are NEVER awarded above the package amount. A user who buys a
+ * package always receives EXACTLY `package.coinAmount` coins — there are no
+ * bonus/extra/promotional coins on VANTA Coin purchases.
  */
 export const VANTA_COIN_PACKAGES = [
-  { id: 'pkg_starter', name: 'Starter', coins: 100, bonusCoins: 0, price: 1, badge: null },
-  { id: 'pkg_popular', name: 'Popular', coins: 500, bonusCoins: 25, price: 5, badge: 'MOST_POPULAR' },
-  { id: 'pkg_standard', name: 'Standard', coins: 1000, bonusCoins: 50, price: 10, badge: null },
-  { id: 'pkg_premium', name: 'Premium', coins: 5000, bonusCoins: 250, price: 50, badge: null },
-  { id: 'pkg_elite', name: 'Elite', coins: 10000, bonusCoins: 500, price: 100, badge: null },
-  { id: 'pkg_ultimate', name: 'Ultimate', coins: 25000, bonusCoins: 1500, price: 250, badge: 'BEST_VALUE' },
-  { id: 'pkg_legendary', name: 'Legendary', coins: 50000, bonusCoins: 3500, price: 500, badge: 'LIMITED_OFFER' },
-  { id: 'pkg_1000', name: 'Signature', coins: 100000, bonusCoins: 7000, price: 1000, badge: null },
-  { id: 'pkg_2500', name: 'Reserve', coins: 250000, bonusCoins: 20000, price: 2500, badge: null },
-  { id: 'pkg_5000', name: 'Prestige', coins: 500000, bonusCoins: 45000, price: 5000, badge: null },
-  { id: 'pkg_10000', name: 'Obsidian', coins: 1000000, bonusCoins: 100000, price: 10000, badge: null },
-  { id: 'pkg_25000', name: 'Private', coins: 2500000, bonusCoins: 300000, price: 25000, badge: null },
-  { id: 'pkg_50000', name: 'Sovereign', coins: 5000000, bonusCoins: 700000, price: 50000, badge: null },
-  { id: 'pkg_75000', name: 'Imperial', coins: 7500000, bonusCoins: 1125000, price: 75000, badge: null },
-  { id: 'pkg_100000', name: 'Founder', coins: 10000000, bonusCoins: 1600000, price: 100000, badge: 'BEST_VALUE' },
+  { id: 'pkg_starter', name: 'Starter', coins: 100, price: 1, badge: null },
+  { id: 'pkg_popular', name: 'Popular', coins: 500, price: 5, badge: 'MOST_POPULAR' },
+  { id: 'pkg_standard', name: 'Standard', coins: 1000, price: 10, badge: null },
+  { id: 'pkg_premium', name: 'Premium', coins: 5000, price: 50, badge: null },
+  { id: 'pkg_elite', name: 'Elite', coins: 10000, price: 100, badge: null },
+  { id: 'pkg_ultimate', name: 'Ultimate', coins: 25000, price: 250, badge: 'BEST_VALUE' },
+  { id: 'pkg_legendary', name: 'Legendary', coins: 50000, price: 500, badge: 'LIMITED_OFFER' },
+  { id: 'pkg_1000', name: 'Signature', coins: 100000, price: 1000, badge: null },
+  { id: 'pkg_2500', name: 'Reserve', coins: 250000, price: 2500, badge: null },
+  { id: 'pkg_5000', name: 'Prestige', coins: 500000, price: 5000, badge: null },
+  { id: 'pkg_10000', name: 'Obsidian', coins: 1000000, price: 10000, badge: null },
+  { id: 'pkg_25000', name: 'Private', coins: 2500000, price: 25000, badge: null },
+  { id: 'pkg_50000', name: 'Sovereign', coins: 5000000, price: 50000, badge: null },
+  { id: 'pkg_75000', name: 'Imperial', coins: 7500000, price: 75000, badge: null },
+  { id: 'pkg_100000', name: 'Founder', coins: 10000000, price: 100000, badge: 'BEST_VALUE' },
 ] as const;
 
 export function coinsToUsd(coins: number): number {

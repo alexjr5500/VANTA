@@ -6,7 +6,7 @@ import type {
   DashboardStats, UserRecord, CreatorRecord, ContentItem,
   LiveStreamMonitor, FinancialTransaction, GiftDefinition,
   CommunityRecord, NotificationCampaign, AuditLog, AnalyticsReport,
-  ServerInfrastructure, AdminUser
+  ServerInfrastructure, AdminUser, CoinPaymentsDashboard, CoinPurchaseRecord
 } from '@/types/admin';
 
 // ==========================================
@@ -252,4 +252,21 @@ export const getInfrastructureRealtime = (token: string): Promise<ServerInfrastr
 
 export const exportAnalytics = (token: string, format: 'pdf' | 'csv' | 'excel', type: string, timeframe?: string): Promise<Blob> => {
   return apiGet<any>(`/api/admin/analytics/export?format=${format}&type=${type}&timeframe=${timeframe || 'monthly'}`, token);
+};
+
+// ==========================================
+// COIN PAYMENTS (VANTA Coin purchase dashboard)
+// ==========================================
+
+export const getCoinPaymentsDashboard = (token: string): Promise<CoinPaymentsDashboard> => {
+  return apiGet<CoinPaymentsDashboard>('/api/admin/coin-payments', token);
+};
+
+export const listCoinPurchases = (token: string, params?: { status?: string; limit?: number; offset?: number }): Promise<{ purchases: CoinPurchaseRecord[]; total: number }> => {
+  const query = new URLSearchParams((params || {}) as any).toString();
+  return apiGet<any>(`/api/admin/coin-payments/list?${query}`, token);
+};
+
+export const refundCoinPurchase = (token: string, orderId: string, reason: string): Promise<any> => {
+  return apiPost<any>(`/api/admin/coin-payments/${orderId}/refund`, { reason }, token);
 };

@@ -39,6 +39,43 @@ export const COIN_PAYMENT_MODE = {
 
 export type CoinPaymentMode = (typeof COIN_PAYMENT_MODE)['TEST'] | (typeof COIN_PAYMENT_MODE)['LIVE'];
 
+/**
+ * Explicit purchase-order lifecycle statuses.
+ *
+ * Conventions:
+ *  - PENDING    order created, no payment processed yet — NEVER credits coins
+ *  - PROCESSING a verified provider event (webhook) accepted the payment and
+ *               the backend is finalizing it (recoverable on retry)
+ *  - PAID       payment verified by the provider, credit not yet applied
+ *  - COMPLETED  coins have been credited to the buyer (terminal success)
+ *  - FAILED     payment failed / was rejected
+ *  - EXPIRED    order TTL elapsed before payment was completed
+ *  - CANCELLED  buyer/provider cancelled before payment
+ *  - REFUNDED   a completed purchase was refunded (original row stays immutable)
+ *
+ * Only a server-side verified payment may transition an order into
+ * PAID/COMPLETED. Coins are NEVER created at order-creation time.
+ */
+export const COIN_PAYMENT_STATUS = {
+  PENDING: 'PENDING',
+  PROCESSING: 'PROCESSING',
+  PAID: 'PAID',
+  COMPLETED: 'COMPLETED',
+  FAILED: 'FAILED',
+  EXPIRED: 'EXPIRED',
+  CANCELLED: 'CANCELLED',
+  REFUNDED: 'REFUNDED',
+} as const;
+
+export type CoinPaymentStatus = (typeof COIN_PAYMENT_STATUS)[keyof typeof COIN_PAYMENT_STATUS];
+
+// Statuses the atomic completion claim will accept (i.e. not yet credited).
+export const COIN_PAYMENT_CREDITABLE_STATUSES: readonly string[] = Object.freeze([
+  COIN_PAYMENT_STATUS.PENDING,
+  COIN_PAYMENT_STATUS.PROCESSING,
+  COIN_PAYMENT_STATUS.PAID,
+]);
+
 export const COIN_PAYMENT_ORDER_TTL_SECONDS = 30 * 60; // orders expire after 30 minutes
 
 /**
@@ -80,6 +117,127 @@ export function getTestPaymentDepositAddress(): string {
   const address = (process.env.VANTA_TEST_PAYMENT_ADDRESS || '').trim();
   if (address && TEST_ADDRESS_REGEX.test(address)) return address;
   return TEST_MODE_DEPOSIT_ADDRESS;
+}
+
+// ============================================================================
+// CONFIGURATION VALIDATION (run at server startup)
+// ============================================================================
+
+/** A valid EVM wallet address: 0x + 40 hex chars (checksummed addresses OK). */
+export function isValidCoinPaymentDepositAddress(address: string): boolean {
+  return typeof address === 'string' && /^0x[a-fA-F0-9]{40}$/.test(address.trim());
+}
+
+/**
+ * A valid EVM transaction hash: 0x + 64 hex chars. Live payment webhooks must
+ * present a blockchain transaction hash in this shape before it can even be
+ * considered for verification.
+ */
+export function isValidTransactionHash(hash: string): boolean {
+  return typeof hash === 'string' && /^0x[a-fA-F0-9]{64}$/.test(hash.trim());
+}
+
+/**
+ * Secret used to authenticate provider payment webhooks.
+ * If empty, live webhooks are rejected (nothing can be verified), which keeps
+ * coin crediting impossible until the deployment is actually configured.
+ */
+export function getCoinPaymentWebhookSecret(): string {
+  return (process.env.VANTA_COIN_PAYMENT_WEBHOOK_SECRET || '').trim();
+}
+
+export interface CoinPaymentConfigValidation {
+  mode: CoinPaymentMode;
+  isTestMode: boolean;
+  isProduction: boolean;
+  depositAddress: string | null;
+  addressValid: boolean;
+  webhookSecretConfigured: boolean;
+  /** Errors mean LIVE purchases MUST stay disabled. */
+  errors: string[];
+  /** Warnings are non-fatal but worth surfacing to operators. */
+  warnings: string[];
+}
+
+/**
+ * Validate the coin-payment configuration. This is the single place that
+ * decides whether live purchases can operate.
+ *
+ * Rules:
+ *  - test mode is only honored outside production (a production deployment can
+ *    never simulate payments), and never requires a deposit address.
+ *  - live mode REQUIRES a valid VANTA_COIN_PAYMENT_ADDRESS. If it is missing or
+ *    malformed the configuration is in error and live purchases stay disabled —
+ *    the app NEVER silently falls back to test mode.
+ */
+export function validateCoinPaymentConfig(): CoinPaymentConfigValidation {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const mode = getCoinPaymentMode();
+  const depositAddress = getCoinPaymentDepositAddress();
+  const addressValid = depositAddress ? isValidCoinPaymentDepositAddress(depositAddress) : false;
+  const webhookSecretConfigured = getCoinPaymentWebhookSecret().length > 0;
+
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const raw = (process.env.VANTA_COIN_PAYMENT_MODE || '').trim().toLowerCase();
+
+  if (mode === COIN_PAYMENT_MODE.TEST) {
+    if (isProduction) {
+      errors.push(
+        'VANTA_COIN_PAYMENT_MODE=test is not allowed in production (NODE_ENV=production). ' +
+          'Set VANTA_COIN_PAYMENT_MODE=live and VANTA_COIN_PAYMENT_ADDRESS to enable live purchases.'
+      );
+    }
+    if (!raw) {
+      warnings.push('VANTA_COIN_PAYMENT_MODE is not set; running in test (sandbox) payment mode for development.');
+    } else if (raw === COIN_PAYMENT_MODE.LIVE) {
+      warnings.push('VANTA_COIN_PAYMENT_MODE=live is set but the runtime is in test mode (not production).');
+    }
+  } else {
+    if (!depositAddress) {
+      errors.push(
+        'LIVE coin purchases are disabled: VANTA_COIN_PAYMENT_ADDRESS is not configured. ' +
+          'Set it to the public receiving wallet address, or run in test mode with VANTA_COIN_PAYMENT_MODE=test (development only).'
+      );
+    } else if (!addressValid) {
+      errors.push(
+        'LIVE coin purchases are disabled: VANTA_COIN_PAYMENT_ADDRESS is not a valid EVM address ' +
+          '(expected 0x followed by 40 hex characters).'
+      );
+    }
+    if (!webhookSecretConfigured) {
+      warnings.push(
+        'VANTA_COIN_PAYMENT_WEBHOOK_SECRET is not configured: live payment webhooks will be rejected ' +
+          'and no payment can be credited until it is set.'
+      );
+    }
+    if (isProduction && !depositAddress) {
+      warnings.push('Production environment is missing VANTA_COIN_PAYMENT_ADDRESS — live purchases remain disabled.');
+    }
+  }
+
+  return {
+    mode,
+    isTestMode: mode === COIN_PAYMENT_MODE.TEST,
+    isProduction,
+    depositAddress,
+    addressValid,
+    webhookSecretConfigured,
+    errors,
+    warnings,
+  };
+}
+
+/**
+ * True when the deployment is safe to offer LIVE coin purchases:
+ * live (or production-forced) mode + a valid configured deposit address.
+ * Test mode is always usable without an address.
+ */
+export function isLiveCoinPaymentsAvailable(): boolean {
+  const config = validateCoinPaymentConfig();
+  if (config.isTestMode) return false;
+  return config.depositAddress !== null && config.addressValid;
 }
 // ============================================================================
 // TEST PAYMENT SIMULATE TOKEN (HMAC)

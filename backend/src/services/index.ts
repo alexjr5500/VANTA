@@ -2,6 +2,12 @@ export { authService, AuthService } from "./auth.service";
 export { chatService, ChatService } from "./chat.service";
 export { liveService, LiveService } from "./live.service";
 export { walletService, WalletService } from "./wallet.service";
+export {
+  coinPaymentService,
+  CoinPaymentService,
+  CoinPaymentUnavailableError,
+  PaymentWebhookError,
+} from "./coin-payment.service";
 export { notificationService, NotificationService } from "./notification.service";
 export { paymentService, PaymentService } from "./payment.service";
 export { moderationService, ModerationService } from "./moderation.service";

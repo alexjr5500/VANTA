@@ -142,19 +142,19 @@ async function main() {
   // ============================================================================
 
   const packages = [
-    { name: 'Starter Pack', coins: 100, price: 0.99, bonusCoins: 0, isPopular: false, sortOrder: 1 },
-    { name: 'Popular Pack', coins: 550, price: 4.99, bonusCoins: 50, isPopular: true, sortOrder: 2 },
-    { name: 'Premium Pack', coins: 1200, price: 9.99, bonusCoins: 100, isPopular: true, sortOrder: 3 },
-    { name: 'Elite Pack', coins: 2500, price: 19.99, bonusCoins: 300, isPopular: false, sortOrder: 4 },
-    { name: 'Ultra Pack', coins: 6500, price: 49.99, bonusCoins: 1000, isPopular: false, sortOrder: 5 },
-    { name: 'Legendary Pack', coins: 14000, price: 99.99, bonusCoins: 3000, isPopular: false, sortOrder: 6 },
+    { name: 'Starter Pack', coins: 100, price: 0.99, isPopular: false, sortOrder: 1 },
+    { name: 'Popular Pack', coins: 550, price: 4.99, isPopular: true, sortOrder: 2 },
+    { name: 'Premium Pack', coins: 1200, price: 9.99, isPopular: true, sortOrder: 3 },
+    { name: 'Elite Pack', coins: 2500, price: 19.99, isPopular: false, sortOrder: 4 },
+    { name: 'Ultra Pack', coins: 6500, price: 49.99, isPopular: false, sortOrder: 5 },
+    { name: 'Legendary Pack', coins: 14000, price: 99.99, isPopular: false, sortOrder: 6 },
     // High-value packages (up to $100,000)
-    { name: 'Platinum Pack', coins: 107500, price: 999.99, bonusCoins: 7500, isPopular: false, sortOrder: 7 },
-    { name: 'Diamond Pack', coins: 540000, price: 4999.99, bonusCoins: 40000, isPopular: false, sortOrder: 8 },
-    { name: 'Royal Pack', coins: 1090000, price: 9999.99, bonusCoins: 90000, isPopular: false, sortOrder: 9 },
-    { name: 'Imperial Pack', coins: 2750000, price: 24999.99, bonusCoins: 250000, isPopular: false, sortOrder: 10 },
-    { name: 'Sovereign Pack', coins: 5550000, price: 49999.99, bonusCoins: 550000, isPopular: false, sortOrder: 11 },
-    { name: 'VANTA Black Pack', coins: 11200000, price: 99999.99, bonusCoins: 1200000, isPopular: false, sortOrder: 12 },
+    { name: 'Platinum Pack', coins: 107500, price: 999.99, isPopular: false, sortOrder: 7 },
+    { name: 'Diamond Pack', coins: 540000, price: 4999.99, isPopular: false, sortOrder: 8 },
+    { name: 'Royal Pack', coins: 1090000, price: 9999.99, isPopular: false, sortOrder: 9 },
+    { name: 'Imperial Pack', coins: 2750000, price: 24999.99, isPopular: false, sortOrder: 10 },
+    { name: 'Sovereign Pack', coins: 5550000, price: 49999.99, isPopular: false, sortOrder: 11 },
+    { name: 'VANTA Black Pack', coins: 11200000, price: 99999.99, isPopular: false, sortOrder: 12 },
   ];
 
   for (const pkg of packages) {

@@ -7,9 +7,11 @@ import {
   setupPin, updatePin, verifyPin,
   updateTransferLimit, getWalletAnalytics,
   getCoinPackages, getPaymentAddress, verifyPayment, searchWalletUsers,
+  getCoinPurchases,
   exportTransactions,
 } from '../controllers/wallet.controller';
 import { authenticateJWT } from '../middleware/auth.middleware';
+import { rateLimiter } from '../security/rateLimiter';
 
 const router = Router();
 
@@ -51,8 +53,10 @@ router.post('/address', saveWalletAddress);
 
 // Coin packages (Buy Coins flow)
 router.get('/packages', getCoinPackages);
-router.post('/payment-address', getPaymentAddress);
-router.post('/verify-payment', verifyPayment);
+router.post('/payment-address', rateLimiter.coinPurchase, getPaymentAddress);
+router.post('/verify-payment', rateLimiter.coinPurchase, verifyPayment);
+// Coin purchase history for the authenticated user
+router.get('/purchases', getCoinPurchases);
 
 // User search (Send Coins flow)
 router.get('/users/search', searchWalletUsers);

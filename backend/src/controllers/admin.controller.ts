@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../prisma';
-import { moderationService, walletService, userService, adminService, adService } from '../services';
+import { moderationService, walletService, userService, adminService, adService, coinPaymentService } from '../services';
 import { AuthenticatedRequest } from '../security';
 
 // ============================================================================
@@ -865,6 +865,46 @@ export const getAllDeposits = async (req: AuthenticatedRequest, res: Response): 
     ]);
 
     res.status(200).json({ deposits, total });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const getCoinPaymentsDashboard = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const dashboard = await coinPaymentService.getCoinPaymentDashboard();
+    res.status(200).json(dashboard);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const listCoinPayments = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = parseInt(req.query.offset as string) || 0;
+    const status = req.query.status as string | undefined;
+    const result = await coinPaymentService.listCoinPurchases({ limit, offset, status });
+    res.status(200).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const refundCoinPurchase = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const adminId = req.user?.userId || '';
+    const orderId = req.params.orderId;
+    const reason = req.body?.reason;
+    if (!orderId) {
+      res.status(400).json({ error: 'orderId is required' });
+      return;
+    }
+    const result = await walletService.refundCoinPurchase(adminId, orderId, reason, req.ip);
+    res.status(200).json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });

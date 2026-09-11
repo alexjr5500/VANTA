@@ -39,6 +39,9 @@ import {
   getAllGifts,
   getAllWithdrawals,
   searchUsers,
+  getCoinPaymentsDashboard,
+  listCoinPayments,
+  refundCoinPurchase,
   // New ad admin endpoints
   createCampaign,
   updateCampaign,
@@ -93,6 +96,11 @@ router.get('/wallet/analytics', getWalletAnalytics);
 
 // Coin Management
 router.get('/coins', getCoinManagement);
+
+// Coin payment dashboard (VANTA Coin purchase analytics + refunds)
+router.get('/coin-payments', getCoinPaymentsDashboard);
+router.get('/coin-payments/list', listCoinPayments);
+router.post('/coin-payments/:orderId/refund', refundCoinPurchase);
 
 const giftTextFields = ['slug', 'name', 'icon', 'image', 'category', 'subcategory', 'description', 'animationUrl', 'animationType', 'thumbnailUrl', 'glowColor', 'particleColor', 'soundEffect', 'artworkType', 'rarity', 'tier', 'effectProfile', 'previewAssetUrl'] as const;
 const giftBooleanFields = ['isActive', 'isFeatured', 'isTrending', 'isPopular', 'isLimited', 'isLegendary', 'comboEnabled'] as const;

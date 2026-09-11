@@ -452,8 +452,6 @@ export interface TranslationKeys {
     purchaseCoins: string;
     coinPackages: string;
     popularPackage: string;
-    bonusCoins: string;
-    totalCoins: string;
     price: string;
     buyNow: string;
     paymentMethod: string;

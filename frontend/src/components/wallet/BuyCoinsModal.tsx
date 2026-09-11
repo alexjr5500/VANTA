@@ -17,7 +17,6 @@ interface CoinPackage {
   name: string;
   coins: number;
   price: number;
-  bonusCoins?: number;
   isPopular?: boolean;
   badge?: string | null;
 }
@@ -133,9 +132,11 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
 
     try {
       const data = await apiPost<any>('/api/wallets/payment-address', {
+        // The backend resolves the exact coin amount from the selected package
+        // itself. NEVER send a coin amount/bonus — a client cannot influence
+        // how many coins are credited.
         packageId: selectedPackage.id,
         network: network.id,
-        amount: selectedPackage.price,
       }, token);
       
       if (!data?.address || !data?.orderId) throw new Error('The payment provider did not return complete payment details.');
@@ -185,18 +186,53 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
         simulateToken: isTestMode ? simulateToken : undefined,
       }, token);
 
-      if (!result?.success) {
-        setError(result?.message || 'Payment is awaiting provider verification.');
+      if (result?.success) {
+        setStep('success');
+        if (onSuccess) {
+          onSuccess(selectedPackage.coins);
+        }
+        return;
+      }
+
+      // LIVE mode: the backend accepted the transaction reference but coins are
+      // only credited after the provider webhook verifies it server-side.
+      // Poll the user's purchase list until this order flips to COMPLETED.
+      if (result?.pending) {
+        const deadline = Date.now() + 120_000; // up to 2 minutes
+        const startedAt = Date.now();
+        // eslint-disable-next-line no-constant-condition
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 5000));
+          try {
+            const list = await apiGet<{ purchases?: any[] }>('/api/wallets/purchases?limit=50', token);
+            const found = (list?.purchases || []).find((o: any) => o.id === orderId);
+            if (found) {
+              if (found.status === 'COMPLETED') {
+                setStep('success');
+                if (onSuccess) onSuccess(found.coins ?? selectedPackage.coins);
+                return;
+              }
+              if (found.status === 'FAILED' || found.status === 'EXPIRED' || found.status === 'REFUNDED') {
+                setError('Payment could not be completed. Your coins were not charged.');
+                setStep('payment');
+                return;
+              }
+            }
+          } catch {
+            // Transient network failure — keep polling.
+          }
+          if (Date.now() - startedAt > 90_000) break;
+        }
+        setError('Payment is still awaiting on-chain confirmation. Your coins will be credited automatically once the transaction is verified.');
         setStep('payment');
         return;
       }
-      setStep('success');
 
-      if (onSuccess) {
-        onSuccess(selectedPackage.coins + (selectedPackage.bonusCoins || 0));
-      }
+      // Any other non-success response (e.g. validation error).
+      setError(result?.message || 'Payment could not be completed. Your coins were not charged.');
+      setStep('payment');
     } catch (err: any) {
-      setError(err.message || 'Payment verification failed. Please contact support.');
+      setError(err.message || 'Payment could not be completed. Your coins were not charged.');
       setStep('payment');
     } finally {
       setConfirming(false);
@@ -292,7 +328,6 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
                              <p className="truncate text-sm font-semibold text-white">{pkg.name}</p>
                              <p className="truncate text-xs text-white/40">
                               {pkg.coins.toLocaleString()} VANTA Coins
-                              {pkg.bonusCoins ? ` + ${pkg.bonusCoins} bonus` : ''}
                             </p>
                           </div>
                         </div>
@@ -324,7 +359,6 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
                        <span className="text-xs text-white/40">VANTA Coins</span>
                       <span className="text-sm font-semibold text-white">
                         {selectedPackage.coins.toLocaleString()}
-                        {selectedPackage.bonusCoins ? ` + ${selectedPackage.bonusCoins} bonus` : ''}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
@@ -528,8 +562,7 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
                     transition={{ delay: 0.4 }}
                     className="text-sm text-white/40 max-w-xs"
                   >
-                    {selectedPackage?.coins.toLocaleString()} VANTA
-                    {selectedPackage?.bonusCoins ? ` + ${selectedPackage.bonusCoins} bonus` : ''} have been added to your wallet.
+                    You receive: {selectedPackage?.coins.toLocaleString()} VANTA Coins.
                   </motion.p>
                   {txHash && paymentMode !== 'test' && (
                     <motion.a

@@ -179,3 +179,11 @@ backend/prisma/backend/prisma/dev.db
 backend/prisma/backend/prisma/dev.db-journal
 
 .env-backup/
+
+# Local development artifacts & helper scripts (not part of the product)
+.kilo/
+run-next-build.cmd
+backend/scripts/brace-check.js
+backend/scripts/db-conn-test.js
+backend/scripts/verify-env-loading.js
+backend/scripts/verify-env-loading.ts

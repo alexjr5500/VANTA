@@ -1,5 +1,8 @@
-import 'dotenv/config';
-import express, { Express, Request, Response } from 'express';
+// Load environment variables deterministically (backend/.env, then cwd/.env,
+// then repo-root/.env). This MUST run before any module reads process.env,
+// which is why it is the very first import.
+import './config/env';
+import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -19,6 +22,7 @@ import authRoutes from './routes/auth.routes';
 import profileRoutes from './routes/profile.routes';
 import settingsRoutes from './routes/settings.routes';
 import walletRoutes from './routes/wallet.routes';
+import paymentsRoutes from './routes/payments.routes';
 import welcomeRewardRoutes from './routes/welcome-reward.routes';
 import messageRoutes from './routes/message.routes';
 import notificationRoutes from './routes/notification.routes';
@@ -138,6 +142,17 @@ app.use(compression({
 }));
 
 // Request parsing with size limits
+// Capture the raw request body so the payment webhook can verify the HMAC
+// signature over the exact bytes the provider signed (express.json() parses
+// but does not preserve the original buffer).
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  const chunks: Buffer[] = [];
+  req.on('data', (chunk: Buffer) => {
+    if ((req as any).rawBody === undefined) (req as any).rawBody = '';
+    (req as any).rawBody += chunk.toString('utf8');
+  });
+  req.on('end', () => next());
+});
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
@@ -395,6 +410,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/profiles', profileRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/wallets', walletRoutes);
+// Provider payment webhook (HMAC-authenticated, no user session required).
+// This is the ONLY path that credits coins for a LIVE purchase.
+app.use('/api/payments', paymentsRoutes);
 app.use('/api/welcome-reward', welcomeRewardRoutes);
 app.use('/api/messages', rateLimiter.messaging, messageRoutes);
 app.use('/api/notifications', notificationRoutes);
@@ -548,6 +566,31 @@ async function startServer() {
   try {
     // Initialize security layer
     await initializeSecurity();
+
+    // Validate the coin-payment configuration at startup. In live mode a
+    // missing/malformed VANTA_COIN_PAYMENT_ADDRESS keeps live purchases
+    // disabled (never a silent fallback to test mode). Surfaced to operators.
+    try {
+      const { validateCoinPaymentConfig } = await import('./config/coin-payments.config');
+      const coinConfig = validateCoinPaymentConfig();
+      console.info(
+        `[COIN-PAYMENTS] Effective mode: ${coinConfig.mode} | ` +
+        `live address configured: ${Boolean(coinConfig.depositAddress && coinConfig.addressValid)} | ` +
+        `webhook secret configured: ${coinConfig.webhookSecretConfigured}`
+      );
+      for (const warning of coinConfig.warnings) {
+        console.warn(`[COIN-PAYMENTS] ${warning}`);
+      }
+      for (const error of coinConfig.errors) {
+        console.error(`[COIN-PAYMENTS] ${error}`);
+      }
+      if (coinConfig.mode === 'test' && !coinConfig.isProduction) {
+        console.warn('[COIN-PAYMENTS] Sandbox/test payment mode is ACTIVE — simulated purchases do not move real funds.');
+      }
+    } catch (configError) {
+      // Startup must not hard-fail on a non-critical config check.
+      console.warn('[COIN-PAYMENTS] Config validation could not run:', configError);
+    }
 
     // Initialize performance monitoring alerts
     setupDefaultAlerts();

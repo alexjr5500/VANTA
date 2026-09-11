@@ -4,7 +4,13 @@ import { notificationService } from "./notification.service";
 import * as crypto from "crypto";
 import * as bcrypt from "bcryptjs";
 import { calculateTransferFee, coinsToUsd, VANTA_COINS_PER_USD, WITHDRAWAL_FEE_RATE, MIN_WITHDRAWAL_AMOUNT } from "../config/wallet.config";
-import { COIN_PAYMENT_ORDER_TTL_SECONDS, isCoinPaymentTestMode, verifyCoinPaymentSimulateToken } from "../config/coin-payments.config";
+import {
+  COIN_PAYMENT_ORDER_TTL_SECONDS,
+  COIN_PAYMENT_CREDITABLE_STATUSES,
+  COIN_PAYMENT_STATUS,
+  isCoinPaymentTestMode,
+  verifyCoinPaymentSimulateToken,
+} from "../config/coin-payments.config";
 
 // ============================================================================
 // TRANSACTION TYPE CONSTANTS
@@ -240,6 +246,7 @@ export class WalletService {
           type: options?.type || "GIFT_SENT",
           amount: Math.abs(amount),
           fee: 0,
+          balanceBefore: wallet.coinBalance,
           balance: updatedWallet.coinBalance,
           status: "COMPLETED",
           description: options?.description || `Spent ${amount.toLocaleString()} VANTA Coins`,
@@ -383,16 +390,23 @@ export class WalletService {
     options: {
       mode: string;
       simulateToken?: string;
+      /** External provider reference (e.g. blockchain tx hash) for the order. */
+      providerOrderId?: string;
+      /** Optional verified-provider details stored for auditability. */
+      verification?: Record<string, unknown>;
       ipAddress?: string;
     } = { mode: "live" }
   ) {
     const order = await prisma.purchaseOrder.findFirst({ where: { id: orderId, userId } });
     if (!order) throw new Error("Purchase order not found.");
-    if (order.status === "COMPLETED") {
+    if (order.status === COIN_PAYMENT_STATUS.COMPLETED) {
       // Idempotent replay — already credited, return the existing result.
       return { order, coins: order.coins, alreadyCompleted: true };
     }
-    if (order.status !== "PENDING") {
+    if (order.status === COIN_PAYMENT_STATUS.REFUNDED) {
+      throw new Error("This purchase was refunded and cannot be completed again.");
+    }
+    if (!COIN_PAYMENT_CREDITABLE_STATUSES.includes(order.status)) {
       throw new Error(`This purchase order cannot be completed (status: ${order.status}).`);
     }
     if (COIN_PAYMENT_ORDER_TTL_SECONDS > 0) {
@@ -418,17 +432,26 @@ export class WalletService {
       throw new Error("Wallet is frozen. Contact support.");
     }
 
-    const providerOrderId = `${options.mode}:${orderId}`;
+    // The providerOrderId is the strongest duplicate guard: in live mode it is
+    // the blockchain transaction hash, and PurchaseOrder.providerOrderId has a
+    // UNIQUE constraint at the database level.
+    const providerReference = options.providerOrderId?.trim() || order.providerReference || "";
+    const providerOrderId = options.mode === "test"
+      ? `test:${orderId}`
+      : `live:${providerReference || orderId}`;
 
     // Conditional status flip makes the completion idempotent under concurrency:
     // a second request finds 0 rows updated and cannot credit twice.
     const result = await prisma.$transaction(async (tx) => {
       const claimed = await tx.purchaseOrder.updateMany({
-        where: { id: orderId, userId, status: "PENDING" },
+        where: { id: orderId, userId, status: { in: [...COIN_PAYMENT_CREDITABLE_STATUSES] } },
         data: {
-          status: "COMPLETED",
+          status: COIN_PAYMENT_STATUS.COMPLETED,
           providerOrderId,
+          providerReference: providerReference || null,
           paymentMethod: order.paymentMethod,
+          paymentMode: options.mode || order.paymentMode,
+          confirmedAt: new Date(),
         },
       });
 
@@ -453,6 +476,7 @@ export class WalletService {
           type: TX_TYPES.PURCHASE,
           amount: order.coins,
           fee: 0,
+          balanceBefore: wallet.coinBalance,
           balance: updatedWallet.coinBalance,
           status: "COMPLETED",
           description: `Purchased ${order.coins.toLocaleString()} VANTA Coins for $${order.amount.toFixed(2)}`,
@@ -462,6 +486,7 @@ export class WalletService {
             provider: order.provider,
             mode: options.mode,
             providerOrderId,
+            verification: options.verification || undefined,
           }),
         },
       });
@@ -502,8 +527,129 @@ export class WalletService {
     } catch {
       // Ignore: the purchase itself already succeeded.
     }
-
     return { order: result.order, coins: order.coins, wallet: result.updatedWallet, alreadyCompleted: false };
+  }
+
+  // COIN PURCHASE REFUNDS (auditable, immutable original)
+  // ============================================================
+
+  /**
+   * Refund a completed coin purchase.
+   *
+   * Safety:
+   *  - The original PurchaseOrder row is NEVER deleted — it is marked REFUNDED
+   *    and a separate negative REFUND ledger entry is created.
+   *  - Refund claim is conditional (`status` in [COMPLETED, PAID]), so a
+   *    repeated refund request can never run twice.
+   *  - The user's spendable balance must cover the refund; otherwise the
+   *    refund is rejected so a user cannot end up with unlimited coins by
+   *    chaining purchases and refunds.
+   */
+  async refundCoinPurchase(
+    adminUserId: string,
+    orderId: string,
+    reason?: string,
+    ipAddress?: string
+  ) {
+    const order = await prisma.purchaseOrder.findUnique({ where: { id: orderId } });
+    if (!order) throw new Error("Purchase order not found.");
+    if (order.status === "REFUNDED") {
+      return { order, alreadyRefunded: true };
+    }
+    if (order.status !== "COMPLETED" && order.status !== "PAID") {
+      throw new Error(
+        `Only completed purchases can be refunded (current status: ${order.status}).`
+      );
+    }
+
+    const wallet = await this.ensureWallet(order.userId);
+    if (wallet.coinBalance < order.coins) {
+      throw new Error(
+        `Refund deferred: the user's spendable balance (${wallet.coinBalance} coins) is below the refunded amount (${order.coins} coins). ` +
+          "Reconcile manually per VANTA business rules before issuing this refund."
+      );
+    }
+
+    const refundReason = (reason || "").trim().slice(0, 500) || null;
+
+    const result = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.purchaseOrder.updateMany({
+        where: { id: orderId, status: { in: ["COMPLETED", "PAID"] } },
+        data: {
+          status: "REFUNDED",
+          refundedAt: new Date(),
+          refundedBy: adminUserId,
+          refundReason: refundReason,
+        },
+      });
+
+      if (claimed.count === 0) {
+        const current = await tx.purchaseOrder.findUnique({ where: { id: orderId } });
+        if (current?.status === "REFUNDED") return null;
+        throw new Error("This purchase cannot be refunded.");
+      }
+
+      const updatedWallet = await tx.wallet.update({
+        where: { userId: order.userId },
+        data: { coinBalance: { decrement: order.coins } },
+      });
+
+      // Negative ledger entry: the original PURCHASE entry stays intact.
+      await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          userId: order.userId,
+          type: "REFUND",
+          amount: -order.coins,
+          fee: 0,
+          balanceBefore: wallet.coinBalance,
+          balance: updatedWallet.coinBalance,
+          status: "COMPLETED",
+          description: `Refund of ${order.coins.toLocaleString()} VANTA Coins for purchase ${orderId}`,
+          reference: orderId,
+          metadata: JSON.stringify({
+            adminId: adminUserId,
+            reason: refundReason,
+            orderId,
+            paymentMode: order.paymentMode,
+          }),
+        },
+      });
+
+      await tx.walletAuditLog.create({
+        data: {
+          userId: order.userId,
+          action: "COIN_PURCHASE_REFUNDED",
+          details: JSON.stringify({
+            orderId,
+            adminId: adminUserId,
+            reason: refundReason,
+            coins: order.coins,
+          }),
+          ipAddress,
+        },
+      });
+
+      return { order: { ...order, status: "REFUNDED" }, updatedWallet };
+    });
+
+    if (result === null) {
+      const current = await prisma.purchaseOrder.findUnique({ where: { id: orderId } });
+      return { order: current || order, alreadyRefunded: true };
+    }
+
+    try {
+      await notificationService.createNotification(
+        order.userId,
+        "WALLET_REFUND",
+        "Refund Processed",
+        `${order.coins.toLocaleString()} VANTA Coins were returned to your Balance.${refundReason ? ` Reason: ${refundReason}` : ""}`
+      );
+    } catch {
+      // Notification failure must not roll back a completed refund.
+    }
+
+    return { order: result.order, alreadyRefunded: false, wallet: result.updatedWallet };
   }
 
   // ============================================================

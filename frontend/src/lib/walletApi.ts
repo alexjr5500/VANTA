@@ -37,20 +37,6 @@ export async function getBalance() {
 // DEPOSITS
 // ============================================================================
 
-export async function processDeposit(data: {
-  amount: number;
-  coins: number;
-  paymentMethod: string;
-  providerOrderId: string;
-}) {
-  const res = await fetch(`${WALLET_URL}/deposit`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders(getToken()) },
-    body: JSON.stringify(data),
-  });
-  return handleResponse(res);
-}
-
 export async function getDeposits(limit = 50, offset = 0) {
   const res = await fetch(`${WALLET_URL}/deposits?limit=${limit}&offset=${offset}`, {
     headers: { ...authHeaders(getToken()) },
@@ -218,7 +204,6 @@ export async function getCoinPackages() {
 export async function getPaymentAddress(data: {
   packageId: string;
   network: string;
-  amount: number;
 }) {
   const res = await fetch(`${WALLET_URL}/payment-address`, {
     method: 'POST',

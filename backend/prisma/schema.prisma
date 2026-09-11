@@ -1164,6 +1164,8 @@ model SparkCoinPackage {
   name           String
   coins          Int
   price          Float
+  // LEGACY/HISTORICAL ONLY — never used when calculating newly purchased coins.
+  // The authoritative rule is: coinsCredited = package.coinAmount (ZERO bonus).
   bonusCoins     Int             @default(0)
   isPopular      Boolean         @default(false)
   isActive       Boolean         @default(true)
@@ -1192,12 +1194,29 @@ model PurchaseOrder {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
+  // ---- VANTA Coin purchase extras (additive; see config/coin-payments.config.ts) ----
+  // Backend-resolved catalog name snapshot + payment-mode used for the order.
+  packageName     String?
+  paymentMode     String?
+  // Provider blockchain reference (e.g. raw tx hash) for auditable verification.
+  providerReference String?
+  // Expiry of the payment window; safe to auto-expire PENDING orders after this.
+  expiresAt       DateTime?
+  // When the verified payment was applied (COMPLETED).
+  confirmedAt     DateTime?
+  // Refund bookkeeping (the original row is never deleted — a REFUND ledger
+  // entry is created instead).
+  refundedAt      DateTime?
+  refundedBy      String?
+  refundReason    String?
+
   @@index([userId])
   @@index([status])
   @@index([createdAt])
   @@index([providerOrderId])
   @@index([userId, status])
   @@index([provider, status, createdAt])
+  @@index([paymentMode, status, createdAt])
 }
 
 model Gift {
@@ -1322,6 +1341,8 @@ model Wallet {
   totalGiftsSent     Int                 @default(0)
   totalGiftsReceived Int                 @default(0)
   totalWithdrawn     Float               @default(0.0)
+  // LEGACY/HISTORICAL ONLY — never used when calculating newly purchased coins.
+  // VANTA Coin purchases credit EXACTLY the package coin amount.
   bonusCoins         Int                 @default(0)
   lockedCoins        Int                 @default(0)
   isFrozen           Boolean             @default(false)
@@ -1383,6 +1404,8 @@ model WalletTransaction {
   description String?
   reference   String?
   metadata    String?  // JSON - stores extra info like recipientId, giftId, streamId, etc.
+  // Balance immediately before this movement (auditable ledger: before -> after).
+  balanceBefore Float?
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
 

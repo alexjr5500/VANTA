@@ -7,12 +7,10 @@ import { VANTA_COIN_PACKAGES, VANTA_COINS_PER_USD } from '../config/wallet.confi
 import {
   getCoinPaymentMode,
   COIN_PAYMENT_MODE,
-  COIN_PAYMENT_ORDER_TTL_SECONDS,
-  getCoinPaymentDepositAddress,
-  getTestPaymentDepositAddress,
-  createCoinPaymentSimulateToken,
+  COIN_PAYMENT_STATUS,
   SUPPORTED_COIN_PAYMENT_NETWORKS,
 } from '../config/coin-payments.config';
+import { coinPaymentService, CoinPaymentUnavailableError } from '../services/coin-payment.service';
 
 // ============================================================================
 // WALLET & BALANCE
@@ -47,22 +45,17 @@ export const getBalance = async (req: AuthRequest, res: Response): Promise<void>
 // ============================================================================
 
 export const processDeposit = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const userId = req.user?.userId;
-    const { amount, coins, paymentMethod, providerOrderId } = req.body;
-    if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
-    if (!amount || !coins || !paymentMethod || !providerOrderId) {
-      res.status(400).json({ error: 'Amount, coins, paymentMethod, and providerOrderId are required' });
-      return;
-    }
-    const wallet = await walletService.processDeposit(
-      userId, amount, coins, paymentMethod, providerOrderId, req.ip
-    );
-    res.status(200).json({ message: 'Deposit successful', wallet });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(400).json({ error: message });
-  }
+  // Deprecated: this legacy top-up endpoint let clients claim a payment was
+  // completed and get coins credited. That violates the payment contract
+  // ("never credit coins because a frontend request says payment was done").
+  // Coin purchases MUST go through the verified Buy Coins flow:
+  //   POST /api/wallets/payment-address  then  POST /api/wallets/verify-payment
+  res.status(410).json({
+    error:
+      'This deposit method is deprecated and does not credit coins. ' +
+      'Use POST /api/wallets/payment-address to start a coin purchase.',
+  });
+  return;
 };
 
 // ============================================================================
@@ -390,71 +383,23 @@ export const getCoinPackages = async (req: Request, res: Response): Promise<void
 export const getPaymentAddress = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
-    const { packageId, network } = req.body;
     if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
-    if (!packageId || !network) {
-      res.status(400).json({ error: 'packageId and network are required' });
-      return;
-    }
-    if (!SUPPORTED_COIN_PAYMENT_NETWORKS.includes(network)) {
-      res.status(400).json({ error: 'Unsupported payment network. Choose USDT (BEP-20) or USDC (Base).' });
-      return;
-    }
-    const configuredPackage = VANTA_COIN_PACKAGES.find(pkg => pkg.id === packageId || String(pkg.coins) === packageId);
-    if (!configuredPackage) { res.status(400).json({ error: 'Invalid coin package' }); return; }
-    const amount = configuredPackage.price;
 
-    // Payment mode determines the deposit address and how confirmations work:
-    //  - test: backend test gateway, clearly-flagged simulated payment.
-    //  - live: real crypto payments to VANTA_COIN_PAYMENT_ADDRESS; coins are only
-    //    credited after provider-side verification (see verifyPayment).
-    const mode = getCoinPaymentMode();
-    let paymentAddress: string | null;
-    if (mode === COIN_PAYMENT_MODE.TEST) {
-      paymentAddress = getTestPaymentDepositAddress();
-    } else {
-      paymentAddress = getCoinPaymentDepositAddress();
-      if (!paymentAddress) {
-        // Surface the EXACT missing configuration instead of a generic message.
-        res.status(503).json({
-          error:
-            'Coin purchases are unavailable: the live payment deposit address is not configured. ' +
-            'Set VANTA_COIN_PAYMENT_ADDRESS for live payments, or run the API in development with ' +
-            'VANTA_COIN_PAYMENT_MODE=test for the sandbox payment mode.',
-        });
-        return;
-      }
-    }
-
-    // Create a pending purchase order to track the payment
-    const order = await prisma.purchaseOrder.create({
-      data: {
-        userId,
-        coins: configuredPackage.coins + configuredPackage.bonusCoins,
-        amount,
-        currency: 'USD',
-        provider: mode === COIN_PAYMENT_MODE.TEST ? 'test' : 'crypto',
-        status: 'PENDING',
-        paymentMethod: network,
-      },
-    });
-
-    const payload: Record<string, unknown> = {
-      address: paymentAddress,
-      orderId: order.id,
-      network,
-      amount,
-      expiresIn: COIN_PAYMENT_ORDER_TTL_SECONDS,
-      mode,
-    };
-    if (mode === COIN_PAYMENT_MODE.TEST) {
-      // The simulate token lets the client complete the *simulated* payment.
-      // It is bound to this order/user/amount and signed by the server.
-      payload.simulateToken = createCoinPaymentSimulateToken(order);
-    }
+    const payload = await coinPaymentService.initializeCoinPurchase(
+      userId,
+      req.body?.packageId,
+      req.body?.network,
+      req.ip
+    );
 
     res.status(200).json(payload);
   } catch (error) {
+    if (error instanceof CoinPaymentUnavailableError) {
+      // User-facing message stays generic; the exact configuration problem was
+      // logged server-side by the service.
+      res.status(503).json({ error: error.message });
+      return;
+    }
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });
   }
@@ -471,19 +416,23 @@ export const verifyPayment = async (req: AuthRequest, res: Response): Promise<vo
     }
     const order = await prisma.purchaseOrder.findFirst({ where: { id: orderId, userId } });
     if (!order) { res.status(404).json({ error: 'Purchase order not found.' }); return; }
-    if (order.status === 'COMPLETED') {
+    if (order.status === COIN_PAYMENT_STATUS.COMPLETED) {
       // Idempotent replay of a success callback/webhook — no second credit.
       res.status(200).json({ success: true, message: 'Purchase already confirmed.', coins: order.coins });
+      return;
+    }
+    if (order.status === COIN_PAYMENT_STATUS.REFUNDED) {
+      res.status(400).json({ error: 'This purchase was refunded and cannot be completed.' });
       return;
     }
 
     const mode = getCoinPaymentMode();
 
     if (mode === COIN_PAYMENT_MODE.TEST) {
-      // Development/test payment mode: complete the *simulated* payment. The
-      // backend test gateway requires an explicit confirmation plus the HMAC
-      // simulate token it issued at order-initialization time. No real funds
-      // move, and production deployments can never run in test mode.
+      // Development/test payment mode: the backend test gateway requires an
+      // explicit confirmation plus the HMAC simulate token it issued at
+      // order-initialization time. No real funds move, and production
+      // deployments can never run in test mode.
       if (testConfirmation !== true) {
         res.status(400).json({ error: 'A test payment confirmation is required to complete this simulated payment.' });
         return;
@@ -492,8 +441,7 @@ export const verifyPayment = async (req: AuthRequest, res: Response): Promise<vo
         res.status(400).json({ error: 'testTransactionReference is required with the test payment confirmation.' });
         return;
       }
-      const result = await walletService.completeCoinPurchase(userId, order.id, {
-        mode,
+      const result = await coinPaymentService.completeTestPurchase(userId, order.id, {
         simulateToken,
         ipAddress: req.ip,
       });
@@ -505,15 +453,42 @@ export const verifyPayment = async (req: AuthRequest, res: Response): Promise<vo
         success: true,
         message: 'Simulated payment verified. Coins added to your balance.',
         coins: result.coins,
+        balance: result.wallet?.coinBalance,
         mode,
+        testSandbox: true,
       });
       return;
     }
 
-    // LIVE mode — coin crediting belongs to a trusted provider webhook after
-    // provider-side amount, asset, destination and confirmation checks. A
-    // client-submitted transaction reference is never proof of payment.
-    res.status(202).json({ success: false, pending: true, message: 'Payment is awaiting provider verification.' });
+    // LIVE mode — coin crediting belongs exclusively to the trusted provider
+    // webhook (POST /api/payments/webhook) after server-side verification of
+    // amount, asset, destination and finality. A client-submitted transaction
+    // reference is never proof of payment.
+    res.status(202).json({
+      success: false,
+      pending: true,
+      orderId: order.id,
+      status: order.status,
+      message: 'Payment is awaiting provider verification.',
+    });
+  } catch (error) {
+    if (error instanceof CoinPaymentUnavailableError) {
+      res.status(503).json({ error: error.message });
+      return;
+    }
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const getCoinPurchases = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+    const limit = parseInt(req.query.limit as string) || 50;
+    const offset = parseInt(req.query.offset as string) || 0;
+    const result = await coinPaymentService.getUserPurchases(userId, limit, offset);
+    res.status(200).json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });

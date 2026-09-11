@@ -46,7 +46,8 @@ export class MonetizationService {
       data: {
         userId,
         packageId: pkg.id,
-        coins: pkg.coins + pkg.bonusCoins,
+        // Coins credited are EXACTLY the package amount — ZERO bonus coins.
+        coins: pkg.coins,
         amount: pkg.price,
         status: 'PENDING',
       },

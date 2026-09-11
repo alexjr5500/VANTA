@@ -206,6 +206,56 @@ export interface FinancialTransaction {
   metadata?: Record<string, any>;
 }
 
+/** A VANTA Coin purchase order as seen by admins. */
+export interface CoinPurchaseRecord {
+  id: string;
+  userId: string;
+  packageId?: string | null;
+  packageName?: string | null;
+  coins: number;
+  amount: number;
+  currency: string;
+  status: string; // PENDING | PROCESSING | PAID | COMPLETED | FAILED | EXPIRED | CANCELLED | REFUNDED
+  provider?: string | null;
+  providerOrderId?: string | null;
+  providerReference?: string | null;
+  paymentMethod?: string | null;
+  paymentMode?: string | null; // test | live
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt?: string | null;
+  expiresAt?: string | null;
+  refundedAt?: string | null;
+  refundedBy?: string | null;
+  refundReason?: string | null;
+  user?: { id: string; username: string; email?: string; fullName?: string | null };
+}
+
+/** Aggregated Coin Payments dashboard payload. */
+export interface CoinPaymentsDashboard {
+  stats: {
+    totalPurchases: number;
+    successful: number;
+    pending: number;
+    processing: number;
+    paid: number;
+    failed: number;
+    expired: number;
+    refunded: number;
+    totalCoinsSold: number;
+    totalRevenueUSD: number;
+  };
+  mode: {
+    effective: 'test' | 'live';
+    isTestMode: boolean;
+    isProduction: boolean;
+    liveAddressConfigured: boolean;
+    livePurchasesAvailable: boolean;
+    errors: string[];
+  };
+  recent: CoinPurchaseRecord[];
+}
+
 export interface GiftDefinition {
   id: string;
   slug?: string;

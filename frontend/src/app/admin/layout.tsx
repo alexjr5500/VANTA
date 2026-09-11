@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  BarChart3, Users, UserCog, FileText, Radio, Wallet, Gift,
+  BarChart3, Users, UserCog, FileText, Radio, Wallet, Gift, Coins,
   Building2, Bell, TrendingUp, ScrollText, Server, Shield,
   Menu, X, LogOut, Settings, BellDot, Activity, Heart
 } from 'lucide-react';
@@ -42,6 +42,7 @@ const navSections: NavSection[] = [
     label: 'Finance',
     items: [
       { href: '/admin/finance', label: 'Finance', icon: Wallet, roles: ['SUPER_ADMIN', 'ADMIN', 'CEO', 'ADMINISTRATOR', 'FINANCE_MANAGER'] },
+      { href: '/admin/coin-payments', label: 'Coin Payments', icon: Coins, roles: ['SUPER_ADMIN', 'ADMIN', 'CEO', 'ADMINISTRATOR', 'FINANCE_MANAGER'] },
       { href: '/admin/gifts', label: 'Gifts', icon: Gift, roles: ['SUPER_ADMIN', 'ADMIN', 'CEO', 'ADMINISTRATOR', 'FINANCE_MANAGER'] },
     ],
   },

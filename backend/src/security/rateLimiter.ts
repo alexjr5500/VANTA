@@ -181,6 +181,24 @@ class RateLimiter {
     max: config.rateLimit.search.max,
     message: 'Too many search requests. Please slow down.',
   });
+
+  /**
+   * Coin purchase related endpoints (order initialization + payment
+   * confirmation). Keyed per authenticated user so an account cannot spam
+   * orders or replay completion attempts.
+   */
+  coinPurchase = this.createLimiter({
+    windowMs: 60_000,
+    max: 8,
+    message: 'Too many purchase attempts. Please slow down and try again.',
+  });
+
+  /** Provider payment webhooks — per IP, generous but bounded. */
+  coinWebhook = this.createLimiter({
+    windowMs: 60_000,
+    max: 120,
+    message: 'Too many webhook requests.',
+  });
 }
 
 export const rateLimiter = new RateLimiter();
