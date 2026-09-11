@@ -629,7 +629,13 @@ export class FeedService {
     const cleanContent = normalizeComment(content);
     if (!cleanContent || cleanContent.length > COMMENT_MAX_LENGTH) throw new Error(`Comments must be between 1 and ${COMMENT_MAX_LENGTH} characters`);
     const comment = await prisma.postComment.update({ where: { id: commentId }, data: { content: cleanContent }, include: { user: { select: COMMENT_USER }, _count: { select: { likes: true, replies: true } } } });
-    await prisma.securityLog.create({ data: { userId, action: "COMMENT_UPDATED", metadata: JSON.stringify({ commentId, postId: existing.postId }) } });
+    try {
+      await prisma.securityLog.create({ data: { userId, action: "COMMENT_UPDATED", metadata: JSON.stringify({ commentId, postId: existing.postId }) } });
+    } catch (auditErr) {
+      // Audit logging must be fail-safe: a logging failure must not turn a valid
+      // comment-update request into an error response.
+      console.error('[AUDIT] Failed to record COMMENT_UPDATED:', auditErr);
+    }
     emitSocialEvent("social:comment-updated", { postId: existing.postId, comment });
     return formatComment(comment);
   }
@@ -640,8 +646,15 @@ export class FeedService {
     if (existing.userId !== userId && !["ADMIN", "MODERATOR"].includes(role)) throw new Error("Unauthorized");
     await prisma.$transaction([
       prisma.postComment.delete({ where: { id: commentId } }),
-      prisma.securityLog.create({ data: { userId, action: "COMMENT_DELETED", metadata: JSON.stringify({ commentId, postId: existing.postId }) } }),
     ]);
+    try {
+      // Audit log is intentionally OUTSIDE the delete transaction so a logging
+      // failure never rolls back the (already-applied) comment deletion and never
+      // turns a valid delete request into an error.
+      await prisma.securityLog.create({ data: { userId, action: "COMMENT_DELETED", metadata: JSON.stringify({ commentId, postId: existing.postId }) } });
+    } catch (auditErr) {
+      console.error('[AUDIT] Failed to record COMMENT_DELETED:', auditErr);
+    }
     const commentCount = await prisma.postComment.count({ where: { postId: existing.postId } });
     emitSocialEvent("social:comment-deleted", { postId: existing.postId, commentId, commentCount });
     return { deleted: true, commentCount };

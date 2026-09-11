@@ -49,14 +49,22 @@ class AuditLogger {
     try {
       const timestamp = new Date().toISOString();
       const metadataStr = event.metadata ? JSON.stringify(event.metadata) : null;
-      
+
+      // userId is optional and nullable. For anonymous/system events (no
+      // authenticated actor) we store NULL — we must NEVER fabricate a synthetic
+      // id (e.g. 'anonymous') because SecurityLog.userId is a foreign key to
+      // User.id and a synthetic value causes a P2003 FK violation.
+      const actorUserId = event.userId && typeof event.userId === 'string' && event.userId.trim().length > 0
+        ? event.userId.trim()
+        : (event.userId || null);
+
       // Create hash chain for tamper resistance
-      const hashInput = `${this.previousHash}|${timestamp}|${event.userId || 'anonymous'}|${event.action}|${event.ipAddress || 'unknown'}|${metadataStr}`;
+      const hashInput = `${this.previousHash}|${timestamp}|${actorUserId || 'anonymous'}|${event.action}|${event.ipAddress || 'unknown'}|${metadataStr}`;
       const hash = CryptoUtils.sha256(hashInput);
 
       const auditEntry = await prisma.securityLog.create({
         data: {
-          userId: event.userId || 'anonymous',
+          userId: actorUserId,
           action: event.action,
           ipAddress: event.ipAddress || null,
           userAgent: event.userAgent || null,

@@ -71,7 +71,7 @@ class AuditLogger {
    * Log a security event
    */
   async log(
-    userId: string,
+    userId: string | null | undefined,
     action: AuditAction | string,
     options?: {
       ipAddress?: string;
@@ -80,9 +80,15 @@ class AuditLogger {
     }
   ): Promise<void> {
     try {
+      // userId is optional and nullable. Anonymous/system events store NULL —
+      // never fabricate a synthetic id that would violate the User FK.
+      const actorUserId = userId && typeof userId === 'string' && userId.trim().length > 0
+        ? userId.trim()
+        : null;
+
       await prisma.securityLog.create({
         data: {
-          userId,
+          userId: actorUserId,
           action,
           ipAddress: options?.ipAddress || null,
           userAgent: options?.userAgent || null,
@@ -99,7 +105,7 @@ class AuditLogger {
    * Log an event and return immediately (fire-and-forget)
    */
   logAsync(
-    userId: string,
+    userId: string | null | undefined,
     action: AuditAction | string,
     options?: {
       ipAddress?: string;

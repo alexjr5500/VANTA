@@ -1002,8 +1002,8 @@ model MutedUser {
 
 model SecurityLog {
   id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   action    String
   ipAddress String?
   userAgent String?

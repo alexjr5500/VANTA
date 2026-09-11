@@ -141,19 +141,28 @@ app.use(compression({
   },
 }));
 
-// Request parsing with size limits
-// Capture the raw request body so the payment webhook can verify the HMAC
-// signature over the exact bytes the provider signed (express.json() parses
-// but does not preserve the original buffer).
-app.use((req: Request, _res: Response, next: NextFunction) => {
-  const chunks: Buffer[] = [];
-  req.on('data', (chunk: Buffer) => {
-    if ((req as any).rawBody === undefined) (req as any).rawBody = '';
-    (req as any).rawBody += chunk.toString('utf8');
-  });
-  req.on('end', () => next());
-});
-app.use(express.json({ limit: '10mb' }));
+// Request parsing with size limits.
+// The payment webhook needs the raw request body to verify the HMAC signature
+// over the exact bytes the provider signed. We MUST NOT register a global
+// req.on('data')/req.on('end') reader: doing so CONSUMES the IncomingMessage
+// stream before express.json()/express.urlencoded() (which wrap body-parser's
+// raw-body reader) ever get to parse it, producing the production error
+// "InternalServerError: stream is not readable" from raw-body/body-parser.
+//
+// The correct approach is to hand express.json() a `verify` callback. body-parser
+// reads the stream exactly ONCE and invokes verify() with the raw buffer before
+// JSON parsing, letting us preserve the exact bytes for webhook HMAC verification
+// without ever re-reading the request stream. Normal API routes still consume the
+// already-parsed req.body. Only JSON-bodied requests get a rawBody; the webhook
+// falls back to req.body when rawBody is absent (defensive).
+app.use(express.json({
+  limit: '10mb',
+  verify: (req: Request, _res: Response, buf: Buffer) => {
+    if (buf && buf.length > 0) {
+      (req as any).rawBody = buf.toString('utf8');
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
