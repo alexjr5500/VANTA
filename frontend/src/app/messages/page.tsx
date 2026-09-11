@@ -76,6 +76,8 @@ interface Message {
   editedAt?: string | null;
   deletedAt?: string | null;
   pending?: boolean;
+  uploading?: boolean;
+  uploadProgress?: number;
   failed?: boolean;
   pinnedAt?: string | null;
   reactions?: Array<{ id: string; reaction: string; userId: string }>;
@@ -218,6 +220,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [attachmentDrafts, setAttachmentDrafts] = useState<AttachmentDraft[]>([]);
   const uploadAbortRef = useRef<AbortController | null>(null);
+  // Retains local files + preview URLs for in-chat media messages that are
+  // still uploading (or failed), so a retry can re-upload the same files.
+  const pendingMediaRef = useRef<Record<string, { file: File; fileType: 'IMAGE' | 'VIDEO'; fileName: string; previewUrl: string }[]>>({});
   const [trimVideoFile, setTrimVideoFile] = useState<File | null>(null);
   const [editEntityOpen, setEditEntityOpen] = useState(false);
   const [editEntityId, setEditEntityId] = useState<string | null>(null);
@@ -488,7 +493,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     try {
       const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50`, token);
       const msgList = Array.isArray(data) ? data : data?.messages ?? data?.data ?? [];
-      setMessages(msgList.map((msg: any) => normalizeMessageRecord(msg, user?.id)));
+      setMessages(msgList.map((msg: any) => normalizeMessageRecord(msg, user?.id)).filter((msg) => !msg.deletedAt));
       setMessageCursor(data?.nextCursor ?? null);
       await apiPut<any>(`/api/messages/${conversationId}/read`, {}, token).catch(() => undefined);
       setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation));
@@ -516,7 +521,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setLoadingOlder(true);
     try {
       const data = await apiGet<any>(`/api/messages/${activeConversation}?limit=50&cursor=${encodeURIComponent(messageCursor)}`, token);
-      const older = (data?.messages ?? []).map((msg: any) => normalizeMessageRecord(msg, user?.id));
+      const older = (data?.messages ?? [])
+        .map((msg: any) => normalizeMessageRecord(msg, user?.id))
+        .filter((msg) => !msg.deletedAt);
       setMessages(previous => [...older, ...previous]);
       setMessageCursor(data?.nextCursor ?? null);
       // Keep the reader exactly where they were after older messages are
@@ -704,13 +711,27 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     socketRef.current = socket;
     const onMessage = (raw: any) => {
       const message = normalizeMessage(raw);
+      // A message that arrives already deleted never enters the visible list.
+      if (message.deletedAt) return;
       if (message.conversationId === activeConversationRef.current) {
         setMessages(previous => previous.some(item => item.id === message.id) ? previous.map(item => item.id === message.id ? message : item) : [...previous.filter(item => !(item.pending && item.text === message.text && item.senderId === message.senderId)), message]);
         apiPut<any>(`/api/messages/${message.conversationId}/read`, {}, token).catch(() => undefined);
       }
       fetchConversations();
     };
-    const onUpdated = (raw: any) => { const message = normalizeMessage(raw); setMessages(previous => previous.map(item => item.id === message.id ? message : item)); fetchConversations(); };
+    // `message:updated` and `message:deleted` share one handler: an updated/deleted
+    // message must finish its lifecycle in the same place. Deleted messages are
+    // removed entirely (no placeholder) — the conversation behaves as if they
+    // never existed. On refresh / other devices the backend omits them too.
+    const onUpdated = (raw: any) => {
+      const message = normalizeMessage(raw);
+      if (message.deletedAt) {
+        setMessages(previous => previous.filter(item => item.id !== message.id));
+      } else {
+        setMessages(previous => previous.map(item => item.id === message.id ? message : item));
+      }
+      fetchConversations();
+    };
     const onRead = (data: any) => { if (data.readerId !== user.id) setMessages(previous => previous.map(item => item.isOwn ? { ...item, read: true } : item)); fetchConversations(); };
     const onPresence = (data: any) => setConversations(previous => previous.map(conversation => {
       if (conversation.type === 'direct') {
@@ -980,60 +1001,125 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setIsUploadingAttachment(false);
   };
 
-  /** Upload a single draft file and return the attachment metadata (no send). */
-  const uploadDraftFile = async (id: string): Promise<{ fileId: string; url: string; fileType: string; fileName: string; fileSize: number } | null> => {
-    const draft = attachmentDrafts.find(item => item.id === id);
-    if (!draft || !token || !activeConversation) return null;
-    const controller = new AbortController();
-    uploadAbortRef.current = controller;
-    setAttachmentDrafts(previous => previous.map(item => item.id === id ? { ...item, status: 'uploading', progress: 0, error: undefined } : item));
+  /**
+   * Upload every pending draft and send them as ONE in-chat message. A pending
+   * message appears in the conversation immediately (with live upload progress)
+   * and the composer/media-selection UI closes at once, so the user can keep
+   * chatting while large files upload. When the uploads finish the same message
+   * is swapped for the saved server message.
+   */
+  const uploadAndSendMedia = async (drafts: AttachmentDraft[], content: string, replyToId?: string): Promise<void> => {
+    if (!token || !user || !activeConversation || !drafts.length) return;
+    const sendConv = activeConversation;
+    const pendingId = `pending-media-${Date.now()}`;
+    const previewAttachments = drafts.map(draft => ({ url: draft.previewUrl, fileType: draft.fileType, fileName: draft.file.name }));
+    const pending = normalizeMessage({
+      id: pendingId, conversationId: sendConv, senderId: user.id, sender: user,
+      content, attachments: previewAttachments, createdAt: new Date().toISOString(),
+      pending: true, uploading: true, uploadProgress: 0,
+      replyTo: activeReply ? { id: activeReply.id, content: activeReply.text, sender: activeReply.sender } : undefined,
+    });
+    setMessages(previous => [...previous, pending]);
+    // Retain local files + preview URLs so a failed upload can be retried.
+    pendingMediaRef.current[pendingId] = drafts.map(draft => ({ file: draft.file, fileType: draft.fileType, fileName: draft.file.name, previewUrl: draft.previewUrl }));
+    // Release the composer + media-selection UI immediately.
+    setReplyingTo(null);
+    setMessageInput('');
+    setAttachmentDrafts([]);
+    resetComposerHeight();
+    stopOutgoingTyping();
+    clearTypingFor(activeConversation);
+
+    const updateProgress = (value: number) => {
+      if (activeConversationRef.current !== sendConv) return;
+      setMessages(previous => previous.map(item => item.id === pendingId ? { ...item, uploadProgress: value } : item));
+    };
+    const total = drafts.length;
+    let completed = 0;
+    let firstError: any = null;
+    const metas: any[] = [];
+
+    for (const draft of drafts) {
+      const controller = new AbortController();
+      uploadAbortRef.current = controller;
+      try {
+        const form = new FormData();
+        form.append('file', draft.file);
+        form.append('conversationId', sendConv);
+        const uploaded = await apiUpload<any>('/api/upload/message', form, token, 'POST', progress => {
+          const overall = Math.min(100, Math.round(((completed + progress / 100) / total) * 100));
+          updateProgress(overall);
+        }, controller.signal);
+        const url = uploaded.url ?? uploaded.data?.url;
+        const fileId = uploaded.fileId ?? uploaded.id ?? uploaded.data?.fileId;
+        if (!url || !fileId) throw new Error('Upload did not return a usable attachment');
+        metas.push({ fileId, url, fileType: draft.fileType, fileName: draft.file.name, fileSize: draft.file.size });
+        completed += 1;
+        updateProgress(Math.round((completed / total) * 100));
+      } catch (err: any) {
+        if (err?.statusCode !== 499) firstError = firstError ?? err;
+        break;
+      } finally {
+        uploadAbortRef.current = null;
+      }
+    }
+
+    if (firstError) {
+      setMessages(previous => previous.map(item => item.id === pendingId ? { ...item, pending: false, uploading: false, failed: true } : item));
+      showToast?.({ type: 'error', title: 'Upload failed', message: firstError?.message || 'Tap retry to upload again.' });
+      return;
+    }
+
     try {
-      const form = new FormData();
-      form.append('file', draft.file);
-      form.append('conversationId', activeConversation);
-      const uploaded = await apiUpload<any>('/api/upload/message', form, token, 'POST', progress => setAttachmentDrafts(previous => previous.map(item => item.id === id ? { ...item, progress } : item)), controller.signal);
-      const url = uploaded.url ?? uploaded.data?.url;
-      const fileId = uploaded.fileId ?? uploaded.id ?? uploaded.data?.fileId;
-      if (!url || !fileId) throw new Error('Upload did not return a usable attachment');
-      setAttachmentDrafts(previous => previous.map(item => item.id === id ? { ...item, status: 'sending', progress: 100 } : item));
-      return { fileId, url, fileType: draft.fileType, fileName: draft.file.name, fileSize: draft.file.size };
+      const result = await apiPost<any>('/api/messages/send', { conversationId: sendConv, content, type: metas[0]?.fileType || 'TEXT', attachments: metas, replyToId }, token);
+      const saved = normalizeMessage(result.data ?? result.message ?? result);
+      if (activeConversationRef.current === sendConv) {
+        setMessages(previous => [...previous.filter(item => item.id !== pendingId && item.id !== saved.id), saved]);
+      } else {
+        setMessages(previous => previous.filter(item => item.id !== pendingId));
+      }
+      fetchConversations();
+      // Free local object URLs now that the saved message uses server URLs.
+      (pendingMediaRef.current[pendingId] || []).forEach(ref => { try { URL.revokeObjectURL(ref.previewUrl); } catch { /* ignore */ } });
+      delete pendingMediaRef.current[pendingId];
     } catch (err: any) {
-      if (err?.statusCode !== 499) setAttachmentDrafts(previous => previous.map(item => item.id === id ? { ...item, status: 'failed', error: err?.message || 'Upload failed. Please try again.' } : item));
-      return null;
-    } finally {
-      uploadAbortRef.current = null;
+      setMessages(previous => previous.map(item => item.id === pendingId ? { ...item, pending: false, uploading: false, failed: true } : item));
+      showToast?.({ type: 'error', title: 'Message not sent', message: err?.message || 'Tap retry to send again.' });
     }
   };
 
   /**
    * Upload every pending draft then send them as ONE message with the caption so
    * multiple media + caption produce a single logical Message row (the backend
-   * Message model carries many Attachment children). Retry re-uses this to push
-   * a previously-failed draft alongside the rest.
+   * Message model carries many Attachment children).
    */
   const uploadAllAndSend = async (): Promise<void> => {
     if (!token || !activeConversation || !attachmentDrafts.length) return;
     const draftsToSend = attachmentDrafts.filter(item => item.status === 'ready' || item.status === 'failed');
     if (!draftsToSend.length) return;
-    setIsUploadingAttachment(true);
-    const uploaded: { id: string; meta: any }[] = [];
-    for (const draft of draftsToSend) {
-      const meta = await uploadDraftFile(draft.id);
-      if (meta) uploaded.push({ id: draft.id, meta });
-    }
-    if (!uploaded.length) { setIsUploadingAttachment(false); return; }
-    try {
-      await sendCurrentMessage(messageInput.trim(), uploaded.map(item => item.meta));
-    } catch {
-      // sendCurrentMessage already surfaces the failure; keep drafts for retry.
-      setIsUploadingAttachment(false);
-      return;
-    }
-    const uploadedIds = new Set(uploaded.map(item => item.id));
-    const cleared = attachmentDrafts.filter(item => !uploadedIds.has(item.id));
-    revokeDraftUrls(attachmentDrafts.filter(item => uploadedIds.has(item.id)));
-    setAttachmentDrafts(cleared);
+    await uploadAndSendMedia(draftsToSend, messageInput.trim(), activeReply?.id);
     setIsUploadingAttachment(false);
+  };
+
+  /** Re-send a failed message. Media messages re-upload their retained files. */
+  const retryFailedMessage = async (message: Message): Promise<void> => {
+    if (!token || !activeConversation) return;
+    const stored = pendingMediaRef.current[message.id];
+    if (stored && stored.length) {
+      const drafts: AttachmentDraft[] = stored.map(item => ({
+        file: item.file,
+        previewUrl: item.previewUrl,
+        fileType: item.fileType,
+        progress: 0,
+        status: 'ready' as const,
+        id: typeof crypto !== 'undefined' && crypto?.randomUUID ? crypto.randomUUID() : `draft-retry-${Date.now()}-${Math.random()}`,
+      }));
+      delete pendingMediaRef.current[message.id];
+      setMessages(previous => previous.filter(item => item.id !== message.id));
+      await uploadAndSendMedia(drafts, message.text || '', undefined);
+    } else {
+      await sendCurrentMessage(message.text, message.attachments || []);
+    }
   };
 
   const sendComposer = () => {
@@ -1088,7 +1174,12 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     try {
       const result = await apiDelete<any>(`/api/messages/message/${message.id}?forEveryone=true`, token);
       const deleted = normalizeMessage(result.data ?? result);
-      setMessages(previous => previous.map(item => item.id === deleted.id ? deleted : item));
+      // A deleted message is wiped from the conversation — never shown as a
+      // placeholder or tombstone. Removing it from local state immediately
+      // keeps the UI consistent until the authoritative `message:deleted`
+      // socket event (or a re-fetch) confirms it.
+      setMessages(previous => previous.filter(item => item.id !== deleted.id));
+      fetchConversations();
     } catch (err: any) { showToast?.({ type: 'error', title: 'Delete failed', message: err?.message || 'Could not delete this message.' }); }
   };
 
@@ -1717,7 +1808,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                            ? 'rounded-[15px] rounded-br-[4px] border-[#d6a83f]/20 bg-[#23211a] text-[#f5f5f5]'
                            : 'rounded-[15px] rounded-bl-[4px] border-white/[0.08] bg-[#151517] text-[#d4d4d8]'
                       )}>
-                        {msg.deletedAt ? <span className="italic opacity-60">Message deleted</span> : msg.type === 'CALL' ? (
+                        {msg.deletedAt ? null : msg.type === 'CALL' ? (
                           <span className="flex items-center justify-center gap-1.5 whitespace-nowrap py-0.5 px-3 text-xs text-white/50">
                             <Phone size={12} className="text-[#d6a83f]" />
                             {msg.text || msg.content}
@@ -1737,6 +1828,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                             : attachment.fileType === 'AUDIO' ? <div key={attachment.id || index} className={cn('mt-1 min-w-0', visibleMessageText(msg) && 'mb-1.5')}><VoiceNotePlayer src={attachment.url} name={attachment.fileName} /></div>
                             : <a key={attachment.id || index} href={attachment.url} target="_blank" rel="noreferrer" className="mb-2 block underline px-1">{attachment.fileName || 'Download attachment'}</a>)}
                           {visibleMessageText(msg).trim() && <p className="px-3 py-2 max-w-[420px]">{visibleMessageText(msg)}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}</p>}
+                          {msg.uploading && <div className="mt-1 flex items-center gap-1.5 text-[10px] text-[#6aa5ff]"><Loader2 size={10} className="animate-spin" /><span className="tabular-nums">Uploading {msg.uploadProgress ?? 0}%</span></div>}
                         </>)}
                       </div>
                       <div className={cn('flex items-center gap-1 mt-0.5', msg.isOwn ? 'justify-end mr-1' : 'justify-start ml-1')}>
@@ -1745,7 +1837,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                         </span>
                         {msg.pinnedAt && <Pin size={9} className="text-white/40" />}
                         {msg.isOwn && (
-                          msg.failed ? <button onClick={() => sendCurrentMessage(msg.text, msg.attachments)} className="text-[9px] text-red-400">Failed to send · Retry</button> : msg.pending ? <Loader2 size={10} className="animate-spin text-gray-400" /> : msg.read ? <CheckCheck size={10} className="text-white/70" /> : <Check size={10} className="text-gray-500" />
+                          msg.failed ? <button onClick={() => retryFailedMessage(msg)} className="text-[9px] text-red-400">Failed to send · Retry</button> : msg.pending ? <Loader2 size={10} className="animate-spin text-[#8a94a6]" /> : msg.read ? <CheckCheck size={10} className="text-[#6aa5ff]" /> : <Check size={10} className="text-[#9aa6b2]" />
                         )}
                       </div>
                       {msg.reactions && msg.reactions.length > 0 && <div className={cn('mt-1 flex flex-wrap gap-1', msg.isOwn && 'justify-end')}>{Array.from(new Set(msg.reactions.map(item => item.reaction))).map(reaction => <button key={reaction} onClick={() => reactToMessage(msg, reaction)} className="rounded-full border border-white/10 bg-[#161616] px-2 py-0.5 text-xs">{reaction} {msg.reactions?.filter(item => item.reaction === reaction).length}</button>)}</div>}
@@ -2251,14 +2343,19 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       />
 
       {/* Floating create button — bottom-right, always reachable while scrolling */}
-      <MessagesCreateButton
-        search={newChatSearch}
-        results={newChatResults}
-        onSearch={handleNewChatSearch}
-        onSelectUser={handleNewChat}
-        onNewGroup={handleNewGroup}
-        onNewChannel={handleNewChannel}
-      />
+      {/* Floating create button — only on the Chats index/list page. Never
+          rendered inside an open private/group/channel conversation. `showMobileList`
+          flips to false the moment a conversation is selected on every breakpoint. */}
+      {showMobileList && (
+        <MessagesCreateButton
+          search={newChatSearch}
+          results={newChatResults}
+          onSearch={handleNewChatSearch}
+          onSelectUser={handleNewChat}
+          onNewGroup={handleNewGroup}
+          onNewChannel={handleNewChannel}
+        />
+      )}
 
     </motion.div>
   );

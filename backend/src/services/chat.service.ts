@@ -157,7 +157,11 @@ export class ChatService {
 
     const pageSize = Math.min(Math.max(limit, 1), 100);
     const messages = await prisma.message.findMany({
-      where: { conversationId },
+      // Soft-deleted messages are wiped from the conversation entirely — the
+      // product treats "delete for everyone" as a hard removal, so we never
+      // return deleted rows (no placeholders survive a refresh or a reload on
+      // any device).
+      where: { conversationId, deletedAt: null },
       include: {
         sender: {
           select: userSelect,
