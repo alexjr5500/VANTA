@@ -31,7 +31,6 @@ export default function ProfileHeader({ profile, own, menuOpen, menuRef, onMenu,
     followers: finite(profile.stats?.followers ?? profile.stats?.totalFollowers ?? profile.counts?.followers ?? profile._count?.followers),
     following: finite(profile.stats?.following ?? profile.stats?.totalFollowing ?? profile.counts?.following ?? profile._count?.following),
     posts: finite(profile.stats?.posts ?? profile.stats?.totalPosts ?? profile.counts?.posts ?? profile._count?.posts),
-    live: finite(profile.stats?.live ?? profile.stats?.liveSessions ?? profile.stats?.totalStreams ?? profile.counts?.live ?? profile._count?.livestreams),
   };
 
   const displayName = profile.fullName || profile.displayName || profile.username;
@@ -105,7 +104,6 @@ export default function ProfileHeader({ profile, own, menuOpen, menuRef, onMenu,
         <div><strong>{formatCount(stats.posts)}</strong><span>Posts</span></div>
         <button onClick={() => onPeople('followers')}><strong>{formatCount(stats.followers)}</strong><span>Followers</span></button>
         <button onClick={() => onPeople('following')}><strong>{formatCount(stats.following)}</strong><span>Following</span></button>
-        <div><strong>{formatCount(stats.live)}</strong><span>Live</span></div>
       </div>
     </div>
   </header>;

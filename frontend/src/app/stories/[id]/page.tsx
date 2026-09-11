@@ -10,6 +10,7 @@ import { useAuth } from '@/context/AuthContext';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
 import { useToast } from '@/components/ui/Toast';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
+import { openStoryLayer, closeStoryLayer, longPressStartStory, longPressEndStory, resetStoryPlayback, startStoryPlayback, tapZone, type StoryPlaybackSnapshot } from '@/lib/storyPlayback';
 
 type ViewerUser = { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean };
 type Story = { id: string; userId: string; mediaUrl: string; mediaType?: string; caption?: string; views?: number; viewed?: boolean; duration?: number; likeCount?: number; reshareCount?: number; commentCount?: number; likedByMe?: boolean; resharedFromUsername?: string; user?: ViewerUser; author?: ViewerUser };
@@ -91,6 +92,16 @@ export default function StoryViewerPage({ params }: { params: { id: string } }) 
   // Where to resume an IMAGE story's progress after the comment/reply composer
   // pauses it — keeps the "resume from where it stopped" behavior smooth.
   const resumeOffsetRef = useRef(0);
+  // Centralized playback state machine (#11): every control (tap nav, long press,
+  // reshare/comment/reply/share/delete overlays) drives this single state instead
+  // of fighting over separate pause flags. Only one controller owns the active
+  // story's progress.
+  const [playbackState, setPlaybackState] = useState<'playing' | 'paused' | 'interaction'>('playing');
+  const interactionLayersRef = useRef<Set<string>>(new Set());
+  const longPressRef = useRef(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tapSuppressedRef = useRef(false);
+  const playbackSnapshotRef = useRef<StoryPlaybackSnapshot>(startStoryPlayback());
   const toast = useToast();
 
   // Read the ?start=<storyId> hint once on mount (client side, avoids SSR params).
@@ -138,6 +149,11 @@ const flat = useMemo(
 
   const advance = useCallback(() => {
     resumeOffsetRef.current = 0;
+    playbackSnapshotRef.current = resetStoryPlayback();
+    interactionLayersRef.current.clear();
+    longPressRef.current = false;
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    setPlaybackState('playing');
     setPosition(prev => {
       if (prev === null) return prev;
       if (prev + 1 >= flat.length) {
@@ -152,6 +168,11 @@ const flat = useMemo(
 
   const retreat = useCallback(() => {
     resumeOffsetRef.current = 0;
+    playbackSnapshotRef.current = resetStoryPlayback();
+    interactionLayersRef.current.clear();
+    longPressRef.current = false;
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    setPlaybackState('playing');
     setPosition(prev => (prev === null || prev <= 0 ? prev : prev - 1));
     setTick(0);
     setPaused(false);
@@ -193,20 +214,37 @@ const flat = useMemo(
 
   // Pause the current story — used automatically when the comment/reply composer
   // opens. Videos stop in-place; image stories remember their elapsed progress.
-  const pauseProgression = () => {
+  const applyPauseEffects = () => {
     if (!current) return;
-    if (isVideo) {
-      videoRef.current?.pause();
-    } else {
+    const media = videoRef.current;
+    if (media && !media.paused) media.pause();
+    if (!isVideo) {
       const duration = Number(current.story.duration) > 0 ? Number(current.story.duration) : DEFAULT_DURATION;
       resumeOffsetRef.current = Math.min(Math.max(0, tick), duration);
     }
     setPaused(true);
   };
 
-  // Resume the current story automatically once the composer is submitted or
-  // closed. No manual Play press is required.
-  const resumeProgression = () => {
+  const commitPlaybackSnapshot = (next: StoryPlaybackSnapshot) => {
+    playbackSnapshotRef.current = next;
+    // Keep the runtime layer set in sync so the video guards below stay correct.
+    interactionLayersRef.current = new Set(next.layers);
+    setPlaybackState(next.state);
+  };
+
+  // Pause because an interaction (modal/action) opened. The story stops progressing
+  // and preserves its position until every opened layer is released.
+  const pauseStory = (reason: string) => {
+    applyPauseEffects();
+    commitPlaybackSnapshot(openStoryLayer(playbackSnapshotRef.current, reason));
+  };
+
+  const resumeStory = (reason?: string) => {
+    let next = playbackSnapshotRef.current;
+    if (reason) next = closeStoryLayer(next, reason);
+    // Still held open by another overlay, or still being long-pressed -> stay paused.
+    if (next.state !== 'playing') { commitPlaybackSnapshot(next); return; }
+    commitPlaybackSnapshot(next);
     if (!current) return;
     if (isVideo) {
       const video = videoRef.current;
@@ -215,14 +253,55 @@ const flat = useMemo(
     setPaused(false);
   };
 
+  // Long-press anywhere on the story pauses it (WhatsApp-style). Release resumes
+  // from exactly where it stopped without restarting the story.
+  const LONG_PRESS_MS = 600;
+  const handleMediaPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest('button, input, textarea, a, [role="button"]')) return;
+    if (!current) return;
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressRef.current = false;
+    longPressTimerRef.current = setTimeout(() => {
+      longPressRef.current = true;
+      tapSuppressedRef.current = true;
+      applyPauseEffects();
+      commitPlaybackSnapshot(longPressStartStory(playbackSnapshotRef.current));
+    }, LONG_PRESS_MS);
+  };
+
+  const releaseLongPress = () => {
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    longPressRef.current = false;
+    const next = longPressEndStory(playbackSnapshotRef.current);
+    commitPlaybackSnapshot(next);
+    // No overlay is holding the story open anymore -> resume from where it paused.
+    if (next.state === 'playing' && current) {
+      if (isVideo) {
+        const video = videoRef.current;
+        if (video && video.paused) void video.play().catch(() => undefined);
+      }
+      setPaused(false);
+    }
+  };
+
   const handleMediaTap = (event: React.MouseEvent<HTMLDivElement>) => {
+    // A finished long-press must not also count as a navigation tap.
+    if (tapSuppressedRef.current) { tapSuppressedRef.current = false; return; }
+    // Never navigate when a button/control underneath handled the interaction.
+    if ((event.target as HTMLElement).closest('button, input, textarea, a, [role="button"]')) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
-    if (x < rect.width * 0.33) retreat();
-    else if (x > rect.width * 0.66) advance();
-    // Center taps intentionally do nothing — the story auto-plays and there is no
-    // manual pause control anymore.
+    // Divide the viewing area into left (previous) and right (next) tap zones.
+    if (tapZone(rect.width, x) === 'next') advance();
+    else retreat();
   };
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+      if (videoRef.current) videoRef.current.pause();
+    };
+  }, []);
 
   // Keyboard navigation.
 
@@ -240,6 +319,7 @@ const flat = useMemo(
     if (!token || !current || !isOwner) return;
     const items = await apiGet<Viewer[]>(`/api/stories/${current.story.id}/viewers`, token, { skipCache: true }).catch(() => []);
     setViewers(items);
+    pauseStory('viewers');
   };
 
   if (loading) return <main className="grid min-h-[100dvh] place-items-center bg-[#050505] text-white"><Loader2 className="animate-spin text-white/50"/></main>;
@@ -313,7 +393,7 @@ const creator = current.group.user || {};
   const openComments = async () => {
     if (!current || !token) return;
     setCommentsOpen(true);
-    pauseProgression();
+    pauseStory('comments');
     setCommentsLoading(true);
     try {
       const items = await apiGet<StoryComment[]>(`/api/stories/${encodeURIComponent(current.story.id)}/comments`, token, { skipCache: true });
@@ -354,7 +434,7 @@ const creator = current.group.user || {};
         ...group,
         stories: group.stories.map(story => story.id === storyId ? { ...story, commentCount: (story.commentCount || 0) + 1 } : story),
       })));
-      resumeProgression();
+      resumeStory('comments');
     } catch (reason: any) {
       toast.error('Could not add comment', reason?.message);
     } finally {
@@ -371,6 +451,7 @@ const creator = current.group.user || {};
     try {
       await apiPost(`/api/stories/${encodeURIComponent(storyId)}/reshare`, { caption: reshareText.trim() || undefined }, token);
       setReshareOpen(false);
+      resumeStory('reshare');
       setReshareText('');
       toast.success('Reshared to your Story');
     } catch (reason: any) {
@@ -416,6 +497,7 @@ const creator = current.group.user || {};
         }
       }
       setShareOpen(false);
+      resumeStory('share');
       return;
     }
     if (destination === 'MESSAGE') {
@@ -438,7 +520,7 @@ const creator = current.group.user || {};
       await apiPost(`/api/messages/send`, { conversationId, content: replyText.trim(), type: 'TEXT' }, token);
       setReplyText('');
       setReplyOpen(false);
-      resumeProgression();
+      resumeStory('reply');
       toast.success('Reply sent');
     } catch (reason: any) {
       toast.error('Reply failed', reason?.message);
@@ -456,6 +538,10 @@ const creator = current.group.user || {};
     try {
       await apiDelete(`/api/stories/${encodeURIComponent(storyId)}`, token);
       setDeleteConfirmOpen(false);
+      resumeStory('delete');
+      interactionLayersRef.current.clear();
+      playbackSnapshotRef.current = resetStoryPlayback();
+      setPlaybackState('playing');
       const nextGroups = groups
         .map(group => ({ ...group, stories: group.stories.filter(story => story.id !== storyId) }))
         .filter(group => group.stories.length > 0);
@@ -482,7 +568,7 @@ const creator = current.group.user || {};
   return (
     <main className="relative h-[100dvh] overflow-hidden bg-[#050505] text-white">
       {/* Media */}
-      <div className="absolute inset-0 grid place-items-center bg-black" onClick={handleMediaTap} role="presentation">
+      <div className="absolute inset-0 grid place-items-center bg-black" onClick={handleMediaTap} onPointerDown={handleMediaPointerDown} onPointerUp={releaseLongPress} onPointerCancel={releaseLongPress} onPointerLeave={releaseLongPress} onContextMenu={event => { if (event.button === 2 && !isOwner) event.preventDefault(); }} role="presentation">
         {isVideo ? (
           // eslint-disable-next-line jsx-a11y/media-has-caption
           <video
@@ -493,10 +579,9 @@ const creator = current.group.user || {};
             playsInline
             preload="auto"
             className="max-h-full w-full object-contain"
-            onClick={event => event.stopPropagation()}
             onEnded={advance}
-            onPlay={() => { setPaused(false); setTick(0); }}
-            onPause={() => setPaused(true)}
+            onPlay={() => { if (!longPressRef.current && interactionLayersRef.current.size === 0) { setPaused(false); setTick(0); } }}
+            onPause={() => { if (!longPressRef.current && interactionLayersRef.current.size === 0) setPaused(true); }}
           />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
@@ -548,11 +633,11 @@ const creator = current.group.user || {};
               <Eye size={14}/>{compact(current.story.views || 0)} views
             </button>
           )}
-          <button type="button" onClick={() => setShareOpen(true)} aria-label="Share story" className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white/80 backdrop-blur">
+          <button type="button" onClick={() => { pauseStory('share'); setShareOpen(true); }} aria-label="Share story" className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white/80 backdrop-blur">
             <Share2 size={16}/>
           </button>
           {isOwner && (
-            <button type="button" onClick={() => setDeleteConfirmOpen(true)} aria-label="Delete story" className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white/80 backdrop-blur">
+            <button type="button" onClick={() => { pauseStory('delete'); setDeleteConfirmOpen(true); }} aria-label="Delete story" className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white/80 backdrop-blur">
               <Trash2 size={16}/>
             </button>
           )}
@@ -609,7 +694,7 @@ const creator = current.group.user || {};
             </button>
             <button
               type="button"
-              onClick={() => setReshareOpen(true)}
+              onClick={() => { pauseStory('reshare'); setReshareOpen(true); }}
               aria-label="Reshare story to your Status"
               className="flex w-16 flex-col items-center gap-1 rounded-2xl bg-black/45 px-2 py-2 text-white backdrop-blur transition active:scale-95"
             >
@@ -622,11 +707,11 @@ const creator = current.group.user || {};
       {/* Viewers list (own stories only) */}
       {viewers && (
         <>
-          <button type="button" onClick={() => setViewers(null)} aria-label="Close viewers" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm"/>
+          <button type="button" onClick={() => { setViewers(null); resumeStory('viewers'); }} aria-label="Close viewers" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm"/>
           <section role="dialog" aria-modal="true" aria-label="Story viewers" className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[72dvh] w-full max-w-md flex-col rounded-t-3xl border border-white/10 bg-[#151517] pb-[env(safe-area-inset-bottom)]">
             <header className="flex min-h-16 items-center justify-between border-b border-white/[.08] px-5">
               <div><h2 className="font-semibold">Story viewers</h2><p className="text-xs text-[#c8c8cc]/55">{viewers.length} unique views</p></div>
-              <button type="button" onClick={() => setViewers(null)} className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={20}/></button>
+              <button type="button" onClick={() => { setViewers(null); resumeStory('viewers'); }} className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={20}/></button>
             </header>
             <div className="overflow-y-auto px-5">
               {viewers.length ? viewers.map(viewer => (
@@ -643,11 +728,11 @@ const creator = current.group.user || {};
 {/* Generic Share sheet (Copy link / Share / Message) — kept separate from Reshare */}
       {shareOpen && (
         <>
-          <button type="button" onClick={() => setShareOpen(false)} aria-label="Close share options" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm" />
+          <button type="button" onClick={() => { setShareOpen(false); resumeStory('share'); }} aria-label="Close share options" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm" />
           <section role="dialog" aria-modal="true" aria-label="Share story" className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-md rounded-t-3xl border border-white/10 bg-[#151517] p-5 pb-[env(safe-area-inset-bottom)]">
             <header className="mb-4 flex items-center justify-between">
               <div><h2 className="font-semibold">Share story</h2><p className="text-xs text-[#c8c8cc]/55">{creator.fullName || creator.username || 'VANTA'}</p></div>
-              <button type="button" onClick={() => setShareOpen(false)} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]"><X size={20}/></button>
+              <button type="button" onClick={() => { setShareOpen(false); resumeStory('share'); }} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]"><X size={20}/></button>
             </header>
             <div className="grid grid-cols-3 gap-2">
               <button type="button" onClick={() => void handleShareAction('COPY_LINK')} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 text-xs text-[#b8b8b8] transition hover:bg-white/[0.06]">
@@ -671,14 +756,14 @@ const creator = current.group.user || {};
           status reshare). It never opens a share sheet or a send-to-people menu. */}
       {reshareOpen && current && (
         <>
-          <button type="button" onClick={() => setReshareOpen(false)} aria-label="Close reshare composer" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm" />
+          <button type="button" onClick={() => { setReshareOpen(false); resumeStory('reshare'); }} aria-label="Close reshare composer" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm" />
           <section role="dialog" aria-modal="true" aria-label="Reshare to your Story" className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-md rounded-t-3xl border border-white/10 bg-[#151517] p-5 pb-[env(safe-area-inset-bottom)]">
             <header className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="font-semibold">Reshare to your Story</h2>
                 <p className="text-xs text-[#c8c8cc]/55">Will appear on your Status for 24 hours</p>
               </div>
-              <button type="button" onClick={() => setReshareOpen(false)} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]"><X size={20}/></button>
+              <button type="button" onClick={() => { setReshareOpen(false); resumeStory('reshare'); }} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]"><X size={20}/></button>
             </header>
             <div className="mb-4 flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-black/25 p-3">
               {isVideo ? (
@@ -721,7 +806,7 @@ const creator = current.group.user || {};
       {/* Comments sheet — real story comments */}
       {commentsOpen && current && (
         <>
-          <button type="button" onClick={() => { setCommentsOpen(false); resumeProgression(); }} aria-label="Close comments" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm" />
+          <button type="button" onClick={() => { setCommentsOpen(false); resumeStory('comments'); }} aria-label="Close comments" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm" />
           <section role="dialog" aria-modal="true" aria-label="Story comments" className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[72dvh] w-full max-w-md flex-col rounded-t-3xl border border-white/10 bg-[#151517] pb-[env(safe-area-inset-bottom)]">
             <header className="flex min-h-16 items-center justify-between border-b border-white/[.08] px-5">
               <div>
@@ -729,10 +814,10 @@ const creator = current.group.user || {};
                 <p className="text-xs text-[#c8c8cc]/55">{comments.length} comment{comments.length === 1 ? '' : 's'}</p>
               </div>
               <div className="flex items-center gap-1">
-                <button type="button" onClick={() => { setCommentsOpen(false); setReplyOpen(true); }} className="rounded-full px-3 py-2 text-xs text-[#c8c8cc] transition hover:bg-white/[0.06] hover:text-white" aria-label="Message the story owner">
+                <button type="button" onClick={() => { setCommentsOpen(false); resumeStory('comments'); pauseStory('reply'); setReplyOpen(true); }} className="rounded-full px-3 py-2 text-xs text-[#c8c8cc] transition hover:bg-white/[0.06] hover:text-white" aria-label="Message the story owner">
                   Message @{creator.username || 'owner'}
                 </button>
-                <button type="button" onClick={() => { setCommentsOpen(false); resumeProgression(); }} className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={20}/></button>
+                <button type="button" onClick={() => { setCommentsOpen(false); resumeStory('comments'); }} className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={20}/></button>
               </div>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto px-5">
@@ -785,14 +870,14 @@ const creator = current.group.user || {};
       {/* Reply composer — sends the story owner a direct message */}
       {replyOpen && (
         <>
-          <button type="button" onClick={() => { setReplyOpen(false); resumeProgression(); }} aria-label="Close reply composer" className="fixed inset-0 z-40 bg-black/65" />
+          <button type="button" onClick={() => { setReplyOpen(false); resumeStory('reply'); }} aria-label="Close reply composer" className="fixed inset-0 z-40 bg-black/65" />
           <section role="dialog" aria-modal="true" aria-label="Reply to story" className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-md rounded-t-3xl border border-white/10 bg-[#151517] p-5 pb-[env(safe-area-inset-bottom)]">
             <header className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="font-semibold">Reply to @{creator.username || 'story'}</h2>
                 <p className="text-xs text-[#c8c8cc]/55">Sent as a direct message to {creator.fullName || creator.username || 'the story owner'}</p>
               </div>
-              <button type="button" onClick={() => { setReplyOpen(false); resumeProgression(); }} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]"><X size={20}/></button>
+              <button type="button" onClick={() => { setReplyOpen(false); resumeStory('reply'); }} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]"><X size={20}/></button>
             </header>
             <form
               onSubmit={event => { event.preventDefault(); void sendStoryReply(); }}
@@ -823,15 +908,15 @@ const creator = current.group.user || {};
       {/* Delete story confirmation (owner only) */}
       {deleteConfirmOpen && (
         <>
-          <button type="button" onClick={() => setDeleteConfirmOpen(false)} aria-label="Cancel delete" className="fixed inset-0 z-[70] bg-black/65 backdrop-blur-sm" />
+          <button type="button" onClick={() => { setDeleteConfirmOpen(false); resumeStory('delete'); }} aria-label="Cancel delete" className="fixed inset-0 z-[70] bg-black/65 backdrop-blur-sm" />
           <section role="alertdialog" aria-modal="true" aria-label="Delete story" className="fixed z-[80] top-1/2 left-1/2 w-[min(400px,calc(100%-24px))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-white/10 bg-[#151517] p-5 shadow-2xl">
             <header className="mb-3 flex items-center justify-between">
               <h2 className="font-semibold">Delete this story?</h2>
-              <button type="button" onClick={() => setDeleteConfirmOpen(false)} className="grid h-9 w-9 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={18}/></button>
+              <button type="button" onClick={() => { setDeleteConfirmOpen(false); resumeStory('delete'); }} className="grid h-9 w-9 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={18}/></button>
             </header>
             <p className="mb-5 text-sm text-[#c8c8cc]/65">This cannot be undone. The story will be removed from your Status immediately.</p>
             <div className="flex items-center justify-end gap-2">
-              <button type="button" disabled={deleteSending} onClick={() => setDeleteConfirmOpen(false)} className="min-h-11 rounded-lg border border-white/10 px-4 text-sm text-[#c8c8cc] transition hover:bg-white/[0.05]">Cancel</button>
+              <button type="button" disabled={deleteSending} onClick={() => { setDeleteConfirmOpen(false); resumeStory('delete'); }} className="min-h-11 rounded-lg border border-white/10 px-4 text-sm text-[#c8c8cc] transition hover:bg-white/[0.05]">Cancel</button>
               <button type="button" disabled={deleteSending} onClick={() => void confirmDeleteStory()} className="min-h-11 rounded-lg bg-[#b4232f] px-4 text-sm font-semibold text-white transition hover:bg-[#9f1d2a] disabled:opacity-40">{deleteSending ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}Delete story</button>
             </div>
           </section>

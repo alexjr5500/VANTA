@@ -8,7 +8,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import argon2 from 'argon2';
+import { CryptoUtils } from '../src/security/crypto';
 import {
   ADMIN_EMAIL,
   ADMIN_USERNAME,
@@ -89,28 +89,37 @@ async function runVerification(): Promise<void> {
 
     // ============================================================================
     // TEST 4: Password is hashed (not plain text)
+    // Supports both the current bcrypt hashes and legacy Argon2id hashes, exactly
+    // as the runtime auth layer (CryptoUtils.verifyPassword) does.
     // ============================================================================
+    const isBcrypt = (h: string) =>
+      h.startsWith('$2a$') || h.startsWith('$2b$') || h.startsWith('$2y$');
+    const isArgon = (h: string) => h.startsWith('$argon');
+    const supportedHash = admin.passwordHash && (isBcrypt(admin.passwordHash) || isArgon(admin.passwordHash));
+
     results.push({
       name: 'Password is hashed (not plain text)',
-      passed: !!admin.passwordHash && admin.passwordHash !== ADMIN_PASSWORD && admin.passwordHash.startsWith('$argon'),
+      passed: !!admin.passwordHash && admin.passwordHash !== ADMIN_PASSWORD && !!supportedHash,
       details: admin.passwordHash
-        ? `Hash format: ${admin.passwordHash.substring(0, 30)}... (Argon2id)`
+        ? `Hash format: ${admin.passwordHash.substring(0, 30)}... (${
+            isBcrypt(admin.passwordHash) ? 'bcrypt' : isArgon(admin.passwordHash) ? 'Argon2id' : 'UNKNOWN'
+          })`
         : 'No password hash found',
     });
 
     // ============================================================================
-    // TEST 5: Password verification works with Argon2
+    // TEST 5: Password verification works (via the app's CryptoUtils)
     // ============================================================================
     if (admin.passwordHash) {
-      const passwordValid = await argon2.verify(admin.passwordHash, ADMIN_PASSWORD);
+      const passwordValid = await CryptoUtils.verifyPassword(admin.passwordHash, ADMIN_PASSWORD);
       results.push({
-        name: 'Password verification works (Argon2id)',
+        name: 'Password verification works',
         passed: passwordValid,
         details: passwordValid ? 'Password validated successfully' : 'Password validation FAILED',
       });
     } else {
       results.push({
-        name: 'Password verification works (Argon2id)',
+        name: 'Password verification works',
         passed: false,
         details: 'Cannot verify - no password hash',
       });

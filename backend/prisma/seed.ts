@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { initialGiftCatalog } from './gift-catalog.data';
+import { CryptoUtils } from '../src/security/crypto';
 import {
   ADMIN_EMAIL as adminEmail,
   ADMIN_USERNAME as adminUsername,
@@ -27,21 +28,37 @@ async function main() {
   });
 
   if (existingAdmin) {
-    // Update missing fields if necessary
+    // SECURE production admin password bootstrap/reset.
+    //
+    // When the canonical admin account (ceo@vanta.app) already exists, the
+    // Railway ADMIN_PASSWORD establishes/refreshes its password. Without this,
+    // setting ADMIN_PASSWORD after the first seed has NO effect, because the
+    // account-creation branch below is skipped on re-runs.
+    //
+    // The password is hashed with the SAME implementation used by the runtime
+    // auth service (CryptoUtils.hashPassword -> bcrypt), so verification via
+    // CryptoUtils.verifyPassword is guaranteed to work. The plaintext password
+    // is never stored in source or written to logs — only the bcrypt hash is
+    // persisted. This is idempotent and never creates a second admin account;
+    // only email/username/role/status/flags are preserved and the password hash
+    // is reconciled to ADMIN_PASSWORD.
+    const freshHash = await CryptoUtils.hashPassword(adminPassword);
+
     const updates: any = {};
     if (existingAdmin.role !== 'ADMIN') updates.role = 'ADMIN';
     if (!existingAdmin.verified) updates.verified = true;
     if (!existingAdmin.emailVerified) updates.emailVerified = true;
+    if (existingAdmin.status !== 'ACTIVE') updates.status = 'ACTIVE';
+    // Always reconcile the hash so the configured ADMIN_PASSWORD is authoritative.
+    updates.passwordHash = freshHash;
 
-    if (Object.keys(updates).length > 0) {
-      await prisma.user.update({
-        where: { id: existingAdmin.id },
-        data: updates,
-      });
-      console.log('✅ Administrator account updated with missing fields');
-    } else {
-      console.log('✅ Administrator account already exists and is up-to-date');
-    }
+    await prisma.user.update({
+      where: { id: existingAdmin.id },
+      data: updates,
+    });
+    console.log(
+      '✅ Administrator account reconciled (identity/role/flags preserved; password established from ADMIN_PASSWORD)'
+    );
   } else {
     // Keep seed-created credentials aligned with the application's current
     // password hashing algorithm. Runtime verification remains compatible
