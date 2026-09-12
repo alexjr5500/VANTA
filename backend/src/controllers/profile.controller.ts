@@ -140,7 +140,7 @@ export const getProfilePosts = async (req: AuthRequest, res: Response): Promise<
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    const posts = await userService.getUserPosts(userId, cursor, limit);
+    const posts = await userService.getUserPosts(userId, userId, cursor, limit);
     res.status(200).json(posts);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
@@ -216,7 +216,10 @@ export const getPublicProfilePosts = async (req: Request, res: Response): Promis
     const username = getParamString(req.params.username);
     const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const limit = parseLimit(req.query.limit, 10);
-    const posts = await userService.getPublicUserPostsByUsername(username, cursor, limit);
+    // Optionally-authenticated: the viewer's like/save/follow state is applied
+    // to the returned posts so public profiles show the same active states as Home.
+    const viewerId = (req as AuthRequest).user?.userId;
+    const posts = await userService.getPublicUserPostsByUsername(username, viewerId, cursor, limit);
     res.status(200).json(posts);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';

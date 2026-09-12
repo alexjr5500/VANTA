@@ -28,9 +28,10 @@ export default function ProfileHeader({ profile, own, menuOpen, menuRef, onMenu,
   const avatar = resolveMediaUrl(profile.avatarUrl || profile.profile?.avatarUrl || profile.avatar || '');
   const cover = resolveMediaUrl(profile.bannerUrl || profile.profile?.bannerUrl || '') || '';
   const stats = {
-    followers: finite(profile.stats?.followers ?? profile.stats?.totalFollowers ?? profile.counts?.followers ?? profile._count?.followers),
     following: finite(profile.stats?.following ?? profile.stats?.totalFollowing ?? profile.counts?.following ?? profile._count?.following),
+    followers: finite(profile.stats?.followers ?? profile.stats?.totalFollowers ?? profile.counts?.followers ?? profile._count?.followers),
     posts: finite(profile.stats?.posts ?? profile.stats?.totalPosts ?? profile.counts?.posts ?? profile._count?.posts),
+    likes: finite(profile.stats?.likes ?? profile.stats?.totalLikes ?? profile.counts?.likes ?? profile._count?.likes),
   };
 
   const displayName = profile.fullName || profile.displayName || profile.username;
@@ -101,9 +102,10 @@ export default function ProfileHeader({ profile, own, menuOpen, menuRef, onMenu,
       </div>
 
       <div className="profile-stats" aria-label="Profile statistics">
-        <div><strong>{formatCount(stats.posts)}</strong><span>Posts</span></div>
-        <button onClick={() => onPeople('followers')}><strong>{formatCount(stats.followers)}</strong><span>Followers</span></button>
         <button onClick={() => onPeople('following')}><strong>{formatCount(stats.following)}</strong><span>Following</span></button>
+        <button onClick={() => onPeople('followers')}><strong>{formatCount(stats.followers)}</strong><span>Followers</span></button>
+        <div><strong>{formatCount(stats.posts)}</strong><span>Posts</span></div>
+        <div><strong>{formatCount(stats.likes)}</strong><span>Likes</span></div>
       </div>
     </div>
   </header>;

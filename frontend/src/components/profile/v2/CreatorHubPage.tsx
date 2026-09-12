@@ -9,6 +9,8 @@ import { useContentCreation } from '@/components/create/ContentCreationContext';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
 import CommentPanel from '@/components/social/CommentPanel';
 import GiftPicker, { type GiftCatalogItem } from '@/components/social/GiftPicker';
+import FeedPostMoreSheet from '@/components/social/FeedPostMoreSheet';
+import FeedPostShareSheet from '@/components/social/FeedPostShareSheet';
 import { useToast } from '@/components/ui/Toast';
 import PeopleDialog from './PeopleDialog';
 import ProfileContent from './ProfileContent';
@@ -40,6 +42,7 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   const [deletePostFor, setDeletePostFor] = useState<ProfileItem>();
   const [followPending, setFollowPending] = useState(false);
   const [people, setPeople] = useState<'followers' | 'following' | null>(null); const [commentFor, setCommentFor] = useState<ProfileItem>();
+  const [shareFor, setShareFor] = useState<ProfileItem>(); const [moreFor, setMoreFor] = useState<ProfileItem>();
   const [giftFor, setGiftFor] = useState<ProfileItem>(); const [gifts, setGifts] = useState<GiftCatalogItem[]>([]); const [balance, setBalance] = useState(0);
   const profileRequest = useRef(0);
 
@@ -166,6 +169,21 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     try { const [catalog, wallet] = await Promise.all([apiGet<any>('/api/monetization/gifts', token), apiGet<any>('/api/monetization/wallet', token, { skipCache: true })]); setGifts(unwrap(catalog) as GiftCatalogItem[]); setBalance(finite(wallet?.coinBalance)); }
     catch (reason: any) { setGiftFor(undefined); toast.error('Gift picker unavailable', reason?.message); }
   };
+  const creatorOf = (item: ProfileItem) => item.author || item.user || item.creator || item.host || {};
+  const sharePost = async (destination: 'COPY_LINK' | 'NATIVE' | 'MESSAGE') => {
+    if (!shareFor || !token) return;
+    const id = cleanPostId(shareFor);
+    const url = `${location.origin}/post/${id}`;
+    try {
+      await apiPost(`/api/feed/${id}/share`, { destination }, token);
+      if (destination === 'COPY_LINK') await navigator.clipboard.writeText(url);
+      else if (destination === 'NATIVE' && navigator.share) await navigator.share({ title: 'VANTA', text: shareFor.content || shareFor.title || 'Check out this post on VANTA', url });
+      else if (destination === 'MESSAGE') router.push(`/chat?share=${encodeURIComponent(url)}`);
+      toast.success('Shared successfully');
+    }
+    catch (reason: any) { toast.error('Share failed', reason?.message); }
+    finally { setShareFor(undefined); }
+  };
 
   if (authLoading || loading) return <ProfileSkeleton />;
   if (error || !profile) return <ProfileFailure kind={error || 'error'} retry={() => void loadProfile()} />;
@@ -175,8 +193,8 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     <ProfileHeader profile={profile} own={own} menuOpen={menuOpen} menuRef={menuRef} onMenu={() => setMenuOpen(value => !value)} onFollow={() => { void follow(); }} onMessage={() => { void messageProfile(); }} onGift={() => { void openGift(profile); }} onCopy={() => { void copyProfile(); }} onPeople={setPeople} followPending={followPending} />
     <ActiveFundraiserSection own={own} />
     <nav className="profile-tabs" aria-label="Profile content">{TABS.filter(item => !item.ownOnly || own).map(({ id, label, icon: Icon }) => <button key={id} className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}><Icon size={16} strokeWidth={tab === id ? 2.4 : 1.9} /><span className="tab-label">{label}</span></button>)}</nav>
-    <section className="profile-content" aria-live="polite">{contentLoading ? <ContentSkeleton /> : contentError ? <ContentError message={contentError} retry={() => setContentRetry(value => value + 1)} /> : <ProfileContent tab={tab} rows={content[tab]} profile={profile} own={own} router={router} onLike={item => void togglePost(item, 'like')} onSave={item => void togglePost(item, 'save')} onComment={setCommentFor} onGift={item => void openGift(item)} onDelete={item => void deletePost(item)} onShare={async item => { await navigator.clipboard.writeText(`${location.origin}/post/${cleanPostId(item)}`); toast.success('Post link copied'); }} onCreate={own ? openPostModal : undefined} />}</section>
-    <AnimatePresence>{commentFor && token && <CommentPanel postId={cleanPostId(commentFor)} initialCount={finite(commentFor.comments ?? commentFor._count?.comments)} token={token} currentUser={user} onClose={() => setCommentFor(undefined)} onCountChange={value => updatePost(cleanPostId(commentFor), { comments: value })} />}{giftFor && token && <GiftPicker gifts={gifts} balance={balance} recipient={{ id: profile.id, username: profile.username, fullName: profile.fullName || profile.displayName || profile.username, avatar }} token={token} initialGift={null} onClose={() => setGiftFor(undefined)} onSent={remaining => { setBalance(remaining); setGiftFor(undefined); toast.success('Gift sent'); }} />}</AnimatePresence>
+    <section className="profile-content" aria-live="polite">{contentLoading ? <ContentSkeleton /> : contentError ? <ContentError message={contentError} retry={() => setContentRetry(value => value + 1)} /> : <ProfileContent tab={tab} rows={content[tab]} profile={profile} own={own} router={router} currentUserId={user?.id} onLike={item => void togglePost(item, 'like')} onSave={item => void togglePost(item, 'save')} onComment={setCommentFor} onGift={item => void openGift(item)} onDelete={item => void deletePost(item)} onShare={setShareFor} onFollow={() => { void follow(); setContentRetry(value => value + 1); }} onMore={setMoreFor} onCreate={own ? openPostModal : undefined} />}</section>
+    <AnimatePresence>{commentFor && token && <CommentPanel postId={cleanPostId(commentFor)} initialCount={finite(commentFor.comments ?? commentFor._count?.comments)} token={token} currentUser={user} onClose={() => setCommentFor(undefined)} onCountChange={value => updatePost(cleanPostId(commentFor), { comments: value })} />}{giftFor && token && <GiftPicker gifts={gifts} balance={balance} recipient={{ id: profile.id, username: profile.username, fullName: profile.fullName || profile.displayName || profile.username, avatar }} token={token} initialGift={null} onClose={() => setGiftFor(undefined)} onSent={remaining => { setBalance(remaining); setGiftFor(undefined); toast.success('Gift sent'); }} />}{shareFor && token && <FeedPostShareSheet close={() => setShareFor(undefined)} share={sharePost} />}{moreFor && token && <FeedPostMoreSheet item={moreFor} isOwn={creatorOf(moreFor).id === user?.id} close={() => setMoreFor(undefined)} openProfile={() => { const creator = creatorOf(moreFor); setMoreFor(undefined); router.push(creator.username ? `/profile/${creator.username}` : '/profile'); }} save={() => { void togglePost(moreFor, 'save'); setMoreFor(undefined); }} remove={() => deletePost(moreFor)} />}</AnimatePresence>
     {people && <PeopleDialog kind={people} own={own} username={profile.username} token={token || undefined} currentUserId={user?.id} close={() => setPeople(null)} />}
     {unfollowOpen && <ConfirmDialog username={profile.username} onCancel={() => setUnfollowOpen(false)} onConfirm={() => { void follow(); }} />}
     {deletePostFor && <DeleteDialog label={tab === 'reels' ? 'Reel' : 'Post'} onCancel={() => setDeletePostFor(undefined)} onConfirm={() => { void confirmDeletePost(); }} />}

@@ -41,7 +41,7 @@ const router = Router();
 
 // Public routes (no auth required)
 router.get('/public/:username', optionallyAuthenticateJWT, getPublicProfile);
-router.get('/public/:username/posts', getPublicProfilePosts);
+router.get('/public/:username/posts', optionallyAuthenticateJWT, getPublicProfilePosts);
 router.get('/public/:username/media', getPublicProfileMedia);
 router.get('/public/:username/reels', getPublicProfileReels);
 router.get('/public/:username/livestreams', getPublicProfileLivestreams);

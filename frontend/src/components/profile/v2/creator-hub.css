@@ -193,15 +193,36 @@
 .profile-stats {
   width: 100%;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-top: 15px;
-  padding: 15px 0 17px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 14px;
+  padding: 12px 0;
   border-top: 1px solid rgba(245, 245, 245, 0.08);
 }
-.profile-stats > * { position: relative; display: grid; gap: 5px; justify-items: center; color: inherit; text-align: center; }
-.profile-stats > * + *::before { content: ""; position: absolute; top: 4px; bottom: 4px; left: 0; width: 1px; background: rgba(245, 245, 245, 0.07); }
-.profile-stats strong { color: var(--profile-text); font-size: 16px; font-weight: 720; line-height: 1; }
-.profile-stats span { color: #858585; font-size: 10px; }
+/* One clean statistics component: each cell is a fixed grid track with the
+   number above its label, all four aligned and evenly spaced. The vertical
+   hairline separators keep the row scannable without adding bulk. */
+.profile-stats > * {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  justify-items: center;
+  align-content: start;
+  color: inherit;
+  text-align: center;
+  min-width: 0;
+}
+.profile-stats > * + *::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  width: 1px;
+  background: rgba(245, 245, 245, 0.06);
+}
+.profile-stats strong { color: var(--profile-text); font-size: 15px; font-weight: 720; line-height: 1; }
+.profile-stats span { color: #858585; font-size: 10px; letter-spacing: 0; white-space: nowrap; }
 .profile-stats button:hover span { color: var(--profile-muted); }
 
 .profile-tabs {
@@ -263,6 +284,13 @@
   transform: translateX(0);
 }
 .profile-content { min-height: 300px; padding-top: 4px; }
+
+/* Profile post feed renders the SAME shared FeedPostCard as Home. Give the
+   posts the same divider rhythm and spacing Home uses so profile posts feel
+   like part of the global feed, not a separate surface. */
+.profile-post-feed { display: flex; flex-direction: column; }
+.profile-post-feed > :not(:first-child) { border-top: 1px solid rgba(245, 245, 245, 0.06); }
+.profile-post-feed > :first-child { padding-top: 2px; }
 
 .content-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
 .content-tile { position: relative; aspect-ratio: 4 / 5; overflow: hidden; background: var(--profile-raised); }
@@ -463,8 +491,23 @@
 .tile-actions button:focus-visible { outline: 2px solid var(--profile-text); outline-offset: 2px; }
 
 .dialog-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(4px); }
-.confirm-dialog,
-.people-dialog {
+/* Modal close button: a compact circular icon target so dialogs can be dismissed
+   easily on both desktop and touch. */
+.dialog-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  color: #8c8c8c;
+  background: transparent;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.dialog-close:hover { color: var(--profile-text); background: rgba(245, 245, 245, 0.07); }
+.confirm-dialog {
   position: fixed;
   top: 50%;
   left: 50%;
@@ -486,11 +529,146 @@
 .confirm-dialog > p { padding: 18px 0; color: #999; font-size: 13px; }
 .confirm-dialog footer { display: flex; justify-content: flex-end; gap: 8px; }
 .danger-action { color: #ef8d8d; }
-.people-dialog { padding: 12px; }
-.people-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(245, 245, 245, 0.05); }
-.people-row > a { flex: 1; }
-.people-follow { min-height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid rgba(245, 245, 245, 0.14); border-radius: 6px; color: var(--profile-text); font-size: 11px; }
-.dialog-empty { padding: 48px 10px; color: #888; text-align: center; }
+.people-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 61;
+  width: min(460px, calc(100% - 20px));
+  max-height: min(80dvh, 640px);
+  display: flex;
+  flex-direction: column;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(245, 245, 245, 0.11);
+  border-radius: 14px;
+  background: var(--profile-raised);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.75);
+  overscroll-behavior: contain;
+}
+/* Header + search stay fixed; only the list body scrolls. */
+.people-dialog header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(245, 245, 245, 0.07);
+  background: var(--profile-raised);
+}
+.people-dialog-title { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.people-dialog h2 { font-size: 17px; }
+.people-dialog-title p { color: #8c8c8c; font-size: 12px; }
+.people-search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 8px 4px;
+  padding: 0 10px;
+  min-height: 38px;
+  border: 1px solid rgba(245, 245, 245, 0.12);
+  border-radius: 9px;
+  background: rgba(245, 245, 245, 0.06);
+}
+.people-search svg { color: #8c8c8c; flex: none; }
+.people-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  color: var(--profile-text);
+  font-size: 13px;
+  outline: none;
+}
+.people-search input::placeholder { color: #777; }
+.people-search:focus-within { border-color: rgba(214, 168, 63, 0.45); }
+
+/* Independent scroll region: the modal shell stays stable while rows scroll. */
+.people-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px 6px 8px;
+}
+
+.people-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 8px;
+  border-bottom: 1px solid rgba(245, 245, 245, 0.05);
+}
+.people-row:last-child { border-bottom: 0; }
+.people-link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.people-name { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.15; }
+.people-display {
+  min-width: 0;
+  color: var(--profile-text);
+  font-size: 13px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.people-handle {
+  min-width: 0;
+  color: #858585;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Fixed-width action column: the button never jumps and can't overlap the name. */
+.people-follow {
+  flex: none;
+  width: 96px;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(245, 245, 245, 0.14);
+  border-radius: 8px;
+  color: var(--profile-text);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+  white-space: nowrap;
+}
+.people-follow:disabled { cursor: wait; opacity: 0.7; }
+.people-follow[aria-busy="true"] { opacity: 0.7; }
+
+.people-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 12px;
+  color: #888;
+  font-size: 13px;
+  text-align: center;
+}
+.people-state svg { color: #777; }
+.people-retry {
+  min-height: 34px;
+  padding: 0 16px;
+  border: 1px solid rgba(245, 245, 245, 0.14);
+  border-radius: 8px;
+  color: var(--profile-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.people-retry:hover { background: rgba(245, 245, 245, 0.06); }
+.spin-small { width: 14px; height: 14px; animation: spin 0.8s linear infinite; }
 .dialog-alert { margin: 10px 4px 4px; padding: 9px 10px; border: 1px solid rgba(245, 245, 245, 0.12); border-radius: 6px; color: var(--profile-muted); font-size: 12px; }
 .spin { margin: 48px auto; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -539,6 +717,25 @@
 
   .profile-actions { position: relative; z-index: 41; }
   .profile-menu-wrap { position: static; }
+}
+
+/* Followers / Following modal: near-full-width bottom sheet on small phones,
+   with safe-area insets so it never extends beyond the viewport. */
+@media (max-width: 560px) {
+  .people-dialog {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: min(88dvh, 600px);
+    transform: none;
+    border-radius: 16px 16px 0 0;
+    border-top: 1px solid rgba(245, 245, 245, 0.11);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .people-dialog header { padding: 12px 14px env(safe-area-inset-top); }
+  .people-body { padding: 5px 8px 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

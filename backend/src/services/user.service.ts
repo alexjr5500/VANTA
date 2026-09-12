@@ -288,10 +288,21 @@ export class UserService {
     };
   }
 
-  async getUserPosts(userId: string, cursor?: string, limit: number = 10) {
-    const query: any = { authorId: userId };
+  /**
+   * Fetch a user's posts normalized to the exact same shape the Home feed
+   * returns (`formatPost` in feed.service.ts). Rendering Profile, Likes and
+   * Home through one shared post component (FeedPostCard) requires every source
+   * to honour the same data contract:
+   *
+   *   { id, type, content, media, author:{id,username,fullName,avatar,verified},
+   *     likes, comments, shares, createdAt, liked, saved, following }
+   *
+   * `viewerId` is the account whose like/save/follow state is reflected, so the
+   * correct active states and counts are shown to whoever is looking.
+   */
+  async getUserPosts(userId: string, viewerId?: string, cursor?: string, limit: number = 10) {
     const posts = await prisma.post.findMany({
-      where: query,
+      where: { authorId: userId },
       orderBy: { createdAt: 'desc' },
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -306,23 +317,66 @@ export class UserService {
             profile: { select: { avatarUrl: true } },
           },
         },
-        likes: { select: { id: true } },
-        comments: { select: { id: true } },
+        likes: { where: { userId: viewerId }, select: { id: true } },
+        saves: { where: { userId: viewerId }, select: { id: true } },
+        _count: { select: { likes: true, comments: true } },
       },
     });
 
     const nextCursor = posts.length > limit ? posts.pop()?.id : undefined;
+
+    // Whether the viewer already follows the post author. This is the same
+    // "following" flag Home's feed uses on the post header Follow button.
+    let followsAuthor = false;
+    if (viewerId && viewerId !== userId) {
+      followsAuthor = Boolean(await prisma.follow.findUnique({
+        where: { followerId_followingId: { followerId: viewerId, followingId: userId } },
+        select: { id: true },
+      }));
+    }
+
     return {
-      items: posts.map(({ author, ...post }: any) => ({
-        ...post,
-        author: {
-          ...author,
-          avatar: author.profile?.avatarUrl || author.avatar || null,
-          avatarUrl: author.profile?.avatarUrl || author.avatar || null,
-          profile: undefined,
-        },
+      items: posts.map(({ author, ...post }: any) => this.serializePost(post, author, {
+        viewerId,
+        followsAuthor,
+        liked: post.likes?.length > 0,
+        saved: post.saves?.length > 0,
       })),
       nextCursor,
+    };
+  }
+
+  /**
+   * Serialize a raw Prisma post row into the Home feed `FeedItem` shape that the
+   * shared FeedPostCard renders. Mirrors formatPost/formatVideo in feed.service.ts.
+   */
+  private serializePost(post: any, author: any, ctx: {
+    viewerId?: string;
+    followsAuthor?: boolean;
+    liked?: boolean;
+    saved?: boolean;
+  } = {}) {
+    return {
+      id: post.id,
+      type: post.mediaUrl
+        ? (String(post.mediaUrl).includes('.mp4') || String(post.mediaUrl).includes('.webm') ? 'video' : 'post')
+        : 'post',
+      content: post.content,
+      media: post.mediaUrl,
+      author: {
+        id: author?.id || post.authorId,
+        username: author?.username,
+        fullName: author?.fullName || author?.username,
+        avatar: author?.profile?.avatarUrl || author?.avatar || null,
+        verified: author?.verified,
+      },
+      likes: post._count?.likes || 0,
+      comments: post._count?.comments || 0,
+      shares: post.shareCount || 0,
+      createdAt: post.createdAt,
+      liked: Boolean(ctx.liked),
+      saved: Boolean(ctx.saved),
+      following: ctx.viewerId && ctx.viewerId !== post.authorId ? Boolean(ctx.followsAuthor) : false,
     };
   }
 
@@ -372,23 +426,42 @@ export class UserService {
       include: {
         post: {
           include: {
-            author: { select: { id: true, username: true, avatar: true } },
-            likes: { select: { id: true } },
-            comments: { select: { id: true } },
+            author: {
+              select: {
+                id: true,
+                username: true,
+                fullName: true,
+                avatar: true,
+                verified: true,
+                profile: { select: { avatarUrl: true } },
+              },
+            },
+            likes: { where: { userId }, select: { id: true } },
+            saves: { where: { userId }, select: { id: true } },
+            _count: { select: { likes: true, comments: true } },
           },
         },
       },
     });
     const nextCursor = likes.length > limit ? likes.pop()?.id : undefined;
-    return { items: likes, nextCursor };
+    // Liked posts are the viewer's own likes, so every row is liked; follow state
+    // of the post author is irrelevant here but serialized identically.
+    return {
+      items: likes.map((like: any) => this.serializePost(like.post, like.post?.author, {
+        viewerId: userId,
+        liked: true,
+        saved: like.post?.saves?.length > 0,
+      })),
+      nextCursor,
+    };
   }
 
-  async getPublicUserPostsByUsername(username: string, cursor?: string, limit: number = 10) {
+  async getPublicUserPostsByUsername(username: string, viewerId?: string, cursor?: string, limit: number = 10) {
     const user = await prisma.user.findUnique({ where: { username } });
     if (!user) {
       throw new Error('Profile not found');
     }
-    return this.getUserPosts(user.id, cursor, limit);
+    return this.getUserPosts(user.id, viewerId, cursor, limit);
   }
 
   async getPublicUserMediaByUsername(username: string, cursor?: string, limit: number = 12) {
