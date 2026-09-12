@@ -27,7 +27,7 @@ import VideoTrimModal from '@/components/video/VideoTrimModal';
 import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 import { VoiceNotePlayer, VideoMessagePreview, VideoFullscreenPlayer } from '@/components/messages/ChatMediaPlayer';
 import { activeReplyFor, createReply, type ReplyState } from '@/lib/replyState';
-import { isSecureMediaContext, mapMediaError, microphoneBlockedMessage } from '@/lib/mediaPermissions';
+import { isSecureMediaContext, mapMediaError } from '@/lib/mediaPermissions';
 import { addDrafts, hasBusyDraft, readyDraftCount, removeDraft, type AttachmentDraft } from '@/lib/attachmentDrafts';
 
 interface Conversation {
@@ -586,7 +586,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       showToast?.({
         type: 'error',
         title: issue.title,
-        message: microphoneBlockedMessage(),
+        message: issue.message,
       });
       return;
     }
