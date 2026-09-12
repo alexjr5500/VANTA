@@ -1742,7 +1742,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     <button
                       onClick={() => void chatCalls.startCall('voice')}
                       disabled={chatCalls.status !== 'idle'}
-                      className="btn-icon w-8 h-8"
+                      className="btn-icon h-9 w-9"
                       aria-label="Start a voice call"
                       title="Start a voice call"
                     >
@@ -1751,7 +1751,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     <button
                       onClick={() => void chatCalls.startCall('video')}
                       disabled={chatCalls.status !== 'idle'}
-                      className="btn-icon w-8 h-8"
+                      className="btn-icon h-9 w-9"
                       aria-label="Start a video call"
                       title="Start a video call"
                     >
@@ -1759,8 +1759,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     </button>
                   </>
                 )}
-                <button onClick={() => setMessageSearchOpen(value => !value)} className="btn-icon w-8 h-8" aria-label="Search chat"><Search size={15} /></button>
-                 <button onClick={openConversationInfo} className="btn-icon w-9 h-9" aria-label="Conversation information"><MoreVertical size={17} /></button>
+                <button onClick={() => setMessageSearchOpen(value => !value)} className="btn-icon h-9 w-9" aria-label="Search chat"><Search size={15} /></button>
+                 <button onClick={openConversationInfo} className="btn-icon h-9 w-9" aria-label="Conversation information"><MoreVertical size={17} /></button>
               </div>
             </header>
 
@@ -1795,15 +1795,15 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     onPointerMove={event => { cancelMessageLongPress(); trackMessageSwipe(event, msg); }}
                     onContextMenu={event => { if (!msg.pending) { event.preventDefault(); setMessageContextId(msg.id); } }}
                   >
-                    <div className="max-w-[78%] min-w-0">
+                    <div className="w-fit max-w-[78%] min-w-0">
                       {!msg.isOwn && (
-                        <div className="flex items-center gap-2 mb-1 ml-1">
-                          <span className="text-[11px] font-medium text-[#c8c8cc]">{msg.sender.fullName || msg.sender.username}</span>
+                        <div className="flex max-w-[min(100%,420px)] items-center gap-2">
+                          <span className="truncate text-[11px] font-medium text-[#c8c8cc]">{msg.sender.fullName || msg.sender.username}</span>
                           {['OWNER', 'ADMIN', 'MODERATOR'].includes(senderRole || '') && <span className="text-[8px] font-bold uppercase text-[#d6a83f]">{senderRole === 'OWNER' ? 'Owner' : senderRole === 'MODERATOR' ? 'Moderator' : 'Admin'}</span>}
                         </div>
                       )}
                       <div className={cn(
-                        'chat-bubble-text border text-[14px] leading-[1.45] shadow-[0_8px_24px_rgba(0,0,0,.22)] select-none w-fit max-w-[min(100%,78%)]',
+                        'chat-bubble-text w-fit max-w-full overflow-hidden border text-[14px] leading-[1.45] shadow-[0_1px_3px_rgba(0,0,0,.22)]',
                         msg.isOwn
                            ? 'rounded-[15px] rounded-br-[4px] border-[#d6a83f]/20 bg-[#23211a] text-[#f5f5f5]'
                            : 'rounded-[15px] rounded-bl-[4px] border-white/[0.08] bg-[#151517] text-[#d4d4d8]'
@@ -1815,20 +1815,20 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                           </span>
                         ) : (
                           <>
-                          {msg.replyTo && <div className="mt-1.5 mb-1.5 flex max-w-[min(100%,360px)] border-l-2 border-[#d6a83f] rounded-sm bg-black/20 pr-2 pl-2 pt-1 pb-1"><button type="button" className="min-w-0 max-w-full flex-1 text-left" onClick={() => { const original = document.getElementById(`message-${msg.replyTo.id}`); original?.scrollIntoView({ behavior: 'smooth', block: 'center' }); original?.classList.add('ring-1', 'ring-[#d6a83f]/70'); window.setTimeout(() => original?.classList.remove('ring-1', 'ring-[#d6a83f]/70'), 1200); }}><strong className="mb-0.5 block truncate text-[9px] text-[#f2c75c]">{msg.replyTo.sender?.fullName || `@${msg.replyTo.sender?.username || 'user'}`}</strong><span className="block truncate text-[10px] text-white/55">{msg.replyTo.content || msg.replyTo.text || 'Attachment'}</span></button></div>}
+                          {msg.replyTo && <div className="mx-3 mt-2 mb-0.5 flex min-w-0 max-w-[min(100%,360px)] flex-col border-l-2 border-[#d6a83f] rounded-sm bg-black/20 pr-2 pl-2 pt-1.5 pb-1.5"><button type="button" className="min-w-0 max-w-full text-left" onClick={() => { const original = document.getElementById(`message-${msg.replyTo.id}`); original?.scrollIntoView({ behavior: 'smooth', block: 'center' }); original?.classList.add('ring-1', 'ring-[#d6a83f]/70'); window.setTimeout(() => original?.classList.remove('ring-1', 'ring-[#d6a83f]/70'), 1200); }}><strong className="block truncate text-[9px] text-[#f2c75c]">{msg.replyTo.sender?.fullName || `@${msg.replyTo.sender?.username || 'user'}`}</strong><span className="block truncate text-[10px] text-white/55">{msg.replyTo.content || msg.replyTo.text || 'Attachment'}</span></button></div>}
                           {msg.attachments?.map((attachment, index) => attachment.fileType === 'IMAGE'
-                            ? <button key={attachment.id || index} type="button" onClick={() => openMediaViewer(attachment)} className="block max-w-full overflow-hidden rounded-[8px] bg-transparent text-left" aria-label={`Open ${attachment.fileName || 'image'} in media viewer`}><img
+                            ? <button key={attachment.id || index} type="button" onClick={() => openMediaViewer(attachment)} className="block min-w-0 max-w-full bg-transparent text-left" aria-label={`Open ${attachment.fileName || 'image'} in media viewer`}><img
                               src={attachment.url}
                               alt={attachment.fileName || 'Image attachment'}
                               loading="lazy"
                               decoding="async"
-                              className="block max-h-[420px] max-w-[min(100%,420px)] w-auto h-auto rounded-[8px] object-contain"
+                              className="block max-h-[420px] max-w-[420px] w-auto h-auto object-contain"
                             /></button>
-                            : attachment.fileType === 'VIDEO' ? <span key={attachment.id || index} className={cn('block min-w-0 max-w-[min(100%,420px)] rounded-[8px]', visibleMessageText(msg) && 'mb-1.5')}><VideoMessagePreview attachment={attachment} onOpen={openMediaViewer} /></span>
-                            : attachment.fileType === 'AUDIO' ? <div key={attachment.id || index} className={cn('mt-1 min-w-0', visibleMessageText(msg) && 'mb-1.5')}><VoiceNotePlayer src={attachment.url} name={attachment.fileName} /></div>
-                            : <a key={attachment.id || index} href={attachment.url} target="_blank" rel="noreferrer" className="mb-2 block underline px-1">{attachment.fileName || 'Download attachment'}</a>)}
+                            : attachment.fileType === 'VIDEO' ? <span key={attachment.id || index} className={cn('block min-w-0 max-w-[420px]', visibleMessageText(msg) && 'mb-1.5')}><VideoMessagePreview attachment={attachment} onOpen={openMediaViewer} /></span>
+                            : attachment.fileType === 'AUDIO' ? <div key={attachment.id || index} className={cn('min-w-0 px-3', visibleMessageText(msg) ? 'pt-2 pb-1' : 'py-2.5')}><VoiceNotePlayer src={attachment.url} name={attachment.fileName} /></div>
+                            : <a key={attachment.id || index} href={attachment.url} target="_blank" rel="noreferrer" className="flex min-w-0 max-w-full items-center gap-2 px-3 py-2.5 text-xs underline underline-offset-2 text-white/70 hover:text-white">{<FileText size={13} className="shrink-0 text-white/40" />}<span className="min-w-0 truncate">{attachment.fileName || 'Download attachment'}</span></a>)}
                           {visibleMessageText(msg).trim() && <p className="px-3 py-2 max-w-[420px]">{visibleMessageText(msg)}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}</p>}
-                          {msg.uploading && <div className="mt-1 flex items-center gap-1.5 text-[10px] text-[#6aa5ff]"><Loader2 size={10} className="animate-spin" /><span className="tabular-nums">Uploading {msg.uploadProgress ?? 0}%</span></div>}
+                          {msg.uploading && <div className="mt-1 flex items-center gap-1.5 px-3 pb-2 text-[10px] text-[#6aa5ff]"><Loader2 size={10} className="animate-spin" /><span className="tabular-nums">Uploading {msg.uploadProgress ?? 0}%</span></div>}
                         </>)}
                       </div>
                       <div className={cn('flex items-center gap-1 mt-0.5', msg.isOwn ? 'justify-end mr-1' : 'justify-start ml-1')}>
@@ -2081,17 +2081,41 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
           </motion.div>;
         })()}
         {deleteConfirmMessage && (
-          <motion.div className="fixed inset-0 z-[95] bg-black/65 backdrop-blur-[2px]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDeleteConfirmMessage(null)} aria-label="Cancel delete" />
+          <motion.div
+            role="presentation"
+            aria-hidden="true"
+            className="fixed inset-0 z-[95] bg-black/65 backdrop-blur-[2px]"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setDeleteConfirmMessage(null)}
+            aria-label="Cancel delete"
+          />
         )}
         {deleteConfirmMessage && (
-          <motion.section role="alertdialog" aria-modal="true" aria-label="Delete message" initial={{ opacity: 0, scale: .97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: .97 }} className="fixed left-1/2 top-1/2 z-[96] w-[min(380px,calc(100%-24px))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-white/[0.09] bg-[#151517] p-5 shadow-2xl">
-            <header className="mb-3 flex items-center justify-between"><h2 className="font-semibold">Delete this message for everyone?</h2><button type="button" onClick={() => setDeleteConfirmMessage(null)} className="grid h-9 w-9 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={18} /></button></header>
-            <p className="mb-5 text-sm leading-6 text-[#c8c8cc]/65">This cannot be undone. The message will be removed for everyone in this conversation.</p>
-            <div className="flex items-center justify-end gap-2">
-              <button type="button" onClick={() => setDeleteConfirmMessage(null)} className="min-h-11 rounded-lg border border-white/10 px-4 text-sm text-[#c8c8cc] transition hover:bg-white/[0.05]">Cancel</button>
-              <button type="button" onClick={() => void confirmDeleteMessage()} className="min-h-11 rounded-lg bg-[#b4232f] px-4 text-sm font-semibold text-white transition hover:bg-[#9f1d2a]">Delete for everyone</button>
-            </div>
-          </motion.section>
+          <motion.div
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Delete message"
+            initial={{ opacity: 0, scale: .97 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: .97 }}
+            className="fixed inset-0 z-[96] grid place-items-center overflow-hidden"
+          >
+            <motion.section
+              initial={{ opacity: 0, y: 8, scale: .97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: .97 }}
+              className="w-[min(380px,calc(100vw-40px))] max-h-[calc(100dvh-56px-var(--safe-inset,0px))] overflow-y-auto rounded-[22px] border border-white/[0.1] bg-[#151517] p-5 shadow-2xl"
+            >
+              <header className="mb-3 flex items-center justify-between"><h2 className="font-semibold">Delete this message for everyone?</h2><button type="button" onClick={() => setDeleteConfirmMessage(null)} className="grid h-9 w-9 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={18} /></button></header>
+              <p className="mb-5 text-sm leading-6 text-[#c8c8cc]/65">This cannot be undone. The message will be removed for everyone in this conversation.</p>
+              <div className="flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setDeleteConfirmMessage(null)} className="min-h-11 rounded-lg border border-white/10 px-4 text-sm text-[#c8c8cc] transition hover:bg-white/[0.05]">Cancel</button>
+                <button type="button" onClick={() => void confirmDeleteMessage()} className="min-h-11 rounded-lg bg-[#b4232f] px-4 text-sm font-semibold text-white transition hover:bg-[#9f1d2a]">Delete for everyone</button>
+              </div>
+            </motion.section>
+          </motion.div>
         )}
         {editEntityOpen && activeConv && activeConv.type !== 'direct' && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] h-[var(--chat-viewport-height,100dvh)] bg-[#050505]"><motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 320 }} className="mx-auto flex h-full w-full max-w-[720px] flex-col bg-[#0d0d0f]">
           <header className="flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-white/[0.08] px-5 pt-[max(clamp(0px,env(safe-area-inset-top),16px),12px)]"><button onClick={() => closeChatSubview(() => setEditEntityOpen(false))} className="btn-icon h-9 w-9 shrink-0" aria-label="Close management"><ArrowLeft size={18}/></button><div className="min-w-0 text-center"><h2 className="text-sm font-semibold text-[#f5f5f5]">{activeConv.type === 'group' ? 'Group settings' : 'Channel settings'}</h2><p className="text-[9px] uppercase tracking-[.16em] text-[#d6a83f]">{isManagedOwner ? 'Owner controls' : 'Administrator controls'}</p></div><button onClick={saveEntityChanges} disabled={isSavingEntity || isUploadingAvatar || !editName.trim()} className="btn-gold-ghost h-9 px-4 text-xs disabled:opacity-40 font-semibold">{isSavingEntity ? <Loader2 size={15} className="animate-spin"/> : 'Save'}</button></header>

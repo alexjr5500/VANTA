@@ -65,6 +65,7 @@ export class ChatService {
           },
         },
         messages: {
+          where: { deletedAt: null },
           orderBy: { createdAt: "desc" },
           take: 1,
           include: {
@@ -108,6 +109,7 @@ export class ChatService {
         const unreadCount = await prisma.message.count({
           where: {
             conversationId: conversation.id,
+            deletedAt: null,
             senderId: { not: userId },
             reads: { none: { userId } },
           },
@@ -454,6 +456,7 @@ export class ChatService {
     const messages = await prisma.message.findMany({
       where: {
         conversationId,
+        deletedAt: null,
         content: {
           contains: safeQuery,
         },

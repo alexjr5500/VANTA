@@ -61,8 +61,16 @@ export default function PostDetailPage({ params }: { params: { id: string } }) {
   return <main className="min-h-[100dvh] w-full bg-[#050505] pb-24 text-white">
     <PageHeader back="/home" title="Post" className="mb-4" />
     <article className="w-full min-w-0 rounded-2xl border border-white/10 bg-[#101010]">
-      <header className="flex items-center gap-3 p-4"><Avatar src={post.author.avatar} alt={post.author.username} size="md"/><div className="min-w-0"><Link href={`/profile/${post.author.username}`} className="flex items-center gap-1.5 truncate font-semibold"><span className="truncate">{post.author.fullName || post.author.username}</span>{post.author.verified && <VerificationBadge verified size="sm" />}</Link><p className="truncate text-xs text-white/45">@{post.author.username}</p></div></header>
-      {post.content && <p className="whitespace-pre-wrap break-words px-4 pb-4 text-sm leading-6 text-white/85">{post.content}</p>}
+      <header className="grid grid-cols-[auto_1fr] items-start gap-3 pt-3">
+        <div className="grid shrink-0 self-start">
+          <Avatar src={post.author.avatar} alt={post.author.username} size="md"/>
+        </div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5"><Link href={`/profile/${post.author.username}`} className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-semibold"><span className="min-w-0 truncate">{post.author.fullName || post.author.username}</span>{post.author.verified && <VerificationBadge verified size="sm" />}</Link></div>
+          <p className="truncate text-xs text-white/45">@{post.author.username}</p>
+          {post.content && <p className="mt-2 whitespace-pre-wrap break-words pb-4 text-sm leading-6 text-white/85">{post.content}</p>}
+        </div>
+      </header>
       {media && <PostMedia src={media} isVideo={video} alt={post.author.username ? `Post by ${post.author.username}` : 'Post media'} autoplayOnView={false} preload="metadata"/>}
       <div className="flex items-center gap-1.5 border-t border-white/[.07] px-4 py-2 text-xs text-white/45" aria-label={`${post.views || 0} views`}><Eye size={14}/>{formatCount(post.views || 0)} views</div>
       <footer className="grid grid-cols-3 border-t border-white/10 p-2 text-sm text-white/65">

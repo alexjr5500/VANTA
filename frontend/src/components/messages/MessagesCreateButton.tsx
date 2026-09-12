@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Hash, MessageCircle, Plus, Search, Users } from 'lucide-react';
+import { ChevronRight, Hash, MessageCircle, Plus, Search, Users, X } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 
 interface MessagesCreateButtonProps {
@@ -23,15 +23,6 @@ export default function MessagesCreateButton({
   onNewChannel,
 }: MessagesCreateButtonProps) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   const runAndClose = (action: () => void | Promise<void>) => {
     setOpen(false);
@@ -39,7 +30,7 @@ export default function MessagesCreateButton({
   };
 
   return (
-    <div ref={rootRef} className="fixed bottom-[max(4.75rem,calc(env(safe-area-inset-bottom)+4rem))] right-4 z-50">
+    <div className="fixed bottom-[max(4.75rem,calc(env(safe-area-inset-bottom)+4rem))] right-4 z-50">
       <AnimatePresence>
         {open && (
           <>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence } from 'framer-motion';
-import { Film, Heart, Image as ImageIcon, Info, MessageCircle, Radio, RefreshCw, X } from 'lucide-react';
+import { Film, Heart, Image as ImageIcon, Info, MessageCircle, RefreshCw, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useContentCreation } from '@/components/create/ContentCreationContext';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
@@ -20,7 +20,6 @@ import { cleanPostId, finite, isVideoPost, postOnly, unwrap } from './profileTyp
 const TABS: Array<{ id: ProfileTab; label: string; icon: typeof Film; ownOnly?: boolean }> = [
   { id: 'posts', label: 'Posts', icon: MessageCircle },
   { id: 'reels', label: 'Reels', icon: Film },
-  { id: 'live', label: 'Live', icon: Radio },
   { id: 'media', label: 'Media', icon: ImageIcon },
   { id: 'likes', label: 'Liked', icon: Heart, ownOnly: true },
 ];
