@@ -493,7 +493,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     try {
       const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50`, token);
       const msgList = Array.isArray(data) ? data : data?.messages ?? data?.data ?? [];
-      setMessages(msgList.map((msg: any) => normalizeMessageRecord(msg, user?.id)).filter((msg) => !msg.deletedAt));
+      setMessages(msgList.map((msg: any) => normalizeMessageRecord(msg, user?.id)).filter((msg: Message) => !msg.deletedAt));
       setMessageCursor(data?.nextCursor ?? null);
       await apiPut<any>(`/api/messages/${conversationId}/read`, {}, token).catch(() => undefined);
       setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation));
@@ -523,7 +523,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       const data = await apiGet<any>(`/api/messages/${activeConversation}?limit=50&cursor=${encodeURIComponent(messageCursor)}`, token);
       const older = (data?.messages ?? [])
         .map((msg: any) => normalizeMessageRecord(msg, user?.id))
-        .filter((msg) => !msg.deletedAt);
+        .filter((msg: Message) => !msg.deletedAt);
       setMessages(previous => [...older, ...previous]);
       setMessageCursor(data?.nextCursor ?? null);
       // Keep the reader exactly where they were after older messages are
@@ -2117,9 +2117,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             </motion.section>
           </motion.div>
         )}
-        {editEntityOpen && activeConv && activeConv.type !== 'direct' && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] h-[var(--chat-viewport-height,100dvh)] bg-[#050505]"><motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 320 }} className="mx-auto flex h-full w-full max-w-[720px] flex-col bg-[#0d0d0f]">
-          <header className="flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-white/[0.08] px-5 pt-[max(clamp(0px,env(safe-area-inset-top),16px),12px)]"><button onClick={() => closeChatSubview(() => setEditEntityOpen(false))} className="btn-icon h-9 w-9 shrink-0" aria-label="Close management"><ArrowLeft size={18}/></button><div className="min-w-0 text-center"><h2 className="text-sm font-semibold text-[#f5f5f5]">{activeConv.type === 'group' ? 'Group settings' : 'Channel settings'}</h2><p className="text-[9px] uppercase tracking-[.16em] text-[#d6a83f]">{isManagedOwner ? 'Owner controls' : 'Administrator controls'}</p></div><button onClick={saveEntityChanges} disabled={isSavingEntity || isUploadingAvatar || !editName.trim()} className="btn-gold-ghost h-9 px-4 text-xs disabled:opacity-40 font-semibold">{isSavingEntity ? <Loader2 size={15} className="animate-spin"/> : 'Save'}</button></header>
-          <div className="flex-1 overflow-y-auto px-4 pb-[max(20px,env(safe-area-inset-bottom))] scrollbar-hide">
+        {editEntityOpen && activeConv && activeConv.type !== 'direct' && (<>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => closeChatSubview(() => setEditEntityOpen(false))} className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm" aria-label="Close management" />
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] pointer-events-none"><motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 320 }} className="ml-auto h-[var(--chat-viewport-height,100dvh)] w-full max-w-[720px] overflow-y-auto overscroll-contain border-l border-white/[0.08] bg-[#0d0d0f] pb-[max(16px,env(safe-area-inset-bottom))] md:max-w-[540px]">
+          <header className="sticky top-0 z-10 flex min-h-16 items-center justify-between gap-3 border-b border-white/[0.08] bg-[#0d0d0f]/95 px-5 backdrop-blur-xl"><button onClick={() => closeChatSubview(() => setEditEntityOpen(false))} className="btn-icon h-9 w-9 shrink-0" aria-label="Close management"><ArrowLeft size={18}/></button><div className="min-w-0 text-center"><h2 className="text-sm font-semibold text-[#f5f5f5]">{activeConv.type === 'group' ? 'Group settings' : 'Channel settings'}</h2><p className="text-[9px] uppercase tracking-[.16em] text-[#d6a83f]">{isManagedOwner ? 'Owner controls' : 'Administrator controls'}</p></div><button onClick={saveEntityChanges} disabled={isSavingEntity || isUploadingAvatar || !editName.trim()} className="btn-gold-ghost h-9 px-4 text-xs disabled:opacity-40 font-semibold">{isSavingEntity ? <Loader2 size={15} className="animate-spin"/> : 'Save'}</button></header>
+          <div className="px-4">
             <section className="rounded-2xl border border-white/[0.08] bg-[#151517] p-5 text-center"><div className="border-b border-white/[0.06] pb-4 text-[10px] font-semibold uppercase tracking-[.16em] text-white/30">{activeConv.type === 'group' ? 'Group photo' : 'Channel photo'}</div><div className="relative mx-auto mt-4 w-fit"><button onClick={() => editAvatarInputRef.current?.click()} className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border border-[#d6a83f]/25 bg-[#151517]" aria-label="Change photo">{editAvatar ? <Avatar src={editAvatar} alt={`${activeConv.name} photo`} size="xl" className="!h-full !w-full"/> : <Camera size={22} className="text-white/35"/>}{isUploadingAvatar && <span className="absolute inset-0 grid place-items-center bg-black/70"><Loader2 size={18} className="animate-spin"/></span>}</button><span className="absolute -bottom-1 -right-1 grid h-8 w-8 place-items-center rounded-full border border-[#d6a83f]/30 bg-[#202023] text-[#f2c75c]"><Camera size={14}/></span></div><input ref={editAvatarInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden" onChange={uploadEntityAvatar}/><div className="mt-4 flex justify-center gap-2"><button onClick={() => editAvatarInputRef.current?.click()} className="btn-gold-ghost h-8 px-3 text-[11px]">Change photo</button>{editAvatar && <button onClick={() => setEditAvatar(null)} className="btn-ghost h-8 px-3 text-[11px] text-red-300 hover:text-red-200">Remove</button>}</div><h3 className="mt-3 text-base font-semibold text-[#f5f5f5]">{editName || activeConv.name}</h3><p className="mt-1 text-xs text-[#c8c8cc]/55">{managedEntity?._count?.members ?? managedEntity?.members?.length ?? 0} {activeConv.type === 'channel' ? 'subscribers' : 'members'} · {activeConv.type === 'channel' && editHandle ? `#${editHandle}` : activeConv.handle ? `#${activeConv.handle}` : isManagedOwner ? 'Owner' : 'Admin'}</p></section>
 
             {/* Identity */}
@@ -2145,24 +2147,30 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             {/* Danger zone — irreversible actions kept apart */}
             <section className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/[0.04]"><div className="flex items-center gap-2 border-b border-red-500/15 px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-red-400"><Ban size={13}/>Danger zone</div><div className="flex items-start gap-3 px-4 py-3.5"><div className="min-w-0 flex-1"><p className="text-sm text-white/80">Leave this {activeConv.type === 'group' ? 'group' : 'channel'}</p><p className="text-[10px] text-white/40">You will lose access to this conversation and its messages.</p></div><button onClick={() => setLeaveDialog(true)} className="btn-destructive h-9 px-3 text-xs">Leave {activeConv.type === 'group' ? 'Group' : 'Channel'}</button></div></section>
           </div>
-        </motion.div></motion.div>}
+        </motion.div></motion.div>
+          </>
+        )}
         {createModalOpen && createType && (
+          <>
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] flex h-[var(--chat-viewport-height,100dvh)] items-stretch justify-center overflow-hidden bg-[#050505]"
+            className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm"
+            onClick={() => resetCreateModal()}
+            aria-label="Close creation"
+          />
+          <motion.div
+            initial={{ y: '100%', opacity: 0 }}
+            animate={{ y: 0, opacity: 1, transition: { type: 'spring', damping: 30, stiffness: 320 } }}
+            exit={{ y: '100%', opacity: 0, transition: { duration: 0.2, ease: 'easeIn' } }}
+            className="fixed inset-x-0 bottom-0 z-[61] mx-auto flex max-h-[88dvh] w-full max-w-[680px] flex-col overflow-hidden rounded-t-[24px] border-x border-t border-white/[0.08] bg-[#0d0d0f] pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-2xl md:max-h-[min(720px,calc(100dvh-120px))] md:rounded-2xl md:my-auto md:left-1/2 md:-translate-x-1/2"
           >
-            <motion.div
-              initial={{ scale: 0.96, y: 12 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.96, y: 12 }}
-              className="flex h-full w-full max-w-[720px] flex-col overflow-hidden bg-[#0d0d0f]"
-            >
-              <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.06] px-5 pb-4 pt-[max(16px,env(safe-area-inset-top))]">
+            <div aria-hidden="true" className="mx-auto mt-1.5 h-1 w-10 shrink-0 rounded-full bg-white/15 md:hidden" />
+              <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.06] px-5 pb-4 pt-4">
                 <div className="flex min-w-0 items-center gap-3">
-                  <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl border', createType === 'group' ? 'border-emerald-500/25 bg-emerald-500/10' : 'border-amber-500/25 bg-amber-500/10')}>
-                    {createType === 'group' ? <Users size={18} className="text-emerald-400" /> : <Hash size={18} className="text-amber-400" />}
+                  <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[#d6a83f]/25 bg-[#d6a83f]/10')}>
+                    {createType === 'group' ? <Users size={18} className="text-[#f2c75c]" /> : <Hash size={18} className="text-[#f2c75c]" />}
                   </span>
                   <div className="min-w-0">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/30">{createType === 'group' ? 'Group' : 'Channel'}</p>
@@ -2335,22 +2343,22 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               </div>
               </div>
 
-              <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4 pb-[max(16px,env(safe-area-inset-bottom))]">
+              <footer className="flex shrink-0 items-center justify-end gap-3 border-t border-white/[0.06] px-5 py-4">
                 <button onClick={() => resetCreateModal()} className="btn-secondary text-sm">Cancel</button>
                 <button
                   onClick={() => void handleCreateEntity()}
                   disabled={isCreatingEntity || isUploadingAvatar}
-                  className="btn-primary text-sm disabled:opacity-50"
+                  className="btn-gold text-sm disabled:opacity-50"
                 >
                   {isCreatingEntity ? (
-                    <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Creating…</span>
+                    <span className="flex items-center gap-2"><Loader2 size={15} className="animate-spin" /> Creating…</span>
                   ) : (
-                    <span className="flex items-center gap-2">{createType === 'group' ? <Users size={14} /> : <Hash size={14} />} Create {createType}</span>
+                    <span className="flex items-center gap-2">{createType === 'group' ? <Users size={15} /> : <Hash size={15} />} Create {createType}</span>
                   )}
                 </button>
               </footer>
             </motion.div>
-          </motion.div>
+          </>
         )}
       </AnimatePresence>
 
@@ -2366,7 +2374,6 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         trimActionLabel="Trim & Preview"
       />
 
-      {/* Floating create button — bottom-right, always reachable while scrolling */}
       {/* Floating create button — only on the Chats index/list page. Never
           rendered inside an open private/group/channel conversation. `showMobileList`
           flips to false the moment a conversation is selected on every breakpoint. */}
