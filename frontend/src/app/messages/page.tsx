@@ -2164,7 +2164,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             initial={{ y: '100%', opacity: 0 }}
             animate={{ y: 0, opacity: 1, transition: { type: 'spring', damping: 30, stiffness: 320 } }}
             exit={{ y: '100%', opacity: 0, transition: { duration: 0.2, ease: 'easeIn' } }}
-            className="fixed inset-x-0 bottom-0 z-[61] mx-auto flex max-h-[88dvh] w-full max-w-[680px] flex-col overflow-hidden rounded-t-[24px] border-x border-t border-white/[0.08] bg-[#0d0d0f] pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-2xl md:max-h-[min(720px,calc(100dvh-120px))] md:rounded-2xl md:my-auto md:left-1/2 md:-translate-x-1/2"
+            className="fixed inset-x-0 bottom-0 z-[61] mx-auto flex max-h-[88dvh] w-full max-w-[680px] flex-col overflow-hidden rounded-t-[24px] border-x border-t border-white/[0.08] bg-[#0d0d0f] pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-2xl md:max-h-[min(720px,calc(100dvh-120px))] md:rounded-2xl md:inset-y-0 md:my-auto md:left-1/2 md:-translate-x-1/2"
           >
             <div aria-hidden="true" className="mx-auto mt-1.5 h-1 w-10 shrink-0 rounded-full bg-white/15 md:hidden" />
               <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.06] px-5 pb-4 pt-4">
