@@ -57,6 +57,7 @@ import { useLiveKit, getLiveKitToken } from '@/lib/hooks/useLiveKit';
 import GiftAnimationOverlay from '@/components/gifts/GiftAnimationOverlay';
 import { useGiftAnimationQueue } from '@/components/gifts/useGiftAnimationQueue';
 import LiveParticipantGrid, { type StageParticipant } from '@/components/live/LiveParticipantGrid';
+import { reconcileLiveChat } from '@/lib/liveChatDedupe';
 import Avatar from '@/components/ui/Avatar';
 import { cn, formatNumber } from '@/lib/utils';
 import { useToast } from '@/components/ui/Toast';
@@ -121,6 +122,15 @@ function liveEventLine(d: any): string | null {
     default: return '';
   }
 }
+
+/** Reconciler for the studio host chat (dedups by stable server id). */
+const STUDIO_CHAT_RECONCILE = {
+  idOf: (l: any) => (l as StudioChatMessage).id,
+  fingerprintOf: (l: any) => {
+    const m = l as StudioChatMessage;
+    return `${m.user?.id ?? ''}\u0000${m.kind ?? ''}\u0000${m.message}`;
+  },
+};
 
 interface StudioVideoProps {
   stream: MediaStream | null;
@@ -382,7 +392,7 @@ export default function StudioPage() {
     });
 
     sock.on('host_chat_history', (d: any) => {
-      if (alive && d?.streamId === rid && Array.isArray(d?.messages)) setHostMessages((d.messages as StudioChatMessage[]).slice(-100));
+      if (alive && d?.streamId === rid && Array.isArray(d?.messages)) setHostMessages((prev) => reconcileLiveChat(prev, d.messages as StudioChatMessage[], { maxVisible: 100, ...STUDIO_CHAT_RECONCILE }).visible as StudioChatMessage[]);
     });
     sock.on('host_settings', (d: any) => {
       if (!alive || d?.streamId !== rid) return;
@@ -397,7 +407,7 @@ export default function StudioPage() {
     });
     sock.on('new_comment', (d: any) => {
       if (alive && d?.streamId === rid && d?.message) {
-        setHostMessages((prev) => [...prev.slice(-99), d.message as StudioChatMessage]);
+        setHostMessages((prev) => reconcileLiveChat(prev, [d.message as StudioChatMessage], { maxVisible: 100, ...STUDIO_CHAT_RECONCILE }).visible as StudioChatMessage[]);
       }
     });
     sock.on('viewer_count', (d: any) => {
@@ -450,7 +460,8 @@ export default function StudioPage() {
       if (!alive || d?.streamId !== rid) return;
       const line = liveEventLine(d);
       if (!line) return;
-      setHostMessages((prev) => [...prev.slice(-99), { id: `ev-${d.at}-${d.type}-${Math.random().toString(36).slice(2, 6)}`, message: line, kind: 'system', meta: { type: d.type } }]);
+      const sys: StudioChatMessage = { id: `ev-${d.at}-${d.type}-${Math.random().toString(36).slice(2, 6)}`, message: line, kind: 'system', meta: { type: d.type } };
+      setHostMessages((prev) => reconcileLiveChat(prev, [sys], { maxVisible: 100, ...STUDIO_CHAT_RECONCILE }).visible as StudioChatMessage[]);
     });
 
     // Host view of the guest stage + capacity.

@@ -69,6 +69,7 @@ import { useToast } from '@/components/ui/Toast';
 import { cn, formatNumber } from '@/lib/utils';
 import GiftAnimationOverlay from '@/components/gifts/GiftAnimationOverlay';
 import { useGiftAnimationQueue } from '@/components/gifts/useGiftAnimationQueue';
+import { reconcileLiveChat } from '@/lib/liveChatDedupe';
 
 type Phase =
   | 'IDLE'
@@ -173,6 +174,15 @@ function toChatLine(raw: any): ChatLine {
     user,
   };
 }
+
+/** Reconciler for the host chat overlay (dedups by stable server id). */
+const HOST_CHAT_RECONCILE = {
+  idOf: (l: any) => (l as ChatLine).id,
+  fingerprintOf: (l: any) => {
+    const m = l as ChatLine;
+    return `${m.user?.id ?? ''}\u0000${m.kind ?? ''}\u0000${m.message}`;
+  },
+};
 
 /** Camera <video> that attaches the real device MediaStream. */
 function CameraFeed({ stream, mirror, filterCss, muted, ariaLabel }: { stream: MediaStream | null; mirror?: boolean; filterCss?: string; muted?: boolean; ariaLabel?: string }) {
@@ -504,12 +514,12 @@ export default function GoLivePage() {
     });
     sock.on('host_chat_history', (d: any) => {
       if (alive && d?.streamId === rid && Array.isArray(d?.messages)) {
-        setChatLines(d.messages.map(toChatLine).slice(-80));
+        setChatLines((prev) => reconcileLiveChat(prev, (d.messages as any[]).map(toChatLine), { maxVisible: 80, ...HOST_CHAT_RECONCILE }).visible as ChatLine[]);
       }
     });
     sock.on('new_comment', (d: any) => {
       if (alive && d?.streamId === rid && d?.message) {
-        setChatLines((prev) => [...prev.slice(-79), toChatLine(d.message)]);
+        setChatLines((prev) => reconcileLiveChat(prev, [toChatLine(d.message)], { maxVisible: 80, ...HOST_CHAT_RECONCILE }).visible as ChatLine[]);
       }
     });
     sock.on('viewer_count', (d: any) => {
@@ -539,7 +549,8 @@ export default function GoLivePage() {
       if (!alive || d?.streamId !== rid) return;
       const line = liveEventLine(d);
       if (!line) return;
-      setChatLines((prev) => [...prev.slice(-79), { id: `ev-${d.at}-${d.type}-${Math.random().toString(36).slice(2, 6)}`, message: line, kind: 'system', meta: { type: d.type }, createdAt: d.at }]);
+      const sys: ChatLine = { id: `ev-${d.at}-${d.type}-${Math.random().toString(36).slice(2, 6)}`, message: line, kind: 'system', meta: { type: d.type }, createdAt: d.at };
+      setChatLines((prev) => reconcileLiveChat(prev, [sys], { maxVisible: 80, ...HOST_CHAT_RECONCILE }).visible as ChatLine[]);
     });
     // Gift events published on the main socket room by the economy service.
     sock.on('gift_received', (giftPayload: any) => {

@@ -10,6 +10,59 @@ import { liveKitService } from '../services/livekit.service';
 // events always reach them even if their socket left a stream room on reconnect.
 const streamHosts = new Map<string, string>();
 
+// In-process stream → { hostId, approvedGuests } cache, so we can classify a
+// departing socket as a genuine viewer vs the host or a stage guest WITHOUT an
+// extra DB round-trip on every leave/reconnect. This is the root-cause guard for
+// the "Host left live"/"guest left live" false alarms: a host opening their own
+// stream as a viewer (preview/moderation), or a guest switching viewer sockets,
+// must NEVER broadcast a spurious `viewer_left`/`live_event('left')` to everyone.
+const streamRoles = new Map<string, { hostId: string; approvedGuests: Set<string> }>();
+
+/** Resolve (and cache) the host + stage-guest ids for a stream, or null. */
+async function getStreamRoles(streamId: string): Promise<{ hostId: string; approvedGuests: Set<string> } | null> {
+  const cached = streamRoles.get(streamId);
+  if (cached) return cached;
+  try {
+    const stream = await prisma.liveStream.findUnique({
+      where: { id: streamId },
+      select: { id: true, hostId: true, approvedGuests: true },
+    });
+    if (!stream) return null;
+    let guests = new Set<string>();
+    try {
+      const parsed = stream.approvedGuests ? JSON.parse(stream.approvedGuests) : [];
+      if (Array.isArray(parsed)) guests = new Set(parsed.map(String));
+    } catch {
+      /* malformed JSON → treat as no stage guests */
+    }
+    const roles = { hostId: stream.hostId, approvedGuests: guests };
+    streamRoles.set(streamId, roles);
+    return roles;
+  } catch {
+    return null;
+  }
+}
+
+/** Forget the cached roles for a stream (called whenever host/guest state changes). */
+function invalidateStreamRoles(streamId: string) {
+  streamRoles.delete(streamId);
+}
+
+/**
+ * Classify a user's relationship to a stream for join/leave broadcast purposes.
+ * A user that is the host or an approved stage guest is NOT a "viewer" in the
+ * social sense — their control-studio socket / guest sockets joining or leaving
+ * must not be announced as a viewer joining/leaving, nor counted against the
+ * viewer roster the same way. Only genuine viewers announce + count.
+ */
+async function getStreamRole(streamId: string, userId: string): Promise<'host' | 'guest' | 'viewer'> {
+  const roles = await getStreamRoles(streamId);
+  if (!roles) return 'viewer';
+  if (userId === roles.hostId) return 'host';
+  if (roles.approvedGuests.has(userId)) return 'guest';
+  return 'viewer';
+}
+
 /** Emit a lightweight typed activity event (system messages) to the room + host. */
 function emitActivity(io: Server, streamId: string, type: string, payload: Record<string, unknown>) {
   const hostId = streamHosts.get(streamId);
@@ -50,10 +103,20 @@ export const handleLiveSocket = (io: Server) => {
       if (!current) return;
       try {
         const count = await liveService.leaveStream(current, userId);
-        const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true, avatar: true } });
+        // Broadcast a social "left" ONLY for genuine viewers. The host's own
+        // control/preview socket, and stage guests switching sockets, must never
+        // announce a viewer leaving — otherwise a host opening their own stream
+        // as a viewer (preview/moderation) or a guest reconnecting would make
+        // everyone see "@host left the live" / "@guest left the live" even though
+        // nothing actually left. Guest departures are already covered by the
+        // dedicated `guest_left` event, so announcing them here is redundant.
+        const role = await getStreamRole(current, userId);
         io.to(`stream_${current}`).emit('viewer_count', { streamId: current, viewers: count });
-        io.to(`stream_${current}`).emit('viewer_left', { streamId: current, userId, username: user?.username, avatar: user?.avatar });
-        emitActivity(io, current, 'left', { user: { id: userId, username: user?.username || userId, avatar: user?.avatar } });
+        if (role === 'viewer') {
+          const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true, avatar: true } });
+          io.to(`stream_${current}`).emit('viewer_left', { streamId: current, userId, username: user?.username, avatar: user?.avatar });
+          emitActivity(io, current, 'left', { user: { id: userId, username: user?.username || userId, avatar: user?.avatar } });
+        }
       } catch (err) {
         console.error('Error leaving stream on disconnect:', err);
       } finally {
@@ -71,10 +134,17 @@ export const handleLiveSocket = (io: Server) => {
         socket.join(`stream_${streamId}`);
         socket.data.streamId = streamId;
         const count = await liveService.countViewers(streamId);
-        const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true, avatar: true } });
+        // Announce a social "joined" ONLY for genuine viewers, mirroring the
+        // leave side. A host joining their own stream as a viewer (preview) or a
+        // stage guest reconnecting must not broadcast a fake viewer join — the
+        // host is already "live" and guests have a dedicated `guest_joined`.
+        const role = await getStreamRole(streamId, userId);
         io.to(`stream_${streamId}`).emit('viewer_count', { streamId, viewers: count });
-        io.to(`stream_${streamId}`).emit('viewer_joined', { streamId, userId, username: user?.username, avatar: user?.avatar });
-        emitActivity(io, streamId, 'joined', { user: await getUserIdentity(userId) });
+        if (role === 'viewer') {
+          const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true, avatar: true } });
+          io.to(`stream_${streamId}`).emit('viewer_joined', { streamId, userId, username: user?.username, avatar: user?.avatar });
+          emitActivity(io, streamId, 'joined', { user: await getUserIdentity(userId) });
+        }
         // Send the current roster to the newly-joined viewer.
         const members = await prisma.streamViewer.findMany({
           where: { streamId },
@@ -163,6 +233,7 @@ export const handleLiveSocket = (io: Server) => {
       const { streamId } = data;
       try {
         await liveService.endStream(streamId, userId);
+        invalidateStreamRoles(streamId);
         io.to(`stream_${streamId}`).emit('stream_ended', { streamId });
         io.to(`stream_${streamId}`).emit('stream_state', { streamId, state: 'ENDED' });
         // Close LiveKit room in background
@@ -360,6 +431,9 @@ export const handleLiveSocket = (io: Server) => {
           io.to(`user_${viewerId}`).emit('guest_rejected', { streamId });
           emitActivity(io, streamId, 'guest_rejected', { user: { id: viewerId, username: (await getUserIdentity(viewerId)).username } });
         }
+        // Guest roster changed → refresh the host/guest role cache so join/leave
+        // announcements classify the newly-approved/removed user correctly.
+        invalidateStreamRoles(streamId);
         const guestState = await liveService.getGuestState(streamId);
         io.to(`stream_${streamId}`).emit('guest_state', guestState);
         io.to(`user_${userId}`).emit('guest_state', guestState);
@@ -373,6 +447,7 @@ export const handleLiveSocket = (io: Server) => {
       try {
         if (typeof streamId !== 'string' || typeof guestId !== 'string') throw new Error('Invalid removal');
         await liveService.removeGuest(streamId, userId, guestId, true);
+        invalidateStreamRoles(streamId);
         io.to(`user_${guestId}`).emit('guest_removed', { streamId });
         emitActivity(io, streamId, 'guest_removed', { user: { id: guestId, username: (await getUserIdentity(guestId)).username } });
         const guestState = await liveService.getGuestState(streamId);
@@ -387,6 +462,7 @@ export const handleLiveSocket = (io: Server) => {
       try {
         if (typeof streamId !== 'string' || typeof guestId !== 'string') throw new Error('Invalid request');
         await liveService.endGuestSession(streamId, userId, guestId);
+        invalidateStreamRoles(streamId);
         io.to(`user_${guestId}`).emit('guest_removed', { streamId });
         emitActivity(io, streamId, 'guest_removed', { user: { id: guestId, username: (await getUserIdentity(guestId)).username } });
         const guestState = await liveService.getGuestState(streamId);
@@ -401,6 +477,7 @@ export const handleLiveSocket = (io: Server) => {
       try {
         if (typeof streamId !== 'string') throw new Error('Invalid request');
         await liveService.removeGuest(streamId, userId, userId, false);
+        invalidateStreamRoles(streamId);
         emitActivity(io, streamId, 'guest_left', { user: { id: userId, username: (await getUserIdentity(userId)).username } });
         const guestState = await liveService.getGuestState(streamId);
         io.to(`stream_${streamId}`).emit('guest_state', guestState);
@@ -500,6 +577,7 @@ export const handleLiveSocket = (io: Server) => {
       const ended = await liveService.sweepStaleLiveStreams();
       for (const stream of ended) {
         streamHosts.delete(stream.id);
+        invalidateStreamRoles(stream.id);
         io.to(`stream_${stream.id}`).emit('stream_ended', { streamId: stream.id, reason: 'host_timeout' });
         io.to(`stream_${stream.id}`).emit('stream_state', { streamId: stream.id, state: 'ENDED' });
         io.to(`user_${stream.hostId}`).emit('stream_ended', { streamId: stream.id, reason: 'host_timeout' });

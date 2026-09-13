@@ -51,6 +51,7 @@ import { normalizeGiftCatalog, type GiftCatalogItem } from '@/lib/giftCatalog';
 import GiftAnimationOverlay from '@/components/gifts/GiftAnimationOverlay';
 import { useGiftAnimationQueue } from '@/components/gifts/useGiftAnimationQueue';
 import LiveParticipantGrid, { type StageParticipant } from '@/components/live/LiveParticipantGrid';
+import { reconcileLiveChat, type ChatLineLike } from '@/lib/liveChatDedupe';
 
 type ViewerPhase = 'LOADING' | 'LIVE' | 'ENDED' | 'ERROR';
 type SheetId = 'none' | 'chat' | 'viewers' | 'more' | 'gift';
@@ -114,6 +115,19 @@ function toChatMessage(raw: any): ChatMessage {
     user,
   };
 }
+
+// Shared reconcile options for the viewer chat. Dedup anchors on the stable
+// server message id first; when a message has no id we fall back to an
+// author+text fingerprint so a duplicated server-un-ids delivery can never
+// render twice. (Comments normally always carry a server id, this is a safety
+// net for malformed/legacy payloads.)
+const CHAT_RECONCILE: { idOf: (l: ChatLineLike) => unknown; fingerprintOf: (l: ChatLineLike) => string } = {
+  idOf: (l) => (l as ChatMessage).id,
+  fingerprintOf: (l) => {
+    const m = l as ChatMessage;
+    return `${m.user?.id ?? ''}\u0000${m.kind ?? ''}\u0000${m.message}`;
+  },
+};
 
 /** Attaches a MediaStream (remote host video) to a <video>. */
 function ViewerVideo({ stream }: { stream: MediaStream | null }) {
@@ -207,10 +221,12 @@ export default function LiveViewerPage() {
   }, []);
 
   const appendMessage = useCallback((raw: any) => {
-    setMessages((prev) => {
-      const next = [...prev, toChatMessage(raw)];
-      return next.length > 80 ? next.slice(-80) : next;
-    });
+    const line = toChatMessage(raw);
+    // Reconcile by stable server id: the same message can arrive via history +
+    // live push and (for a host) via the dedicated user_ room, so it must be
+    // shown exactly once. Non-matching older lines are returned as overflow so
+    // full chat can still surface them — never destructively deleted.
+    setMessages((prev) => reconcileLiveChat(prev, [line], { maxVisible: 80, ...CHAT_RECONCILE }).visible as ChatMessage[]);
   }, []);
 
   const handleStreamEnded = useCallback(() => {
@@ -293,7 +309,8 @@ export default function LiveViewerPage() {
         if (d?.streamId !== rid) return;
         const line = viewerEventLine(d);
         if (!line) return;
-        setMessages((prev) => [...prev.slice(-79), { id: `ev-${d.at}-${d.type}-${Math.random().toString(36).slice(2, 6)}`, message: line, kind: 'system', meta: { type: d.type }, createdAt: d.at }]);
+        const sys: ChatMessage = { id: `ev-${d.at}-${d.type}-${Math.random().toString(36).slice(2, 6)}`, message: line, kind: 'system', meta: { type: d.type }, createdAt: d.at };
+        setMessages((prev) => reconcileLiveChat(prev, [sys], { maxVisible: 80, ...CHAT_RECONCILE }).visible as ChatMessage[]);
       });
       socket.on('message_pinned', (d: any) => {
         if (d?.streamId === rid && d?.pinned) setPinnedMessage({ id: d.pinned.id, username: d.pinned.username, message: d.pinned.message });
@@ -407,7 +424,7 @@ socket.on('guest_state', (d: any) => {
             (Array.isArray(d?.messages) ? d.messages : undefined) ??
             (Array.isArray(d?.messages?.items) ? d.messages.items : undefined) ??
             [];
-          setMessages((messagesRaw as any[]).map(toChatMessage).reverse().slice(-60));
+          setMessages((prev) => reconcileLiveChat(prev, (messagesRaw as any[]).map(toChatMessage).reverse(), { maxVisible: 80, ...CHAT_RECONCILE }).visible as ChatMessage[]);
         })
         .catch(() => undefined);
 
