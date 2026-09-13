@@ -21,7 +21,7 @@ const makeFile = (name: string, type: string): File =>
 
 const toPreview = (_file: File) => `blob:http://vanta.local/${_file.name}`;
 
-function makeDraft(file: File, fileType: 'IMAGE' | 'VIDEO' = 'IMAGE'): AttachmentDraft {
+function makeDraft(file: File, fileType: 'IMAGE' | 'VIDEO' | 'FILE' = 'IMAGE'): AttachmentDraft {
   return {
     file,
     fileType,
@@ -48,6 +48,17 @@ describe('attachmentDrafts (multi-select composer)', () => {
     expect(next).toHaveLength(3);
     expect(next.map(d => d.file.name)).toEqual(['a.jpg', 'b.jpg', 'c.mp4']);
     expect(next[2].fileType).toBe('VIDEO');
+  });
+
+  it('adds document FILE drafts alongside media in the same composer', () => {
+    const next = addDrafts([], [
+      { file: makeFile('b.jpg', 'image/jpeg'), fileType: 'IMAGE' },
+      { file: makeFile('report.pdf', 'application/pdf'), fileType: 'FILE' },
+      { file: makeFile('doc.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'), fileType: 'FILE' },
+    ], toPreview);
+    expect(next).toHaveLength(3);
+    expect(next.map(d => d.fileType)).toEqual(['IMAGE', 'FILE', 'FILE']);
+    expect(next[2].file.name).toBe('doc.docx');
   });
 
   it('removes a single attachment without touching the others', () => {

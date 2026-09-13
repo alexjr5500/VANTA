@@ -200,6 +200,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const createAvatarFileIdRef = useRef<string | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  // Native document/file picker — multi-select documents for the composer.
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const activeConversationRef = useRef<string | null>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -220,10 +222,12 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [newChatResults, setNewChatResults] = useState<any[]>([]);
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [attachmentDrafts, setAttachmentDrafts] = useState<AttachmentDraft[]>([]);
+  // Toggles the compact Camera / Photos / Files attachment sheet above the composer.
+  const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
   const uploadAbortRef = useRef<AbortController | null>(null);
   // Retains local files + preview URLs for in-chat media messages that are
   // still uploading (or failed), so a retry can re-upload the same files.
-  const pendingMediaRef = useRef<Record<string, { file: File; fileType: 'IMAGE' | 'VIDEO'; fileName: string; previewUrl: string }[]>>({});
+  const pendingMediaRef = useRef<Record<string, { file: File; fileType: 'IMAGE' | 'VIDEO' | 'FILE'; fileName: string; previewUrl: string }[]>>({});
   const [trimVideoFile, setTrimVideoFile] = useState<File | null>(null);
   const [editEntityOpen, setEditEntityOpen] = useState(false);
   const [editEntityId, setEditEntityId] = useState<string | null>(null);
@@ -968,6 +972,47 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
     // Trim the first video if any; later ones are queued for trim after.
     if (videosToTrim.length) setTrimVideoFile(videosToTrim[0]);
+  };
+
+  /**
+   * Native multi-select documents/files for the chat composer. Documents are
+   * added as FILE drafts (no video-trim pass) and are uploaded + sent through
+   * the same single-send pipeline as images and videos.
+   */
+  const handleDocumentAttachment = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (files.length === 0) return;
+
+    const documentTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain',
+    ];
+    const documentInputs: { file: File; fileType: 'FILE' }[] = [];
+    for (const file of files) {
+      if (!documentTypes.includes(file.type)) {
+        showToast?.({ type: 'error', title: 'Unsupported file type', message: 'Choose PDF, DOC, DOCX or TXT files.' });
+        continue;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        showToast?.({ type: 'error', title: 'File too large', message: 'Documents must be 10 MB or smaller.' });
+        continue;
+      }
+      documentInputs.push({ file, fileType: 'FILE' });
+    }
+    if (documentInputs.length) {
+      setAttachmentDrafts(previous => addDrafts(previous, documentInputs, file => URL.createObjectURL(file)));
+    }
+  };
+
+  /** Open the native device camera for a photo or video. */
+  const openCamera = () => {
+    setShowAttachmentSheet(false);
+    // A hidden `<input type="file" capture>` opens the OS camera app and requests
+    // camera permission at the OS level — no custom/photo-picker fallback.
+    window.requestAnimationFrame(() => cameraInputRef.current?.click());
   };
 
   const handleTrimVideoConfirm = (result: VideoTrimResult) => {
@@ -1897,7 +1942,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                 <div className={cn('mb-2 flex flex-wrap gap-1.5 rounded-lg border border-white/[0.1] bg-[#101010] p-2')}>
                   {attachmentDrafts.map((draft) => (
                     <div key={draft.id} className="relative shrink-0">
-                      <div className={cn('h-14 w-14 overflow-hidden rounded-md bg-black', draft.fileType === 'IMAGE' ? '' : 'ring-1 ring-white/10')}>{draft.fileType === 'IMAGE' ? <img src={draft.previewUrl} alt="Attachment preview" className="h-full w-full object-cover"/> : <video src={draft.previewUrl} muted preload="metadata" className="h-full w-full object-cover"/>}</div>
+                      <div className={cn('h-14 w-14 overflow-hidden rounded-md bg-black', draft.fileType === 'IMAGE' ? '' : 'ring-1 ring-white/10')}>{draft.fileType === 'IMAGE' ? <img src={draft.previewUrl} alt="Attachment preview" className="h-full w-full object-cover"/> : draft.fileType === 'FILE' ? <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-[#151517] px-1 text-center"><FileText size={14} className="shrink-0 text-[#f2c75c]"/><span className="w-full truncate text-[7px] leading-tight text-white/70">{draft.file.name}</span></div> : <video src={draft.previewUrl} muted preload="metadata" className="h-full w-full object-cover"/>}</div>
                       {draft.status === 'failed' ? (
                         <button onClick={() => void uploadAllAndSend()} className="absolute -bottom-1 -right-1 grid h-5 w-5 place-items-center rounded-full bg-[#d6a83f]/15 text-[#f2c75c]" aria-label="Retry upload"><RefreshCw size={10}/></button>
                       ) : (
@@ -1910,11 +1955,20 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   <p className="self-center pl-1 text-[10px] text-white/45">{readyDraftCount(attachmentDrafts)} attachment{attachmentDrafts.length === 1 ? '' : 's'} · tap ✕ to remove</p>
                 </div>
               )}
+              {/* Compact attach sheet: Camera / Photos / Files (native pickers) */}
+              {showAttachmentSheet && (
+                <div className="mb-2 flex items-center gap-1.5 rounded-xl border border-white/[0.07] bg-[#151517] px-1.5 py-1">
+                  <button onClick={() => { setShowAttachmentSheet(false); openCamera(); }} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-lg px-2 py-1.5 transition hover:bg-white/[0.06] disabled:opacity-40" aria-label="Open camera"><Camera size={17} className="text-[#f2c75c]" /><span className="text-[9px] leading-none text-white/60">Camera</span></button>
+                  <button onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => attachmentInputRef.current?.click()); }} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-lg px-2 py-1.5 transition hover:bg-white/[0.06] disabled:opacity-40" aria-label="Choose photos or videos"><ImageIcon size={17} className="text-emerald-400" /><span className="text-[9px] leading-none text-white/60">Photos</span></button>
+                  <button onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => fileInputRef.current?.click()); }} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-lg px-2 py-1.5 transition hover:bg-white/[0.06] disabled:opacity-40" aria-label="Choose files or documents"><FileText size={17} className="text-white/80" /><span className="text-[9px] leading-none text-white/60">Files</span></button>
+                </div>
+              )}
               <div className="flex items-center gap-2">
+                {/* Hidden native pickers — each invokes a distinct real device capability */}
                 <input ref={attachmentInputRef} type="file" className="hidden" accept="image/*,video/*" multiple onChange={handleAttachment} />
                 <input ref={cameraInputRef} type="file" className="hidden" accept="image/*,video/*" capture="environment" onChange={handleAttachment} />
-                <button onClick={() => attachmentInputRef.current?.click()} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="btn-icon h-10 w-10 shrink-0 disabled:opacity-50" aria-label="Add attachment">{isUploadingAttachment ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={17} />}</button>
-                <button onClick={() => cameraInputRef.current?.click()} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="btn-icon h-10 w-10 shrink-0 text-[#f2c75c] disabled:opacity-50" aria-label="Open camera to capture a photo or video"><Camera size={18} /></button>
+                <input ref={fileInputRef} type="file" className="hidden" accept="application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" multiple onChange={handleDocumentAttachment} />
+                <button onClick={() => setShowAttachmentSheet(v => !v)} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="btn-icon h-10 w-10 shrink-0 disabled:opacity-50" aria-label="Add attachment">{isUploadingAttachment ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={17} />}</button>
                 <div className="flex-1 relative">
                   <textarea
                     ref={messageInputRef}

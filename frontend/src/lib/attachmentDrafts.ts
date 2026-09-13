@@ -9,13 +9,19 @@
  * single-send behaviour can be unit-tested in the `node` vitest environment.
  */
 
+/**
+ * Supported draft attachment kinds. IMAGE/VIDEO render as media thumbnails,
+ * FILE renders as a compact document card (name + size) in the composer.
+ */
+export type DraftFileType = 'IMAGE' | 'VIDEO' | 'FILE';
+
 export interface AttachmentDraft {
   /** Local File or trimmed File object to upload. */
   file: File;
-  /** Object URL shown as the thumbnail while composing. */
+  /** Object URL (media) or display reference (FILE) shown while composing. */
   previewUrl: string;
-  /** "IMAGE" or "VIDEO". */
-  fileType: 'IMAGE' | 'VIDEO';
+  /** "IMAGE", "VIDEO" or "FILE". */
+  fileType: DraftFileType;
   /** Upload lifecycle progress 0-100. */
   progress: number;
   status: 'ready' | 'uploading' | 'sending' | 'failed';
@@ -26,7 +32,7 @@ export interface AttachmentDraft {
 
 export interface AttachmentDraftInput {
   file: File;
-  fileType: 'IMAGE' | 'VIDEO';
+  fileType: DraftFileType;
 }
 
 let nextId = 0;

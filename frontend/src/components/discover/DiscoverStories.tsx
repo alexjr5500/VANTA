@@ -114,7 +114,7 @@ export default function DiscoverStories() {
         </>
       )}
 
-      <div ref={scrollRef} className="flex gap-3 overflow-x-auto scrollbar-hide pb-2 px-1">
+      <div ref={scrollRef} className="flex gap-2.5 overflow-x-auto scrollbar-hide pb-1 pt-0.5 px-1">
         {stories.slice(0, 10).map((group, i) => {
           const user = group.user || {};
           const opener = group.hasUnviewed
@@ -129,7 +129,7 @@ export default function DiscoverStories() {
               transition={{ delay: i * 0.03 }}
               type="button"
               onClick={() => router.push(`/stories/${encodeURIComponent(user.id)}?start=${encodeURIComponent(opener.id)}`)}
-              className="flex flex-col items-center gap-1.5 shrink-0 group"
+              className="flex flex-col items-center gap-1 shrink-0 group"
             >
               <StoryCircle src={user.avatar} alt={user.username || 'Story'} active={group.hasUnviewed} showDot segments={(group.stories || []).map(story => ({ id: story.id, viewed: Boolean(story.viewed) }))} />
               <span className="text-[10px] text-white/50 truncate max-w-[64px]">{user.username}</span>
