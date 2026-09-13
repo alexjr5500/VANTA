@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, Image, Video, X, FileWarning, CheckCircle2, Loader2 } from 'lucide-react';
+import { Upload, Image, Video, X, FileWarning, CheckCircle2, Loader2, Camera } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { useAuth } from '@/context/AuthContext';
@@ -49,6 +49,7 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
   const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const { token } = useAuth();
   const filesRef = useRef<MediaFile[]>([]);
   const abortControllers = useRef(new Map<string, AbortController>());
@@ -295,6 +296,20 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
     input.click();
   }, []);
 
+  /** Launch the device camera (mobile/PWA) and return the capture through the SAME
+   *  upload/file pipeline as gallery selection. Falls back to the file picker on
+   *  desktop browsers that lack camera capture support. */
+  const openCamera = useCallback(() => {
+    cameraInputRef.current?.click();
+  }, []);
+
+  const handleCameraCapture = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      processFiles(e.target.files);
+    }
+    e.target.value = '';
+  }, [processFiles]);
+
   useImperativeHandle(ref, () => ({ openPicker }), [openPicker]);
 
   const formatSize = (bytes: number) => {
@@ -316,6 +331,17 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
         multiple={!storyMode && maxFiles > 1}
         className="hidden"
         onChange={handleFileSelect}
+        aria-hidden="true"
+      />
+      {/* Camera capture — opens the native device camera on mobile/PWA; the
+          captured photo/video returns through the same pipeline as gallery media. */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*,video/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleCameraCapture}
         aria-hidden="true"
       />
       {/* Drop zone */}
@@ -351,6 +377,9 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
             </p>
           </div>
           <div className="flex items-center gap-3 mt-1">
+            <button type="button" onClick={openCamera} aria-label="Open camera to capture media" className="flex items-center gap-1.5 text-[10px] text-[#d6a83f] bg-[#d6a83f]/10 px-2.5 py-1 rounded-full transition hover:bg-[#d6a83f]/20">
+              <Camera size={11} /> Camera
+            </button>
             <span className="flex items-center gap-1.5 text-[10px] text-gray-500 bg-white/[0.04] px-2.5 py-1 rounded-full">
               <Image size={11} /> Photo
             </span>
@@ -362,14 +391,24 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
       </div>}
 
       {storyMode && mediaFiles.length === 0 && (
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="mx-auto flex items-center gap-2 rounded-lg border border-white/[0.1] bg-white/[0.04] px-4 py-2.5 text-xs font-medium text-white/70 transition hover:bg-white/[0.08] hover:text-white"
-        >
-          <Upload size={15} />
-          Choose photo or video
-        </button>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-2 rounded-lg border border-white/[0.1] bg-white/[0.04] px-4 py-2.5 text-xs font-medium text-white/70 transition hover:bg-white/[0.08] hover:text-white"
+          >
+            <Upload size={15} />
+            Choose photo or video
+          </button>
+          <button
+            type="button"
+            onClick={openCamera}
+            className="flex items-center gap-2 rounded-lg border border-[#d6a83f]/30 bg-[#d6a83f]/10 px-4 py-2.5 text-xs font-medium text-[#f2c75c] transition hover:bg-[#d6a83f]/20"
+          >
+            <Camera size={15} />
+            Camera
+          </button>
+        </div>
       )}
 
       {/* Media previews */}

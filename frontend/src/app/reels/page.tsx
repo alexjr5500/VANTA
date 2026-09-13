@@ -515,7 +515,7 @@ function ReelCard({ reel, index, active, nearby, muted, paused, videos, sections
     <section ref={node => { sections.current[reel.id] = node; }} data-index={index} className="relative flex h-[100dvh] snap-start items-center justify-center bg-[#050505] pb-[calc(64px+env(safe-area-inset-bottom))] pt-0  ">
       <div className="flex h-full w-full items-center justify-center   ">
         <div className="relative h-full w-full overflow-hidden bg-black      ">
-          {reel.thumbnailUrl && <img src={resolveMediaUrl(reel.thumbnailUrl)} alt="" className={cn('absolute inset-0 h-full w-full object-cover transition-opacity duration-300', !videoLoading && !videoFailed && 'opacity-0')} />}
+          {reel.thumbnailUrl && <img src={resolveMediaUrl(reel.thumbnailUrl)} alt="" className={cn('absolute inset-0 h-full w-full object-contain transition-opacity duration-300', !videoLoading && !videoFailed && 'opacity-0')} />}
           {nearby && !videoFailed && (
             <video
               ref={node => { videos.current[reel.id] = node; }}
@@ -549,7 +549,7 @@ function ReelCard({ reel, index, active, nearby, muted, paused, videos, sections
               onWaiting={() => setVideoLoading(true)}
               onPlaying={() => setVideoLoading(false)}
               onTimeUpdate={event => { const video = event.currentTarget; setProgress(video.duration ? (video.currentTime / video.duration) * 100 : 0); }}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
               aria-label={`Reel by ${reel.author.username}`}
             />
           )}

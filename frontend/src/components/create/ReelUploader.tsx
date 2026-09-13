@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Clapperboard, Upload, X } from 'lucide-react';
+import { Clapperboard, Upload, X, Camera } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { apiUpload } from '@/lib/apiClient';
 import { useAuth } from '@/context/AuthContext';
@@ -54,6 +54,7 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
   const [dragActive, setDragActive] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   // ---- Lifecycle ----------------------------------------------------------
 
@@ -306,6 +307,18 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
                     }}
                   />
 
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="video/mp4,video/webm,image/*"
+                    capture="environment"
+                    className="sr-only"
+                    onChange={(event) => {
+                      handleFiles(event.target.files);
+                      event.target.value = '';
+                    }}
+                  />
+
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
@@ -313,6 +326,15 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
                   >
                     <Upload size={15} />
                     Choose Video
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#d6a83f]/30 bg-[#d6a83f]/10 text-[#f2c75c] transition hover:bg-[#d6a83f]/20"
+                  >
+                    <Camera size={16} />
+                    Capture Video
                   </button>
                 </div>
               ) : (

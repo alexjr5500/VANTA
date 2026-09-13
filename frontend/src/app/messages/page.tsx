@@ -199,6 +199,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   // create success / failure) always targets the correct server file.
   const createAvatarFileIdRef = useRef<string | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const activeConversationRef = useRef<string | null>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1911,7 +1912,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               )}
               <div className="flex items-center gap-2">
                 <input ref={attachmentInputRef} type="file" className="hidden" accept="image/*,video/*" multiple onChange={handleAttachment} />
+                <input ref={cameraInputRef} type="file" className="hidden" accept="image/*,video/*" capture="environment" onChange={handleAttachment} />
                 <button onClick={() => attachmentInputRef.current?.click()} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="btn-icon h-10 w-10 shrink-0 disabled:opacity-50" aria-label="Add attachment">{isUploadingAttachment ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={17} />}</button>
+                <button onClick={() => cameraInputRef.current?.click()} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="btn-icon h-10 w-10 shrink-0 text-[#f2c75c] disabled:opacity-50" aria-label="Open camera to capture a photo or video"><Camera size={18} /></button>
                 <div className="flex-1 relative">
                   <textarea
                     ref={messageInputRef}
