@@ -87,7 +87,7 @@ export default function Avatar({
     >
       <div
         className={cn(
-          'rounded-full flex items-center justify-center overflow-hidden',
+          'aspect-square rounded-full flex items-center justify-center overflow-hidden',
           'bg-[#161616] border border-white/[0.08]',
           sizeStyles[size],
           className

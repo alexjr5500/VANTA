@@ -11,7 +11,7 @@ import {
   Loader2, Users, Hash, ArrowLeft, X, UserPlus, Camera, BellOff,
   Pin, Image as ImageIcon, FileText, Info, ChevronRight, Flag, Ban, Pencil, RefreshCw,
   Shield, Trash2, Crown, Globe2, Lock, UserMinus, Copy, Forward, Smile, MoreVertical,
-  Mic, Square, Phone, Video,
+  Mic, Square, Phone, Video, Play,
 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
@@ -25,7 +25,7 @@ import { useCalls } from '@/context/CallContext';
 import { useChatUnread } from '@/context/ChatUnreadContext';
 import VideoTrimModal from '@/components/video/VideoTrimModal';
 import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
-import { VoiceNotePlayer, VideoMessagePreview, VideoFullscreenPlayer } from '@/components/messages/ChatMediaPlayer';
+import { VoiceNotePlayer, VideoFullscreenPlayer } from '@/components/messages/ChatMediaPlayer';
 import { activeReplyFor, createReply, type ReplyState } from '@/lib/replyState';
 import { isSecureMediaContext, mapMediaError } from '@/lib/mediaPermissions';
 import { addDrafts, hasBusyDraft, readyDraftCount, removeDraft, type AttachmentDraft } from '@/lib/attachmentDrafts';
@@ -145,6 +145,57 @@ const visibleMessageText = (message: Message): string => {
   const candidates = [image?.fileName, image?.url].filter(Boolean).map(value => String(value).split('/').pop());
   return candidates.includes(text) || attachmentTextPattern.test(text) ? '' : message.text;
 };
+
+// ============================================================================
+// RESPONSIVE MEDIA GALLERY GRID
+//
+// Used by BOTH the composer draft preview and the sent/received message bubbles
+// so every place renders a multi-attachment group with the same Instagram-style
+// responsive gallery rules:
+//   1 attachment → full-size single tile
+//   2 attachments → 2 equal columns
+//   3 attachments → first large on the left, 2 & 3 stacked on the right
+//   4 attachments → 2×2 grid
+//   5+ attachments → polished multi-item grid with remaining-count overlay
+//
+// Only IMAGE / VIDEO tiles go in the grid (they share one object-fit:cover tile).
+// FILE / AUDIO attachments keep their dedicated document/audio cards rendered
+// adjacent to (not inside) the grid.
+// ============================================================================
+
+/** Versatile attachment shape shared by drafts and persisted messages. */
+type GridAttachment = {
+  id?: string;
+  url?: string;
+  previewUrl?: string;
+  fileType: string;
+  fileName?: string;
+};
+
+const GRID_MAX_VISIBLE = 5;
+
+/** Aspect ratio of the whole grid container so `auto-rows-fr` yields even cells. */
+function gridAspectClass(count: number): string {
+  if (count === 1) return 'aspect-[4/3]';
+  if (count === 2) return 'aspect-[2/1]';
+  if (count === 3 || count === 4) return 'aspect-square';
+  return 'aspect-[3/2]';
+}
+
+/** Grid template columns/rows per count; every row shares height via auto-rows-fr. */
+function gridColumnsClass(count: number): string {
+  if (count === 1) return 'grid-cols-1';
+  if (count === 2) return 'grid-cols-2 grid-rows-1 auto-rows-fr';
+  if (count === 3) return 'grid-cols-2 grid-rows-2 auto-rows-fr';
+  if (count === 4) return 'grid-cols-2 grid-rows-2 auto-rows-fr';
+  return 'grid-cols-3 grid-rows-2 auto-rows-fr';
+}
+
+/** Per-tile placement classes (the 3-item "featured left" layout is custom). */
+function gridTileClass(count: number, index: number): string {
+  if (count === 3) return index === 0 ? 'col-span-1 row-span-2' : 'col-span-1 row-span-1';
+  return '';
+}
 
 const formatVoiceTime = (seconds: number): string => {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -1862,17 +1913,50 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                         ) : (
                           <>
                           {msg.replyTo && <div className="mx-3 mt-2 mb-0.5 flex min-w-0 max-w-[min(100%,360px)] flex-col border-l-2 border-[#d6a83f] rounded-sm bg-black/20 pr-2 pl-2 pt-1.5 pb-1.5"><button type="button" className="min-w-0 max-w-full text-left" onClick={() => { const original = document.getElementById(`message-${msg.replyTo.id}`); original?.scrollIntoView({ behavior: 'smooth', block: 'center' }); original?.classList.add('ring-1', 'ring-[#d6a83f]/70'); window.setTimeout(() => original?.classList.remove('ring-1', 'ring-[#d6a83f]/70'), 1200); }}><strong className="block truncate text-[9px] text-[#f2c75c]">{msg.replyTo.sender?.fullName || `@${msg.replyTo.sender?.username || 'user'}`}</strong><span className="block truncate text-[10px] text-white/55">{msg.replyTo.content || msg.replyTo.text || 'Attachment'}</span></button></div>}
-                          {msg.attachments?.map((attachment, index) => attachment.fileType === 'IMAGE'
-                            ? <button key={attachment.id || index} type="button" onClick={() => openMediaViewer(attachment)} className="block min-w-0 max-w-full bg-transparent text-left" aria-label={`Open ${attachment.fileName || 'image'} in media viewer`}><img
-                              src={attachment.url}
-                              alt={attachment.fileName || 'Image attachment'}
-                              loading="lazy"
-                              decoding="async"
-                              className="block max-h-[420px] max-w-[420px] w-auto h-auto object-contain"
-                            /></button>
-                            : attachment.fileType === 'VIDEO' ? <span key={attachment.id || index} className={cn('block min-w-0 max-w-[420px]', visibleMessageText(msg) && 'mb-1.5')}><VideoMessagePreview attachment={attachment} onOpen={openMediaViewer} /></span>
-                            : attachment.fileType === 'AUDIO' ? <div key={attachment.id || index} className={cn('min-w-0 px-3', visibleMessageText(msg) ? 'pt-2 pb-1' : 'py-2.5')}><VoiceNotePlayer src={attachment.url} name={attachment.fileName} /></div>
-                            : <a key={attachment.id || index} href={attachment.url} target="_blank" rel="noreferrer" className="flex min-w-0 max-w-full items-center gap-2 px-3 py-2.5 text-xs underline underline-offset-2 text-white/70 hover:text-white">{<FileText size={13} className="shrink-0 text-white/40" />}<span className="min-w-0 truncate">{attachment.fileName || 'Download attachment'}</span></a>)}
+                          {(() => {
+                            const allAtts: GridAttachment[] = ((msg.attachments ?? []) as any[]).map(a => ({ ...a, url: (a && (a.url || a.previewUrl)) as string, previewUrl: undefined }));
+                            const mediaAtts = allAtts.filter(a => a.fileType === 'IMAGE' || a.fileType === 'VIDEO');
+                            const otherAtts = allAtts.filter(a => a.fileType !== 'IMAGE' && a.fileType !== 'VIDEO');
+                            const total = mediaAtts.length;
+                            const visible = total > GRID_MAX_VISIBLE ? mediaAtts.slice(0, GRID_MAX_VISIBLE) : mediaAtts;
+                            const hiddenCount = total - visible.length;
+                            return (
+                              <>
+                                {total > 0 && (
+                                  <div className={cn('grid w-full gap-1.5 overflow-hidden rounded-[14px]', gridAspectClass(total), gridColumnsClass(total))}>
+                                    {visible.map((att, index) => (
+                                      <div key={att.id || `${att.url}-${index}`} className={cn('relative min-w-0 overflow-hidden', gridTileClass(total, index))}>
+                                        <button
+                                          type="button"
+                                          onClick={() => openMediaViewer({ ...att, url: att.url! })}
+                                          className="group block h-full w-full bg-[#0d0d0f] text-left"
+                                          aria-label={`Open ${att.fileName || (att.fileType === 'VIDEO' ? 'video' : 'image')} in media viewer`}
+                                        >
+                                          {att.fileType === 'VIDEO' ? (
+                                            <>
+                                              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                                              <video src={att.url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                                              <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                                                <span className="grid h-8 w-8 place-items-center rounded-full bg-black/55 text-white ring-1 ring-white/25 backdrop-blur-[2px] group-hover:bg-black/75"><Play size={14} className="ml-0.5 fill-current" /></span>
+                                              </span>
+                                            </>
+                                          ) : (
+                                            <img src={att.url} alt={att.fileName || 'Image attachment'} loading="lazy" decoding="async" className="h-full w-full object-cover" />
+                                          )}
+                                        </button>
+                                        {hiddenCount > 0 && index === visible.length - 1 && (
+                                          <span className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center bg-black/60 text-base font-semibold text-white">+{hiddenCount}</span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {otherAtts.map((att, index) => att.fileType === 'AUDIO'
+                                  ? <div key={att.id || `extra-${index}`} className={cn('min-w-0 px-3', visibleMessageText(msg) ? 'pt-2 pb-1' : 'py-2.5')}><VoiceNotePlayer src={att.url!} name={att.fileName} /></div>
+                                  : <a key={att.id || `extra-${index}`} href={att.url} target="_blank" rel="noreferrer" className="flex min-w-0 max-w-full items-center gap-2 px-3 py-2.5 text-xs underline underline-offset-2 text-white/70 hover:text-white">{<FileText size={13} className="shrink-0 text-white/40" />}<span className="min-w-0 truncate">{att.fileName || 'Download attachment'}</span></a>)}
+                              </>
+                            );
+                          })()}
                           {visibleMessageText(msg).trim() && <p className="px-3 py-2 max-w-[420px]">{visibleMessageText(msg)}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}</p>}
                           {msg.uploading && <div className="mt-1 flex items-center gap-1.5 px-3 pb-2 text-[10px] text-[#6aa5ff]"><Loader2 size={10} className="animate-spin" /><span className="tabular-nums">Uploading {msg.uploadProgress ?? 0}%</span></div>}
                         </>)}
@@ -1939,20 +2023,49 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                 </div>
               )}
               {attachmentDrafts.length > 0 && (
-                <div className={cn('mb-2 flex flex-wrap gap-1.5 rounded-lg border border-white/[0.1] bg-[#101010] p-2')}>
-                  {attachmentDrafts.map((draft) => (
-                    <div key={draft.id} className="relative shrink-0">
-                      <div className={cn('h-14 w-14 overflow-hidden rounded-md bg-black', draft.fileType === 'IMAGE' ? '' : 'ring-1 ring-white/10')}>{draft.fileType === 'IMAGE' ? <img src={draft.previewUrl} alt="Attachment preview" className="h-full w-full object-cover"/> : draft.fileType === 'FILE' ? <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-[#151517] px-1 text-center"><FileText size={14} className="shrink-0 text-[#f2c75c]"/><span className="w-full truncate text-[7px] leading-tight text-white/70">{draft.file.name}</span></div> : <video src={draft.previewUrl} muted preload="metadata" className="h-full w-full object-cover"/>}</div>
-                      {draft.status === 'failed' ? (
-                        <button onClick={() => void uploadAllAndSend()} className="absolute -bottom-1 -right-1 grid h-5 w-5 place-items-center rounded-full bg-[#d6a83f]/15 text-[#f2c75c]" aria-label="Retry upload"><RefreshCw size={10}/></button>
-                      ) : (
-                        <button onClick={() => cancelAttachment(draft.id)} className="absolute -bottom-1 -right-1 grid h-5 w-5 place-items-center rounded-full bg-black/70 text-white/80" aria-label="Remove attachment"><X size={10}/></button>
+                <div className="mb-2 rounded-lg border border-white/[0.1] bg-[#101010] p-2">
+                  {(() => {
+                    const mediaDrafts = attachmentDrafts.filter(d => d.fileType === 'IMAGE' || d.fileType === 'VIDEO');
+                    const fileDrafts = attachmentDrafts.filter(d => d.fileType === 'FILE');
+                    const total = mediaDrafts.length;
+                    const visible = total > GRID_MAX_VISIBLE ? mediaDrafts.slice(0, GRID_MAX_VISIBLE) : mediaDrafts;
+                    const hiddenCount = total - visible.length;
+                    return (<>
+                      {total > 0 && (
+                        <div className={cn('grid w-full gap-1.5 overflow-hidden rounded-lg', gridAspectClass(total), gridColumnsClass(total))}>
+                          {visible.map((draft, index) => (
+                            <div key={draft.id} className={cn('relative min-w-0 overflow-hidden', gridTileClass(total, index))}>
+                              <div className="h-full w-full bg-black">{draft.fileType === 'IMAGE'
+                                ? <img src={draft.previewUrl} alt="Attachment preview" className="h-full w-full object-cover" />
+                                : <video src={draft.previewUrl} muted playsInline preload="metadata" className="h-full w-full object-cover" />}</div>
+                              {draft.status === 'failed' ? (
+                                <button onClick={() => void uploadAllAndSend()} className="absolute -bottom-1 -right-1 grid h-5 w-5 place-items-center rounded-full bg-[#d6a83f]/15 text-[#f2c75c]" aria-label="Retry upload"><RefreshCw size={10}/></button>
+                              ) : (
+                                <button onClick={() => cancelAttachment(draft.id)} className="absolute -bottom-1 -right-1 grid h-5 w-5 place-items-center rounded-full bg-black/70 text-white/80" aria-label="Remove attachment"><X size={10}/></button>
+                              )}
+                              {draft.status === 'uploading' && <span className="absolute inset-0 grid place-items-center bg-black/40 text-[9px] text-white">{draft.progress}%</span>}
+                              {draft.status === 'sending' && <span className="absolute inset-0 grid place-items-center bg-black/40 text-white/80"><Loader2 size={12} className="animate-spin"/></span>}
+                              {hiddenCount > 0 && index === visible.length - 1 && (
+                                <span className="absolute inset-0 z-[1] grid place-items-center bg-black/60 text-base font-semibold text-white">+{hiddenCount}</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       )}
-                      {draft.status === 'uploading' && <span className="absolute inset-0 grid place-items-center rounded-md bg-black/40 text-[9px] text-white">{draft.progress}%</span>}
-                      {draft.status === 'sending' && <span className="absolute inset-0 grid place-items-center rounded-md bg-black/40 text-white/80"><Loader2 size={12} className="animate-spin"/></span>}
-                    </div>
-                  ))}
-                  <p className="self-center pl-1 text-[10px] text-white/45">{readyDraftCount(attachmentDrafts)} attachment{attachmentDrafts.length === 1 ? '' : 's'} · tap ✕ to remove</p>
+                      {fileDrafts.map(draft => (
+                        <div key={draft.id} className="relative mt-1.5 flex min-w-0 items-center gap-2 overflow-hidden rounded-lg border border-white/[0.08] bg-[#151517] px-2.5 py-2">
+                          <FileText size={15} className="shrink-0 text-[#f2c75c]" />
+                          <span className="min-w-0 flex-1 truncate text-[11px] text-white/75">{draft.file.name}</span>
+                          {draft.status === 'failed' ? (
+                            <button onClick={() => void uploadAllAndSend()} className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[#d6a83f]/15 text-[#f2c75c]" aria-label="Retry upload"><RefreshCw size={10}/></button>
+                          ) : (
+                            <button onClick={() => cancelAttachment(draft.id)} className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-black/70 text-white/80" aria-label="Remove attachment"><X size={10}/></button>
+                          )}
+                        </div>
+                      ))}
+                      <p className="mt-1.5 pl-1 text-[10px] text-white/45">{readyDraftCount(attachmentDrafts)} attachment{attachmentDrafts.length === 1 ? '' : 's'} · tap ✕ to remove</p>
+                    </>);
+                  })()}
                 </div>
               )}
               {/* Compact attach sheet: Camera / Photos / Files (native pickers) */}
