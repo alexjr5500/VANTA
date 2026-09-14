@@ -197,9 +197,9 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
             animate={{ y: 0, transition: { type: 'spring', damping: 30, stiffness: 320 } }}
             exit={{ y: '100%', transition: { duration: 0.2, ease: 'easeIn' } }}
             className={cn(
-              'fixed inset-x-0 bottom-0 z-[101] mx-auto flex w-full flex-col overflow-hidden bg-[#050505] shadow-[0_-12px_48px_rgba(0,0,0,0.6)]',
+              'fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-[101] mx-auto flex w-full flex-col overflow-hidden bg-[#050505] shadow-[0_-12px_48px_rgba(0,0,0,0.6)]',
               isStory
-                ? 'top-0 h-[100dvh] border-0 rounded-none md:max-w-[480px] md:h-[88dvh] md:rounded-t-[28px] md:border-x md:border-t md:border-white/[0.08] md:bg-[#0d0d0f]/95 md:backdrop-blur-2xl'
+                ? 'top-0 h-[var(--vanta-vh,100dvh)] border-0 rounded-none md:max-w-[480px] md:h-[88dvh] md:rounded-t-[28px] md:border-x md:border-t md:border-white/[0.08] md:bg-[#0d0d0f]/95 md:backdrop-blur-2xl'
                 : 'max-w-[480px] border-x border-t border-white/[0.08] bg-[#0d0d0f]/95 rounded-t-[28px] backdrop-blur-2xl'
             )}
             role="dialog"

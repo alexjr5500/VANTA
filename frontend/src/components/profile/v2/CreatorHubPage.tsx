@@ -37,7 +37,7 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   const [profile, setProfile] = useState<ProfileData | null>(null); const [tab, setTab] = useState<ProfileTab>('posts');
   const [content, setContent] = useState(emptyContent); const [loading, setLoading] = useState(true); const [contentLoading, setContentLoading] = useState(false);
   const [contentError, setContentError] = useState(''); const [contentRetry, setContentRetry] = useState(0);
-  const [error, setError] = useState<string | null>(null); const [menuOpen, setMenuOpen] = useState(false); const menuRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
   const [unfollowOpen, setUnfollowOpen] = useState(false);
   const [deletePostFor, setDeletePostFor] = useState<ProfileItem>();
   const [followPending, setFollowPending] = useState(false);
@@ -65,10 +65,6 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   }, [authLoading, normalized, own, refreshToken, router, token]);
 
   useEffect(() => { void loadProfile(); }, [loadProfile]);
-  useEffect(() => {
-    const close = (event: MouseEvent) => { if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false); };
-    document.addEventListener('mousedown', close); return () => document.removeEventListener('mousedown', close);
-  }, []);
 
   const endpoint = useMemo(() => {
     const prefix = own ? '/api/profiles/me' : `/api/profiles/public/${encodeURIComponent(normalized)}`;
@@ -97,7 +93,6 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   const copyProfile = async () => {
     try { await navigator.clipboard.writeText(`${location.origin}/profile/${profile?.username}`); toast.success('Profile link copied'); }
     catch { toast.error('Unable to copy profile link'); }
-    setMenuOpen(false);
   };
   const messageProfile = async () => {
     if (!profile) return;
@@ -190,7 +185,7 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   const avatar = profile.avatarUrl || profile.profile?.avatarUrl || profile.avatar || '';
 
   return <main className="profile-page">
-    <ProfileHeader profile={profile} own={own} menuOpen={menuOpen} menuRef={menuRef} onMenu={() => setMenuOpen(value => !value)} onFollow={() => { void follow(); }} onMessage={() => { void messageProfile(); }} onGift={() => { void openGift(profile); }} onCopy={() => { void copyProfile(); }} onPeople={setPeople} followPending={followPending} />
+    <ProfileHeader profile={profile} own={own} onFollow={() => { void follow(); }} onMessage={() => { void messageProfile(); }} onGift={() => { void openGift(profile); }} onCopy={() => { void copyProfile(); }} onPeople={setPeople} followPending={followPending} />
     <ActiveFundraiserSection own={own} />
     <nav className="profile-tabs" aria-label="Profile content">{TABS.filter(item => !item.ownOnly || own).map(({ id, label, icon: Icon }) => <button key={id} className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}><Icon size={16} strokeWidth={tab === id ? 2.4 : 1.9} /><span className="tab-label">{label}</span></button>)}</nav>
     <section className="profile-content" aria-live="polite">{contentLoading ? <ContentSkeleton /> : contentError ? <ContentError message={contentError} retry={() => setContentRetry(value => value + 1)} /> : <ProfileContent tab={tab} rows={content[tab]} profile={profile} own={own} router={router} currentUserId={user?.id} onLike={item => void togglePost(item, 'like')} onSave={item => void togglePost(item, 'save')} onComment={setCommentFor} onGift={item => void openGift(item)} onDelete={item => void deletePost(item)} onShare={setShareFor} onFollow={() => { void follow(); setContentRetry(value => value + 1); }} onMore={setMoreFor} onCreate={own ? openPostModal : undefined} />}</section>

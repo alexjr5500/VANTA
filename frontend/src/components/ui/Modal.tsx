@@ -58,7 +58,7 @@ export default function Modal({
   return (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overscroll-contain p-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))]">
+        <div className="fixed inset-0 z-[100] flex h-[var(--vanta-vh,100dvh)] items-center justify-center overflow-y-auto overscroll-contain p-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-[max(12px,env(safe-area-inset-top))]">
           {/* Overlay */}
           <motion.div
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
@@ -71,7 +71,7 @@ export default function Modal({
           {/* Modal */}
           <motion.div
             className={cn(
-              'relative flex max-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-24px)] min-h-0 w-full flex-col overflow-hidden glass-strong rounded-[var(--radius-modal)] shadow-2xl',
+              'relative flex max-h-[calc(var(--vanta-vh,100dvh)-env(safe-area-inset-top)-env(safe-area-inset-bottom)-24px)] min-h-0 w-full flex-col overflow-hidden glass-strong rounded-[var(--radius-modal)] shadow-2xl',
               sizeStyles[size]
             )}
             initial={{ opacity: 0, scale: 0.95, y: 20 }}

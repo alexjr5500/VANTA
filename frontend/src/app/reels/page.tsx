@@ -442,7 +442,7 @@ export default function ReelsPage() {
         ))}
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid h-[calc(64px+env(safe-area-inset-bottom))] grid-cols-5 border-t border-white/[.08] bg-[#080808]/92 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl " aria-label="Mobile navigation">
+      <nav className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-30 grid h-[calc(64px+env(safe-area-inset-bottom))] grid-cols-5 border-t border-white/[.08] bg-[#080808]/92 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl " aria-label="Mobile navigation">
         {nav.map(item => item.create ? (
           <button key={item.label} type="button" onClick={openCreateHub} className="mx-auto grid h-12 w-12 place-items-center self-center rounded-full bg-[#c9a227] text-black" aria-label="Create"><Plus size={22} /></button>
         ) : (
@@ -728,7 +728,7 @@ function ReportPanel({ reel, pending, submit, close }: { reel: Reel; pending: bo
 }
 
 function Dialog({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
-  return <><motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close} aria-label={`Close ${title}`} className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm" /><motion.section initial={{ opacity: 0, y: 18, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18, scale: .98 }} role="dialog" aria-modal="true" aria-label={title} className="fixed bottom-0 left-0 right-0 z-[60] mx-auto w-full max-w-md rounded-t-lg border border-white/10 bg-[#161616] p-4 shadow-2xl    "><header className="mb-3 flex items-center justify-between"><h2 className="font-semibold">{title}</h2><button type="button" onClick={close} className="grid h-9 w-9 place-items-center rounded-lg text-white/50 hover:bg-white/[.06]" aria-label="Close"><X size={18} /></button></header>{children}</motion.section></>;
+  return <><motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close} aria-label={`Close ${title}`} className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm" /><motion.section initial={{ opacity: 0, y: 18, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18, scale: .98 }} role="dialog" aria-modal="true" aria-label={title} className="fixed bottom-[var(--vanta-kb,0px)] left-0 right-0 z-[60] mx-auto max-h-[calc(var(--vanta-vh,100dvh)-8px)] w-full max-w-md overflow-y-auto overscroll-contain rounded-t-lg border border-white/10 bg-[#161616] p-4 shadow-2xl"><header className="mb-3 flex items-center justify-between"><h2 className="font-semibold">{title}</h2><button type="button" onClick={close} className="grid h-9 w-9 place-items-center rounded-lg text-white/50 hover:bg-white/[.06]" aria-label="Close"><X size={18} /></button></header>{children}</motion.section></>;
 }
 
 function MenuButton({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {

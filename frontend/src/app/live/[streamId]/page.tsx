@@ -899,7 +899,7 @@ const sendComment = useCallback(() => {
               exit={{ y: 60, opacity: 0 }}
               transition={{ type: 'spring', damping: 28, stiffness: 320 }}
               onClick={(e) => e.stopPropagation()}
-              className="relative flex h-[62vh] min-h-[320px] w-full flex-col rounded-t-3xl border-t border-white/10 bg-[#0d0d0f]/97 pb-[calc(env(safe-area-inset-bottom)+10px)] text-white backdrop-blur-2xl"
+              className="relative flex h-[62vh] min-h-[320px] w-full flex-col rounded-t-3xl border-t border-white/10 bg-[#0d0d0f]/97 pb-[calc(env(safe-area-inset-bottom)+var(--vanta-kb,0px)+10px)] text-white backdrop-blur-2xl"
             >
               <div className="mx-auto mb-1 mt-2 h-1 w-10 rounded-full bg-white/20" />
               <div className="flex items-center justify-between px-4 pb-2">

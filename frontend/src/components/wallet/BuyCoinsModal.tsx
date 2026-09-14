@@ -270,7 +270,7 @@ export default function BuyCoinsModal({ open, onClose, onSuccess }: BuyCoinsModa
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 30 }}
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed inset-x-0 bottom-0 top-[5dvh] z-[101] mx-auto flex w-full max-w-[480px] flex-col overflow-hidden rounded-t-xl border border-white/[0.08] bg-[#101010] shadow-2xl"
+            className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] top-[5dvh] z-[101] mx-auto flex w-full max-w-[480px] flex-col overflow-hidden rounded-t-xl border border-white/[0.08] bg-[#101010] shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-label="Buy VANTA Coins"

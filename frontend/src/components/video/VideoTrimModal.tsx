@@ -80,7 +80,7 @@ export default function VideoTrimModal({
             aria-modal="true"
             aria-label={title}
             className={cn(
-              'fixed inset-x-0 bottom-0 z-[111] mx-auto flex h-[94dvh] w-full max-w-[480px] flex-col overflow-hidden rounded-t-[28px] border border-b-0 border-white/[0.08] bg-[#0d0d0f] shadow-[0_-12px_48px_rgba(0,0,0,0.6)]',
+              'fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-[111] mx-auto flex h-[var(--vanta-vh,94dvh)] w-full max-w-[480px] flex-col overflow-hidden rounded-t-[28px] border border-b-0 border-white/[0.08] bg-[#0d0d0f] shadow-[0_-12px_48px_rgba(0,0,0,0.6)]',
               className
             )}
           >

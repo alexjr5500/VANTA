@@ -35,6 +35,7 @@ import { useContentCreation } from '@/components/create/ContentCreationContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { useChatUnread } from '@/context/ChatUnreadContext';
 import { useCalls } from '@/context/CallContext';
+import { mountVisualViewport } from '@/lib/visualViewport';
 import IncomingCallBanner from '@/components/messages/IncomingCallBanner';
 import ChatCallOverlay from '@/components/messages/ChatCallOverlay';
 import GlobalGiftAnimations from '@/components/gifts/GlobalGiftAnimations';
@@ -110,7 +111,7 @@ const MobileMenu = memo(function MobileMenu({
             onClick={onClose}
           />
           <motion.aside
-            className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[82dvh] w-full max-w-[480px] flex-col overflow-hidden rounded-t-[24px] border border-b-0 border-white/[0.08] bg-[#0d0d0f]/98 pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-2xl"
+            className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-50 mx-auto flex max-h-[calc(var(--vanta-vh,100dvh)-0.5rem)] w-full max-w-[480px] flex-col overflow-hidden rounded-t-[24px] border border-b-0 border-white/[0.08] bg-[#0d0d0f]/98 pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-2xl"
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
@@ -217,6 +218,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setIsClient(true);
   }, []);
+
+  // Mount the global visual-viewport / mobile-keyboard tracker once. It writes
+  // --vanta-vh / --vanta-kb / --vanta-safe-bottom on :root so every fixed
+  // composer, sheet, dialog and popup can stay above the on-screen keyboard.
+  useEffect(() => mountVisualViewport(), []);
 
   // Pages now scroll inside the app's single [data-vanta-scroll] container
   // (the Chat scrolling model) instead of the document. Next.js resets the
@@ -418,7 +424,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 64, opacity: 0 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="fixed inset-x-0 bottom-0 z-40 mx-auto w-full max-w-[480px] border-x border-t border-white/[0.08] bg-[#080808]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-2xl"
+            className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-40 mx-auto w-full max-w-[480px] border-x border-t border-white/[0.08] bg-[#080808]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-2xl"
             aria-label="Mobile navigation"
           >
             <div className="mx-auto grid min-h-16 grid-cols-5 items-center px-2 pt-1">

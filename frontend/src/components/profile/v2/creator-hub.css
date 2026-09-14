@@ -130,6 +130,10 @@
 }
 .profile-actions:has(.primary),
 .profile-actions:has(.message) { display: grid; grid-template-columns: minmax(0, 1fr) 36px 36px 36px; }
+/* Own profile: Edit Profile (fills) + Share — two clean tracks under the cover. */
+.profile-actions:has(.edit-action) { display: grid; grid-template-columns: minmax(0, 1fr) 36px; }
+.profile-button.edit-action { display: inline-flex; align-items: center; justify-content: center; gap: 7px; text-decoration: none; }
+.profile-button.share-action svg { color: var(--profile-gold); }
 .profile-button,
 .profile-icon {
   height: 36px;
@@ -535,7 +539,7 @@
   left: 50%;
   z-index: 61;
   width: min(460px, calc(100% - 20px));
-  max-height: min(80dvh, 640px);
+  max-height: min(80dvh, calc(var(--vanta-vh, 100dvh) - 24px), 640px);
   display: flex;
   flex-direction: column;
   transform: translate(-50%, -50%);
@@ -726,9 +730,9 @@
     top: auto;
     left: 0;
     right: 0;
-    bottom: 0;
+    bottom: var(--vanta-kb, 0px);
     width: 100%;
-    max-height: min(88dvh, 600px);
+    max-height: min(88dvh, calc(var(--vanta-vh, 100dvh) - 8px), 600px);
     transform: none;
     border-radius: 16px 16px 0 0;
     border-top: 1px solid rgba(245, 245, 245, 0.11);

@@ -148,13 +148,13 @@ export default function CreateHub({ open, onClose }: CreateHubProps) {
 
           {/* Modal */}
           <motion.div
-            className="fixed inset-x-0 bottom-0 z-[var(--z-modal)] mx-auto flex w-full max-w-[480px] flex-col"
+            className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-[var(--z-modal)] mx-auto flex w-full max-w-[480px] flex-col"
             variants={modalVariants}
             initial="hidden"
             animate="visible"
             exit="exit"
           >
-            <div className="flex max-h-[82dvh] flex-col overflow-hidden rounded-t-[20px] border border-b-0 border-white/[0.08] bg-[#0d0d0f]/98 pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-2xl">
+            <div className="flex max-h-[calc(var(--vanta-vh,100dvh)-0.5rem)] flex-col overflow-hidden rounded-t-[20px] border border-b-0 border-white/[0.08] bg-[#0d0d0f]/98 pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-2xl">
               <div className="mx-auto mt-2 h-1 w-9 rounded-full bg-white/20" />
               {/* Header */}
               <div className="flex shrink-0 items-center justify-between border-b border-white/[0.06] px-5 py-4">

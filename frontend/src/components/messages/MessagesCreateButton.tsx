@@ -30,7 +30,7 @@ export default function MessagesCreateButton({
   };
 
   return (
-    <div className="fixed bottom-[max(4.75rem,calc(env(safe-area-inset-bottom)+4rem))] right-4 z-50">
+    <div className="fixed bottom-[max(4.75rem,calc(env(safe-area-inset-bottom)+4rem+var(--vanta-kb,0px)))] right-4 z-50">
       <AnimatePresence>
         {open && (
           <>
@@ -53,7 +53,7 @@ export default function MessagesCreateButton({
               initial={{ y: '100%', opacity: 0 }}
               animate={{ y: 0, opacity: 1, transition: { type: 'spring', damping: 30, stiffness: 320 } }}
               exit={{ y: '100%', opacity: 0, transition: { duration: 0.2, ease: 'easeIn' } }}
-              className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[80dvh] w-full max-w-[520px] flex-col overflow-hidden rounded-t-[24px] border-x border-t border-white/[0.08] bg-[#0d0d0f]/98 pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-2xl md:max-h-[min(640px,calc(100dvh-120px))] md:rounded-2xl md:inset-y-0 md:my-auto md:left-1/2 md:-translate-x-1/2"
+              className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-50 mx-auto flex max-h-[calc(var(--vanta-vh,100dvh)-0.5rem)] w-full max-w-[520px] flex-col overflow-hidden rounded-t-[24px] border-x border-t border-white/[0.08] bg-[#0d0d0f]/98 pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-2xl md:max-h-[min(640px,calc(100dvh-120px))] md:rounded-2xl md:inset-y-0 md:my-auto md:left-1/2 md:-translate-x-1/2"
             >
               {/* Grab handle (mobile) */}
               <div aria-hidden="true" className="mx-auto mt-1.5 h-1 w-10 shrink-0 rounded-full bg-white/15 md:hidden" />

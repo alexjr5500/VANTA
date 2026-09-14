@@ -708,7 +708,7 @@ const creator = current.group.user || {};
       {viewers && (
         <>
           <button type="button" onClick={() => { setViewers(null); resumeStory('viewers'); }} aria-label="Close viewers" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm"/>
-          <section role="dialog" aria-modal="true" aria-label="Story viewers" className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[72dvh] w-full max-w-md flex-col rounded-t-3xl border border-white/10 bg-[#151517] pb-[env(safe-area-inset-bottom)]">
+          <section role="dialog" aria-modal="true" aria-label="Story viewers" className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-50 mx-auto flex max-h-[72dvh] w-full max-w-md flex-col rounded-t-3xl border border-white/10 bg-[#151517] pb-[env(safe-area-inset-bottom)]">
             <header className="flex min-h-16 items-center justify-between border-b border-white/[.08] px-5">
               <div><h2 className="font-semibold">Story viewers</h2><p className="text-xs text-[#c8c8cc]/55">{viewers.length} unique views</p></div>
               <button type="button" onClick={() => { setViewers(null); resumeStory('viewers'); }} className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={20}/></button>
@@ -729,7 +729,7 @@ const creator = current.group.user || {};
       {shareOpen && (
         <>
           <button type="button" onClick={() => { setShareOpen(false); resumeStory('share'); }} aria-label="Close share options" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm" />
-          <section role="dialog" aria-modal="true" aria-label="Share story" className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-md rounded-t-3xl border border-white/10 bg-[#151517] p-5 pb-[env(safe-area-inset-bottom)]">
+          <section role="dialog" aria-modal="true" aria-label="Share story" className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-50 mx-auto w-full max-w-md rounded-t-3xl border border-white/10 bg-[#151517] p-5 pb-[env(safe-area-inset-bottom)]">
             <header className="mb-4 flex items-center justify-between">
               <div><h2 className="font-semibold">Share story</h2><p className="text-xs text-[#c8c8cc]/55">{creator.fullName || creator.username || 'VANTA'}</p></div>
               <button type="button" onClick={() => { setShareOpen(false); resumeStory('share'); }} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]"><X size={20}/></button>
@@ -757,7 +757,7 @@ const creator = current.group.user || {};
       {reshareOpen && current && (
         <>
           <button type="button" onClick={() => { setReshareOpen(false); resumeStory('reshare'); }} aria-label="Close reshare composer" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm" />
-          <section role="dialog" aria-modal="true" aria-label="Reshare to your Story" className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-md rounded-t-3xl border border-white/10 bg-[#151517] p-5 pb-[env(safe-area-inset-bottom)]">
+          <section role="dialog" aria-modal="true" aria-label="Reshare to your Story" className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-50 mx-auto w-full max-w-md rounded-t-3xl border border-white/10 bg-[#151517] p-5 pb-[env(safe-area-inset-bottom)]">
             <header className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="font-semibold">Reshare to your Story</h2>
@@ -807,7 +807,7 @@ const creator = current.group.user || {};
       {commentsOpen && current && (
         <>
           <button type="button" onClick={() => { setCommentsOpen(false); resumeStory('comments'); }} aria-label="Close comments" className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm" />
-          <section role="dialog" aria-modal="true" aria-label="Story comments" className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[72dvh] w-full max-w-md flex-col rounded-t-3xl border border-white/10 bg-[#151517] pb-[env(safe-area-inset-bottom)]">
+          <section role="dialog" aria-modal="true" aria-label="Story comments" className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-50 mx-auto flex max-h-[calc(var(--vanta-vh,100dvh)-8px)] w-full max-w-md flex-col rounded-t-3xl border border-white/10 bg-[#151517] pb-[env(safe-area-inset-bottom)]">
             <header className="flex min-h-16 items-center justify-between border-b border-white/[.08] px-5">
               <div>
                 <h2 className="font-semibold">Comments</h2>
@@ -871,7 +871,7 @@ const creator = current.group.user || {};
       {replyOpen && (
         <>
           <button type="button" onClick={() => { setReplyOpen(false); resumeStory('reply'); }} aria-label="Close reply composer" className="fixed inset-0 z-40 bg-black/65" />
-          <section role="dialog" aria-modal="true" aria-label="Reply to story" className="fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-md rounded-t-3xl border border-white/10 bg-[#151517] p-5 pb-[env(safe-area-inset-bottom)]">
+          <section role="dialog" aria-modal="true" aria-label="Reply to story" className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-50 mx-auto w-full max-w-md rounded-t-3xl border border-white/10 bg-[#151517] p-5 pb-[env(safe-area-inset-bottom)]">
             <header className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="font-semibold">Reply to @{creator.username || 'story'}</h2>
