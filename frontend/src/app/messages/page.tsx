@@ -29,6 +29,7 @@ import { VoiceNotePlayer, VideoFullscreenPlayer } from '@/components/messages/Ch
 import { activeReplyFor, createReply, type ReplyState } from '@/lib/replyState';
 import { isSecureMediaContext, mapMediaError } from '@/lib/mediaPermissions';
 import { addDrafts, hasBusyDraft, readyDraftCount, removeDraft, type AttachmentDraft } from '@/lib/attachmentDrafts';
+import { renderTextWithLinks } from '@/lib/linkify';
 
 interface Conversation {
   id: string;
@@ -1857,6 +1858,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   </>
                 )}
                 <button onClick={() => setMessageSearchOpen(value => !value)} className="btn-icon h-9 w-9" aria-label="Search chat"><Search size={15} /></button>
+                 {activeConv.type !== 'direct' && canEditEntity && (
+                  <button onClick={() => void openEntityEditor()} className="btn-icon h-9 w-9 text-[#f2c75c]" aria-label={`Edit ${activeConv.type === 'channel' ? 'channel' : 'group'}`} title={`Edit ${activeConv.type === 'channel' ? 'channel' : 'group'}`}><Pencil size={16} /></button>
+                 )}
                  <button onClick={openConversationInfo} className="btn-icon h-9 w-9" aria-label="Conversation information"><MoreVertical size={17} /></button>
               </div>
             </header>
@@ -1908,7 +1912,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                         {msg.deletedAt ? null : msg.type === 'CALL' ? (
                           <span className="flex items-center justify-center gap-1.5 whitespace-nowrap py-0.5 px-3 text-xs text-white/50">
                             <Phone size={12} className="text-[#d6a83f]" />
-                            {msg.text || msg.content}
+                            {renderTextWithLinks(msg.text || msg.content || '', 'linkify')}
                           </span>
                         ) : (
                           <>
@@ -1957,7 +1961,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                               </>
                             );
                           })()}
-                          {visibleMessageText(msg).trim() && <p className="px-3 py-2 max-w-[420px]">{visibleMessageText(msg)}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}</p>}
+                          {visibleMessageText(msg).trim() && <p className="px-3 py-2 max-w-[420px] break-words">{renderTextWithLinks(visibleMessageText(msg), 'linkify')}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}</p>}
                           {msg.uploading && <div className="mt-1 flex items-center gap-1.5 px-3 pb-2 text-[10px] text-[#6aa5ff]"><Loader2 size={10} className="animate-spin" /><span className="tabular-nums">Uploading {msg.uploadProgress ?? 0}%</span></div>}
                         </>)}
                       </div>

@@ -669,8 +669,15 @@ async function startServer() {
 
     // Seed development wallet for Admin/CEO (development only - guarded internally)
     try {
-      const { seedDevWallet } = require('../prisma/seed-dev-wallet');
-      await seedDevWallet();
+      const { seedAdminDevWallet } = await import('./services/admin-dev-wallet.service');
+      const devWalletResult = await seedAdminDevWallet(prisma);
+      if (devWalletResult.action === 'granted') {
+        console.log(`[SEED] Development balance granted: ${devWalletResult.balanceAfter.toLocaleString()} VANTA Coins`);
+      } else if (devWalletResult.action === 'seed-already-available') {
+        console.log(`[SEED] Development balance already present: ${devWalletResult.balanceAfter.toLocaleString()} VANTA Coins`);
+      } else if (devWalletResult.action === 'disabled') {
+        console.log('[SEED] Development balance skipped (production environment).');
+      }
     } catch (seedError) {
       console.warn('[SEED] Dev wallet seeding skipped:', seedError);
     }

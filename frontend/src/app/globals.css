@@ -1112,6 +1112,20 @@
     @apply bg-white/[0.06] text-white text-sm;
   }
 
+  /* ═══ Clickable links across all message surfaces ═══ */
+  /* Links are wrapped in React <a> tags (never dangerouslySetInnerHTML) and
+     open externally with rel="noopener noreferrer". Visible styling matches
+     VANTA's accent for an unmistakable tap target. `break-all` keeps very long
+     URLs from overflowing narrow bubbles. */
+  .linkify {
+    color: #6aa5ff;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    cursor: pointer;
+  }
+
   /* ═══ Gift Animation Container ═══ */
   .gift-animation {
     @apply fixed inset-0 pointer-events-none z-[var(--z-toast)];

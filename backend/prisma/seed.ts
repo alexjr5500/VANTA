@@ -7,6 +7,7 @@ import {
   ADMIN_USERNAME as adminUsername,
   resolveAdminPassword,
 } from './admin-credentials';
+import { seedAdminDevWallet } from '../src/services/admin-dev-wallet.service';
 
 const prisma = new PrismaClient();
 
@@ -196,6 +197,33 @@ async function main() {
     });
   }
   console.log(`✅ ${allGifts.length} gifts created`);
+
+  // ============================================================================
+  // 3b. DEVELOPMENT-ONLY: Top-up the CEO/admin wallet to the configured
+  //     development balance (ADMIN_DEV_BALANCE, default 1,000,000).
+  //     This is idempotent and HARD-DISABLED in production (see
+  //     src/services/admin-dev-wallet.service.ts). It never reduces an existing
+  //     higher balance and never stacks successive grants.
+  // ============================================================================
+  try {
+    const devWalletResult = await seedAdminDevWallet(prisma);
+    if (devWalletResult.action === 'granted') {
+      console.log(
+        `✅ Development balance granted: ${devWalletResult.admin?.email || devWalletResult.admin?.username} ` +
+        `→ ${devWalletResult.balanceAfter.toLocaleString()} VANTA Coins (+${devWalletResult.credited.toLocaleString()})`
+      );
+    } else if (devWalletResult.action === 'seed-already-available') {
+      console.log(
+        `✅ Development balance already present: ${devWalletResult.balanceAfter.toLocaleString()} VANTA Coins (unchanged)`
+      );
+    } else if (devWalletResult.action === 'disabled') {
+      console.log('⏭️  Development balance skipped (production environment).');
+    } else {
+      console.log(`ℹ️  ${devWalletResult.message}`);
+    }
+  } catch (seedWalletError) {
+    console.warn('⚠️  Development admin balance grant skipped:', seedWalletError);
+  }
 
   console.log('🎉 VANTA monetization seeding complete!');
 }

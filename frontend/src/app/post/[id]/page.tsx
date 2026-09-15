@@ -10,6 +10,7 @@ import PostMedia from '@/components/social/PostMedia';
 import { useAuth } from '@/context/AuthContext';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { apiGet, apiPost } from '@/lib/apiClient';
+import { renderTextWithLinks } from '@/lib/linkify';
 
 type Post = {
   id: string; content: string; mediaUrl?: string | null; createdAt: string;
@@ -68,7 +69,7 @@ export default function PostDetailPage({ params }: { params: { id: string } }) {
         <div className="min-w-0">
           <div className="flex items-center gap-1.5"><Link href={`/profile/${post.author.username}`} className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-semibold"><span className="min-w-0 truncate">{post.author.fullName || post.author.username}</span>{post.author.verified && <VerificationBadge verified size="sm" />}</Link></div>
           <p className="truncate text-xs text-white/45">@{post.author.username}</p>
-          {post.content && <p className="mt-2 whitespace-pre-wrap break-words pb-4 text-sm leading-6 text-white/85">{post.content}</p>}
+          {post.content && <p className="mt-2 whitespace-pre-wrap break-words pb-4 text-sm leading-6 text-white/85">{renderTextWithLinks(post.content, 'linkify')}</p>}
         </div>
       </header>
       {media && <PostMedia src={media} isVideo={video} alt={post.author.username ? `Post by ${post.author.username}` : 'Post media'} autoplayOnView={false} preload="metadata"/>}

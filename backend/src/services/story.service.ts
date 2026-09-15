@@ -106,6 +106,39 @@ export class StoryService {
     });
   }
 
+  /**
+   * Create a text-only Story/Status (no media/background image required).
+   * The text lives in `caption` and the row is typed as `mediaType: "TEXT"`,
+   * so the existing Story model/APIs/delete/engagement flows work unchanged.
+   */
+  async createTextStory(userId: string, text: string, options?: { isVerified?: boolean }) {
+    const trimmed = typeof text === "string" ? text.trim() : "";
+    if (!trimmed) throw new Error("Text story cannot be empty");
+    if (trimmed.length > 5000) throw new Error("Text story is too long");
+
+    const isVerified = Boolean(options?.isVerified);
+    const expiresAt = new Date(Date.now() + STORY_TTL_MS);
+
+    const story = await prisma.$transaction(async tx => {
+      await this.assertCanCreateStory(tx, userId, isVerified);
+      return tx.story.create({
+        data: {
+          userId,
+          // mediaUrl is a required column; an empty value signals "no media".
+          mediaUrl: "",
+          mediaType: "TEXT",
+          caption: trimmed,
+          expiresAt,
+        },
+        include: {
+          user: { select: { id: true, username: true, avatar: true } },
+        },
+      });
+    });
+
+    return story;
+  }
+
   async likeStory(storyId: string, userId: string) {
     const story = await this.requireActiveStory(storyId);
     await prisma.storyLike.upsert({

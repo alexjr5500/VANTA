@@ -11,6 +11,7 @@ import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
 import { useToast } from '@/components/ui/Toast';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { openStoryLayer, closeStoryLayer, longPressStartStory, longPressEndStory, resetStoryPlayback, startStoryPlayback, tapZone, type StoryPlaybackSnapshot } from '@/lib/storyPlayback';
+import { renderTextWithLinks } from '@/lib/linkify';
 
 type ViewerUser = { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean };
 type Story = { id: string; userId: string; mediaUrl: string; mediaType?: string; caption?: string; views?: number; viewed?: boolean; duration?: number; likeCount?: number; reshareCount?: number; commentCount?: number; likedByMe?: boolean; resharedFromUsername?: string; user?: ViewerUser; author?: ViewerUser };
@@ -349,6 +350,7 @@ const flat = useMemo(
   }
 const creator = current.group.user || {};
   const isVideo = current.story.mediaType?.toUpperCase() === 'VIDEO';
+  const isText = current.story.mediaType?.toUpperCase() === 'TEXT';
 
 // ─── Story actions: Like / Comment / Reshare ───────────────────────────
   const toggleLike = async () => {
@@ -569,7 +571,13 @@ const creator = current.group.user || {};
     <main className="relative h-[100dvh] overflow-hidden bg-[#050505] text-white">
       {/* Media */}
       <div className="absolute inset-0 grid place-items-center bg-black" onClick={handleMediaTap} onPointerDown={handleMediaPointerDown} onPointerUp={releaseLongPress} onPointerCancel={releaseLongPress} onPointerLeave={releaseLongPress} onContextMenu={event => { if (event.button === 2 && !isOwner) event.preventDefault(); }} role="presentation">
-        {isVideo ? (
+        {isText ? (
+          <div className="flex h-full w-full flex-col items-center justify-center px-6 text-center">
+            <div className="mx-auto w-full max-w-[520px] rounded-2xl border border-white/[0.06] bg-gradient-to-br from-[#1a1a1c] to-[#0e0e10] px-6 py-10 shadow-[0_20px_60px_rgba(0,0,0,.5)]">
+              <p className="whitespace-pre-wrap break-words text-2xl font-semibold leading-relaxed text-[#f5f5f5]">{renderTextWithLinks(current.story.caption || '', 'linkify')}</p>
+            </div>
+          </div>
+        ) : isVideo ? (
           // eslint-disable-next-line jsx-a11y/media-has-caption
           <video
             key={current.story.id}
@@ -766,7 +774,9 @@ const creator = current.group.user || {};
               <button type="button" onClick={() => { setReshareOpen(false); resumeStory('reshare'); }} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]"><X size={20}/></button>
             </header>
             <div className="mb-4 flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-black/25 p-3">
-              {isVideo ? (
+              {isText ? (
+                <div className="flex h-20 w-16 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#1a1a1c] to-[#0e0e10] p-2"><span className="line-clamp-4 text-[10px] leading-tight text-white/80">{current.story.caption || 'Text story'}</span></div>
+              ) : isVideo ? (
                 <video src={resolveMediaUrl(current.story.mediaUrl)} muted playsInline className="h-20 w-16 shrink-0 rounded-xl object-cover" />
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -828,7 +838,7 @@ const creator = current.group.user || {};
                   <article key={comment.id} className="flex items-start gap-3 border-b border-white/[.06] py-3">
                     <Avatar src={comment.user.avatar} alt={comment.user.username} size="sm"/>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm"><b className="mr-1">@{comment.user.username}</b><span className="break-words text-white/90">{comment.content}</span></p>
+                      <p className="text-sm"><b className="mr-1">@{comment.user.username}</b><span className="break-words text-white/90">{renderTextWithLinks(comment.content, 'linkify')}</span></p>
                       <time className="text-[11px] text-[#c8c8cc]/45">{new Date(comment.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time>
                     </div>
                     {(comment.user.id === user?.id || isOwner) && (

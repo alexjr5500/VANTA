@@ -52,6 +52,7 @@ import GiftAnimationOverlay from '@/components/gifts/GiftAnimationOverlay';
 import { useGiftAnimationQueue } from '@/components/gifts/useGiftAnimationQueue';
 import LiveParticipantGrid, { type StageParticipant } from '@/components/live/LiveParticipantGrid';
 import { reconcileLiveChat, type ChatLineLike } from '@/lib/liveChatDedupe';
+import { renderTextWithLinks } from '@/lib/linkify';
 
 type ViewerPhase = 'LOADING' | 'LIVE' | 'ENDED' | 'ERROR';
 type SheetId = 'none' | 'chat' | 'viewers' | 'more' | 'gift';
@@ -792,7 +793,7 @@ const sendComment = useCallback(() => {
           >
             <span className="flex items-start gap-1.5 text-[11px] leading-snug">
               <Pin size={11} className="mt-0.5 shrink-0 text-[#D6A83F]" />
-              <span><b className="text-[#F2C75C]">{pinnedMessage.username || 'host'}</b> <span className="text-white/90">{pinnedMessage.message}</span></span>
+              <span><b className="text-[#F2C75C]">{pinnedMessage.username || 'host'}</b> <span className="text-white/90">{renderTextWithLinks(pinnedMessage.message, 'linkify')}</span></span>
             </span>
           </motion.div>
         )}
@@ -806,7 +807,7 @@ const sendComment = useCallback(() => {
           ) : (
             <p key={m.id} className="truncate text-[12px] leading-snug text-white/95 drop-shadow-md">
               <span className="font-bold text-[#F2C75C]">{m.user?.username || 'Viewer'}: </span>
-              <span className="text-white/90">{m.message}</span>
+              <span className="text-white/90">{renderTextWithLinks(m.message, 'linkify')}</span>
             </p>
           ),
         )}
@@ -916,7 +917,7 @@ const sendComment = useCallback(() => {
                     <Pin size={13} className="mt-0.5 shrink-0 text-[#D6A83F]" />
                     <div className="min-w-0 flex-1 text-[11px] leading-snug">
                       <span className="font-semibold text-[#F2C75C]">{pinnedMessage.username || 'host'}</span>
-                      <span className="text-white/90"> {pinnedMessage.message}</span>
+                      <span className="text-white/90"> {renderTextWithLinks(pinnedMessage.message, 'linkify')}</span>
                     </div>
                     <button type="button" onClick={() => setPinnedMessage(null)} aria-label="Dismiss pinned message" className="shrink-0 text-white/50 hover:text-white"><X size={13} /></button>
                   </motion.div>
@@ -941,7 +942,7 @@ const sendComment = useCallback(() => {
                             {m.user?.id === stream.host.id && <span className="rounded bg-[#D6A83F]/20 px-1 text-[8px] font-bold uppercase tracking-wide text-[#F2C75C]">Streamer</span>}
                             {m.user?.verified && <VerificationBadge size="xs" />}
                           </span>
-                          <span className="ml-1 break-words text-white/90">{m.message}</span>
+                          <span className="ml-1 break-words text-white/90">{renderTextWithLinks(m.message, 'linkify')}</span>
                         </div>
                         <button type="button" onClick={() => setActionFor(m)} aria-label={`Report message from ${m.user?.username || 'user'}`} className="shrink-0 rounded p-0.5 text-white/0 transition hover:bg-white/10 hover:text-white/80 group-hover:text-white/45">
                           <Flag size={11} />

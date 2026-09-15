@@ -90,3 +90,48 @@ describe('StoryService daily Status upload limit', () => {
     expect(await service.getStatusUsage('user-1')).toEqual({ used: 3, limit: 7 });
   });
 });
+
+describe('StoryService.createTextStory (text-only Story/Status)', () => {
+  const tx = { story: { count: db.story.count, create: db.story.create } };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (db.$transaction as jest.Mock).mockImplementation(async (callback: any) => callback(tx));
+  });
+
+  it('creates a TEXT story row with the text in caption and empty mediaUrl', async () => {
+    (db.story.count as jest.Mock).mockResolvedValue(2);
+    (db.story.create as jest.Mock).mockResolvedValue({ id: 'text-story' });
+    const story = await service.createTextStory('user-1', ' Hello VANTA! ', { isVerified: false });
+    expect(story.id).toBe('text-story');
+    expect(db.story.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: 'user-1',
+        mediaUrl: '',
+        mediaType: 'TEXT',
+        caption: 'Hello VANTA!',
+        expiresAt: expect.any(Date),
+      }),
+      include: expect.any(Object),
+    });
+  });
+
+  it('trims the text and rejects empty text', async () => {
+    await expect(service.createTextStory('user-1', '   ', { isVerified: false }))
+      .rejects.toThrow('Text story cannot be empty');
+  });
+
+  it('honours the daily Status quota', async () => {
+    (db.story.count as jest.Mock).mockResolvedValue(7);
+    await expect(service.createTextStory('user-1', 'Too many', { isVerified: false }))
+      .rejects.toThrow('Status limit');
+    expect(db.story.create).not.toHaveBeenCalled();
+  });
+
+  it('bypasses the quota for verified users', async () => {
+    (db.story.create as jest.Mock).mockResolvedValue({ id: 'text-story' });
+    await service.createTextStory('user-v', 'VIP text', { isVerified: true });
+    expect(db.story.count).not.toHaveBeenCalled();
+    expect(db.story.create).toHaveBeenCalled();
+  });
+});

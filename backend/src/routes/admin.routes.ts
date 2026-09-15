@@ -6,6 +6,8 @@ import {
   banUser,
   unbanUser,
   verifyUser,
+  suspendUser,
+  restoreUser,
   getWithdrawals,
   approveWithdrawal,
   rejectWithdrawal,
@@ -167,6 +169,8 @@ router.get('/reports', getReports);
 router.post('/users/ban', banUser);
 router.post('/users/unban', unbanUser);
 router.post('/users/verify', verifyUser);
+router.post('/users/suspend', suspendUser);
+router.post('/users/restore', restoreUser);
 
 // Withdrawals
 router.get('/withdrawals', getWithdrawals);

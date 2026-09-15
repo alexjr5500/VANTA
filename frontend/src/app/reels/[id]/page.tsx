@@ -50,7 +50,7 @@ export default function ReelDetailPage({ params }: { params: { id: string } }) {
         <Link href="/reels" className="mb-5 inline-flex items-center gap-2 text-sm text-white/65 hover:text-white"><ArrowLeft size={17} />Back to Reels</Link>
         <div className="grid gap-4">
           <div className="relative overflow-hidden rounded-xl border border-white/10 bg-black shadow-2xl">
-            <video src={videoSrc} poster={posterSrc || undefined} controls autoPlay muted loop playsInline preload="metadata" className="max-h-[78dvh] w-full object-contain" aria-label={`Reel by ${reel.creator.username}`} />
+            <video src={videoSrc} poster={posterSrc || undefined} controls autoPlay loop playsInline preload="metadata" className="max-h-[78dvh] w-full object-contain" aria-label={`Reel by ${reel.creator.username}`} />
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/75 to-transparent" />
           </div>
           <section className="rounded-xl border border-white/10 bg-white/[.03] p-5">

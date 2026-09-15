@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Image as ImageIcon, Video, Smile, AlertCircle, Loader2 } from 'lucide-react';
+import { ArrowLeft, Image as ImageIcon, Video, Smile, AlertCircle, Loader2, Type, Paperclip } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { useContentCreation } from './ContentCreationContext';
@@ -33,15 +33,19 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isStory = intent === 'story';
+  const [storyKind, setStoryKind] = useState<'media' | 'text'>('media');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const uploaderRef = useRef<MediaUploaderHandle>(null);
 
+  const isTextStory = isStory && storyKind === 'text';
   const hasContent = content.trim().length > 0 || media.length > 0;
   const isOverLimit = content.length > MAX_CHARS;
   const isUploadingMedia = media.some((item) => item.uploading || (!item.uploadedUrl && item.progress < 100 && !item.error));
   const hasFailedMedia = media.some((item) => item.error || !item.uploadedUrl);
-  const canSubmit = hasContent && !isOverLimit && !isUploadingMedia && !hasFailedMedia;
+  const canSubmit = isTextStory
+    ? content.trim().length > 0 && !isOverLimit
+    : hasContent && !isOverLimit && !isUploadingMedia && !hasFailedMedia;
   const uploadSummary = media.length === 0
     ? null
     : media.every((item) => item.progress === 100 && !item.error)
@@ -134,17 +138,28 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
 
     try {
       if (intent === 'story') {
-        const resolvedMedia = media[0];
-        if (!resolvedMedia?.file) {
-          setError('Stories need at least one photo or video.');
-          setIsSubmitting(false);
-          return;
-        }
+        if (isTextStory) {
+          // Text-only Story — no media/background required.
+          const text = content.trim();
+          if (!text) {
+            setError('Type something to share as a text story.');
+            setIsSubmitting(false);
+            return;
+          }
+          await apiPost('/api/stories/text', { text }, token ?? undefined);
+        } else {
+          const resolvedMedia = media[0];
+          if (!resolvedMedia?.file) {
+            setError('Stories need at least one photo or video — or choose the Text option.');
+            setIsSubmitting(false);
+            return;
+          }
 
-        await apiPost('/api/stories', {
-          mediaFileId: resolvedMedia.uploadedId,
-          caption: content.trim() || undefined,
-        }, token ?? undefined);
+          await apiPost('/api/stories', {
+            mediaFileId: resolvedMedia.uploadedId,
+            caption: content.trim() || undefined,
+          }, token ?? undefined);
+        }
       } else {
         await apiPost('/api/feed', {
           content: content.trim(),
@@ -167,7 +182,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
     } finally {
       setIsSubmitting(false);
     }
-  }, [content, media, canSubmit, isSubmitting, onClose, closeAll, token, intent]);
+  }, [content, media, canSubmit, isSubmitting, onClose, closeAll, token, intent, isTextStory]);
 
   const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setContent(e.target.value);
@@ -304,30 +319,113 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                   )}
                 </AnimatePresence>
 
-                {/* Media - real image/video previews from the shared uploader */}
-                <MediaUploader
-                  ref={uploaderRef}
-                  onMediaChange={setMedia}
-                  maxFiles={1}
-                  storyMode={isStory}
-                  openPickerOnMount={isStory}
-                  hideDropZone
-                />
+                {/* Story media OR text — real image/video previews from the shared uploader */}
+                {isStory && (
+                  <div
+                    role="tablist"
+                    aria-label="Story type"
+                    className="flex items-center gap-2 overflow-x-auto rounded-xl border border-white/[0.07] bg-white/[0.025] p-1 scrollbar-hide"
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={storyKind === 'media'}
+                      onClick={() => { setStoryKind('media'); uploaderRef.current?.openPicker('image'); }}
+                      className={cn(
+                        'flex min-w-0 flex-1 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition',
+                        storyKind === 'media' ? 'bg-[#d6a83f]/20 text-[#f2c75c]' : 'text-white/50 hover:text-white'
+                      )}
+                    >
+                      <ImageIcon size={14} />
+                      Photo
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={storyKind === 'media'}
+                      onClick={() => { setStoryKind('media'); uploaderRef.current?.openPicker('video'); }}
+                      className={cn(
+                        'flex min-w-0 flex-1 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition',
+                        storyKind === 'media' && media[0]?.type === 'video' ? 'bg-[#d6a83f]/20 text-[#f2c75c]' : 'text-white/50 hover:text-white'
+                      )}
+                    >
+                      <Video size={14} />
+                      Video
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={storyKind === 'text'}
+                      onClick={() => { setStoryKind('text'); setMedia([]); }}
+                      className={cn(
+                        'flex min-w-0 flex-1 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition',
+                        storyKind === 'text' ? 'bg-[#d6a83f]/20 text-[#f2c75c]' : 'text-white/50 hover:text-white'
+                      )}
+                    >
+                      <Type size={14} />
+                      Text
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={storyKind === 'media'}
+                      onClick={() => { setStoryKind('media'); uploaderRef.current?.openPicker('image'); }}
+                      className={cn(
+                        'flex min-w-0 flex-1 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition',
+                        storyKind === 'media' ? 'text-white/50 hover:text-white' : 'hidden'
+                      )}
+                      title="Attach a file"
+                    >
+                      <Paperclip size={14} />
+                    </button>
+                  </div>
+                )}
 
-                {isStory && media.length > 0 && (
-                  <div className="mx-auto w-full max-w-[520px]">
-                    <label className="block text-xs font-medium text-white/60" htmlFor="story-caption">Add caption</label>
+                {isStory && storyKind === 'text' ? (
+                  <div className="mx-auto flex min-h-[360px] w-full max-w-[520px] flex-col justify-center rounded-2xl border border-white/[0.06] bg-gradient-to-br from-[#1a1a1c] to-[#0e0e10] px-5">
                     <textarea
-                      id="story-caption"
                       ref={textareaRef}
                       value={content}
                       onChange={handleTextareaInput}
-                      placeholder="Add caption"
-                      rows={2}
+                      autoFocus
+                      placeholder="Type your story…"
                       maxLength={MAX_CHARS}
-                      className="mt-2 w-full resize-none border-0 bg-transparent px-3 py-3 text-sm text-white outline-none placeholder:text-white/30 focus:outline-none focus:ring-0 focus:shadow-none"
+                      className="min-h-[280px] w-full resize-none border-0 bg-transparent text-center text-2xl font-semibold leading-relaxed text-[#f5f5f5] outline-none placeholder:font-normal placeholder:text-white/25 focus:outline-none"
+                      aria-label="Text story content"
                     />
+                    <div className="mx-auto mt-2 flex items-center gap-3">
+                      {uploadSummary && <p className={cn('text-xs font-medium', uploadSummary.tone)}>{uploadSummary.label}</p>}
+                      <CharacterCounter current={content.length} max={MAX_CHARS} />
+                    </div>
+                    {error && <p className="mt-2 text-center text-xs text-red-300">{error}</p>}
                   </div>
+                ) : (
+                  <>
+                    <MediaUploader
+                      ref={uploaderRef}
+                      onMediaChange={setMedia}
+                      maxFiles={1}
+                      storyMode={isStory}
+                      openPickerOnMount={isStory && storyKind === 'media'}
+                      hideDropZone
+                    />
+
+                    {isStory && media.length > 0 && (
+                      <div className="mx-auto w-full max-w-[520px]">
+                        <label className="block text-xs font-medium text-white/60" htmlFor="story-caption">Add caption</label>
+                        <textarea
+                          id="story-caption"
+                          ref={textareaRef}
+                          value={content}
+                          onChange={handleTextareaInput}
+                          placeholder="Add caption"
+                          rows={2}
+                          maxLength={MAX_CHARS}
+                          className="mt-2 w-full resize-none border-0 bg-transparent px-3 py-3 text-sm text-white outline-none placeholder:text-white/30 focus:outline-none focus:ring-0 focus:shadow-none"
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {uploadSummary && (
@@ -359,7 +457,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                 <div className="-ml-1.5 flex items-center">
                   <button
                     type="button"
-                    onClick={() => uploaderRef.current?.openPicker('image')}
+                    onClick={() => { if (isStory) setStoryKind('media'); uploaderRef.current?.openPicker('image'); }}
                     disabled={media.length >= 1}
                     className="flex h-11 w-11 items-center justify-center rounded-full text-[#c8c8cc] transition hover:bg-white/[0.06] hover:text-white active:scale-95 disabled:pointer-events-none disabled:opacity-30"
                     aria-label="Add photo"
@@ -369,7 +467,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                   </button>
                   <button
                     type="button"
-                    onClick={() => uploaderRef.current?.openPicker('video')}
+                    onClick={() => { if (isStory) setStoryKind('media'); uploaderRef.current?.openPicker('video'); }}
                     disabled={media.length >= 1}
                     className="flex h-11 w-11 items-center justify-center rounded-full text-[#c8c8cc] transition hover:bg-white/[0.06] hover:text-white active:scale-95 disabled:pointer-events-none disabled:opacity-30"
                     aria-label="Add video"

@@ -3,6 +3,7 @@ import { AuthRequest } from "../middleware/auth.middleware";
 import { prisma } from "../prisma";
 import { uploadService } from "../services";
 import { contentViewService } from "../services/content-view.service";
+import { buildReelFeed } from "../services/reel-feed.service";
 
 const parseLimit = (value: unknown, defaultLimit = 20) => {
   const parsed = typeof value === "string" ? parseInt(value, 10) : NaN;
@@ -17,26 +18,30 @@ const parseLimit = (value: unknown, defaultLimit = 20) => {
 export const getReels = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
-    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
     const limit = parseLimit(req.query.limit, 20);
     const feed = req.query.feed === "following" || req.query.feed === "trending" ? req.query.feed : "for-you";
-    const where = feed === "following" && userId
-      ? { creator: { followers: { some: { followerId: userId } } } }
-      : feed === "following"
-        ? { id: "__authenticated_following_feed__" }
-        : undefined;
+    const seed = typeof req.query.seed === "string" ? req.query.seed : undefined;
+    const pageParam = typeof req.query.page === "string" ? parseInt(req.query.page, 10) : 0;
+    const safePage = Number.isNaN(pageParam) || pageParam < 0 ? 0 : pageParam;
+    const start = safePage * limit;
 
-    const orderBy = feed === "trending"
-      ? [{ views: "desc" as const }, { createdAt: "desc" as const }]
-      : feed === "following"
-        ? [{ createdAt: "desc" as const }]
-        : [{ views: "desc" as const }, { createdAt: "desc" as const }];
+    if (feed === "following" && !userId) {
+      res.status(200).json({ items: [], nextStart: null });
+      return;
+    }
+
+    const { seed: resolvedSeed, nextStart, items: pageItems, followedCreators } = await buildReelFeed({
+      userId,
+      feed,
+      seed,
+      start,
+      limit,
+    });
+
+    const pageReelIds = pageItems.map((item) => item.id);
 
     const reels = await prisma.video.findMany({
-      where,
-      orderBy,
-      take: limit + 1,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      where: { id: { in: pageReelIds } },
       include: {
         creator: {
           select: {
@@ -53,14 +58,10 @@ export const getReels = async (req: AuthRequest, res: Response): Promise<void> =
       },
     });
 
-    const followingCreatorIds = userId
-      ? new Set((await prisma.follow.findMany({
-          where: { followerId: userId, followingId: { in: reels.map((reel) => reel.creatorId) } },
-          select: { followingId: true },
-        })).map((follow) => follow.followingId))
-      : new Set<string>();
-
-    const nextCursor = reels.length > limit ? reels.pop()?.id : undefined;
+    // Re-order by the server-computed feed order (the findMany with `in` does not
+    // preserve order) so pagination/rendering exactly matches the shuffled feed.
+    const orderMap = new Map(pageReelIds.map((id, index) => [id, index]));
+    reels.sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0));
 
     res.status(200).json({
       items: reels.map((reel: any) => ({
@@ -76,14 +77,15 @@ export const getReels = async (req: AuthRequest, res: Response): Promise<void> =
         saves: reel._count.saves,
         isLiked: userId ? reel.likes?.length > 0 : false,
         isSaved: userId ? reel.saves?.length > 0 : false,
-        isFollowing: followingCreatorIds.has(reel.creatorId),
+        isFollowing: followedCreators.has(reel.creatorId),
         author: {
           ...reel.creator,
-          isFollowing: followingCreatorIds.has(reel.creatorId),
+          isFollowing: followedCreators.has(reel.creatorId),
         },
         createdAt: reel.createdAt,
       })),
-      nextCursor,
+      nextStart,
+      seed: resolvedSeed,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";

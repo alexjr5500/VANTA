@@ -44,6 +44,7 @@ import GiftPickerBoundary from '@/components/social/GiftPickerBoundary';
 import { normalizeGiftCatalog } from '@/lib/giftCatalog';
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
+import { renderTextWithLinks } from '@/lib/linkify';
 
 type Feed = 'for-you' | 'following' | 'trending';
 type Author = {
@@ -106,7 +107,7 @@ export default function ReelsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [active, setActive] = useState(0);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useState(false);
   const [paused, setPaused] = useState(false);
   const [commentsFor, setCommentsFor] = useState<Reel | null>(null);
   const [shareFor, setShareFor] = useState<Reel | null>(null);
@@ -127,25 +128,40 @@ export default function ReelsPage() {
   const sections = useRef<Record<string, HTMLElement | null>>({});
   const videos = useRef<Record<string, HTMLVideoElement | null>>({});
   const viewed = useRef(new Set<string>());
+  const userInteractedRef = useRef(false);
+  const [nextStart, setNextStart] = useState<number | null>(null);
+  const feedSeedRef = useRef<string>(`sess-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+  const loadingMoreRef = useRef(false);
   const loadRequest = useRef(0);
   const reelsViewport = useRef<HTMLElement | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (start = 0, append = false) => {
     const requestId = ++loadRequest.current;
-    setLoading(true);
-    setLoadError(false);
+    if (!append) { setLoading(true); setLoadError(false); }
     try {
-      const result = await apiGet<{ items?: Reel[] } | Reel[]>(`/api/reels?feed=${feed}&limit=20`, token || undefined, { skipCache: true });
+      const seed = encodeURIComponent(feedSeedRef.current);
+      const result = await apiGet<{ items?: Reel[]; nextStart?: number | null; seed?: string } | Reel[]>(
+        `/api/reels?feed=${feed}&limit=20&page=${Math.floor(start / 20)}&seed=${seed}`,
+        token || undefined,
+        { skipCache: true }
+      );
       if (requestId !== loadRequest.current) return;
-      const items = Array.isArray(result) ? result : result.items || [];
-      setReels(items.map(reel => ({
+      const items = (Array.isArray(result) ? result : result.items || []).map(reel => ({
         ...reel,
         videoUrl: resolveMediaUrl(reel.videoUrl),
         thumbnailUrl: resolveMediaUrl(reel.thumbnailUrl) || undefined,
         author: { ...reel.author, isFollowing: reel.author?.isFollowing ?? reel.isFollowing },
-      })));
-      setActive(0);
-      setPaused(false);
+      }));
+      if (append) {
+        setReels(previous => {
+          const seen = new Set(previous.map(item => item.id));
+          return [...previous, ...items.filter(item => !seen.has(item.id))];
+        });
+      } else {
+        setReels(items);
+      }
+      setNextStart(Array.isArray(result) ? null : (result?.nextStart ?? null));
+      if (!append) { setActive(0); setPaused(false); }
     } catch (reason: any) {
       if (requestId === loadRequest.current && reason?.statusCode !== 499) setLoadError(true);
     } finally {
@@ -153,7 +169,26 @@ export default function ReelsPage() {
     }
   }, [feed, token]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    // Each feed tab gets its own stable but distinct session seed so the random
+    // order doesn't repeat identically across For You / Following / Trending.
+    feedSeedRef.current = `sess-${feed}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    setNextStart(null);
+    void load();
+  }, [load]);
+
+  const loadMore = useCallback(() => {
+    if (nextStart == null || loadingMoreRef.current || loading) return;
+    loadingMoreRef.current = true;
+    void load(nextStart, true).finally(() => { loadingMoreRef.current = false; });
+  }, [nextStart, load, loading]);
+
+  // Infinite scroll: preload the next page as the user approaches the end of the
+  // loaded Reels. The order stays stable because the session seed is fixed and the
+  // server returns the same deterministic shuffle for every page request.
+  useEffect(() => {
+    if (active >= reels.length - 3) void loadMore();
+  }, [active, reels.length, loadMore]);
 
   useEffect(() => {
     const requested = params.get('reel');
@@ -205,6 +240,35 @@ export default function ReelsPage() {
     }, 2000);
     return () => window.clearTimeout(timer);
   }, [active, muted, paused, reels, token]);
+
+  // Graceful autoplay-with-sound handling: some mobile/desktop browsers block
+  // autoplay WITH audio until the user interacts. VANTA never intentionally mutes
+  // Reels — if the active video couldn't start with sound, we retry it as soon as
+  // the user taps/keys, preserving their audio preference (`muted`) for the feed.
+  useEffect(() => {
+    const retrySound = () => {
+      if (!userInteractedRef.current) return;
+      const activeVideo = videos.current[reels[active]?.id];
+      if (activeVideo && activeVideo.paused && !paused && !muted) {
+        void activeVideo.play().catch(() => undefined);
+      }
+    };
+    const markInteraction = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      // Ignore taps on the inline volume/mute control so we don't fight the user.
+      if (target?.closest('[data-reel-mute]')) return;
+      if (!userInteractedRef.current) userInteractedRef.current = true;
+      retrySound();
+    };
+    window.addEventListener('pointerdown', markInteraction);
+    window.addEventListener('touchstart', markInteraction);
+    window.addEventListener('keydown', markInteraction);
+    return () => {
+      window.removeEventListener('pointerdown', markInteraction);
+      window.removeEventListener('touchstart', markInteraction);
+      window.removeEventListener('keydown', markInteraction);
+    };
+  }, [active, muted, paused, reels]);
 
   const jump = useCallback((index: number) => {
     const reel = reels[index];
@@ -559,7 +623,7 @@ function ReelCard({ reel, index, active, nearby, muted, paused, videos, sections
           {videoFailed && <div className="absolute inset-0 z-20 grid place-items-center bg-black/75 px-8 text-center"><div><Clapperboard className="mx-auto text-white/40" /><h3 className="mt-4 font-semibold">Unable to load Reel</h3><p className="mt-1 max-w-xs text-xs leading-5 text-white/45">{videoError || 'The video could not be played.'}</p><button type="button" onClick={retry} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-white/15 px-4 py-2 text-sm"><RefreshCw size={15} />Retry</button></div></div>}
 
           <div className="absolute right-3 top-16 z-10 flex gap-2">
-            <button type="button" onClick={onMute} className="grid h-9 w-9 place-items-center rounded-full bg-black/45 text-white backdrop-blur" aria-label={muted ? 'Unmute Reel' : 'Mute Reel'}>{muted ? <VolumeX size={17} /> : <Volume2 size={17} />}</button>
+            <button type="button" onClick={onMute} data-reel-mute className="grid h-9 w-9 place-items-center rounded-full bg-black/45 text-white backdrop-blur" aria-label={muted ? 'Unmute Reel' : 'Mute Reel'}>{muted ? <VolumeX size={17} /> : <Volume2 size={17} />}</button>
             <button type="button" onClick={() => void fullscreen()} className="grid h-9 w-9 place-items-center rounded-full bg-black/45 text-white backdrop-blur" aria-label="Enter fullscreen"><Maximize size={16} /></button>
           </div>
 
@@ -676,7 +740,7 @@ function CommentsPanel({ reel, items, loading, text, sending, currentUserId, set
                 <b className="truncate text-[13px] font-semibold text-[#f5f5f5]">{item.user?.fullName || item.user?.username || 'VANTA user'}</b>
                 {item.createdAt && <time className="shrink-0 text-[11px] leading-none text-white/35">{timeAgo(item.createdAt)}</time>}
               </div>
-              <p className="mt-1 break-words text-sm leading-5 text-white/75">{item.content}</p>
+              <p className="mt-1 break-words text-sm leading-5 text-white/75">{renderTextWithLinks(item.content, 'linkify')}</p>
             </div>
             {currentUserId && (item.userId === currentUserId || item.user?.id === currentUserId) && (
               <button type="button" onClick={() => remove(item)} className="-mr-1 grid h-7 w-7 shrink-0 place-items-center self-center rounded-lg text-white/30 transition hover:text-white" aria-label="Delete your comment"><Trash2 size={14} /></button>

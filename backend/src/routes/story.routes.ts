@@ -3,6 +3,7 @@ import multer from "multer";
 import { authenticateJWT } from "../middleware/auth.middleware";
 import {
   createStory,
+  createTextStory,
   getStories,
   getStatusUsage,
   getStoryById,
@@ -23,6 +24,10 @@ const router = Router();
 // NOTE: `/usage` MUST be registered before the parameterised `/:id` route so
 // Express routes `GET /usage` here instead of treating "usage" as a story id.
 router.get("/usage", authenticateJWT, getStatusUsage);
+
+// Text-only Story/Status — registered before the `/:id` routes so the literal
+// `text` path is never captured as a story id.
+router.post("/text", authenticateJWT, createTextStory);
 
 // Public route for viewing individual stories
 router.get("/:id", getStoryById);

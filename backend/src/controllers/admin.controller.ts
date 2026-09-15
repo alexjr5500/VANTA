@@ -447,6 +447,36 @@ export const verifyUser = async (req: AuthenticatedRequest, res: Response): Prom
   }
 };
 
+export const suspendUser = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { userId, reason } = req.body;
+    if (!userId) {
+      res.status(400).json({ error: 'userId is required' });
+      return;
+    }
+    const user = await moderationService.suspendUser(userId, reason || undefined);
+    res.status(200).json({ message: 'User suspended', user });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const restoreUser = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { userId } = req.body;
+    if (!userId) {
+      res.status(400).json({ error: 'userId is required' });
+      return;
+    }
+    const user = await moderationService.restoreUser(userId);
+    res.status(200).json({ message: 'User restored', user });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
 // ============================================================================
 // WITHDRAWALS
 // ============================================================================

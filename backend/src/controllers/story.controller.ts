@@ -71,6 +71,27 @@ export const getStatusUsage = async (req: AuthRequest, res: Response): Promise<v
   }
 };
 
+// Text-only Story/Status — no media file or background image required.
+export const createTextStory = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+
+    const isVerified = (await prisma.user.findUnique({
+      where: { id: userId },
+      select: { verified: true },
+    }))?.verified === true;
+
+    const text = typeof req.body?.text === "string" ? req.body.text : "";
+    const story = await storyService.createTextStory(userId, text, { isVerified });
+
+    res.status(201).json(story);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(400).json({ error: message });
+  }
+};
+
 export const getStories = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;

@@ -9,6 +9,7 @@ import PostMedia from '@/components/social/PostMedia';
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { isVideoItem } from '@/lib/feedIdentity';
+import { renderTextWithLinks } from '@/lib/linkify';
 
 /**
  * FeedPostCard
@@ -88,7 +89,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
           <button type="button" onClick={() => onMore(item)} aria-label="More post options" className="shrink-0 flex h-8 w-8 items-center justify-center rounded-lg text-[#666] transition hover:bg-white/[.05] hover:text-white"><MoreHorizontal size={17}/></button>
         </div>
         {item.location && <p className="truncate text-[10px] text-[#666]">{item.location}</p>}
-        {caption && <p className="whitespace-pre-wrap text-[13px] leading-5 text-[#dedede]">{caption}</p>}
+        {caption && <p className="whitespace-pre-wrap break-words text-[13px] leading-5 text-[#dedede]">{renderTextWithLinks(caption, 'linkify')}</p>}
         {item.hashtags && <p className="text-[11px] text-[#c9a227]">{Array.isArray(item.hashtags) ? item.hashtags.map((tag: string) => `#${tag}`).join(' ') : item.hashtags}</p>}
         {/* Media sits INSIDE the content column so it aligns with the caption,
             matching text posts exactly. No full-bleed, no negative margins. */}

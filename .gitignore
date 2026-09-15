@@ -183,6 +183,12 @@ backend/prisma/backend/prisma/dev.db-journal
 # Local development artifacts & helper scripts (not part of the product)
 .kilo/
 run-next-build.cmd
+
+# Scratch / debug output from local dev session (never commit)
+/backend/ferr.txt
+/backend/fout.txt
+/backend/final-log.txt
+/tmp-*.txt
 backend/scripts/brace-check.js
 backend/scripts/db-conn-test.js
 backend/scripts/verify-env-loading.js
