@@ -395,6 +395,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             remoteStream={chatCalls.remoteStream}
             isMicOn={chatCalls.isMicOn}
             isCamOn={chatCalls.isCamOn}
+            isFrontCamera={chatCalls.isFrontCamera}
             durationSeconds={chatCalls.durationSeconds}
             error={chatCalls.error}
             permissionError={chatCalls.permissionError}
@@ -405,6 +406,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             onCancel={chatCalls.cancelCall}
             onToggleMic={chatCalls.toggleMicrophone}
             onToggleCam={chatCalls.toggleCamera}
+            onFlipCamera={() => chatCalls.flipCamera()}
           />
         )}
 

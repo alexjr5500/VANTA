@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Socket } from 'socket.io-client';
 import { apiPost } from '@/lib/apiClient';
+import { API_BASE_URL } from '@/lib/api';
 import type { AuthUser } from '@/lib/authApi';
 import { applyContinuousAutofocus, pickPrimaryCamera, pickVideoConstraints } from '@/lib/cameraCapture';
 
@@ -14,6 +15,13 @@ import { applyContinuousAutofocus, pickPrimaryCamera, pickVideoConstraints } fro
 // relayed through the existing chat socket backend. The server verifies that
 // the conversation is a PRIVATE direct chat, so groups/channels can never be
 // called.
+//
+// ---------------------------------------------------------------------------
+// No-audio / one-way-audio debugging (production diagnostics behind a flag):
+// Every state machine transition relevant to media transport is logged with
+// `[vanta-call]` when `window.__VANTA_DEBUG = true` is set in the console.
+// Verbose per-transition logs are additionally emitted in development builds.
+// ---------------------------------------------------------------------------
 
 export type CallType = 'voice' | 'video';
 export type CallStatus = 'idle' | 'outgoing' | 'ringing' | 'incoming' | 'connecting' | 'active' | 'ended';
@@ -56,6 +64,8 @@ export interface UseChatCallsReturn {
   remoteStream: MediaStream | null;
   isMicOn: boolean;
   isCamOn: boolean;
+  /** True when the active video track comes from the front (selfie) camera. */
+  isFrontCamera: boolean;
   durationSeconds: number;
   error: string | null;
   permissionError: string | null;
@@ -67,13 +77,60 @@ export interface UseChatCallsReturn {
   cancelCall: () => void;
   toggleMicrophone: () => void;
   toggleCamera: () => void;
+  /** Swap the video camera mid-call (front <-> rear) without renegotiation. */
+  flipCamera: () => Promise<boolean>;
 }
 
-const RTC_CONFIG: RTCConfiguration = {
+const RTC_CONFIG_DEFAULTS: RTCConfiguration = {
   iceServers: [
     { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
   ],
 };
+
+// ICE server configuration is fetched from the backend once per page load. The
+// backend serves the deployment's env-driven STUN/TURN list (see `RTC_ICE_SERVERS`
+// in the backend .env). When the server is unreachable or unconfigured we keep
+// the safe public-STUN default so calls still work on networks without TURN.
+let rtcConfigCache: RTCConfiguration | null = null;
+
+async function loadRtcConfig(): Promise<RTCConfiguration> {
+  if (rtcConfigCache) return rtcConfigCache;
+  try {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 2500);
+    const response = await fetch(`${API_BASE_URL}/api/rtc/ice-config`, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' },
+    });
+    window.clearTimeout(timeout);
+    if (response.ok) {
+      const data = (await response.json()) as { iceServers?: RTCIceServer[] };
+      const servers = Array.isArray(data?.iceServers) ? data.iceServers : [];
+      const valid = servers.filter(s => s && Array.isArray(s.urls) && s.urls.length > 0);
+      if (valid.length > 0) {
+        rtcConfigCache = { iceServers: valid };
+        diag('ICE servers loaded from backend', valid.length);
+        return rtcConfigCache;
+      }
+    }
+  } catch {
+    // Backend unreachable / timeout — fall back to the public STUN default.
+  }
+  rtcConfigCache = { ...RTC_CONFIG_DEFAULTS };
+  return rtcConfigCache;
+}
+
+const isDebug = (): boolean =>
+  typeof window !== 'undefined' &&
+  Boolean((window as unknown as { __VANTA_DEBUG?: boolean }).__VANTA_DEBUG);
+
+/** Structured WebRTC diagnostics (no end-user-visible data). */
+function diag(...args: unknown[]): void {
+  if (isDebug() || process.env.NODE_ENV === 'development') {
+    // eslint-disable-next-line no-console
+    console.info('[vanta-call]', ...args);
+  }
+}
 
 const RING_TIMEOUT_MS = 45_000;
 
@@ -176,6 +233,7 @@ export function useChatCalls(options: UseChatCallsOptions): UseChatCallsReturn {
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCamOn, setIsCamOn] = useState(true);
+  const [isFrontCamera, setIsFrontCamera] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [endedReason, setEndedReason] = useState<string | null>(null);
@@ -290,16 +348,21 @@ const logCall = useCallback(
     setDurationSeconds(0);
     setIsMicOn(true);
     setIsCamOn(true);
+    setIsFrontCamera(true);
     setError(null);
     setPermissionError(null);
     setEndedReason(null);
     updateStatus('idle');
   }, [teardownPeerConnection, updateStatus]);
 
-  const attachPeerConnection = useCallback((stream: MediaStream) => {
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+  const attachPeerConnection = useCallback(async (stream: MediaStream): Promise<RTCPeerConnection> => {
+    const config = await loadRtcConfig();
+    const pc = new RTCPeerConnection(config);
     pcRef.current = pc;
-    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    stream.getTracks().forEach(track => {
+      pc.addTrack(track, stream);
+      diag('local track added', track.kind, track.readyState);
+    });
 
     pc.onicecandidate = (event) => {
       const socketNow = socketRef.current;
@@ -311,10 +374,12 @@ const logCall = useCallback(
         data: event.candidate.toJSON(),
         to: session.peerId,
       });
+      diag('ICE candidate sent', event.candidate.candidate?.slice(0, 40));
     };
 
     pc.ontrack = (event) => {
       if (!event.track) return;
+      diag('remote track received', event.track.kind, event.track.readyState, event.streams?.length ?? 0);
       const merged = new MediaStream();
       if (event.streams && event.streams.length > 0) {
         event.streams[0].getTracks().forEach(track => !merged.getTracks().includes(track) && merged.addTrack(track));
@@ -332,6 +397,7 @@ const logCall = useCallback(
 
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
+      diag('connectionState', state, { callId: sessionRef.current?.callId, ice: pc.iceConnectionState });
       if (state === 'connected') {
         if (statusRef.current === 'connecting' || statusRef.current === 'active') {
           activeAtRef.current = Date.now();
@@ -349,6 +415,18 @@ const logCall = useCallback(
         // Allow the overlay to settle then fully reset.
         setTimeout(() => cleanupCall(), 1500);
       }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      diag('iceConnectionState', pc.iceConnectionState, { callId: sessionRef.current?.callId });
+    };
+
+    pc.onsignalingstatechange = () => {
+      diag('signalingState', pc.signalingState, { callId: sessionRef.current?.callId });
+    };
+
+    pc.onicegatheringstatechange = () => {
+      diag('iceGatheringState', pc.iceGatheringState, { callId: sessionRef.current?.callId });
     };
 
     return pc;
@@ -403,6 +481,14 @@ const startCall = useCallback(async (type: CallType) => {
       return;
     }
 
+    // Track which camera (front/rear) is active so the self-preview can mirror
+    // the front-facing camera exactly once and stay natural on the rear camera.
+    if (type === 'video') {
+      const facing = stream.getVideoTracks()[0]?.getSettings?.().facingMode;
+      setIsFrontCamera(facing === 'user' || facing === 'front');
+      diag('camera facing at call start', facing);
+    }
+
     const callId = makeCallId();
     loggedRef.current = false;
     sessionRef.current = {
@@ -426,7 +512,7 @@ const startCall = useCallback(async (type: CallType) => {
     if (!ringbackRef.current) ringbackRef.current = new RingbackTone();
     ringbackRef.current.start();
 
-    const pc = attachPeerConnection(stream);
+    const pc = await attachPeerConnection(stream);
     let offer: RTCSessionDescriptionInit;
     try {
       offer = await pc.createOffer();
@@ -491,6 +577,12 @@ const startCall = useCallback(async (type: CallType) => {
       return;
     }
 
+    if (session.type === 'video') {
+      const facing = stream.getVideoTracks()[0]?.getSettings?.().facingMode;
+      setIsFrontCamera(facing === 'user' || facing === 'front');
+      diag('camera facing on accept', facing);
+    }
+
     localStreamRef.current = stream;
     setLocalStream(stream);
     setIsMicOn(true);
@@ -503,7 +595,7 @@ const startCall = useCallback(async (type: CallType) => {
       incomingTimerRef.current = null;
     }
 
-    const pc = attachPeerConnection(stream);
+    const pc = await attachPeerConnection(stream);
     const offer = incomingOfferRef.current;
     if (!offer) {
       setError('The call offer expired. Please ask to call again.');
@@ -591,6 +683,64 @@ const declineCall = useCallback(() => {
     const next = !tracks[0].enabled;
     tracks.forEach(track => { track.enabled = next; });
     setIsCamOn(next);
+    diag('camera toggled', next ? 'on' : 'off');
+  }, []);
+
+  const flipCamera = useCallback(async (): Promise<boolean> => {
+    const session = sessionRef.current;
+    const stream = localStreamRef.current;
+    const pc = pcRef.current;
+    if (!session || session.type !== 'video' || !stream || !pc) return false;
+    const currentTrack = stream.getVideoTracks()[0];
+    if (!currentTrack) return false;
+
+    const videoInputs = (await navigator.mediaDevices.enumerateDevices().catch(() => []))
+      .filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
+    if (videoInputs.length < 2) return false;
+
+    const currentDeviceId = currentTrack.getSettings?.().deviceId;
+    const currentFacing = currentTrack.getSettings?.().facingMode;
+    const wantFront = currentFacing === 'environment' || currentFacing === 'back';
+    const next = videoInputs.find(d => d.deviceId && d.deviceId !== currentDeviceId)
+      ?? videoInputs[videoInputs.length - 1];
+
+    try {
+      const constraints = pickVideoConstraints(next, {
+        deviceId: next.deviceId,
+        forceFacingMode: wantFront ? 'user' : 'environment',
+      });
+      const replacement = await navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
+      const newTrack = replacement.getVideoTracks()[0];
+      if (!newTrack || newTrack.readyState !== 'live') {
+        replacement.getTracks().forEach(t => t.stop());
+        return false;
+      }
+      await applyContinuousAutofocus(newTrack);
+
+      // Swap the track on the actual sender so the peer keeps receiving video
+      // without a full SDP renegotiation.
+      const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+      if (sender) {
+        await sender.replaceTrack(newTrack).catch(() => {
+          // Fallback: if replaceTrack failed, push the new track onto the local
+          // stream and let the browser negotiate a replacement internally.
+          stream.addTrack(newTrack);
+        });
+      } else {
+        stream.addTrack(newTrack);
+      }
+      stream.removeTrack(currentTrack);
+      currentTrack.stop();
+
+      const facing = newTrack.getSettings?.().facingMode;
+      const front = facing === 'user' || facing === 'front';
+      setIsFrontCamera(front);
+      setLocalStream(new MediaStream(stream.getTracks()));
+      diag('camera flipped', front ? 'front' : 'rear', { track: newTrack.readyState });
+      return true;
+    } catch {
+      return false;
+    }
   }, []);
 
 // --------------------------------------------------------------------------
@@ -659,15 +809,7 @@ const declineCall = useCallback(() => {
       const signal = payload.data as RTCSessionDescriptionInit | RTCIceCandidateInit;
       // Remote-side answer (caller receives it after callee accepts).
       if ((signal as RTCSessionDescriptionInit).type === 'answer') {
-        const pc = pcRef.current;
-        if (!pc) return;
-        pc.setRemoteDescription(signal as RTCSessionDescriptionInit)
-          .then(() => flushPendingCandidates())
-          .catch(() => undefined);
-        if (statusRef.current === 'outgoing' || statusRef.current === 'ringing') {
-          updateStatus('connecting');
-          activeAtRef.current = Date.now();
-        }
+        applyRemoteAnswer(signal as RTCSessionDescriptionInit);
         return;
       }
       // ICE candidates.
@@ -685,15 +827,36 @@ const declineCall = useCallback(() => {
     const onCallAccepted = (payload: { callId: string; signal: RTCSessionDescriptionInit }) => {
       const session = sessionRef.current;
       if (!session || session.callId !== payload.callId) return;
+      applyRemoteAnswer(payload.signal);
+    };
+
+    // Apply the callee's SDP answer exactly once. The peer connection moves
+    // have-local-offer -> stable, so any duplicate/late answer (the backend
+    // relays the same answer over `call_accepted` and `call_signal`) is ignored
+    // instead of throwing "Called in wrong state".
+    const applyRemoteAnswer = (signal: RTCSessionDescriptionInit) => {
       const pc = pcRef.current;
       if (!pc) return;
-      pc.setRemoteDescription(payload.signal)
-        .then(() => flushPendingCandidates())
-        .catch(() => undefined);
-      if (statusRef.current === 'outgoing' || statusRef.current === 'ringing') {
-        updateStatus('connecting');
-        activeAtRef.current = Date.now();
+      if (pc.signalingState === 'stable' && pc.remoteDescription) {
+        diag('duplicate SDP answer ignored', { callId: sessionRef.current?.callId });
+        return;
       }
+      if (pc.signalingState !== 'have-local-offer') {
+        diag('SDP answer received in unexpected state', pc.signalingState, { callId: sessionRef.current?.callId });
+        return;
+      }
+      pc.setRemoteDescription(signal)
+        .then(() => {
+          diag('remote SDP answer applied');
+          return flushPendingCandidates();
+        })
+        .then(() => {
+          if (statusRef.current === 'outgoing' || statusRef.current === 'ringing') {
+            updateStatus('connecting');
+            activeAtRef.current = Date.now();
+          }
+        })
+        .catch(() => undefined);
     };
 
     const onCallEndedByPeer = (payload: { callId: string }) => {
@@ -796,6 +959,7 @@ const declineCall = useCallback(() => {
     remoteStream,
     isMicOn,
     isCamOn,
+    isFrontCamera,
     durationSeconds,
     error,
     permissionError,
@@ -807,5 +971,6 @@ const declineCall = useCallback(() => {
     cancelCall,
     toggleMicrophone,
     toggleCamera,
+    flipCamera,
   };
 }

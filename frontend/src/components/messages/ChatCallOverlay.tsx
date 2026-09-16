@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
+  FlipVertical2,
   Mic,
   MicOff,
   Phone,
@@ -33,6 +34,7 @@ export interface ChatCallOverlayProps {
   remoteStream: MediaStream | null;
   isMicOn: boolean;
   isCamOn: boolean;
+  isFrontCamera: boolean;
   durationSeconds: number;
   error: string | null;
   permissionError: string | null;
@@ -43,6 +45,7 @@ export interface ChatCallOverlayProps {
   onCancel: () => void;
   onToggleMic: () => void;
   onToggleCam: () => void;
+  onFlipCamera: () => Promise<boolean> | boolean;
 }
 
 const formatTimer = (seconds: number): string => {
@@ -52,29 +55,107 @@ const formatTimer = (seconds: number): string => {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 };
 
-/** Attaches a MediaStream to a <video> element via a ref (React's JSX types
- *  for this Next/React version do not include `srcObject`, which is a live
- *  assignable property rather than a serializable attribute). */
+/** Backs an element with its WebRTC stream and actively starts playback.
+ *
+ * Browsers block autoplay for streams that arrive asynchronously AFTER the
+ * user gesture (accept) that started the call. `autoPlay` alone is unreliable
+ * on mobile, so we explicitly call `.play()` and re-try on the next gesture
+ * (any tap/key/touch) until the media actually starts. This is what makes the
+ * remote caller's voice audible on Android Chrome / iOS Safari / PWA.
+ */
 function StreamVideo({
   stream,
   className,
   muted = false,
+  mirror = false,
 }: {
   stream: MediaStream | null;
   className?: string;
   muted?: boolean;
+  mirror?: boolean;
 }) {
   const ref = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
     const video = ref.current;
     if (!video) return;
-    video.srcObject = stream;
-    if (muted) video.muted = true;
+    if (video.srcObject !== stream) video.srcObject = stream;
+    const attemptPlay = () => {
+      if (!video || video.srcObject !== stream) return;
+      if (video.paused || video.ended) {
+        void video.play().catch(() => {
+          // Playback blocked — retried on the next user gesture below.
+        });
+      }
+    };
+    attemptPlay();
+    if (muted) {
+      video.muted = true;
+      return () => {
+        if (video.srcObject === stream) video.srcObject = null;
+      };
+    }
+    video.muted = false;
+    // Remote media (camera + audio) must start as soon as possible and recover
+    // from autoplay policies on the user's next interaction.
+    const resume = () => {
+      if (video && video.paused) attemptPlay();
+    };
+    window.addEventListener('pointerdown', resume, { passive: true });
+    window.addEventListener('touchstart', resume, { passive: true });
+    window.addEventListener('keydown', resume);
     return () => {
+      window.removeEventListener('pointerdown', resume);
+      window.removeEventListener('touchstart', resume);
+      window.removeEventListener('keydown', resume);
       if (video.srcObject === stream) video.srcObject = null;
     };
   }, [stream, muted]);
-  return <video ref={ref} autoPlay playsInline muted={muted} className={className} />;
+  return (
+    <video
+      ref={ref}
+      autoPlay
+      playsInline
+      muted={muted}
+      className={className}
+      style={mirror ? { transform: 'scaleX(-1)' } : undefined}
+    />
+  );
+}
+
+/** Hidden <audio> sink for VOICE calls.
+ *
+ * A voice call has no video element, so the remote audio track must be attached
+ * to an <audio> element or the caller's voice is silently dropped — the classic
+ * "microphone is ON but I hear nothing" symptom. This element also retries
+ * autoplay on the next user gesture.
+ */
+function RemoteAudio({ stream }: { stream: MediaStream | null }) {
+  const ref = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => {
+    const audio = ref.current;
+    if (!audio || !stream) return;
+    if (audio.srcObject !== stream) audio.srcObject = stream;
+    const attemptPlay = () => {
+      if (!audio || audio.srcObject !== stream) return;
+      if (audio.paused || audio.ended) {
+        void audio.play().catch(() => {
+          // Retried on the next user gesture below.
+        });
+      }
+    };
+    attemptPlay();
+    const resume = () => attemptPlay();
+    window.addEventListener('pointerdown', resume, { passive: true });
+    window.addEventListener('touchstart', resume, { passive: true });
+    window.addEventListener('keydown', resume);
+    return () => {
+      window.removeEventListener('pointerdown', resume);
+      window.removeEventListener('touchstart', resume);
+      window.removeEventListener('keydown', resume);
+      if (audio.srcObject === stream) audio.srcObject = null;
+    };
+  }, [stream]);
+  return <audio ref={ref} autoPlay className="hidden" aria-hidden="true" />;
 }
 
 export default function ChatCallOverlay(props: ChatCallOverlayProps) {
@@ -87,6 +168,7 @@ export default function ChatCallOverlay(props: ChatCallOverlayProps) {
     remoteStream,
     isMicOn,
     isCamOn,
+    isFrontCamera,
     durationSeconds,
     error,
     permissionError,
@@ -97,6 +179,7 @@ export default function ChatCallOverlay(props: ChatCallOverlayProps) {
     onCancel,
     onToggleMic,
     onToggleCam,
+    onFlipCamera,
   } = props;
 
   const showOverlay = status !== 'idle';
@@ -235,11 +318,19 @@ return (
           </div>
         )}
 
+        {/* Voice calls have no <video> element, so the remote audio track must be
+            routed to a dedicated <audio> sink — otherwise the caller's voice never
+            becomes audible. This was the root cause of silent voice calls. */}
+        {!isVideo && (status === 'active' || status === 'connecting') && (
+          <RemoteAudio stream={remoteStream} />
+        )}
+
         {isVideo && localStream && (status === 'active' || status === 'connecting') && (
           <div className="absolute right-4 top-4 z-20 w-28 overflow-hidden rounded-2xl border border-white/20 bg-black shadow-2xl sm:right-6 sm:top-6 sm:w-36">
             <StreamVideo
               stream={localStream}
               muted
+              mirror={isFrontCamera}
               className="aspect-[3/4] w-full object-cover"
             />
           </div>
@@ -287,6 +378,14 @@ return (
                     active={isCamOn}
                     label={isCamOn ? 'Turn camera off' : 'Turn camera on'}
                     icon={isCamOn ? <Video size={20} /> : <VideoOff size={20} />}
+                  />
+                )}
+                {isVideo && isCamOn && (
+                  <ControlIconButton
+                    onClick={() => void onFlipCamera()}
+                    active
+                    label={isFrontCamera ? 'Switch to rear camera' : 'Switch to front camera'}
+                    icon={<FlipVertical2 size={20} />}
                   />
                 )}
                 {!isVideo && (

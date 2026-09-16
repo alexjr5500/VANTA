@@ -43,6 +43,7 @@ import verificationRoutes from './routes/verification.routes';
 import creatorRoutes from './routes/creator.routes';
 import adRoutes from './routes/ad.routes';
 import fundraiserRoutes from './routes/fundraiser.routes';
+import rtcRoutes from './routes/rtc.routes';
 import { ensureDefaultCategories } from './services/fundraiser.service';
 import { aiRouter, registerAISocketHandlers } from './ai';
 import { analyticsRouter, registerAnalyticsSocketHandlers, analyticsEngine } from './analytics';
@@ -451,6 +452,9 @@ app.use('/api/ads', adRoutes);
 // VANTA Give — fundraiser routes (public discovery, owner drafts, donations,
 // private evidence, and admin review).
 app.use('/api/fundraisers', fundraiserRoutes);
+
+// WebRTC ICE server configuration for private calls (public STUN/TURN list).
+app.use('/api/rtc', rtcRoutes);
 
 // ============================================================================
 // AI ROUTES
