@@ -94,7 +94,12 @@ export default function AppearanceSettingsPage() {
 
   return (
     <div className="space-y-8 pb-24">
-      <PageHeader title="Appearance" back="/settings" />
+      <PageHeader
+        sticky
+        bleed
+        title="Appearance"
+        back="/settings"
+      />
 
       <div className="-mt-2">
         <p className="text-sm leading-relaxed text-white/45">

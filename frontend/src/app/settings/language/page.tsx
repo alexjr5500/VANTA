@@ -46,7 +46,12 @@ export default function LanguageSettingsPage() {
 
   return (
     <div className="space-y-8 pb-24">
-      <PageHeader title="Language & Region" back="/settings" />
+      <PageHeader
+        sticky
+        bleed
+        title="Language & Region"
+        back="/settings"
+      />
 
       <div className="-mt-2">
         <p className="text-sm leading-relaxed text-white/45">

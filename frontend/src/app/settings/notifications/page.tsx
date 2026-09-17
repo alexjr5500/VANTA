@@ -132,7 +132,12 @@ export default function NotificationSettingsPage() {
 
   return (
     <div className="space-y-8 pb-24">
-      <PageHeader title="Notifications" back="/settings" />
+      <PageHeader
+        sticky
+        bleed
+        title="Notifications"
+        back="/settings"
+      />
 
       {/* Intro */}
       <div className="-mt-2">

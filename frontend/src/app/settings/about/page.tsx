@@ -22,7 +22,12 @@ const APP_VERSION = '0.1.0';
 export default function AboutPage() {
   return (
     <div className="space-y-8 pb-24">
-      <PageHeader title="About" back="/settings" />
+      <PageHeader
+        sticky
+        bleed
+        title="About"
+        back="/settings"
+      />
 
       <div className="-mt-2">
         <p className="text-sm leading-relaxed text-white/45">

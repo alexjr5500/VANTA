@@ -78,7 +78,12 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-8 pb-24">
-      <PageHeader title="Settings" back="/profile" />
+      <PageHeader
+        sticky
+        bleed
+        title="Settings"
+        back="/profile"
+      />
 
       {loading ? (
         <div className="space-y-4">

@@ -36,7 +36,12 @@ export default function ContentMediaSettingsPage() {
 
   return (
     <div className="space-y-8 pb-24">
-      <PageHeader title="Content & Media" back="/settings" />
+      <PageHeader
+        sticky
+        bleed
+        title="Content & Media"
+        back="/settings"
+      />
 
       <div className="-mt-2">
         <p className="text-sm leading-relaxed text-white/45">

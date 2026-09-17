@@ -39,7 +39,12 @@ const UPDATES = [
 export default function WhatsNewPage() {
   return (
     <div className="space-y-8 pb-24">
-      <PageHeader title="What's New" back="/settings" />
+      <PageHeader
+        sticky
+        bleed
+        title="What's New"
+        back="/settings"
+      />
 
       <div className="-mt-2">
         <p className="text-sm leading-relaxed text-white/45">

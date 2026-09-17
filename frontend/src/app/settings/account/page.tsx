@@ -96,7 +96,12 @@ export default function AccountSettingsPage() {
 
   return (
     <div className="space-y-8 pb-24">
-      <PageHeader title="Account" back="/settings" />
+      <PageHeader
+        sticky
+        bleed
+        title="Account"
+        back="/settings"
+      />
 
       {loading ? (
         <div className="space-y-4">

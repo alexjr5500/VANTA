@@ -36,7 +36,12 @@ export default function HelpCenterPage() {
 
   return (
     <div className="space-y-8 pb-24">
-      <PageHeader title="Help Center" back="/settings" />
+      <PageHeader
+        sticky
+        bleed
+        title="Help Center"
+        back="/settings"
+      />
 
       <div className="-mt-2">
         <p className="text-sm leading-relaxed text-white/45">

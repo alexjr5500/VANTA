@@ -276,6 +276,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // given the scroll fallback so a short viewport (keyboard, address bar)
   // can never clip their controls. Go-Live is a true immersive surface: the
   // camera feed owns the viewport and the page manages its own layers.
+  // Settings (including the legacy Edit Profile entry) renders its own
+  // persistent, full-bleed PageHeader (back + title) using the canonical
+  // sticky-top pattern. As a standard scroll page it still scrolls inside the
+  // shared container, so we only zero the container's top inset below — this
+  // lets the sticky header sit flush against the shell's top edge (like Home /
+  // Discover) while the Settings content scrolls beneath it.
+  const isSettingsRoute = pathname?.startsWith('/settings') || pathname === '/profile/editprofile';
+
   const isImmersiveSurface = isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isGoLivePage;
   const isScrollPage = !isImmersiveSurface;
 
@@ -348,13 +356,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               // Standard user pages keep the classic page inset (px-4 py-5).
               // Console surfaces (Admin / Creator Studio) keep their classic
               // low bottom inset so their desktop layouts stay unchanged.
-              isScrollPage && !isLiveViewer && !isConsolePage && !isReelsPage && 'px-4 py-5',
+              // Settings zeroes the top inset so its sticky full-bleed header
+              // sits flush at the shell's top edge; the page keeps px-4 so the
+              // Settings content itself retains its intended inset.
+              isScrollPage &&
+                !isLiveViewer &&
+                !isConsolePage &&
+                !isReelsPage && cn('px-4 pb-5', isSettingsRoute ? 'pt-0' : 'pt-5'),
               isScrollPage && isConsolePage && 'px-4 pt-5 pb-24'
             )}>
             <motion.div
               key={isClient ? pathname : 'initial'}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
+              // Console pages (Creator Studio / Admin) mount a full-viewport
+              // `position: fixed` header. A translate-Y entrance transform
+              // would make this motion wrapper the containing block for that
+              // fixed header, breaking its edge-to-edge screen alignment, so
+              // console pages fade in without any transform (y) animation.
+              // Non-console pages keep the existing slide-in transition.
+              initial={{ opacity: 0, ...(isConsolePage ? {} : { y: 10 }) }}
+              animate={{ opacity: 1, ...(isConsolePage ? {} : { y: 0 }) }}
               transition={{ duration: 0.2, ease: 'easeOut' }}
             >
               {children}

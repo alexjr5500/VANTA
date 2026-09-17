@@ -46,7 +46,12 @@ export default function DeviceSettingsPage() {
 
   return (
     <div className="space-y-8 pb-24">
-      <PageHeader title="Device & Storage" back="/settings" />
+      <PageHeader
+        sticky
+        bleed
+        title="Device & Storage"
+        back="/settings"
+      />
 
       <div className="-mt-2">
         <p className="text-sm leading-relaxed text-white/45">
