@@ -3,7 +3,7 @@
  *
  * All trimming capability now lives in the shared, feature-agnostic
  * `@/lib/videoTrim` engine that powers every VANTA video upload flow
- * (Reel, Post, Story, Chat, Fundraiser cover) through the shared
+ * (Reel, Post, Story, Chat) through the shared
  * <VideoTrimEditor /> component. Existing imports keep working via the
  * aliases below.
  */

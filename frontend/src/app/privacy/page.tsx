@@ -47,7 +47,7 @@ export default function PrivacyPage() {
             <p>
               This Privacy Policy explains how VANTA collects, uses, stores, shares, protects, and otherwise processes
               information when you use the VANTA website, applications, services, and features, including social
-              profiles, posts, Reels, Stories, Live, messaging, comments, virtual gifts, Balance, fundraising, and
+              profiles, posts, Reels, Stories, Live, messaging, comments, virtual gifts, Balance, and
               related services (collectively, the &ldquo;Service&rdquo;).
             </p>
             <p>
@@ -111,8 +111,6 @@ export default function PrivacyPage() {
               <li>Messages;</li>
               <li>Channel content;</li>
               <li>Group content;</li>
-              <li>Fundraising descriptions;</li>
-              <li>Fundraising images and videos;</li>
               <li>Other information you choose to publish or send.</li>
             </ul>
 
@@ -216,7 +214,6 @@ export default function PrivacyPage() {
               <li>Deliver notifications;</li>
               <li>Process transactions;</li>
               <li>Provide virtual gifts;</li>
-              <li>Provide fundraising functionality;</li>
               <li>Provide customer support.</li>
             </ul>
 
@@ -326,7 +323,6 @@ export default function PrivacyPage() {
               <li>Stories;</li>
               <li>Comments;</li>
               <li>Public follower/following information;</li>
-              <li>Public fundraising information;</li>
               <li>Live streams.</li>
             </ul>
             <p>
@@ -376,32 +372,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">11. FUNDRAISING INFORMATION</h2>
-            <p>VANTA may offer fundraising features.</p>
-            <p>When you create or contribute to a fundraiser, we may process information such as:</p>
-            <ul className="list-disc pl-6 space-y-2">
-              <li>Fundraiser title;</li>
-              <li>Description;</li>
-              <li>Images and videos;</li>
-              <li>Fundraising target;</li>
-              <li>Contribution information;</li>
-              <li>Transaction information;</li>
-              <li>Organizer information;</li>
-              <li>Verification information;</li>
-              <li>Reports or disputes relating to the fundraiser.</li>
-            </ul>
-            <p>Some fundraising information may be publicly displayed.</p>
-            <p>
-              Where identity or financial verification is required, VANTA or its service providers may collect
-              additional information necessary to verify the organizer or process payments.
-            </p>
-            <p>
-              VANTA will only use such information for legitimate purposes associated with the fundraising service,
-              compliance, security, fraud prevention, and applicable legal obligations.
-            </p>
-          </section>
-          <section>
-            <h2 className="text-xl font-bold text-white mb-4">12. PAYMENTS, BALANCE AND VIRTUAL GIFTS</h2>
+            <h2 className="text-xl font-bold text-white mb-4">11. PAYMENTS, BALANCE AND VIRTUAL GIFTS</h2>
             <p>
               If you purchase virtual currency, Balance, gifts, or other paid features, VANTA may process information
               relating to those transactions.
@@ -424,7 +395,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">13. COOKIES AND SIMILAR TECHNOLOGIES</h2>
+            <h2 className="text-xl font-bold text-white mb-4">12. COOKIES AND SIMILAR TECHNOLOGIES</h2>
             <p>
               VANTA may use cookies, local storage, SDKs, pixels, device identifiers, and similar technologies.
             </p>
@@ -445,7 +416,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">14. RECOMMENDATIONS AND PERSONALIZATION</h2>
+            <h2 className="text-xl font-bold text-white mb-4">13. RECOMMENDATIONS AND PERSONALIZATION</h2>
             <p>VANTA may personalize your experience.</p>
             <p>For example, we may use information such as:</p>
             <ul className="list-disc pl-6 space-y-2">
@@ -460,7 +431,7 @@ export default function PrivacyPage() {
               <li>Device and technical information.</li>
             </ul>
             <p>
-              This may help VANTA recommend Reels, posts, accounts, Live streams, fundraisers, or other Content that
+              This may help VANTA recommend Reels, posts, accounts, Live streams, or other Content that
               may be relevant to you.
             </p>
             <p>
@@ -470,7 +441,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">15. ARTIFICIAL INTELLIGENCE AND AUTOMATED SYSTEMS</h2>
+            <h2 className="text-xl font-bold text-white mb-4">14. ARTIFICIAL INTELLIGENCE AND AUTOMATED SYSTEMS</h2>
             <p>VANTA may use automated technologies, including machine-learning or artificial-intelligence systems, to help:</p>
             <ul className="list-disc pl-6 space-y-2">
               <li>Detect spam;</li>
@@ -489,7 +460,7 @@ export default function PrivacyPage() {
             </p>
           </section>
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">16. HOW WE SHARE INFORMATION</h2>
+            <h2 className="text-xl font-bold text-white mb-4">15. HOW WE SHARE INFORMATION</h2>
             <p>
               VANTA does not sell your personal information in the ordinary sense of selling a customer database to
               third parties.
@@ -549,7 +520,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">17. INTERNATIONAL DATA TRANSFERS</h2>
+            <h2 className="text-xl font-bold text-white mb-4">16. INTERNATIONAL DATA TRANSFERS</h2>
             <p>VANTA is a global service.</p>
             <p>Your information may be processed or stored in countries other than the country where you live.</p>
             <p>Those countries may have privacy laws different from those in your jurisdiction.</p>
@@ -564,7 +535,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">18. DATA RETENTION</h2>
+            <h2 className="text-xl font-bold text-white mb-4">17. DATA RETENTION</h2>
             <p>
               VANTA keeps personal information only for as long as reasonably necessary for the purposes described in
               this Privacy Policy, unless a longer period is required or permitted by law.
@@ -585,7 +556,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">19. ACCOUNT DELETION</h2>
+            <h2 className="text-xl font-bold text-white mb-4">18. ACCOUNT DELETION</h2>
             <p>You may request deletion of your VANTA account.</p>
             <p>
               When an account is deleted, VANTA will take reasonable steps to delete or anonymize associated personal
@@ -605,7 +576,7 @@ export default function PrivacyPage() {
             </p>
           </section>
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">20. DATA SECURITY</h2>
+            <h2 className="text-xl font-bold text-white mb-4">19. DATA SECURITY</h2>
             <p>
               VANTA uses reasonable technical and organizational measures designed to protect personal information
               against:
@@ -634,7 +605,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">21. DATA BREACHES</h2>
+            <h2 className="text-xl font-bold text-white mb-4">20. DATA BREACHES</h2>
             <p>
               If VANTA experiences a personal-data breach, we will assess the incident and take appropriate action in
               accordance with applicable law.
@@ -646,7 +617,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">22. YOUR PRIVACY RIGHTS</h2>
+            <h2 className="text-xl font-bold text-white mb-4">21. YOUR PRIVACY RIGHTS</h2>
             <p>Depending on where you live, you may have rights including:</p>
             <ul className="list-disc pl-6 space-y-2">
               <li>Right to know what personal information we process;</li>
@@ -669,7 +640,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">23. HOW TO EXERCISE YOUR RIGHTS</h2>
+            <h2 className="text-xl font-bold text-white mb-4">22. HOW TO EXERCISE YOUR RIGHTS</h2>
             <p>You can submit a privacy request by contacting:</p>
             <p><strong className="text-white/90">Privacy Team:</strong> [INSERT PRIVACY EMAIL]</p>
             <p>Your request should include enough information for us to understand what you are asking for.</p>
@@ -683,7 +654,7 @@ export default function PrivacyPage() {
             <p>VANTA will comply with the applicable legal deadline.</p>
           </section>
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">24. CHILDREN AND MINORS</h2>
+            <h2 className="text-xl font-bold text-white mb-4">23. CHILDREN AND MINORS</h2>
             <p>VANTA is not intended for children below the minimum age permitted under applicable law.</p>
             <p>We do not knowingly collect personal information from children where doing so is prohibited by applicable law.</p>
             <p>
@@ -696,7 +667,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">25. THIRD-PARTY SERVICES AND LINKS</h2>
+            <h2 className="text-xl font-bold text-white mb-4">24. THIRD-PARTY SERVICES AND LINKS</h2>
             <p>
               VANTA may contain links to third-party websites, applications, payment services, or other services.
             </p>
@@ -705,7 +676,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">26. YOUR RESPONSIBILITY</h2>
+            <h2 className="text-xl font-bold text-white mb-4">25. YOUR RESPONSIBILITY</h2>
             <p>You should take reasonable steps to protect your personal information.</p>
             <p>Do not publicly publish information such as:</p>
             <ul className="list-disc pl-6 space-y-2">
@@ -721,7 +692,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">27. CHANGES TO THIS PRIVACY POLICY</h2>
+            <h2 className="text-xl font-bold text-white mb-4">26. CHANGES TO THIS PRIVACY POLICY</h2>
             <p>VANTA may update this Privacy Policy periodically.</p>
             <p>When changes are material, VANTA will provide appropriate notice where required by law.</p>
             <p>The &ldquo;Last Updated&rdquo; date at the top of this policy will indicate when it was most recently changed.</p>
@@ -729,7 +700,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">28. JURISDICTION-SPECIFIC RIGHTS</h2>
+            <h2 className="text-xl font-bold text-white mb-4">27. JURISDICTION-SPECIFIC RIGHTS</h2>
             <p>VANTA is designed for a global audience.</p>
             <p>Depending on where you live, additional privacy laws may provide additional rights or protections.</p>
             <p>These may include laws relating to:</p>
@@ -751,7 +722,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">29. CONTACT US</h2>
+            <h2 className="text-xl font-bold text-white mb-4">28. CONTACT US</h2>
             <p>For privacy questions, requests, or concerns:</p>
             <p><strong className="text-white/90">VANTA Privacy Team</strong></p>
             <p>Email: [PRIVACY EMAIL]</p>
@@ -763,7 +734,7 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-xl font-bold text-white mb-4">30. ACKNOWLEDGEMENT</h2>
+            <h2 className="text-xl font-bold text-white mb-4">29. ACKNOWLEDGEMENT</h2>
             <p>
               By using VANTA, you acknowledge that you have had an opportunity to review this Privacy Policy and
               understand how VANTA processes personal information.

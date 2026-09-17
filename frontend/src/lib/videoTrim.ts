@@ -1,8 +1,8 @@
 /**
  * Shared VANTA video trimming engine.
  *
- * Used by every video upload flow (Reel, Post, Story, Chat, Fundraiser cover)
- * through the reusable <VideoTrimEditor /> component. Trimming is REAL
+ * Used by every video upload flow (Reel, Post, Story, Chat) through the
+ * reusable <VideoTrimEditor /> component. Trimming is REAL
  * trimming: the selected start→end segment is re-encoded in the browser with
  * HTMLVideoElement.captureStream() + MediaRecorder (canvas + Web Audio
  * fallback for browsers without media capture). The output is a brand-new
@@ -117,7 +117,7 @@ function normalizeBaseMimeType(value: string): string {
  * plays those files fine (video elements sniff magic bytes), but uploading the
  * ORIGINAL file on the no-trim fast path then gets rejected by the backend's
  * multer allow-list. This clones the file with a corrected type so every flow
- * (Reel, Post, Story, Chat, Fundraiser cover) uploads a valid video part.
+ * (Reel, Post, Story, Chat) uploads a valid video part.
  */
 export function normalizeVideoFileForUpload(file: File): File {
   if (!file) return file;

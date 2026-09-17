@@ -73,8 +73,8 @@ interface VideoTrimEditorProps {
  * (captureStream + MediaRecorder → new WebM containing only the selected range)
  * → processing → review → onConfirm({ file, duration, … }).
  *
- * Every VANTA feature that accepts a video (Reel, Post, Story, Chat, Fundraiser
- * cover) renders this same component — no copy-pasted trimming per page.
+ * Every VANTA feature that accepts a video (Reel, Post, Story, Chat) renders
+ * this same component — no copy-pasted trimming per page.
  */
 export default function VideoTrimEditor({
   file,

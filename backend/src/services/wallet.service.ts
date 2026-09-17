@@ -29,8 +29,6 @@ export const TX_TYPES = {
   ADMIN_CREDIT: "ADMIN_CREDIT",
   ADMIN_DEBIT: "ADMIN_DEBIT",
   SYSTEM_CREDIT: "SYSTEM_CREDIT",
-  FUNDRAISER_DONATION: "FUNDRAISER_DONATION",
-  FUNDRAISER_RECEIVED: "FUNDRAISER_RECEIVED",
 } as const;
 
 // Types that represent money coming IN (positive)
@@ -42,7 +40,6 @@ const INCOMING_TYPES = new Set([
   TX_TYPES.REFUND,
   TX_TYPES.ADMIN_CREDIT,
   TX_TYPES.SYSTEM_CREDIT,
-  TX_TYPES.FUNDRAISER_RECEIVED,
 ]);
 
 // Types that represent money going OUT (negative)
@@ -52,7 +49,6 @@ const OUTGOING_TYPES = new Set([
   TX_TYPES.WITHDRAWAL,
   TX_TYPES.FEE,
   TX_TYPES.ADMIN_DEBIT,
-  TX_TYPES.FUNDRAISER_DONATION,
 ]);
 
 // ============================================================================
@@ -95,10 +91,6 @@ export function buildTransactionDescription(type: string, amount: number, counte
       return `Sent gift to ${counterpartyLabel || 'recipient'}`;
     case TX_TYPES.GIFT_RECEIVED:
       return `Received gift from ${counterpartyLabel || 'sender'}`;
-    case TX_TYPES.FUNDRAISER_DONATION:
-      return `Donated ${safeAmount} VANTA Coins to ${counterpartyLabel || 'a fundraiser'}${note ? `: ${note}` : ''}`;
-    case TX_TYPES.FUNDRAISER_RECEIVED:
-      return `Received ${safeAmount} VANTA Coins from donations to ${counterpartyLabel || 'your fundraiser'}`;
     case TX_TYPES.DEPOSIT:
       return `Deposited ${safeAmount} VANTA Coins`;
     case TX_TYPES.PURCHASE:

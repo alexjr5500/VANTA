@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   BarChart3, Users, UserCog, FileText, Radio, Wallet, Gift, Coins,
   Building2, Bell, TrendingUp, ScrollText, Server, Shield,
-  Menu, X, LogOut, Settings, BellDot, Activity, Heart
+  Menu, X, LogOut, Settings, BellDot, Activity
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import Avatar from '@/components/ui/Avatar';
@@ -34,7 +34,6 @@ const navSections: NavSection[] = [
       { href: '/admin/communication', label: 'Communication', icon: Bell, roles: ['SUPER_ADMIN', 'ADMIN', 'CEO', 'ADMINISTRATOR'] },
       { href: '/admin/creators', label: 'Creators', icon: UserCog, roles: ['SUPER_ADMIN', 'ADMIN', 'CEO', 'ADMINISTRATOR', 'MODERATOR', 'CONTENT_REVIEWER'] },
       { href: '/admin/content', label: 'Content', icon: FileText, roles: ['SUPER_ADMIN', 'ADMIN', 'CEO', 'ADMINISTRATOR', 'MODERATOR', 'CONTENT_REVIEWER'] },
-      { href: '/admin/fundraisers', label: 'Fundraisers', icon: Heart, roles: ['SUPER_ADMIN', 'ADMIN', 'CEO', 'ADMINISTRATOR', 'MODERATOR', 'CONTENT_REVIEWER'] },
       { href: '/admin/live', label: 'Live Streams', icon: Radio, roles: ['SUPER_ADMIN', 'ADMIN', 'CEO', 'ADMINISTRATOR', 'MODERATOR'] },
     ],
   },

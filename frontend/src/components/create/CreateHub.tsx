@@ -12,11 +12,7 @@ import {
   Radio,
   X,
   Zap,
-  HeartHandshake,
-  ShieldCheck,
 } from 'lucide-react';
-import { useAuth } from '@/context/AuthContext';
-import { canCreateFundraiser } from '@/lib/canCreateFundraiser';
 
 interface CreateHubProps {
   open: boolean;
@@ -52,13 +48,6 @@ const creationOptions = [
     description: 'Share a moment',
     accent: 'bg-[#f2dfb1] text-[#5a3a00]',
   },
-  {
-    id: 'fundraiser',
-    icon: HeartHandshake,
-    label: 'Start Fundraiser',
-    description: 'Raise for a cause',
-    accent: 'bg-[#fdf0d0] text-[#5a3a00]',
-  },
 ];
 
 // Animation variants
@@ -85,8 +74,6 @@ const itemVariants = {
 export default function CreateHub({ open, onClose }: CreateHubProps) {
   const router = useRouter();
   const { openPostModal, openStoryModal, openReelUploader } = useContentCreation();
-  const { user } = useAuth();
-  const fundraiserAllowed = canCreateFundraiser(user);
   const contextHint = { title: 'Create', subtitle: 'Choose how you want to share.' };
 
   const handleSelect = (option: typeof creationOptions[0]) => {
@@ -106,9 +93,6 @@ export default function CreateHub({ open, onClose }: CreateHubProps) {
         // Open the same LIVE Studio flow the "Go Live" button on the /live
         // page uses (reached from the menu). All Go Live entries stay in sync.
         router.push('/live/go-live');
-        break;
-      case 'fundraiser':
-        if (fundraiserAllowed) router.push('/give/start');
         break;
     }
   };
@@ -181,7 +165,6 @@ export default function CreateHub({ open, onClose }: CreateHubProps) {
                 <div className="space-y-2">
                   {creationOptions.map((option, i) => {
                     const Icon = option.icon;
-                    const isFundraiserLocked = option.id === 'fundraiser' && !fundraiserAllowed;
                     return (
                       <motion.button
                         key={option.id}
@@ -189,14 +172,10 @@ export default function CreateHub({ open, onClose }: CreateHubProps) {
                         variants={itemVariants}
                         initial="hidden"
                         animate="visible"
-                        onClick={() => !isFundraiserLocked && handleSelect(option)}
-                        disabled={isFundraiserLocked}
-                        title={isFundraiserLocked ? 'Verification required to create a fundraiser' : undefined}
+                        onClick={() => handleSelect(option)}
                         className={cn(
                           'group relative flex min-h-[76px] w-full items-center gap-4 rounded-xl border border-white/[0.07] bg-white/[0.025] p-3.5 text-left transition',
-                          isFundraiserLocked
-                            ? 'cursor-not-allowed opacity-50'
-                            : 'hover:border-white/[0.16] hover:bg-white/[0.055] active:scale-[.99]'
+                          'hover:border-white/[0.16] hover:bg-white/[0.055] active:scale-[.99]'
                         )}
                       >
                         {/* Icon container */}
@@ -210,14 +189,8 @@ export default function CreateHub({ open, onClose }: CreateHubProps) {
                         {/* Label */}
                         <div className="min-w-0">
                           <p className="text-[15px] font-semibold text-white">{option.label}</p>
-                          <p className="mt-0.5 text-xs text-white/45">
-                            {isFundraiserLocked ? 'Verification required to create a fundraiser' : option.description}
+                          <p className="mt-0.5 text-xs text-white/45">{option.description}
                           </p>
-                          {isFundraiserLocked && (
-                            <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-[#f2c75c]">
-                              <ShieldCheck size={11} /> Verify your account to start a fundraiser
-                            </span>
-                          )}
                         </div>
 
                       </motion.button>

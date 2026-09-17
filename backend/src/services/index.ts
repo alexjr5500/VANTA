@@ -29,10 +29,6 @@ export {
   uploadBannerMulter,
   uploadThumbnail,
   uploadDocument,
-  uploadEvidence,
-  evidenceUploadDir,
-  EVIDENCE_ALLOWED_TYPES,
-  MAX_EVIDENCE_SIZE,
   verifyFileContent,
   buildUploadUrl,
   getFileType,
@@ -68,18 +64,6 @@ export { matchService, MatchService } from "./match.service";
 
 // Verification & Creator Membership service
 export { verificationService, VerificationService } from "./verification.service";
-
-// VANTA Give — fundraising service
-export {
-  fundraiserService,
-  FundraiserService,
-  FUNDRAISER_STATUS,
-  FundraiserStatus,
-  PUBLIC_BROWSEABLE_STATUSES,
-  DONATABLE_STATUSES,
-  RAISING_FOR_OPTIONS,
-  PAYOUT_METHODS,
-} from "./fundraiser.service";
 
 // LiveKit streaming service
 export { liveKitService, LiveKitService } from "./livekit.service";

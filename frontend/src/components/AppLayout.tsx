@@ -23,7 +23,6 @@ import {
   WalletCards,
   HelpCircle,
   Plus,
-  HeartHandshake,
 } from 'lucide-react';
 import VantaLogo from '@/components/ui/VantaLogo';
 import Avatar from '@/components/ui/Avatar';
@@ -50,9 +49,6 @@ const notificationDestination = (notification: any) => {
   if (data.postId) return `/home?post=${data.postId}${data.commentId ? `&comment=${data.commentId}` : ''}`;
   if (data.conversationId || data.groupId || data.channelId) return '/chat';
   const type = typeof notification?.type === 'string' ? notification.type.toLowerCase() : '';
-  // VANTA Give notifications
-  if (data.fundraiserSlug) return `/give/${data.fundraiserSlug}`;
-  if (data.fundraiserId) return `/give/my/${data.fundraiserId}`;
   if (data.transactionId || type === 'wallet' || type.startsWith('wallet_')) return '/balance/transactions';
   if (data.followerUsername) return `/profile/${data.followerUsername}`;
   return '/notifications';
@@ -68,7 +64,6 @@ const mainNavItems = [
   { href: '/bookmarks', icon: Bookmark, label: 'Bookmarks' },
   { href: '/creator', icon: Sparkles, label: 'Creator Studio' },
   { href: '/gifts', icon: Gift, label: 'Gifts' },
-  { href: '/give', icon: HeartHandshake, label: 'VANTA Give' },
   { href: '/settings', icon: Settings, label: 'Settings' },
   { href: '/help', icon: HelpCircle, label: 'Help Center' },
 ];

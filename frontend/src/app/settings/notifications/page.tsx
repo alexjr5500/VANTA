@@ -12,7 +12,6 @@ import {
   AtSign,
   BellRing,
   Heart,
-  HeartHandshake,
   Info,
   Mail,
   MessageSquare,
@@ -53,7 +52,6 @@ const LOCAL_DEFAULTS = {
   groupAlerts: true,
   channelAlerts: true,
   liveInteractionsAlerts: true,
-  fundraiserAlerts: true,
 };
 
 type BackendKey = keyof BackendPrefs;
@@ -281,23 +279,6 @@ export default function NotificationSettingsPage() {
               onChange={(v) => toggleLocal('liveInteractionsAlerts', v)}
               disabled={paused}
               saved={savedKey === 'liveInteractionsAlerts'}
-            />
-          </SettingsGroup>
-
-          {/* ── Fundraising ── */}
-          <SettingsGroup
-            icon={HeartHandshake}
-            title="Fundraising"
-            description="VANTA Give updates"
-          >
-            <ToggleRow
-              icon={HeartHandshake}
-              title="Fundraising Updates"
-              description="Important updates about fundraisers you support or create."
-              checked={local.fundraiserAlerts}
-              onChange={(v) => toggleLocal('fundraiserAlerts', v)}
-              disabled={paused}
-              saved={savedKey === 'fundraiserAlerts'}
             />
           </SettingsGroup>
         </div>

@@ -23,8 +23,8 @@ interface VideoTrimModalProps {
 
 /**
  * Reusable VANTA sheet that hosts the shared <VideoTrimEditor />.
- * Every feature that accepts a video upload (Reel, Post, Story, Chat,
- * Fundraiser cover) uses the same trimmer chrome — only the surrounding
+ * Every feature that accepts a video upload (Reel, Post, Story, Chat) uses the
+ * same trimmer chrome — only the surrounding
  * title/subtitle and review-step fields are feature-specific.
  */
 export default function VideoTrimModal({

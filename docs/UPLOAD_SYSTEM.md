@@ -31,7 +31,7 @@ The frontend uses XHR for real upload progress and provides local previews, drag
 
 ## Shared video uploading + time trimming
 
-Word the frontend upload flows: Reel, Post, Story, Chat attachment and Fundraiser cover all accept video.
+All frontend upload flows accept video: Reel, Post, Story and Chat attachment.
 
 Trimming is a **shared, reusable system** — no feature copies trimming code:
 
@@ -48,15 +48,12 @@ Trimming is a **shared, reusable system** — no feature copies trimming code:
 | Reel | `frontend/src/components/create/ReelUploader.tsx` |
 | Post / Story | `frontend/src/components/create/MediaUploader.tsx` (shared by `CreatePostModal`) |
 | Chat attachment | `frontend/src/app/messages/page.tsx` |
-| Fundraiser cover video | `frontend/src/app/give/start/page.tsx` |
 
 To add trimming to a future video upload flow: render `<VideoTrimModal>` (or `<VideoTrimEditor>` directly) with the selected `File`, then upload `result.file` through the existing upload endpoint — the same way the flows above do.
 
 ### Video MIME normalization
 
 Browsers/download managers occasionally tag real video files (usually `.mp4`) as `text/plain`, `application/octet-stream` or empty. The trimmer accepts those by filename extension so the user can still trim them, but uploading the raw part is rejected by the backend multer allow-list with `File type text/plain is not allowed`. `normalizeVideoFileForUpload()` re-tags any file to a clean base `video/mp4` / `video/webm` (and strips codec parameters like `video/webm;codecs=vp9,opus`) before it leaves `VideoTrimEditor`, so every flow uploads a valid video part. Regression coverage: `backend/src/__tests__/reel-upload-multer.test.ts`.
-
-Fundraiser evidence videos are intentionally **not** passed through the trimmer so supporting review material cannot be silently altered.
 
 ## Verification
 

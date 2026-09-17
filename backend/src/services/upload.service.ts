@@ -332,38 +332,6 @@ export const uploadDocument = multer({
 });
 
 // ============================================================================
-// VANTA GIVE — PRIVATE EVIDENCE UPLOADS
-// ============================================================================
-// Sensitive supporting evidence (medical reports, bills, ID documents) must
-// never be reachable through the public `/uploads` static mount. Files are
-// written to a private directory and streamed only through an authorized
-// endpoint (organizer or admin), never served as static assets.
-export const evidenceUploadDir = (() => {
-  const configured = process.env.EVIDENCE_UPLOAD_DIR;
-  if (configured) return path.isAbsolute(configured) ? configured : path.resolve(__dirname, "../..", configured);
-  // Default: <backend>/private/evidence — sibling of public/, outside the static mount.
-  return path.resolve(__dirname, "../../private/evidence");
-})();
-if (!fs.existsSync(evidenceUploadDir)) {
-  fs.mkdirSync(evidenceUploadDir, { recursive: true });
-}
-
-export const EVIDENCE_ALLOWED_TYPES = [
-  ...ALLOWED_IMAGE_TYPES,
-  ...ALLOWED_VIDEO_TYPES,
-  ...ALLOWED_DOC_TYPES,
-];
-
-export const MAX_EVIDENCE_SIZE = 50 * 1024 * 1024; // 50MB
-
-/** Evidence uploads (images, videos, PDFs/docs) stored in the PRIVATE dir. */
-export const uploadEvidence = multer({
-  storage: createStorage(evidenceUploadDir),
-  limits: { fileSize: MAX_EVIDENCE_SIZE },
-  fileFilter: createFileFilter(EVIDENCE_ALLOWED_TYPES),
-});
-
-// ============================================================================
 // URL & TYPE HELPERS
 // ============================================================================
 

@@ -209,8 +209,8 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
 
   // ---- Shared video trimming -----------------------------------------------
   // Videos selected by the user aren't uploaded as-is: they pass through the
-  // reusable <VideoTrimModal /> (which powers Reels, Posts, Stories, Chat and
-  // Fundraiser covers with the exact same trimmer UI + real re-encode engine).
+  // reusable <VideoTrimModal /> (which powers Reels, Posts, Stories and Chat
+  // with the exact same trimmer UI + real re-encode engine).
   // Only the trimmed file is uploaded, so what is published actually contains
   // the selected time range — never timestamps over the full original.
 

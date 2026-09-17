@@ -46,24 +46,3 @@ export function calculateGiftRecipientCoins(giftCoinValue: number): number {
 export function calculateTransferFee(coins: number): number {
   return Math.ceil(Math.max(0, coins) * TRANSFER_FEE_RATE);
 }
-
-// ============================================================================
-// VANTA GIVE — fundraiser donation rules
-// ============================================================================
-
-/** Platform fee (fraction) withheld from the beneficiary's proceeds for donations. */
-export const FUNDRAISER_PLATFORM_FEE_RATE = 0.05;
-/** Coins earned per 1 currency unit of the fundraiser's currency (USD-aligned). */
-export const FUNDRAISER_COINS_PER_UNIT = VANTA_COINS_PER_USD;
-/** Minimum donation in coins. */
-export const MIN_FUNDRAISER_DONATION_COINS = 100;
-
-/** Convert a currency amount (fundraiser currency) into VANTA coins for settlement. */
-export function currencyToCoins(amount: number, coinsPerUnit: number = FUNDRAISER_COINS_PER_UNIT): number {
-  return Math.floor(Math.max(0, amount) * coinsPerUnit);
-}
-
-/** Platform fee in coins for a donation's coin value. */
-export function calculateFundraiserFeeCoins(coins: number): number {
-  return Math.ceil(Math.max(0, coins) * FUNDRAISER_PLATFORM_FEE_RATE);
-}
