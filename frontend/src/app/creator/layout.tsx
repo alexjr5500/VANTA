@@ -164,26 +164,39 @@ export default function CreatorLayout({ children }: { children: React.ReactNode 
           </>
         )}
       </AnimatePresence>
-      <div className="flex min-h-screen flex-col">
-        {/* Single canonical VANTA studio header (compact utility pattern).
-            The menu toggle opens the studio drawer; title follows the route. */}
-        <PageHeader
-          sticky
-          onMenu={() => setDrawerOpen(true)}
-          title={STUDIO_TITLES[pathname || ''] || 'Creator Studio'}
-          actions={
-            <button
-              type="button"
-              className="relative grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#8A8A8A] transition hover:bg-white/[0.06] hover:text-white"
-              aria-label="Studio notifications"
-            >
-              <Bell size={18} />
-              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[#c9a227]" aria-hidden />
-            </button>
-          }
-        />
+      {/* Single canonical VANTA studio header (compact utility pattern).
+          The menu toggle opens the studio drawer; title follows the route.
+          The outer bar is `fixed inset-x-0` so the header surface reaches BOTH
+          screen edges on every device (viewport-wide), independent of the
+          centered studio frame below. The inner row is constrained to the
+          studio max-width so the menu/title/actions keep exactly the same
+          alignment as the page content. z-30 keeps it above scrolling content
+          but below the drawer backdrop (z-40) and drawer (z-50). */}
+      <header className="fixed inset-x-0 top-0 z-30 border-b border-white/[0.08] bg-[#080808]/90 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
+        <div className="mx-auto w-full max-w-[480px] px-4">
+          <PageHeader
+            onMenu={() => setDrawerOpen(true)}
+            title={STUDIO_TITLES[pathname || ''] || 'Creator Studio'}
+            actions={
+              <button
+                type="button"
+                className="relative grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#8A8A8A] transition hover:bg-white/[0.06] hover:text-white"
+                aria-label="Studio notifications"
+              >
+                <Bell size={18} />
+                <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[#c9a227]" aria-hidden />
+              </button>
+            }
+            className="h-14 !border-b-0"
+          />
+        </div>
+      </header>
 
-        <main className="min-w-0 flex-1 overflow-x-hidden p-4">{children}</main>
+      {/* Content starts below the fixed viewport header (its full height,
+          including the safe-area inset, is reserved as top padding) so nothing
+          scrolls underneath or disappears behind it. */}
+      <div className="flex min-h-screen flex-col">
+        <main className="min-w-0 flex-1 overflow-x-hidden px-4 pb-4 pt-[calc(env(safe-area-inset-top)+3.5rem)]">{children}</main>
       </div>
     </div>
   );

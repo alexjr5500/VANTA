@@ -155,8 +155,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </>
         )}
       </AnimatePresence>
-      <div className="flex min-h-screen flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-white/[.08] bg-[#0d0d0f]/95 px-4 backdrop-blur-xl">
+      {/* Full-viewport fixed admin header. The outer bar is `fixed inset-x-0` so it
+          reaches both screen edges on every device, independent of the centered
+          admin frame below. The inner row is constrained to the admin max-width
+          so the menu/title/actions keep exactly the same alignment as the page
+          content. z-30 keeps it above scrolling content but below the drawer
+          backdrop (z-40) and drawer (z-50). */}
+      <header className="fixed inset-x-0 top-0 z-30 border-b border-white/[.08] bg-[#0d0d0f]/95 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
+        <div className="mx-auto w-full max-w-[700px] flex h-16 items-center justify-between px-4">
           <button onClick={() => setDrawerOpen(true)} className="grid h-10 w-10 place-items-center text-[#b8b8b8]" aria-label="Open admin navigation"><Menu size={20} /></button>
           <strong className="text-sm">Admin</strong>
           <div className="flex items-center gap-2">
@@ -209,9 +215,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               </AnimatePresence>
             </div>
           </div>
-        </header>
+        </div>
+      </header>
 
-        <main className="min-w-0 flex-1 overflow-x-hidden p-4">{children}</main>
+      {/* Content starts below the fixed viewport header (its full height,
+          including the safe-area inset, is reserved as top padding) so nothing
+          scrolls underneath or disappears behind it. */}
+      <div className="flex min-h-screen flex-col">
+        <main className="min-w-0 flex-1 overflow-x-hidden px-4 pb-4 pt-[calc(env(safe-area-inset-top)+4rem)]">{children}</main>
       </div>
     </div>
   );
