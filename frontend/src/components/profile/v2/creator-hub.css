@@ -586,7 +586,7 @@
   outline: none;
 }
 .people-search input::placeholder { color: #777; }
-.people-search:focus-within { border-color: rgba(214, 168, 63, 0.45); }
+.people-search:focus-within { background: rgba(245, 245, 245, 0.1); }
 
 /* Independent scroll region: the modal shell stays stable while rows scroll. */
 .people-body {

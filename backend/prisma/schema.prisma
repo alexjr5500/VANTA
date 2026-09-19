@@ -745,6 +745,16 @@ model Message {
   deletedFor     String?
   editedAt       DateTime?
   deletedAt      DateTime?
+
+  // Story reply — a private "reply to story" message sent through the normal
+  // messaging system. The story reference is denormalized (no FK on purpose):
+  // Stories expire after 24h and can be deleted, so the snapshot fields keep the
+  // reply readable in the inbox long after the original Story is gone.
+  storyReplyStoryId   String?
+  storyReplyMediaUrl  String?
+  storyReplyCaption   String?
+  storyReplyAuthor    String?
+
   reads          MessageRead[]
   reactions      MessageReaction[]
   attachments    Attachment[]
@@ -758,6 +768,7 @@ model Message {
   @@index([type, conversationId, createdAt])
   @@index([replyToId])
   @@index([conversationId, pinnedAt])
+  @@index([storyReplyStoryId])
 }
 
 model MessageRead {

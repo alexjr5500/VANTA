@@ -51,7 +51,7 @@ export default function ExplorePage() {
 
         {/* Premium Search */}
         <div className="relative group">
-          <div className="relative flex items-center rounded-3xl border border-white/[0.06] bg-white/[0.03] backdrop-blur-xl transition-all duration-300 focus-within:border-[#d6a83f]/30 focus-within:bg-white/[0.06] focus-within:shadow-lg focus-within:shadow-[#d6a83f]/10">
+          <div className="relative flex items-center rounded-3xl border border-white/[0.06] bg-white/[0.03] backdrop-blur-xl transition-all duration-300 focus-within:bg-white/[0.06]">
             <Search size={18} className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400 transition-colors duration-300 group-focus-within:text-[#d6a83f]" />
             <input
               type="text"

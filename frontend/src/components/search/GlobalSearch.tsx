@@ -317,7 +317,7 @@ export default function GlobalSearch() {
           onFocus={() => setShowDropdown(true)}
           onKeyDown={handleKeyDown}
           placeholder="Search users, streams, posts..."
-          className="w-full rounded-xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-10 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#d6a83f]/30 focus:bg-white/[0.06] transition-all"
+          className="w-full rounded-xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-10 text-sm text-white placeholder-gray-500 focus:outline-none focus:bg-white/[0.06] transition-all"
           aria-label="Global search"
           autoComplete="off"
           role="combobox"

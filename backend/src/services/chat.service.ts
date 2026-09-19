@@ -183,7 +183,7 @@ export class ChatService {
     return { messages: page.reverse(), nextCursor };
   }
 
-  async sendMessage(conversationId: string, senderId: string, content: string, type = "TEXT", attachments: AttachmentInput[] = [], replyToId?: string) {
+  async sendMessage(conversationId: string, senderId: string, content: string, type = "TEXT", attachments: AttachmentInput[] = [], replyToId?: string, storyReply?: { storyId?: string; mediaUrl?: string; caption?: string; author?: string }) {
     const conversation = await prisma.conversation.findUnique({
       where: { id: conversationId },
       include: { participants: { select: { userId: true, role: true } } },
@@ -220,14 +220,25 @@ export class ChatService {
       const replyTarget = await prisma.message.findFirst({ where: { id: replyToId, conversationId }, select: { id: true } });
       if (!replyTarget) throw new Error("Reply target not found");
     }
-    const allowedTypes = new Set(["TEXT", "IMAGE", "VIDEO", "AUDIO", "FILE"]);
+    const allowedTypes = new Set(["TEXT", "IMAGE", "VIDEO", "AUDIO", "FILE", "STORY_REPLY"]);
+    // Story replies are private direct messages about a specific Story. The
+    // client passes snapshot metadata so the reference survives Story expiry.
+    const storyReplyRef = storyReply && typeof storyReply.storyId === "string" && storyReply.storyId.length > 0
+      ? {
+          storyReplyStoryId: storyReply.storyId.slice(0, 200),
+          storyReplyMediaUrl: typeof storyReply.mediaUrl === "string" ? storyReply.mediaUrl.slice(0, 2000) : null,
+          storyReplyCaption: typeof storyReply.caption === "string" ? storyReply.caption.slice(0, 5000) : null,
+          storyReplyAuthor: typeof storyReply.author === "string" ? storyReply.author.slice(0, 200) : null,
+        }
+      : null;
     const message = await prisma.$transaction(async tx => {
       const created = await tx.message.create({ data: {
         conversationId,
         senderId,
         content: safeContent,
-        type: allowedTypes.has(type) ? type : "TEXT",
+        type: storyReplyRef ? "STORY_REPLY" : (allowedTypes.has(type) ? type : "TEXT"),
         replyToId,
+        ...(storyReplyRef || {}),
         attachments: { create: safeAttachments.map(a => ({
           url: a.url, fileType: String(a.fileType || "FILE").slice(0, 100),
           fileName: a.fileName?.slice(0, 255), fileSize: a.fileSize,

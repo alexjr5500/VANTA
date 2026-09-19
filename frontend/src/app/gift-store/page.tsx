@@ -202,7 +202,7 @@ export default function GiftStorePage() {
               placeholder="Search gifts..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="h-10 w-full rounded-lg border border-white/[0.08] bg-[#0D0D0F] pl-11 pr-10 text-sm text-white outline-none placeholder:text-gray-500 focus:border-white/20"
+              className="h-10 w-full rounded-lg border border-white/[0.08] bg-[#0D0D0F] pl-11 pr-10 text-sm text-white outline-none placeholder:text-gray-500"
             />
             {searchQuery && (
               <button

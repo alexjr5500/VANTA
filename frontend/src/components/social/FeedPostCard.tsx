@@ -3,12 +3,13 @@
 import { motion } from 'framer-motion';
 import { Bookmark, Gift, Heart, MessageCircle, MoreHorizontal, Share2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { type MouseEvent as ReactMouseEvent } from 'react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import PostMedia from '@/components/social/PostMedia';
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
-import { isVideoItem } from '@/lib/feedIdentity';
+import { isVideoItem, detailPathFor } from '@/lib/feedIdentity';
 import { renderTextWithLinks } from '@/lib/linkify';
 
 /**
@@ -65,7 +66,16 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
   const actionClass = 'flex min-h-10 items-center gap-1.5 rounded-lg px-2 text-[11px] text-[#8a8a8a] transition hover:bg-white/[.045] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40';
   const caption = item.content || item.description;
 
-  return <motion.article initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .24 }} className="flex flex-col pt-2 pb-0.5">
+  // Tapping anywhere on the card (except an interactive control) opens the
+  // canonical post/reel detail page — the same single detail route the comment
+  // count and share actions lead to. Inner controls keep their own handlers.
+  const openDetail = (event: ReactMouseEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest('button, a, input, textarea, video, audio, [role="tab"], [contenteditable]')) return;
+    router.push(detailPathFor(item));
+  };
+
+  return <motion.article initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .24 }} onClick={openDetail} className="flex flex-col pt-2 pb-0.5 cursor-pointer">
     <header className="grid grid-cols-[40px_minmax(0,1fr)] items-start gap-2.5">
       <button
         type="button"

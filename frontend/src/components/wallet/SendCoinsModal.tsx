@@ -186,7 +186,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                         onChange={e => setSearchQuery(e.target.value)}
                         placeholder="Search by username or display name..."
                         autoFocus
-                        className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] px-10 py-3 text-sm text-white placeholder-gray-500 outline-none focus:border-white/30 transition-all"
+                        className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] px-10 py-3 text-sm text-white placeholder-gray-500 outline-none transition-all"
                       />
                     </div>
                   </div>

@@ -92,7 +92,7 @@ export default function ConversationList({ conversations, activeId, onSelect, lo
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search chats..."
-            className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white/20 focus:bg-white/[0.06] transition-all"
+            className="w-full rounded-lg border border-white/[0.08] bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:bg-white/[0.06] transition-all"
           />
         </div>
       </div>

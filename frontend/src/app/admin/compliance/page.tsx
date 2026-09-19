@@ -620,7 +620,7 @@ export default function AdminCompliancePage() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search audit logs..."
-              className="w-full rounded-xl border border-white/10 bg-black/40 pl-9 pr-4 py-2 text-sm text-white outline-none focus:border-[#a8a8ac]/50"
+              className="w-full rounded-xl border border-white/10 bg-black/40 pl-9 pr-4 py-2 text-sm text-white outline-none"
             />
           </div>
         </div>

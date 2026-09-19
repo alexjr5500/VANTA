@@ -604,7 +604,7 @@ export default function BalancePage() {
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 placeholder="Search transactions..."
-                className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-[#F5F5F5] placeholder-[#8A8A8A] outline-none focus:border-white/[0.15] transition-all"
+                className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-[#F5F5F5] placeholder-[#8A8A8A] outline-none transition-all"
               />
             </div>
             <div className="flex min-w-0 items-center gap-2 flex-wrap">

@@ -509,7 +509,9 @@ const creator = current.group.user || {};
     }
   };
 
-  // Reply — sends the story owner a direct message via the existing chat API.
+  // Reply — sends the story owner a private direct message via the existing
+  // chat API, tagged with a Story reference so the inbox shows it as a story
+  // reply (and never as a public comment under the story).
   const sendStoryReply = async () => {
     if (!token || !current || !replyText.trim() || replySending) return;
     const ownerId = creator.id || current.story.userId;
@@ -519,7 +521,17 @@ const creator = current.group.user || {};
       const result = await apiPost<{ conversation?: { id: string } }>(`/api/messages/start`, { participantIds: [ownerId], type: 'DIRECT' }, token);
       const conversationId = result?.conversation?.id;
       if (!conversationId) throw new Error('Could not open a conversation with the story owner.');
-      await apiPost(`/api/messages/send`, { conversationId, content: replyText.trim(), type: 'TEXT' }, token);
+      await apiPost(`/api/messages/send`, {
+        conversationId,
+        content: replyText.trim(),
+        type: 'TEXT',
+        storyReply: {
+          storyId: current.story.id,
+          mediaUrl: current.story.mediaType?.toUpperCase() === 'TEXT' ? undefined : current.story.mediaUrl,
+          caption: current.story.caption,
+          author: `${creator.fullName || creator.username || 'VANTA'} (@${creator.username || ''})`.trim(),
+        },
+      }, token);
       setReplyText('');
       setReplyOpen(false);
       resumeStory('reply');
@@ -572,9 +584,9 @@ const creator = current.group.user || {};
       {/* Media */}
       <div className="absolute inset-0 grid place-items-center bg-black" onClick={handleMediaTap} onPointerDown={handleMediaPointerDown} onPointerUp={releaseLongPress} onPointerCancel={releaseLongPress} onPointerLeave={releaseLongPress} onContextMenu={event => { if (event.button === 2 && !isOwner) event.preventDefault(); }} role="presentation">
         {isText ? (
-          <div className="flex h-full w-full flex-col items-center justify-center px-6 text-center">
-            <div className="mx-auto w-full max-w-[520px] rounded-2xl border border-white/[0.06] bg-gradient-to-br from-[#1a1a1c] to-[#0e0e10] px-6 py-10 shadow-[0_20px_60px_rgba(0,0,0,.5)]">
-              <p className="whitespace-pre-wrap break-words text-2xl font-semibold leading-relaxed text-[#f5f5f5]">{renderTextWithLinks(current.story.caption || '', 'linkify')}</p>
+          <div className="flex h-full w-full flex-col items-center justify-center overflow-y-auto overscroll-contain px-5 pt-[max(5.5rem,calc(env(safe-area-inset-top)+5.5rem))] pb-[max(7rem,calc(env(safe-area-inset-bottom)+7rem))] text-center">
+            <div className="mx-auto w-full min-w-0 max-w-[min(540px,calc(100%-2.5rem))] rounded-2xl border border-white/[0.06] bg-gradient-to-br from-[#1a1a1c] to-[#0e0e10] px-6 py-10 shadow-[0_20px_60px_rgba(0,0,0,.5)]">
+              <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-2xl font-semibold leading-relaxed text-[#f5f5f5]">{renderTextWithLinks(current.story.caption || '', 'linkify')}</p>
             </div>
           </div>
         ) : isVideo ? (
@@ -674,10 +686,10 @@ const creator = current.group.user || {};
               <Repeat size={19} strokeWidth={2} className="text-white/70" />
               <span className="text-[11px] font-semibold tabular-nums">{compact(current.story.reshareCount || 0)}</span>
             </div>
-            <div className="flex flex-col items-center gap-1 text-white/85" title="Comments">
+            <button type="button" onClick={() => void openComments()} aria-label="View comments on your story" title="Comments" className="flex flex-col items-center gap-1 text-white/85">
               <MessageCircle size={19} strokeWidth={2} className="text-white/70" />
               <span className="text-[11px] font-semibold tabular-nums">{compact(current.story.commentCount || 0)}</span>
-            </div>
+            </button>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2.5">
@@ -693,12 +705,12 @@ const creator = current.group.user || {};
             </button>
             <button
               type="button"
-              onClick={() => void openComments()}
-              aria-label="Comment on story"
+              onClick={() => { pauseStory('reply'); setReplyOpen(true); }}
+              aria-label="Reply to story — sends the owner a private message"
               className="flex w-16 flex-col items-center gap-1 rounded-2xl bg-black/45 px-2 py-2 text-white backdrop-blur transition active:scale-95"
             >
-              <MessageCircle size={19} strokeWidth={2} />
-              <span className="text-[10px] font-medium text-white/70">Comment</span>
+              <Send size={19} strokeWidth={2} />
+              <span className="text-[10px] font-medium text-white/70">Reply</span>
             </button>
             <button
               type="button"
@@ -775,7 +787,7 @@ const creator = current.group.user || {};
             </header>
             <div className="mb-4 flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-black/25 p-3">
               {isText ? (
-                <div className="flex h-20 w-16 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#1a1a1c] to-[#0e0e10] p-2"><span className="line-clamp-4 text-[10px] leading-tight text-white/80">{current.story.caption || 'Text story'}</span></div>
+                <div className="flex h-20 w-16 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#1a1a1c] to-[#0e0e10] p-2"><span className="line-clamp-4 min-w-0 break-words text-[10px] leading-tight text-white/80">{current.story.caption || 'Text story'}</span></div>
               ) : isVideo ? (
                 <video src={resolveMediaUrl(current.story.mediaUrl)} muted playsInline className="h-20 w-16 shrink-0 rounded-xl object-cover" />
               ) : (
@@ -824,9 +836,6 @@ const creator = current.group.user || {};
                 <p className="text-xs text-[#c8c8cc]/55">{comments.length} comment{comments.length === 1 ? '' : 's'}</p>
               </div>
               <div className="flex items-center gap-1">
-                <button type="button" onClick={() => { setCommentsOpen(false); resumeStory('comments'); pauseStory('reply'); setReplyOpen(true); }} className="rounded-full px-3 py-2 text-xs text-[#c8c8cc] transition hover:bg-white/[0.06] hover:text-white" aria-label="Message the story owner">
-                  Message @{creator.username || 'owner'}
-                </button>
                 <button type="button" onClick={() => { setCommentsOpen(false); resumeStory('comments'); }} className="grid h-11 w-11 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={20}/></button>
               </div>
             </header>

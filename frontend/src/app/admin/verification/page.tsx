@@ -178,7 +178,7 @@ export default function AdminVerificationPage() {
             placeholder="Search by username or email..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-2xl pl-9 pr-4 py-2.5 text-sm text-white outline-none focus:border-[#151517]0/50 transition-colors"
+            className="w-full bg-white/5 border border-white/10 rounded-2xl pl-9 pr-4 py-2.5 text-sm text-white outline-none transition-colors"
           />
         </div>
 

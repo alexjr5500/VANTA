@@ -73,6 +73,14 @@ export const sendMessage = async (req: AuthRequest, res: Response): Promise<void
   try {
     const senderId = req.user?.userId;
     const { conversationId, content = '', type, attachments, replyToId } = req.body;
+    const storyReply = (req.body && typeof req.body === 'object' && typeof (req.body as any).storyReply === 'object' && (req.body as any).storyReply !== null)
+      ? {
+          storyId: typeof (req.body as any).storyReply?.storyId === 'string' ? (req.body as any).storyReply.storyId : undefined,
+          mediaUrl: typeof (req.body as any).storyReply?.mediaUrl === 'string' ? (req.body as any).storyReply.mediaUrl : undefined,
+          caption: typeof (req.body as any).storyReply?.caption === 'string' ? (req.body as any).storyReply.caption : undefined,
+          author: typeof (req.body as any).storyReply?.author === 'string' ? (req.body as any).storyReply.author : undefined,
+        }
+      : undefined;
 
     if (!senderId) {
       res.status(401).json({ error: 'Unauthorized' });
@@ -84,7 +92,7 @@ export const sendMessage = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    const message = await chatService.sendMessage(conversationId, senderId, content, type, Array.isArray(attachments) ? attachments : [], typeof replyToId === 'string' ? replyToId : undefined);
+    const message = await chatService.sendMessage(conversationId, senderId, content, type, Array.isArray(attachments) ? attachments : [], typeof replyToId === 'string' ? replyToId : undefined, storyReply);
     await broadcastMessageEvent(conversationId, 'message:new', message);
     // One unread "New Message" notification per recipient → Notification badge.
     await chatService.dispatchRecipientNotifications(message);

@@ -314,7 +314,7 @@ export default function AdminPage() {
               <input
                 type="text"
                 placeholder="Search users..."
-                className="w-full rounded-xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-white placeholder-gray-500 outline-none focus:border-[#d6a83f]/30 transition-all"
+                className="w-full rounded-xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-white placeholder-gray-500 outline-none transition-all"
               />
             </div>
             <button className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#d6a83f] to-[#c8c8cc] text-[10px] font-bold text-white">

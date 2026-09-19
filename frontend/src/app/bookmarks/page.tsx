@@ -120,7 +120,7 @@ export default function BookmarksPage() {
 
       <div className="relative">
         <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
-        <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search saved posts or creators" className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-3 text-sm text-white outline-none focus:border-[#d6a83f]/40" />
+        <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search saved posts or creators" className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-3 text-sm text-white outline-none" />
       </div>
 
       {/* Bookmarks Grid */}

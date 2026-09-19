@@ -121,6 +121,50 @@ describe('ChatService security and persistence', () => {
     expect(db.message.create).not.toHaveBeenCalled();
   });
 
+  it('creates a Story reply message with the Story reference stored as a private DM', async () => {
+    (db.conversation.findUnique as jest.Mock).mockResolvedValue({
+      id: 'conversation', type: 'DIRECT', participants: [{ userId: 'sender', role: 'MEMBER' }],
+    });
+    (db.message.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: 'story-reply', ...data }));
+    (db.conversation.update as jest.Mock).mockResolvedValue({});
+
+    await service.sendMessage('conversation', 'sender', 'Nice story!', 'TEXT', [], undefined, {
+      storyId: 'story-abc',
+      mediaUrl: 'https://cdn/story.jpg',
+      caption: 'My trip to the coast',
+      author: 'Alex (@alex)',
+    });
+
+    expect(db.message.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        content: 'Nice story!',
+        type: 'STORY_REPLY',
+        storyReplyStoryId: 'story-abc',
+        storyReplyMediaUrl: 'https://cdn/story.jpg',
+        storyReplyCaption: 'My trip to the coast',
+        storyReplyAuthor: 'Alex (@alex)',
+      }),
+    }));
+  });
+
+  it('never publishes a story reply as a public StoryComment', async () => {
+    (db.conversation.findUnique as jest.Mock).mockResolvedValue({
+      id: 'conversation', type: 'DIRECT', participants: [{ userId: 'sender', role: 'MEMBER' }],
+    });
+    (db.message.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: 'story-reply', ...data }));
+    (db.conversation.update as jest.Mock).mockResolvedValue({});
+
+    await service.sendMessage('conversation', 'sender', 'Nice story!', 'TEXT', [], undefined, { storyId: 'story-abc', caption: 'My trip', author: 'Alex' });
+
+    // A story reply touches ONLY the messaging layer — one Message row and the
+    // conversation touch. No StoryComment / feed publish path is ever reached.
+    expect(db.message.create).toHaveBeenCalledTimes(1);
+    expect(db.conversation.update).toHaveBeenCalledTimes(1);
+    const created = (db.message.create as jest.Mock).mock.calls[0][0] as any;
+    expect(created.data.type).toBe('STORY_REPLY');
+    expect(created.data.storyReplyStoryId).toBe('story-abc');
+  });
+
   it('does not create duplicate read receipts', async () => {
     (db.conversation.findUnique as jest.Mock).mockResolvedValue({ id: 'conversation', participants: [{ userId: 'reader' }] });
     (db.message.findMany as jest.Mock).mockResolvedValue([{ id: 'one' }, { id: 'two' }]);
