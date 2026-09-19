@@ -81,7 +81,7 @@ class RecommendationService {
         select: {
           id: true,
           country: true,
-          interests: true,
+          userInterests: { select: { interestValue: true }, take: 100 },
           followers: { take: 100, select: { followingId: true } },
           following: { take: 100, select: { followerId: true } },
           watchHistory: {
@@ -103,7 +103,7 @@ class RecommendationService {
         userId,
         followingIds: user.following.map(f => f.followerId),
         country: user.country,
-        interests: user.interests,
+        interests: user.userInterests?.map(i => i.interestValue) || [],
         types,
         limit: limit * 3, // Request more for diversity mixing
       });

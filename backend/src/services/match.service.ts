@@ -6,14 +6,21 @@ export class MatchService {
    */
   async discover(userId: string, limit: number = 10) {
     try {
-      // Get the current user's profile to find their interests
+      // Get the current user's profile to find their interests.
+      // The User model has no scalar `interests` field: interests live on the
+      // `userInterests` (UserInterest) relation, keyed by interestValue,
+      // populated by the AI recommendation service.
       const currentUser = await prisma.user.findUnique({
         where: { id: userId },
         select: {
           id: true,
-          interests: true,
           city: true,
           country: true,
+          userInterests: {
+            select: { interestValue: true },
+            orderBy: { weight: 'desc' },
+            take: 100,
+          },
         },
       });
 
@@ -22,16 +29,16 @@ export class MatchService {
       }
 
       // Build discovery query - find users with similar interests or location
-      const interests = currentUser.interests || [];
+      const interests = [...new Set(currentUser.userInterests.map(i => i.interestValue).filter(Boolean))];
       const whereClause: any = {
         id: { not: userId },
-        isActive: true,
+        status: 'ACTIVE',
       };
 
       // If user has interests, find users with matching interests
       if (interests.length > 0) {
-        whereClause.interests = {
-          hasSome: interests,
+        whereClause.userInterests = {
+          some: { interestValue: { in: interests } },
         };
       }
 
@@ -39,7 +46,7 @@ export class MatchService {
         where: whereClause,
         take: limit,
         orderBy: [
-          { lastActive: 'desc' },
+          { userPresence: { lastActive: 'desc' } },
           { createdAt: 'desc' },
         ],
         select: {
@@ -52,10 +59,16 @@ export class MatchService {
           city: true,
           country: true,
           age: true,
-          interests: true,
           photos: true,
-          lastActive: true,
           createdAt: true,
+          userInterests: {
+            select: { interestValue: true },
+            orderBy: { weight: 'desc' },
+            take: 20,
+          },
+          userPresence: {
+            select: { lastActive: true },
+          },
           _count: {
             select: {
               followers: true,
@@ -70,11 +83,18 @@ export class MatchService {
         },
       });
 
-      return profiles.map(({ followers, ...profile }) => ({
-        ...profile,
-        following: followers.length > 0,
-        isFollowing: followers.length > 0,
-      }));
+      return profiles.map(({ followers, ...profile }) => {
+        const interestList = (profile.userInterests ?? []).map(interest => interest.interestValue);
+        return {
+          ...profile,
+          interests: interestList,
+          lastActive: profile.userPresence?.lastActive ?? profile.createdAt,
+          userInterests: undefined,
+          userPresence: undefined,
+          following: followers.length > 0,
+          isFollowing: followers.length > 0,
+        };
+      });
     } catch (error) {
       console.error('[MatchService] Error discovering profiles:', error);
       return [];
