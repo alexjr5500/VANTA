@@ -1,13 +1,13 @@
-﻿'use client';
+'use client';
 
 /**
- * VANTA GO LIVE â€” full-screen capture + live room
+ * VANTA GO LIVE — full-screen capture + live room
  * ----------------------------------------------
  * The Go-Live and LIVE-room experience rebuilt to match the product references:
  *
- *   IDLE â†’ REQUESTING_PERMISSIONS â†’ CAMERA_PREVIEW â†’ CONFIGURING_LIVE
- *        â†’ CONNECTING_TO_LIVE (start stream â†’ host token â†’ LiveKit publish)
- *        â†’ LIVE â†’ ENDING_LIVE â†’ LIVE_ENDED
+ *   IDLE → REQUESTING_PERMISSIONS → CAMERA_PREVIEW → CONFIGURING_LIVE
+ *        → CONNECTING_TO_LIVE (start stream → host token → LiveKit publish)
+ *        → LIVE → ENDING_LIVE → LIVE_ENDED
  *
  * The real device camera fills the entire viewport under every control layer.
  * The stream is only marked LIVE after the backend created the session, the
@@ -50,8 +50,15 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trophy,
+  LayoutGrid,
+  Shield,
+  Ban,
+  Trash2,
+  Timer,
+  UserPlus,
   Users,
   Video,
+  VideoOff,
   Wand2,
   X,
   Zap,
@@ -63,12 +70,14 @@ import { API_BASE_URL, authHeaders } from '@/lib/api';
 import { createSocket, type Socket } from '@/lib/socketClient';
 import { useLiveKit, getLiveKitToken } from '@/lib/hooks/useLiveKit';
 import { useLiveCamera, type LiveCameraError } from '@/lib/hooks/useLiveCamera';
+import { useContentCreation } from '@/components/create/ContentCreationContext';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import { useToast } from '@/components/ui/Toast';
 import { cn, formatNumber } from '@/lib/utils';
 import GiftAnimationOverlay from '@/components/gifts/GiftAnimationOverlay';
 import { useGiftAnimationQueue } from '@/components/gifts/useGiftAnimationQueue';
+import type { StageParticipant } from '@/components/live/LiveParticipantGrid';
 import { reconcileLiveChat } from '@/lib/liveChatDedupe';
 
 type Phase =
@@ -89,10 +98,9 @@ type SheetId =
   | 'settings'
   | 'effects'
   | 'beauty'
-  | 'service'
-  | 'rewards'
+  | 'category'
+  | 'guests'
   | 'goal'
-  | 'fanclub'
   | 'more'
   | 'end';
 
@@ -127,6 +135,34 @@ interface LiveSummary {
   estimatedEarnings: number;
 }
 
+interface GuestUser {
+  id: string;
+  username: string;
+  fullName?: string | null;
+  avatar?: string | null;
+  verified?: boolean;
+}
+
+interface GuestStage {
+  guests: GuestUser[];
+  pending: GuestUser[];
+  guestCount: number;
+  guestLimit: number;
+  allowGuests: boolean;
+}
+
+const FALLBACK_CATEGORIES = [
+  'Just Chatting', 'Music', 'Gaming', 'Education', 'Technology',
+  'Lifestyle', 'Sports', 'Art', 'Cooking', 'Other',
+];
+
+const QUALITY_PRESETS: { id: 'auto' | '480p' | '720p' | '1080p'; label: string }[] = [
+  { id: 'auto', label: 'Auto (highest)' },
+  { id: '1080p', label: '1080p' },
+  { id: '720p', label: '720p' },
+  { id: '480p', label: '480p' },
+];
+
 const MODES: { id: LiveMode; label: string; sub: string; icon: typeof Mic }[] = [
   { id: 'voice', label: 'Voice chat', sub: 'Live audio room', icon: Mic },
   { id: 'camera', label: 'Device camera', sub: 'Camera + mic', icon: Camera },
@@ -144,9 +180,9 @@ const FILTERS: { id: string; label: string; css: string }[] = [
   { id: 'mono', label: 'B&W', css: 'grayscale(1) contrast(1.12)' },
 ];
 
-const REACT_EMOJIS = ['â¤ï¸', 'ðŸ”¥', 'ðŸ‘', 'ðŸ˜‚', 'ðŸ˜', 'ðŸŽ‰'];
+const REACT_EMOJIS = ['❤️', '🔥', '👏', '😂', '😍', '🎉'];
 
-/** Minimal live_event â†’ system chat line (keeps chat free of junk). */
+/** Minimal live_event → system chat line (keeps chat free of junk). */
 function liveEventLine(d: any): string | null {
   const u = d?.user;
   const name = u?.username ? `@${u.username}` : 'Someone';
@@ -156,7 +192,7 @@ function liveEventLine(d: any): string | null {
     case 'liked': return '';
     case 'shared': return `${name} shared your live`;
     case 'followed': return `${name} started following you`;
-    case 'gift': return `${name} sent ${d.giftName || 'a gift'}${d.quantity && d.quantity > 1 ? ` Ã— ${d.quantity}` : ''}`;
+    case 'gift': return `${name} sent ${d.giftName || 'a gift'}${d.quantity && d.quantity > 1 ? ` × ${d.quantity}` : ''}`;
     default: return '';
   }
 }
@@ -268,6 +304,17 @@ export default function GoLivePage() {
   const [endedSummary, setEndedSummary] = useState<LiveSummary | null>(null);
   const [connectError, setConnectError] = useState<LiveCameraError | null>(null);
   const [busy, setBusy] = useState(false);
+  // Stream setup state
+  const { liveDraft, clearLiveDraft } = useContentCreation();
+  const [categories, setCategories] = useState<string[]>(FALLBACK_CATEGORIES);
+  const [category, setCategory] = useState<string>('Just Chatting');
+  const [allowGifts, setAllowGifts] = useState(true);
+  const [allowGuests, setAllowGuests] = useState(true);
+  const [thumbnail, setThumbnail] = useState<string | null>(null);
+  const [slowMode, setSlowMode] = useState(false);
+  // Guest stage (host side)
+  const [guestStage, setGuestStage] = useState<GuestStage>({ guests: [], pending: [], guestCount: 0, guestLimit: 4, allowGuests: true });
+  const [guestRequest, setGuestRequest] = useState<GuestUser | null>(null);
 
   const phaseRef = useRef<Phase>('IDLE');
   const streamIdRef = useRef<string | null>(null);
@@ -309,6 +356,33 @@ export default function GoLivePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Prefill the setup from the "+" Go Live modal draft (title/category/thumbnail)
+  // so nothing the user chose before arriving here is lost.
+  useEffect(() => {
+    if (!liveDraft) return;
+    if (liveDraft.title) setTitle(liveDraft.title);
+    if (liveDraft.category) setCategory(liveDraft.category);
+    if (liveDraft.thumbnailUrl) setThumbnail(liveDraft.thumbnailUrl);
+    clearLiveDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveDraft]);
+
+  // Load the real category list from the backend (falls back to a static list
+  // only when the service is unreachable).
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        if (!token) return;
+        const data = await apiGet<any>('/api/live/categories', token);
+        const list = Array.isArray(data) ? data : data?.categories || data?.data || [];
+        const names = list.map((c: any) => (typeof c === 'string' ? c : c?.name)).filter(Boolean);
+        if (mounted && names.length) setCategories(names);
+      } catch { /* keep fallback list */ }
+    })();
+    return () => { mounted = false; };
+  }, [token]);
+
   // Tear down everything on unmount / page-hide (best effort; the backend
   // heartbeat timeout always catches an abandoned session even if this misses).
   useEffect(() => {
@@ -332,7 +406,7 @@ export default function GoLivePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 // ---------------------------------------------------------------------------
-  // Reactions (floating hearts) â€” ephemeral interaction, never a chat line.
+  // Reactions (floating hearts) — ephemeral interaction, never a chat line.
   // ---------------------------------------------------------------------------
   const burstReaction = useCallback((emoji: string) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -353,7 +427,7 @@ export default function GoLivePage() {
     const sid = streamIdRef.current;
     if (!sid) return;
     const url = `${window.location.origin}/live/${sid}`;
-    const body = `Join my VANTA live â€” ${title.trim() || 'Live now'}!`;
+    const body = `Join my VANTA live — ${title.trim() || 'Live now'}!`;
     if (navigator.share) {
       try {
         await navigator.share({ title: 'VANTA Live', text: body, url });
@@ -404,7 +478,7 @@ export default function GoLivePage() {
 
       const { stream: created } = await apiPost<{ stream: StreamDetail }>(
         '/api/live/start',
-        { title: title.trim(), category: 'Just Chatting', description: `${mode} live`, allowGifts: true, audience: 'everyone' },
+        { title: title.trim(), category: category || 'Just Chatting', description: `${mode} live`, allowGifts, allowGuests },
         token,
       );
       if (!created?.id || !created?.liveKitRoom) {
@@ -418,7 +492,7 @@ export default function GoLivePage() {
       // LiveKit acquires the same hardware the preview used and stops the
       // preview tracks, so the on-screen source becomes the published room feed.
       // `connect` resolves only after the room connected AND (if requested) the
-      // camera/mic channels were verified as published — a failed connection or
+      // camera/mic channels were verified as published � a failed connection or
       // a missing track throws inside the hook.
       const previewDeviceId = videoTrack?.getSettings?.().deviceId;
       await lk.connect(hostToken, created.liveKitRoom, {
@@ -545,6 +619,36 @@ export default function GoLivePage() {
     sock.on('chat_paused', (d: any) => {
       if (alive && d?.streamId === rid) setChatPaused(Boolean(d?.paused));
     });
+    sock.on('slow_mode', (d: any) => {
+      if (alive && d?.streamId === rid) setSlowMode(Boolean(d?.enabled));
+    });
+
+    // ---- Guest stage (host side): requests → premium modal; roster → sheet ----
+    sock.on('guest_request', (d: any) => {
+      if (!alive || d?.streamId !== rid || !d?.user) return;
+      setGuestRequest({ id: d.user.id, username: d.user.username, fullName: d.user.fullName, avatar: d.user.avatar, verified: !!d.user.verified });
+      toast.info('Guest request', `@${d.user.username} wants to join your live`);
+    });
+    sock.on('guest_state', (d: any) => {
+      if (!alive || d?.streamId !== rid) return;
+      const list = (u: any[]) => (Array.isArray(u) ? u.map((g: any) => ({ id: g.id, username: g.username, fullName: g.fullName, avatar: g.avatar, verified: !!g.verified })) : []);
+      setGuestStage((prev) => ({
+        guests: list(d.guests),
+        pending: list(d.pending),
+        guestCount: Number(d.guestCount) ?? list(d.guests).length,
+        guestLimit: Number(d.guestLimit) || prev.guestLimit || 4,
+        allowGuests: d.allowGuests !== false,
+      }));
+    });
+    sock.on('guest_pending', (d: any) => {
+      if (!alive || d?.streamId !== rid) return;
+      const list = (u: any[]) => (Array.isArray(u) ? u.map((g: any) => ({ id: g.id, username: g.username, fullName: g.fullName, avatar: g.avatar, verified: !!g.verified })) : []);
+      setGuestStage((prev) => ({ ...prev, pending: list(d.pending) }));
+    });
+    sock.on('guest_error', (d: any) => {
+      if (!alive) return;
+      toast.error('Guest', d?.error || 'Could not manage the guest stage.');
+    });
     sock.on('live_event', (d: any) => {
       if (!alive || d?.streamId !== rid) return;
       const line = liveEventLine(d);
@@ -572,7 +676,7 @@ export default function GoLivePage() {
       if (alive && d?.streamId === rid) endLiveRef.current();
     });
 
-    // Secondary gift namespace â€” the dedicated /gifts socket also surfaces
+    // Secondary gift namespace — the dedicated /gifts socket also surfaces
     // `gift:received`. The queue de-dupes by transaction id, so both channels
     // can coexist without double-playing an animation.
     try {
@@ -605,7 +709,7 @@ export default function GoLivePage() {
   }, [phase, streamData?.id, token, burstReaction, enqueueGiftAnimation]);
 
 // ---------------------------------------------------------------------------
-  // Host heartbeat (10s cadence) â€” the backend enforces a 30s timeout.
+  // Host heartbeat (10s cadence) — the backend enforces a 30s timeout.
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (phase !== 'LIVE' || !streamData?.id || !token) return;
@@ -625,7 +729,7 @@ export default function GoLivePage() {
           endLiveRef.current();
           return;
         }
-        // Transient blip â€” the server allows up to 30s to recover.
+        // Transient blip — the server allows up to 30s to recover.
         lastAck = lastAck;
       }
     };
@@ -646,6 +750,73 @@ export default function GoLivePage() {
     hostSocketRef.current.emit('send_comment', { streamId: sid, comment: text });
     setChatInput('');
   }, [chatInput, chatPaused]);
+
+  // ---- Host guest-stage actions (backed by the real guest socket flow) ----
+  const respondGuest = useCallback((viewerId: string, accept: boolean) => {
+    const sid = streamIdRef.current;
+    if (!sid || !hostSocketRef.current) return;
+    hostSocketRef.current.emit('guest_respond', { streamId: sid, viewerId, accept });
+    setGuestRequest(null);
+    if (accept) {
+      setGuestStage((prev) => ({
+        ...prev,
+        pending: prev.pending.filter((g) => g.id !== viewerId),
+        guests: prev.guests.some((g) => g.id === viewerId) ? prev.guests : [...prev.guests, { id: viewerId, username: 'You', avatar: null }],
+      }));
+      toast.success('Guest added', 'They can now join your live with their camera & mic.');
+    }
+    // The authoritative roster arrives via `guest_state` right after.
+  }, [toast]);
+
+  const removeGuest = useCallback((guestId: string) => {
+    const sid = streamIdRef.current;
+    if (!sid || !hostSocketRef.current) return;
+    hostSocketRef.current.emit('guest_remove', { streamId: sid, guestId });
+    setGuestStage((prev) => ({ ...prev, guests: prev.guests.filter((g) => g.id !== guestId) }));
+  }, []);
+
+  // ---- Host chat moderation (real socket controls) ----
+  const hostToggleChatPause = useCallback(() => {
+    const sid = streamIdRef.current;
+    if (!sid || !hostSocketRef.current) return;
+    hostSocketRef.current.emit('toggle_chat_pause', { streamId: sid });
+  }, []);
+
+  const hostSetSlowMode = useCallback((interval: number) => {
+    const sid = streamIdRef.current;
+    if (!sid || !hostSocketRef.current) return;
+    hostSocketRef.current.emit('toggle_slow_mode', { streamId: sid, interval });
+  }, []);
+
+  const hostClearChat = useCallback(() => {
+    const sid = streamIdRef.current;
+    if (!sid || !hostSocketRef.current) return;
+    hostSocketRef.current.emit('clear_chat', { streamId: sid });
+    setChatLines([]);
+    toast.success('Chat cleared', 'The conversation has been reset.');
+  }, [toast]);
+
+  // Persist gifts/guests permission changes when already live (real PATCH).
+  const applyStreamSettings = useCallback(async (patch: { allowGifts?: boolean; allowGuests?: boolean }) => {
+    const sid = streamIdRef.current;
+    if (!sid || !token) return;
+    try {
+      await apiPut<any>(`/api/live/${sid}`, patch, token);
+    } catch {
+      toast.error('Settings', 'Could not save live settings. Try again.');
+    }
+  }, [token, toast]);
+
+  const updateAllowGifts = useCallback((value: boolean) => {
+    setAllowGifts(value);
+    if (streamIdRef.current) void applyStreamSettings({ allowGifts: value });
+  }, [applyStreamSettings]);
+
+  const updateAllowGuests = useCallback((value: boolean) => {
+    setAllowGuests(value);
+    setGuestStage((prev) => ({ ...prev, allowGuests: value }));
+    if (streamIdRef.current) void applyStreamSettings({ allowGuests: value });
+  }, [applyStreamSettings]);
 
   // Reset per-live stats when a new session goes LIVE.
   useEffect(() => {
@@ -685,6 +856,52 @@ export default function GoLivePage() {
       lk.room?.off('trackSubscribed', onSub as any);
     };
   }, [phase, lk.localParticipant, lk.room]);
+
+  // ---------------------------------------------------------------------------
+  // Guest stage video — surface approved guests' published camera/mic into
+  // compact tiles alongside the host's full-bleed feed (real LiveKit tracks).
+  // ---------------------------------------------------------------------------
+  const [, setGuestTick] = useState(0);
+  useEffect(() => {
+    if (phase !== 'LIVE' || !lk.room) return;
+    const room = lk.room;
+    const bump = () => setGuestTick((t) => t + 1);
+    room.on('trackSubscribed', bump as any);
+    room.on('trackUnsubscribed', bump as any);
+    room.on('participantConnected', bump);
+    room.on('participantDisconnected', bump);
+    return () => {
+      room.off('trackSubscribed', bump as any);
+      room.off('trackUnsubscribed', bump as any);
+      room.off('participantConnected', bump);
+      room.off('participantDisconnected', bump);
+    };
+  }, [phase, lk.room]);
+
+  const stageGuests = useMemo(() => {
+    if (!lk.room || phase !== 'LIVE') return [] as StageParticipant[];
+    const room = lk.room;
+    const approved = new Set(guestStage.guests.map((g) => g.id));
+    const byId = new Map(guestStage.guests.map((g) => [g.id, g]));
+    const tiles: StageParticipant[] = [];
+    room.remoteParticipants.forEach((p: any) => {
+      if (!approved.has(p.identity)) return;
+      const vids: MediaStreamTrack[] = [];
+      p.videoTrackPublications?.forEach((pub: any) => { if (pub?.track?.mediaStreamTrack) vids.push(pub.track.mediaStreamTrack); });
+      const hasAudio = p.audioTrackPublications?.size > 0;
+      const guest = byId.get(p.identity);
+      tiles.push({
+        id: p.identity,
+        username: guest?.username || p.identity,
+        avatar: guest?.avatar || null,
+        verified: guest?.verified,
+        stream: vids.length ? new MediaStream(vids) : null,
+        cameraOn: vids.length > 0,
+        micOn: hasAudio,
+      });
+    });
+    return tiles.slice(0, 4);
+  }, [lk.room, phase, guestStage.guests, lk.participants]);
 
   // ---------------------------------------------------------------------------
   // Render helpers
@@ -736,7 +953,7 @@ export default function GoLivePage() {
       {isPreLive && (
         <>
         <div className="absolute inset-0 flex flex-col" aria-label="Go Live">
-          {/* Top controls */}
+          {/* Top controls — back, VANTA branding, settings */}
           <div className="flex shrink-0 items-center justify-between px-3 pt-[calc(env(safe-area-inset-top)+8px)]">
             <button
               type="button"
@@ -746,26 +963,26 @@ export default function GoLivePage() {
             >
               <X size={19} />
             </button>
+            <div className="flex min-w-0 flex-col items-center">
+              <span className="inline-flex items-center gap-1.5 text-sm font-extrabold tracking-[0.08em] text-[#F2C75C] drop-shadow">
+                <span className="grid h-6 w-6 place-items-center rounded-md bg-gradient-to-br from-[#D6A83F] to-[#F2C75C]">
+                  <Radio size={13} fill="currentColor" className="text-black" />
+                </span>
+                VANTA
+              </span>
+              <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60">Go Live</span>
+            </div>
             <button
               type="button"
-              onClick={() => setSheet('rewards')}
-              aria-label="LIVE Rewards"
-              className="inline-flex h-10 items-center gap-1.5 rounded-full border border-[#D6A83F]/50 bg-black/40 px-4 text-xs font-bold text-[#F2C75C] backdrop-blur-md transition active:scale-95 hover:bg-black/60"
+              onClick={() => setSheet('settings')}
+              aria-label="Stream settings"
+              className="grid h-10 w-10 place-items-center rounded-full border border-white/15 bg-black/40 text-white/90 backdrop-blur-md transition active:scale-95 hover:bg-black/60"
             >
-              <Coins size={16} />
-              LIVE Rewards
+              <Settings size={18} />
             </button>
-            <div className="flex items-center gap-2">
-              <RoundChip onPress={() => setSheet('fanclub')} label="Fan club" active>
-                <Crown size={18} />
-              </RoundChip>
-              <RoundChip onPress={() => setSheet('more')} label="More">
-                <EllipsisH />
-              </RoundChip>
-            </div>
           </div>
 
-          {/* Camera control row â€” floats over the preview above the config panel */}
+          {/* Camera control row — floats over the preview above the config panel */}
           <div className="flex shrink-0 items-center justify-center gap-2.5 pt-4">
             <CameraControl onPress={() => void cam.flipCamera()} label="Flip camera" active={!cam.isFrontCamera}>
               <FlipIc />
@@ -779,16 +996,13 @@ export default function GoLivePage() {
             <CameraControl onPress={() => setSheet('settings')} label="Settings" active={false}>
               <Settings size={18} />
             </CameraControl>
-            <CameraControl onPress={() => setSheet('service')} label="Service+" active={false}>
-              <Plus size={18} />
-            </CameraControl>
           </div>
 
           {/* Spacer */}
           <div className="min-h-0 flex-1" />
         </div>
 
-        {/* Config panel â€” floating translucent panel over the camera */}
+        {/* Config panel — floating translucent panel over the camera */}
         <div className="absolute inset-x-3 bottom-[58px] rounded-3xl border border-white/10 bg-black/55 px-4 pt-3 pb-2 shadow-2xl backdrop-blur-2xl">
           <div className="flex items-center gap-2.5">
             <div className="relative">
@@ -799,7 +1013,7 @@ export default function GoLivePage() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-white">{displayName}</p>
-              <p className="truncate text-[10px] text-white/50">@{user?.username || displayName} Â· Device camera</p>
+              <p className="truncate text-[10px] text-white/50">@{user?.username || displayName} · Device camera</p>
             </div>
             <button
               type="button"
@@ -811,14 +1025,66 @@ export default function GoLivePage() {
             </button>
           </div>
 
+          {/* Thumbnail from the "+" Go Live draft (when one was chosen) */}
+          {thumbnail && (
+            <div className="mt-3 flex items-center gap-2.5 rounded-2xl border border-white/10 bg-white/[0.045] px-3 py-2">
+              <span className="grid h-10 w-14 shrink-0 place-items-center overflow-hidden rounded-lg border border-white/10 bg-[#18181b]">
+                <img src={thumbnail} alt="Stream thumbnail" className="h-full w-full object-cover" />
+              </span>
+              <span className="min-w-0 flex-1 text-[11px] leading-tight text-white/55">
+                <span className="block font-semibold text-white/85">Stream thumbnail</span>
+                Preview shown to viewers browsing Live
+              </span>
+            </div>
+          )}
+
           {/* Title input */}
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value.slice(0, MAX_TITLE))}
-            placeholder="Add a title"
+            placeholder="What are you going live about?"
             aria-label="Livestream title"
             className="mt-3 w-full rounded-2xl border border-white/12 bg-white/[0.07] px-4 py-2.5 text-sm font-medium text-white outline-none placeholder:text-white/45 focus:border-[#D6A83F]/60"
           />
+
+          {/* Category */}
+          <button
+            type="button"
+            onClick={() => setSheet('category')}
+            aria-label="Stream category"
+            className="mt-2 flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/[0.045] px-3.5 py-2.5 transition active:scale-[0.99] hover:bg-white/[0.08]"
+          >
+            <span className="flex items-center gap-2 text-xs font-semibold text-white/80">
+              <LayoutGrid size={15} className="text-[#F2C75C]" />
+              Category
+            </span>
+            <span className="flex items-center gap-1.5 text-xs font-bold text-white">
+              {category || 'Select'}
+              <ChevronRight size={15} className="text-white/40" />
+            </span>
+          </button>
+
+          {/* Guests permission */}
+          <button
+            type="button"
+            onClick={() => updateAllowGuests(!allowGuests)}
+            aria-label="Toggle allowing guests"
+            aria-pressed={allowGuests}
+            className="mt-2 flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/[0.045] px-3.5 py-2.5 transition active:scale-[0.99] hover:bg-white/[0.08]"
+          >
+            <span className="flex items-center gap-2 text-xs font-semibold text-white/80">
+              <Users size={15} className="text-[#F2C75C]" />
+              Guests
+            </span>
+            <span className="flex items-center gap-2">
+              <span className={cn('text-xs font-bold', allowGuests ? 'text-[#F2C75C]' : 'text-white/40')}>
+                {allowGuests ? 'Allow guests' : 'Guests off'}
+              </span>
+              <span className={cn('relative h-6 w-10 rounded-full border transition', allowGuests ? 'border-[#D6A83F]/60 bg-[#D6A83F]/30' : 'border-white/15 bg-white/10')}>
+                <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all', allowGuests ? 'left-[18px] bg-[#F2C75C]' : 'left-0.5 bg-white/50')} />
+              </span>
+            </span>
+          </button>
 
           {/* LIVE goal */}
           <button
@@ -890,7 +1156,7 @@ export default function GoLivePage() {
         </>
       )}
 {/* *********************************************************************
-          LIVE ROOM SURFACE â€” the video is the primary interface.
+          LIVE ROOM SURFACE — the video is the primary interface.
           ********************************************************************* */}
       {isLiveRoom && (
         <div className="absolute inset-0 flex flex-col" aria-label="Live room">
@@ -907,21 +1173,22 @@ export default function GoLivePage() {
                 </span>
               </div>
               <div className="mt-0.5 flex items-center gap-1.5">
-                <EngineIcon badge={Math.max(60, 1000 - liveGiftCount)} />
-                <span className="text-[10px] font-semibold text-white/80">{formatNumber(Math.max(0, 1000 - liveGiftCount))} fans</span>
-                <span className="text-white/35">Â·</span>
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/80">
+                  <Eye size={10} className="text-[#F2C75C]" /> {formatNumber(viewers)} watching
+                </span>
+                <span className="text-white/35">·</span>
                 <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-white/70">
                   <Clock size={10} /> {clock}
                 </span>
+                {liveGiftCount > 0 && (
+                  <>
+                    <span className="text-white/35">·</span>
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-[#F2C75C]">
+                      <Gift size={10} /> {formatNumber(liveGiftCount)}
+                    </span>
+                  </>
+                )}
               </div>
-              <button
-                type="button"
-                onClick={() => setSheet('fanclub')}
-                aria-label="Your Fan Club"
-                className="mt-1 inline-flex h-6 items-center gap-1 rounded-full bg-gradient-to-r from-[#D6A83F] to-[#F2C75C] px-2.5 text-[10px] font-extrabold text-black shadow transition active:scale-95"
-              >
-                <Crown size={11} fill="currentColor" /> Your Fan Club
-              </button>
             </div>
           </div>
 
@@ -931,20 +1198,24 @@ export default function GoLivePage() {
               <Eye size={13} className="text-[#F2C75C]" /> {formatNumber(viewers)}
             </span>
             <span className="flex items-center gap-1.5">
-              <span
-                className={cn('grid h-8 w-8 place-items-center rounded-full border border-white/15 backdrop-blur-md',
+              <button
+                type="button"
+                onClick={() => void lk.toggleMicrophone()}
+                className={cn('grid h-8 w-8 place-items-center rounded-full border border-white/15 backdrop-blur-md transition active:scale-95',
                   lk.isMicrophoneOn ? 'bg-black/45 text-white' : 'bg-rose-500/30 text-rose-200')}
-                aria-label={lk.isMicrophoneOn ? 'Microphone on' : 'Microphone muted'}
+                aria-label={lk.isMicrophoneOn ? 'Mute microphone' : 'Unmute microphone'}
               >
                 {lk.isMicrophoneOn ? <Mic size={14} /> : <MicOff size={14} />}
-              </span>
-              <span
-                className={cn('grid h-8 w-8 place-items-center rounded-full border border-white/15 backdrop-blur-md',
+              </button>
+              <button
+                type="button"
+                onClick={() => void lk.toggleCamera()}
+                className={cn('grid h-8 w-8 place-items-center rounded-full border border-white/15 backdrop-blur-md transition active:scale-95',
                   lk.isCameraOn ? 'bg-black/45 text-white' : 'bg-rose-500/30 text-rose-200')}
-                aria-label={lk.isCameraOn ? 'Camera on' : 'Camera off'}
+                aria-label={lk.isCameraOn ? 'Turn camera off' : 'Turn camera on'}
               >
                 {lk.isCameraOn ? <Camera size={14} /> : <CameraOff size={14} />}
-              </span>
+              </button>
               <button
                 type="button"
                 onClick={endLiveRef.current}
@@ -956,10 +1227,36 @@ export default function GoLivePage() {
             </span>
             {lkReconnecting && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/20 px-2.5 py-1 text-[10px] font-bold text-amber-300 backdrop-blur-md">
-                <Loader2 size={11} className="animate-spin" /> Reconnectingâ€¦
+                <Loader2 size={11} className="animate-spin" /> Reconnecting…
               </span>
             )}
           </div>
+
+          {/* Guest stage tiles — real LiveKit camera/mic video from approved guests */}
+          {stageGuests.length > 0 && (
+            <div className="absolute left-3 top-[calc(env(safe-area-inset-top)+70px)] z-10 flex flex-col gap-2">
+              {stageGuests.map((g) => (
+                <div key={g.id} className="w-32 overflow-hidden rounded-xl border border-white/15 bg-[#0D0D0F] shadow-xl backdrop-blur-sm">
+                  <div className="relative aspect-video w-full">
+                    {g.stream && g.cameraOn ? (
+                      <video ref={(el) => { if (el) { el.srcObject = g.stream; void el.play().catch(() => undefined); } }} playsInline autoPlay muted className="h-full w-full object-cover" aria-label={`${g.username} camera`} />
+                    ) : (
+                      <div className="absolute inset-0 grid place-items-center bg-[#0D0D0F]">
+                        <Avatar src={g.avatar} alt={g.username} size="sm" />
+                      </div>
+                    )}
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-1.5 pb-1 pt-4">
+                      <span className="flex items-center gap-1 text-[10px] font-semibold text-white">
+                        <span className="max-w-[64px] truncate">@{g.username}</span>
+                        {!g.cameraOn && <VideoOff size={9} className="text-rose-300" />}
+                        {!g.micOn && <MicOff size={9} className="text-white/60" />}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Bottom-left: host chat layer (over the video) */}
           <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10">
@@ -983,7 +1280,7 @@ export default function GoLivePage() {
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') sendChat(); }}
-                  placeholder={chatPaused ? 'Chat is paused' : 'Say somethingâ€¦'}
+                  placeholder={chatPaused ? 'Chat is paused' : 'Say something…'}
                   disabled={chatPaused}
                   autoFocus
                   aria-label="Chat message"
@@ -1007,7 +1304,7 @@ export default function GoLivePage() {
                 className="pointer-events-auto inline-flex h-9 items-center gap-2 rounded-full border border-white/15 bg-black/45 px-3.5 text-xs font-medium text-white/85 backdrop-blur-md transition active:scale-95 hover:bg-black/60"
               >
                 <MessageSquare size={15} />
-                {chatPaused ? 'Chat paused' : 'Chat with your viewersâ€¦'}
+                {chatPaused ? 'Chat paused' : 'Chat with your viewers…'}
               </button>
             )}
           </div>
@@ -1016,6 +1313,9 @@ export default function GoLivePage() {
           <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+16px)] right-3 z-10 flex flex-col items-center gap-3">
             <LiveAction onPress={() => setChatOpen((v) => !v)} label="Chat" badge={chatLines.length}>
               <MessageCircle size={20} />
+            </LiveAction>
+            <LiveAction onPress={() => setSheet('guests')} label="Guests" badge={guestStage.guestCount + guestStage.pending.length}>
+              <Users size={20} />
             </LiveAction>
             <LiveAction onPress={() => void shareLive()} label="Share" active>
               <Share2 size={20} />
@@ -1030,7 +1330,7 @@ export default function GoLivePage() {
         </div>
       )}
 {/* *********************************************************************
-          CONNECTING TO LIVE â€” spinner over the camera
+          CONNECTING TO LIVE — spinner over the camera
           ********************************************************************* */}
       {phase === 'CONNECTING_TO_LIVE' && (
         <div className="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -1041,7 +1341,7 @@ export default function GoLivePage() {
                 <Radio size={22} fill="currentColor" />
               </span>
             </span>
-            <p className="text-sm font-bold text-white">Connecting to liveâ€¦</p>
+            <p className="text-sm font-bold text-white">Connecting to live…</p>
             <p className="max-w-[220px] text-center text-[11px] leading-snug text-white/55">
               Starting the stream room and publishing your camera &amp; microphone.
             </p>
@@ -1051,20 +1351,20 @@ export default function GoLivePage() {
       )}
 
       {/* *********************************************************************
-          ENDING LIVE â€” brief transition, camera still visible
+          ENDING LIVE — brief transition, camera still visible
           ********************************************************************* */}
       {isEnding && (
         <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/30">
           <div className="flex flex-col items-center gap-2 rounded-3xl border border-white/10 bg-black/55 px-8 py-6">
             <Loader2 size={22} className="animate-spin text-[#F2C75C]" />
-            <p className="text-sm font-bold text-white">Ending liveâ€¦</p>
+            <p className="text-sm font-bold text-white">Ending live…</p>
             <p className="text-[11px] text-white/55">Thanks for streaming!</p>
           </div>
         </div>
       )}
 
       {/* *********************************************************************
-          LIVE ENDED â€” post-live summary over a dark screen
+          LIVE ENDED — post-live summary over a dark screen
           ********************************************************************* */}
       {isEnded && (
         <div className="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-black/80 px-6 backdrop-blur-md">
@@ -1190,6 +1490,56 @@ export default function GoLivePage() {
           </p>
         </div>
       )}
+
+      {/* Guest request — premium accept/decline modal (real socket flow) */}
+      <AnimatePresence>
+        {guestRequest && (
+          <div className="absolute inset-0 z-[90] flex items-center justify-center px-6" onClick={() => setGuestRequest(null)}>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.92, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 8 }}
+              transition={{ type: 'spring', damping: 26, stiffness: 340 }}
+              onClick={(e) => e.stopPropagation()}
+              className="relative w-full max-w-[320px] overflow-hidden rounded-3xl border border-white/10 bg-[#121216]/97 p-5 text-center shadow-2xl backdrop-blur-2xl"
+            >
+              <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-[#D6A83F]/15 to-transparent" />
+              <div className="relative flex flex-col items-center">
+                <div className="relative">
+                  <Avatar src={guestRequest.avatar} alt={guestRequest.username} size="xl" wrapperClassName="ring-2 ring-[#D6A83F]/60" />
+                  <span className="absolute -bottom-1 -right-1 grid h-6 w-6 place-items-center rounded-full border-2 border-[#121216] bg-[#D6A83F] text-black">
+                    <UserPlus size={12} strokeWidth={2.6} />
+                  </span>
+                </div>
+                <h3 className="mt-3 text-base font-extrabold text-white">Guest request</h3>
+                <p className="mt-1 text-sm text-white/60">
+                  <span className="font-bold text-[#F2C75C]">@{guestRequest.username}</span> wants to join your live
+                </p>
+                <p className="mt-2 text-[11px] text-white/40">They&apos;ll join with their camera &amp; microphone.</p>
+
+                <div className="mt-5 flex w-full gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => respondGuest(guestRequest.id, false)}
+                    className="flex-1 rounded-2xl border border-white/12 bg-white/[0.05] py-3 text-sm font-bold text-white/80 transition active:scale-[0.97] hover:bg-white/[0.1]"
+                  >
+                    Decline
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => respondGuest(guestRequest.id, true)}
+                    className="flex-1 rounded-2xl bg-gradient-to-r from-[#D6A83F] to-[#F2C75C] py-3 text-sm font-extrabold text-black shadow-[0_8px_24px_rgba(214,168,63,0.35)] transition active:scale-[0.97]"
+                  >
+                    Accept
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
 {/* *********************************************************************
           BOTTOM SHEETS
           ********************************************************************* */}
@@ -1221,23 +1571,189 @@ export default function GoLivePage() {
               {sheet === 'settings' && (
                 <div className="mt-3 space-y-1.5">
                   <SettingRow
-                    icon={cam.isVideoOn ? <Camera size={16} /> : <CameraOff size={16} />}
+                    icon={isLiveRoom ? (lk.isCameraOn ? <Camera size={16} /> : <CameraOff size={16} />) : (cam.isVideoOn ? <Camera size={16} /> : <CameraOff size={16} />)}
                     label="Camera"
-                    value={cam.isVideoOn ? 'On' : 'Off'}
-                    onToggle={() => cam.toggleVideo()}
-                    active={cam.isVideoOn}
+                    value={isLiveRoom ? (lk.isCameraOn ? 'On' : 'Off') : (cam.isVideoOn ? 'On' : 'Off')}
+                    onToggle={isLiveRoom ? () => void lk.toggleCamera() : () => cam.toggleVideo()}
+                    active={isLiveRoom ? lk.isCameraOn : cam.isVideoOn}
                   />
                   <SettingRow
-                    icon={cam.isAudioOn ? <Mic size={16} /> : <MicOff size={16} />}
+                    icon={isLiveRoom ? (lk.isMicrophoneOn ? <Mic size={16} /> : <MicOff size={16} />) : (cam.isAudioOn ? <Mic size={16} /> : <MicOff size={16} />)}
                     label="Microphone"
-                    value={cam.isAudioOn ? 'On' : 'Off'}
-                    onToggle={async () => { if (!cam.getStream()?.getAudioTracks().length) { try { await cam.addMicrophone(); } catch { return; } } cam.toggleAudio(); }}
-                    active={cam.isAudioOn}
+                    value={isLiveRoom ? (lk.isMicrophoneOn ? 'On' : 'Off') : (cam.isAudioOn ? 'On' : 'Off')}
+                    onToggle={isLiveRoom ? () => void lk.toggleMicrophone() : async () => { if (!cam.getStream()?.getAudioTracks().length) { try { await cam.addMicrophone(); } catch { return; } } cam.toggleAudio(); }}
+                    active={isLiveRoom ? lk.isMicrophoneOn : cam.isAudioOn}
                   />
-                  <SettingRow icon={<RepeatIc size={16} />} label="Camera flip" value={cam.isFrontCamera ? 'Front' : 'Back'} onToggle={() => void cam.flipCamera()} active={!cam.isFrontCamera} />
+                  {!isLiveRoom && <SettingRow icon={<RepeatIc size={16} />} label="Camera flip" value={cam.isFrontCamera ? 'Front' : 'Back'} onToggle={() => void cam.flipCamera()} active={!cam.isFrontCamera} />}
+
+                  {/*
+                    Real capture-quality preset — re-acquires the camera at the
+                    requested resolution before broadcast (graceful fallback).
+                    During the live the published bitstream is already running,
+                    so it applies to the next session instead.
+                  */}
+                  <div className="flex items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5">
+                    <span className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-white/70"><SlidersHorizontal size={16} /></span>
+                    <span className="flex-1 text-left">
+                      <span className="block text-sm font-semibold">Video quality</span>
+                      {isLiveRoom && <span className="block text-[10px] text-white/40">Applied when you go live</span>}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {QUALITY_PRESETS.map((q) => {
+                        const selected = cam.videoQuality === q.id;
+                        return (
+                          <button
+                            key={q.id}
+                            type="button"
+                            disabled={!cam.isVideoOn || isLiveRoom}
+                            onClick={() => { void cam.setVideoQuality(q.id); }}
+                            aria-pressed={selected}
+                            className={cn('rounded-full px-2.5 py-1 text-[10px] font-bold transition active:scale-95 disabled:opacity-40',
+                              selected ? 'bg-[#D6A83F] text-black' : 'bg-white/[0.06] text-white/60 hover:bg-white/[0.12]')}
+                          >
+                            {q.id === 'auto' ? 'Auto' : q.id}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {cam.captureInfo && (
+                    <p className="px-1 text-[10px] text-white/40">Capturing at {cam.captureInfo}</p>
+                  )}
+
+                  <SettingRow
+                    icon={<Gift size={16} />}
+                    label="Enable gifts"
+                    value={allowGifts ? 'On' : 'Off'}
+                    onToggle={() => updateAllowGifts(!allowGifts)}
+                    active={allowGifts}
+                  />
+                  <SettingRow
+                    icon={<Users size={16} />}
+                    label="Allow guests"
+                    value={allowGuests ? 'On' : 'Off'}
+                    onToggle={() => updateAllowGuests(!allowGuests)}
+                    active={allowGuests}
+                  />
                   <button type="button" onClick={() => { setSheet('beauty'); }} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm">
                     <Sparkles size={16} className="text-[#F2C75C]" /> Beauty &amp; filters<span className="ml-auto text-white/40"><ChevronRight size={15} /></span>
                   </button>
+
+                  {/* Chat moderation — only meaningful while the stream is live */}
+                  {isLiveRoom && (
+                    <div className="mt-1 border-t border-white/[0.08] pt-2">
+                      <p className="mb-1.5 flex items-center gap-1.5 px-1 text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
+                        <Shield size={12} /> Chat moderation
+                      </p>
+                      <div className="space-y-1.5">
+                        <SettingRow
+                          icon={<Ban size={16} />}
+                          label="Pause chat"
+                          value={chatPaused ? 'Paused' : 'Live'}
+                          onToggle={hostToggleChatPause}
+                          active={chatPaused}
+                        />
+                        <SettingRow
+                          icon={<Timer size={16} />}
+                          label="Slow mode"
+                          value={slowMode ? 'On' : 'Off'}
+                          onToggle={() => hostSetSlowMode(slowMode ? 0 : 5)}
+                          active={slowMode}
+                        />
+                        <button type="button" onClick={hostClearChat} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90 transition active:scale-[0.99] hover:bg-white/[0.08]">
+                          <span className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-white/70"><Trash2 size={16} /></span>
+                          <span className="flex-1 text-left text-sm font-semibold">Clear chat</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {sheet === 'category' && (
+                <div className="mt-3 grid max-h-[52vh] grid-cols-2 gap-2 overflow-y-auto pb-2">
+                  {categories.map((cat) => {
+                    const selected = category === cat;
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => { setCategory(cat); setSheet('none'); }}
+                        aria-pressed={selected}
+                        className={cn('flex items-center gap-2 rounded-2xl border px-3 py-2.5 text-sm font-semibold transition active:scale-[0.98]',
+                          selected ? 'border-[#D6A83F]/70 bg-[#D6A83F]/15 text-[#F2C75C]' : 'border-white/[0.08] bg-white/[0.04] text-white/80 hover:bg-white/[0.08]')}
+                      >
+                        <LayoutGrid size={14} className={selected ? 'text-[#F2C75C]' : 'text-white/35'} />
+                        <span className="truncate">{cat}</span>
+                        {selected && <Check size={14} className="ml-auto text-[#F2C75C]" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {sheet === 'guests' && (
+                <div className="mt-3 max-h-[52vh] space-y-3 overflow-y-auto pb-2">
+                  <div>
+                    <p className="mb-1.5 flex items-center justify-between px-1 text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
+                      <span>On stage</span>
+                      <span>{guestStage.guestCount}/{guestStage.guestLimit}</span>
+                    </p>
+                    {guestStage.guests.length === 0 ? (
+                      <p className="rounded-2xl border border-dashed border-white/[0.1] px-3 py-4 text-center text-xs text-white/40">No guests on stage yet.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {guestStage.guests.map((g) => (
+                          <div key={g.id} className="flex items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2">
+                            <Avatar src={g.avatar} alt={g.username} size="sm" />
+                            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white/90">@{g.username}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeGuest(g.id)}
+                              aria-label={`Remove ${g.username} from stage`}
+                              className="inline-flex items-center gap-1 rounded-full border border-rose-400/30 bg-rose-500/10 px-2.5 py-1 text-[10px] font-bold text-rose-300 transition active:scale-95"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {guestStage.pending.length > 0 && (
+                    <div>
+                      <p className="mb-1.5 px-1 text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">Waiting to join</p>
+                      <div className="space-y-1.5">
+                        {guestStage.pending.map((g) => (
+                          <div key={g.id} className="flex items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2">
+                            <Avatar src={g.avatar} alt={g.username} size="sm" />
+                            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white/90">@{g.username}</span>
+                            <button
+                              type="button"
+                              onClick={() => respondGuest(g.id, true)}
+                              aria-label={`Accept ${g.username}`}
+                              className="inline-flex items-center gap-1 rounded-full bg-[#D6A83F] px-2.5 py-1 text-[10px] font-extrabold text-black transition active:scale-95"
+                            >
+                              <Check size={11} strokeWidth={3} /> Accept
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => respondGuest(g.id, false)}
+                              aria-label={`Decline ${g.username}`}
+                              className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/[0.06] px-2.5 py-1 text-[10px] font-bold text-white/70 transition active:scale-95"
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {!allowGuests && (
+                    <p className="rounded-xl bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">Guests are currently turned off for this live.</p>
+                  )}
                 </div>
               )}
 
@@ -1288,64 +1804,19 @@ export default function GoLivePage() {
                 </div>
               )}
 
-              {sheet === 'rewards' && (
-                <div className="mt-3 space-y-2">
-                  {[
-                    { icon: <Zap size={16} />, title: 'Reach 100 fans', desc: 'Earn 50 VANTA Coins instantly' },
-                    { icon: <Gift size={16} />, title: 'First live gift', desc: '2Ã— coins on your first gift of the day' },
-                    { icon: <Trophy size={16} />, title: '60 min milestone', desc: 'Unlock the Gold Streak badge' },
-                  ].map((r) => (
-                    <div key={r.title} className="flex items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5">
-                      <span className="grid h-9 w-9 place-items-center rounded-full bg-[#D6A83F]/15 text-[#F2C75C]">{r.icon}</span>
-                      <span className="flex-1">
-                        <span className="block text-sm font-semibold">{r.title}</span>
-                        <span className="block text-[11px] text-white/50">{r.desc}</span>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {sheet === 'fanclub' && (
-                <div className="mt-3">
-                  <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-br from-[#D6A83F]/20 to-transparent px-3 py-3">
-                    <Avatar src={avatar} alt={displayName} size="lg" />
-                    <div className="flex-1">
-                      <p className="text-sm font-bold">{displayName}â€™s Fan Club</p>
-                      <p className="text-[11px] text-white/55">{formatNumber(Math.max(0, 1000 - liveGiftCount))} members Â· Join free</p>
-                    </div>
-                    <button type="button" onClick={() => toast.success('Fan Club', 'You are already a member.')} className="rounded-full bg-[#D6A83F] px-4 py-2 text-xs font-extrabold text-black">Joined âœ“</button>
-                  </div>
-                  <p className="mt-3 text-[11px] leading-relaxed text-white/50">
-                    Your Fan Club sees exclusive LIVE emojis, early access to your streams and a special badge next to their name.
-                  </p>
-                </div>
-              )}
-
-              {sheet === 'service' && (
-                <div className="mt-3 space-y-1.5">
-                  {[
-                    { icon: <MessageSquare size={16} />, label: 'Auto subtitles', desc: 'Live captions for your viewers' },
-                    { icon: <LanguagesIc size={16} />, label: 'Translate chat', desc: 'Viewers see comments in their language' },
-                    { icon: <Sparkles size={16} />, label: 'Smart highlights', desc: 'Auto-clip your best moments' },
-                  ].map((s) => (
-                    <button key={s.label} type="button" onClick={() => toast.info('Service+', `${s.label} is coming soon.`)} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-left">
-                      <span className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-[#F2C75C]">{s.icon}</span>
-                      <span className="flex-1">
-                        <span className="block text-sm font-semibold">{s.label}</span>
-                        <span className="block text-[11px] text-white/50">{s.desc}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
               {sheet === 'more' && (
                 <div className="mt-3 space-y-1.5">
-                  <MoreRow icon={<RepeatIc size={16} />} label="Flip camera" onPress={() => void cam.flipCamera()} />
-                  <MoreRow icon={cam.isAudioOn ? <MicOff size={16} /> : <Mic size={16} />} label={cam.isAudioOn ? 'Mute microphone' : 'Unmute microphone'} onPress={() => void cam.toggleAudio()} />
-                  <MoreRow icon={cam.isVideoOn ? <CameraOff size={16} /> : <Camera size={16} />} label={cam.isVideoOn ? 'Turn camera off' : 'Turn camera on'} onPress={() => cam.toggleVideo()} />
-                  {isLiveRoom && <MoreRow icon={<Flag size={16} />} label="Report a problem" onPress={() => toast.info('Report', 'Thanks â€” our team will review it.')} />}
+                  {!isLiveRoom && <MoreRow icon={<RepeatIc size={16} />} label="Flip camera" onPress={() => void cam.flipCamera()} />}
+                  <MoreRow
+                    icon={isLiveRoom ? (lk.isMicrophoneOn ? <MicOff size={16} /> : <Mic size={16} />) : (cam.isAudioOn ? <MicOff size={16} /> : <Mic size={16} />)}
+                    label={isLiveRoom ? (lk.isMicrophoneOn ? 'Mute microphone' : 'Unmute microphone') : (cam.isAudioOn ? 'Mute microphone' : 'Unmute microphone')}
+                    onPress={isLiveRoom ? () => void lk.toggleMicrophone() : () => void cam.toggleAudio()}
+                  />
+                  <MoreRow
+                    icon={isLiveRoom ? (lk.isCameraOn ? <CameraOff size={16} /> : <Camera size={16} />) : (cam.isVideoOn ? <CameraOff size={16} /> : <Camera size={16} />)}
+                    label={isLiveRoom ? (lk.isCameraOn ? 'Turn camera off' : 'Turn camera on') : (cam.isVideoOn ? 'Turn camera off' : 'Turn camera on')}
+                    onPress={isLiveRoom ? () => void lk.toggleCamera() : () => cam.toggleVideo()}
+                  />
                   {isLiveRoom && (
                     <button type="button" onClick={endLiveRef.current} className="flex w-full items-center gap-3 rounded-2xl bg-rose-500/10 px-3 py-2.5 text-sm font-bold text-rose-300">
                       <X size={16} /> End live<span className="ml-auto text-xs font-medium text-rose-300/60">Tap to stop</span>
@@ -1369,10 +1840,9 @@ function sheetTitle(id: SheetId): string {
     case 'settings': return 'Live settings';
     case 'effects': return 'Live effects';
     case 'beauty': return 'Beautify';
-    case 'service': return 'Service+';
-    case 'rewards': return 'LIVE Rewards';
+    case 'category': return 'Choose a category';
+    case 'guests': return 'Guests';
     case 'goal': return 'Set a LIVE goal';
-    case 'fanclub': return 'Fan Club';
     case 'more': return 'More options';
     default: return '';
   }

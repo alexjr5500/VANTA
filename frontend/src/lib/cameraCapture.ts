@@ -135,6 +135,16 @@ export function pickIdealDimension(deviceCeiling: number, preferred: number): nu
   if (!deviceCeiling || deviceCeiling <= 0) return 0;
   return Math.min(preferred, deviceCeiling);
 }
+
+/** Clamp a fixed quality preset (preserving 16:9) to the device's capture ceiling. */
+export function pickIdealTarget(target: CaptureTarget, maxWidth: number, maxHeight: number): CaptureTarget {
+  if (maxWidth <= 0 || maxHeight <= 0) return target;
+  if (target.width <= maxWidth && target.height <= maxHeight) return target;
+  const scale = Math.min(maxWidth / target.width, maxHeight / target.height);
+  const width = Math.floor(target.width * scale);
+  const height = Math.floor(target.height * scale);
+  return { width: Math.max(width, 320), height: Math.max(height, 180), frameRate: target.frameRate };
+}
 // ============================================================================
 // Constraint builders
 // ============================================================================
@@ -146,7 +156,22 @@ export interface VideoConstraintOptions {
   preferFront?: boolean;
   /** Force a facing mode even when the device reports none (used by flip). */
   forceFacingMode?: 'user' | 'environment' | null;
+  /**
+   * Optional capture-quality preset. `auto` (default) requests the highest
+   * native resolution the hardware supports (up to 1080p). Explicit presets
+   * cap the requested ideal so users on weak connections/webcams can force a
+   * lower, steadier capture. `ideal` constraints keep the browser free to fall
+   * back to the closest supported mode instead of failing.
+   */
+  quality?: 'auto' | '480p' | '720p' | '1080p';
 }
+
+const QUALITY_TARGETS: Record<NonNullable<VideoConstraintOptions['quality']>, CaptureTarget> = {
+  auto: { width: 0, height: 0, frameRate: 0 }, // resolved below from the device profile
+  '480p': { width: 854, height: 480, frameRate: 30 },
+  '720p': { width: 1280, height: 720, frameRate: 30 },
+  '1080p': { width: 1920, height: 1080, frameRate: 30 },
+};
 
 /**
  * Build getUserMedia video constraints for the best supported configuration.
@@ -159,7 +184,13 @@ export function pickVideoConstraints(
 ): MediaTrackConstraints {
   const profile = readCameraProfile(input);
   const prefersFront = options.preferFront ?? true;
-  const target = pickCaptureTarget(profile);
+  const quality = options.quality ?? 'auto';
+  const autoTarget = pickCaptureTarget(profile);
+  const target = quality === 'auto'
+    ? autoTarget
+    // A fixed preset still respects the device ceiling: never ask for more than
+    // the hardware can capture, just clamp to the requested tier.
+    : pickIdealTarget(QUALITY_TARGETS[quality], profile?.maxWidth ?? 0, profile?.maxHeight ?? 0);
 
   const constraints: MediaTrackConstraints = {
     width: { ideal: target.width },

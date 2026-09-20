@@ -4,7 +4,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  X, Radio, Image, Globe, Users, Lock, AlertCircle,
+  X, Radio, Image, AlertCircle,
   Play, Settings, Monitor, Camera, Mic, MicOff, CameraOff, ArrowRight, ChevronDown, Check
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -25,12 +25,6 @@ const CATEGORIES = [
   'Food & Drink',
 ];
 
-const AUDIENCE_OPTIONS = [
-  { id: 'everyone', label: 'Everyone', icon: Globe, description: 'Visible to everyone on VANTA' },
-  { id: 'followers', label: 'Followers Only', icon: Users, description: 'Only your followers can join' },
-  { id: 'private', label: 'Private', icon: Lock, description: 'Only people you invite can join' },
-];
-
 interface GoLiveModalProps {
   open: boolean;
   onClose: () => void;
@@ -42,7 +36,6 @@ export default function GoLiveModal({ open, onClose }: GoLiveModalProps) {
   const { closeAll, setLiveDraft } = useContentCreation();
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('');
-  const [audience, setAudience] = useState('everyone');
   const [thumbnail, setThumbnail] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +75,6 @@ export default function GoLiveModal({ open, onClose }: GoLiveModalProps) {
   const handleClose = useCallback(() => {
     setTitle('');
     setCategory('');
-    setAudience('everyone');
     setThumbnail(null);
     setError(null);
     setShowCategoryDropdown(false);
@@ -346,54 +338,6 @@ export default function GoLiveModal({ open, onClose }: GoLiveModalProps) {
                         </div>
                       )}
                     </button>
-                  </div>
-
-                  {/* Audience settings */}
-                  <div>
-                    <label className="block text-[10px] font-semibold uppercase tracking-[0.1em] text-white/45 mb-2">
-                      Audience
-                    </label>
-                    <div className="grid gap-2">
-                      {AUDIENCE_OPTIONS.map((option) => {
-                        const Icon = option.icon;
-                        const isSelected = audience === option.id;
-                        return (
-                          <button
-                            key={option.id}
-                            onClick={() => setAudience(option.id)}
-                            className={cn(
-                              'flex items-center gap-3 rounded-2xl border p-3.5 text-left transition-all active:scale-[0.99]',
-                              isSelected
-                                ? 'border-[#D6A83F]/45 bg-[#D6A83F]/10'
-                                : 'border-white/[0.08] bg-white/[0.02] hover:border-white/[0.14] hover:bg-white/[0.04]'
-                            )}
-                            aria-label={`Set audience to ${option.label}`}
-                            aria-pressed={isSelected}
-                          >
-                            <div className={cn(
-                              'w-9 h-9 rounded-xl flex items-center justify-center',
-                              isSelected ? 'bg-[#D6A83F]/20 text-[#F2C75C]' : 'bg-white/[0.05] text-white/45'
-                            )}>
-                              <Icon size={16} />
-                            </div>
-                            <div>
-                              <p className={cn(
-                                'text-sm font-medium',
-                                isSelected ? 'text-white' : 'text-white/70'
-                              )}>
-                                {option.label}
-                              </p>
-                              <p className="text-[10px] text-white/40">{option.description}</p>
-                            </div>
-                            {isSelected && (
-                              <div className="ml-auto grid h-5 w-5 place-items-center rounded-full bg-[#D6A83F]">
-                                <Check size={12} className="text-black" strokeWidth={3} />
-                              </div>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
                   </div>
 
                   {/* Error */}

@@ -71,6 +71,7 @@ export class LiveService {
     thumbnailUrl?: string, 
     allowGifts?: boolean, 
     allowPK?: boolean,
+    allowGuests?: boolean,
     language?: string,
     country?: string,
     recordingEnabled?: boolean
@@ -116,31 +117,69 @@ export class LiveService {
         });
       }
 
-      stream = await prisma.liveStream.create({
-        data: {
-        hostId, 
-        title, 
-        description: description || '', 
-        categoryName: cleanedCategory || undefined,
-        thumbnailUrl,
-        allowGifts: allowGifts ?? true,
-        allowPK: allowPK ?? false,
-        language: language || 'en',
-        country,
-        recordingEnabled: recordingEnabled ?? false,
-        liveKitRoom: roomName,
-        status: 'LIVE',
-        active: true,
-        startedAt: new Date(),
-        lastHostHeartbeat: new Date(),
-        viewerCount: 0,
-        peakViewers: 0,
-        totalViewers: 0,
-        },
-        include: {
-          host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
-          category: { select: { name: true } },
-        },
+      stream = await prisma.$transaction(async (tx: any) => {
+        try {
+          return await tx.liveStream.create({
+            data: {
+              hostId,
+              title,
+              description: description || '',
+              categoryName: cleanedCategory || undefined,
+              thumbnailUrl,
+              allowGifts: allowGifts ?? true,
+              allowPK: allowPK ?? false,
+              allowGuests: allowGuests ?? true,
+              language: language || 'en',
+              country,
+              recordingEnabled: recordingEnabled ?? false,
+              liveKitRoom: roomName,
+              status: 'LIVE',
+              active: true,
+              startedAt: new Date(),
+              lastHostHeartbeat: new Date(),
+              viewerCount: 0,
+              peakViewers: 0,
+              totalViewers: 0,
+            },
+            include: {
+              host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+              category: { select: { name: true } },
+            },
+          });
+        } catch (err: any) {
+          // Pre-migration fallback: if the `allowGuests` column does not exist
+          // yet (database not pushed), degrade to the platform default (guests
+          // allowed) instead of failing the entire Go Live flow.
+          if (err?.meta?.column_name === 'allowGuests' || `${err?.meta?.message ?? err?.message ?? ''}`.includes('allowGuests')) {
+            return tx.liveStream.create({
+              data: {
+                hostId,
+                title,
+                description: description || '',
+                categoryName: cleanedCategory || undefined,
+                thumbnailUrl,
+                allowGifts: allowGifts ?? true,
+                allowPK: allowPK ?? false,
+                language: language || 'en',
+                country,
+                recordingEnabled: recordingEnabled ?? false,
+                liveKitRoom: roomName,
+                status: 'LIVE',
+                active: true,
+                startedAt: new Date(),
+                lastHostHeartbeat: new Date(),
+                viewerCount: 0,
+                peakViewers: 0,
+                totalViewers: 0,
+              },
+              include: {
+                host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+                category: { select: { name: true } },
+              },
+            });
+          }
+          throw err;
+        }
       });
     } catch (error) {
       await liveKitService.closeRoom(roomName).catch(() => undefined);
@@ -500,7 +539,7 @@ export class LiveService {
     if (typeof input.thumbnailUrl === 'string') data.thumbnailUrl = input.thumbnailUrl;
     if (typeof input.language === 'string') data.language = input.language.trim().slice(0, 16);
     if (typeof input.country === 'string') data.country = input.country.trim().slice(0, 80);
-    for (const key of ['allowGifts', 'allowPK', 'recordingEnabled'] as const) {
+    for (const key of ['allowGifts', 'allowPK', 'allowGuests', 'recordingEnabled'] as const) {
       if (typeof input[key] === 'boolean') data[key] = input[key];
     }
     const updated = await prisma.liveStream.update({ where: { id: streamId }, data });
@@ -1002,7 +1041,7 @@ export class LiveService {
   private async getLiveIdOwner(streamId: string) {
     const stream = await prisma.liveStream.findUnique({
       where: { id: streamId },
-      select: { id: true, hostId: true, liveKitRoom: true, active: true, status: true, guests: true, approvedGuests: true },
+      select: { id: true, hostId: true, liveKitRoom: true, active: true, status: true, allowGuests: true, guests: true, approvedGuests: true },
     });
     return stream;
   }
@@ -1017,6 +1056,7 @@ export class LiveService {
   async requestJoinGuest(streamId: string, userId: string) {
     const stream = await this.getLiveIdOwner(streamId);
     if (!stream || !stream.active || stream.status !== 'LIVE') throw new Error('Stream is not live');
+    if (stream.allowGuests === false) throw new Error('Guests are not allowed for this stream');
     if (stream.hostId === userId) throw new Error('You are the host');
     const pending = this.parseJsonList(stream.guests);
     const approved = this.parseJsonList(stream.approvedGuests);
@@ -1115,6 +1155,7 @@ export class LiveService {
     return {
       streamId,
       hostId: stream.hostId,
+      allowGuests: stream.allowGuests !== false,
       guests: order(approvedIds, approvedUsers),
       pending: order(pendingIds, pendingUsers),
       guestCount: approvedIds.length,

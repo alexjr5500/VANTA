@@ -76,6 +76,7 @@ interface StreamDetail {
   active: boolean;
   categoryName?: string | null;
   allowGifts?: boolean;
+  allowGuests?: boolean;
   startedAt?: string | null;
   host: Host;
   _count?: { viewers?: number; giftEvents?: number };
@@ -1029,11 +1030,11 @@ const sendComment = useCallback(() => {
                   </button>
                 )}
                 {!isOwn && guestStatus === 'idle' && (
-                  <button type="button" onClick={requestToJoin} disabled={guestCapacity.count >= guestCapacity.limit} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90 transition active:scale-[0.99] disabled:opacity-50">
+                  <button type="button" onClick={requestToJoin} disabled={guestCapacity.count >= guestCapacity.limit || stream.allowGuests === false} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90 transition active:scale-[0.99] disabled:opacity-50">
                     <span className="grid h-9 w-9 place-items-center rounded-full border border-[#D6A83F]/40 bg-[#D6A83F]/10 text-[#F2C75C]"><Mic size={16} /></span>
                     <span className="flex-1 text-left">
-                      <span className="block text-sm font-semibold">Join the live stage</span>
-                      <span className="block text-[11px] text-white/50">{guestCapacity.count >= guestCapacity.limit ? 'Guest stage is full' : 'Request to speak on camera with the host'}</span>
+                      <span className="block text-sm font-semibold">{stream.allowGuests === false ? 'Guests are off' : 'Join the live stage'}</span>
+                      <span className="block text-[11px] text-white/50">{stream.allowGuests === false ? 'The host has guests turned off for this live' : guestCapacity.count >= guestCapacity.limit ? 'Guest stage is full' : 'Request to speak on camera with the host'}</span>
                     </span>
                   </button>
                 )}

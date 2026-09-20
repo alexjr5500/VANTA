@@ -87,9 +87,18 @@ export default function LiveFeaturedStream({ stream }: LiveFeaturedStreamProps) 
 
             <div className="flex items-center gap-2">
               <button
-                onClick={(e) => { e.stopPropagation(); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const url = `${window.location.origin}/live/${stream.id}`;
+                  const body = `Join ${host.fullName || host.username} live on VANTA — ${stream.title}`;
+                  if (navigator.share) {
+                    void navigator.share({ title: 'VANTA Live', text: body, url }).catch(() => undefined);
+                  } else {
+                    void navigator.clipboard.writeText(url).catch(() => undefined);
+                  }
+                }}
                 className="p-2.5 rounded-xl bg-black/40 backdrop-blur-sm border border-white/[0.08] text-white/60 hover:text-white transition-all"
-                aria-label="Share"
+                aria-label="Share stream"
               >
                 <Share2 size={15} />
               </button>

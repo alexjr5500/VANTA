@@ -95,6 +95,7 @@ export function useLiveCamera() {
   const [loading, setLoading] = useState(false);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [captureInfo, setCaptureInfo] = useState<string>('');
+  const [videoQuality, setVideoQualityState] = useState<'auto' | '480p' | '720p' | '1080p'>('auto');
 
   const streamRef = useRef<MediaStream | null>(null);
   const loadingRef = useRef(false);
@@ -295,6 +296,45 @@ export function useLiveCamera() {
     }
   }, [cameras, fetchCameras]);
 
+  /**
+   * Change the capture quality (re-acquires the video track at the chosen
+   * resolution with graceful fallback). The preview stream's video track is
+   * swapped IN PLACE so the LiveKit publish path (which re-uses this same
+   * stream) carries the chosen quality into the broadcast.
+   */
+  const setVideoQuality = useCallback(async (quality: 'auto' | '480p' | '720p' | '1080p'): Promise<boolean> => {
+    if (!streamRef.current) return false;
+    await fetchCameras();
+    const currentTrack = streamRef.current.getVideoTracks()[0];
+    const currentDeviceId = currentTrack?.getSettings?.().deviceId;
+    const list = cameras.length ? cameras : (await navigator.mediaDevices.enumerateDevices().catch(() => [])).filter((d) => d.kind === 'videoinput');
+    const input = list.find((d) => d.deviceId && d.deviceId === currentDeviceId) || pickPrimaryCamera(list);
+    try {
+      const constraints = pickVideoConstraints(input, { deviceId: input?.deviceId, quality, forceFacingMode: null });
+      const replacement = await navigator.mediaDevices.getUserMedia({ video: constraints });
+      const newTrack = replacement.getVideoTracks()[0];
+      if (!newTrack || newTrack.readyState !== 'live') {
+        replacement.getTracks().forEach((t) => t.stop());
+        return false;
+      }
+      await applyContinuousAutofocus(newTrack);
+      if (currentTrack) {
+        streamRef.current.removeTrack(currentTrack);
+        currentTrack.stop();
+      }
+      streamRef.current.addTrack(newTrack);
+      setStream(new MediaStream(streamRef.current.getTracks()));
+      const facing = newTrack.getSettings?.().facingMode;
+      if (facing === 'environment' || facing === 'back') setIsFrontCamera(false);
+      else if (facing === 'user' || facing === 'front') setIsFrontCamera(true);
+      setCaptureInfo(describeCapture(newTrack));
+      setVideoQualityState(quality);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [cameras, fetchCameras]);
+
   const toggleVideo = useCallback(() => {
     const track = streamRef.current?.getVideoTracks()[0];
     if (!track) return;
@@ -338,6 +378,8 @@ export function useLiveCamera() {
     startPreview,
     addMicrophone,
     flipCamera,
+    setVideoQuality,
+    videoQuality,
     toggleVideo,
     toggleAudio,
     stopAll,

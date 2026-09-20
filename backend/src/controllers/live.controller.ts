@@ -105,7 +105,7 @@ export const getStreamChat = async (req: Request, res: Response): Promise<void> 
 export const startStream = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const hostId = req.user?.userId;
-    const { title, category, description, thumbnailUrl, allowGifts, allowPK, language, country, recordingEnabled } = req.body;
+    const { title, category, description, thumbnailUrl, allowGifts, allowPK, allowGuests, language, country, recordingEnabled } = req.body;
 
     if (!hostId) {
       res.status(401).json({ error: 'Unauthorized' });
@@ -125,6 +125,7 @@ export const startStream = async (req: AuthRequest, res: Response): Promise<void
       thumbnailUrl,
       allowGifts,
       allowPK,
+      allowGuests,
       language,
       country,
       recordingEnabled

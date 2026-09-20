@@ -109,6 +109,36 @@ describe('front/rear camera selection', () => {
   });
 });
 
+describe('pickVideoConstraints capture-quality presets', () => {
+  test('an explicit 720p preset caps the ideal at 1280x720', () => {
+    const cam = fakeCamera({}); // supports 1920x1080
+    const constraints = pickVideoConstraints(cam, { quality: '720p' });
+    const width = constraints.width as ConstrainULongRange;
+    const height = constraints.height as ConstrainULongRange;
+    expect(width.ideal).toBe(1280);
+    expect(height.ideal).toBe(720);
+  });
+
+  test('a 1080p preset never exceeds the device ceiling', () => {
+    const cam = fakeCamera({
+      width: { min: 160, max: 1280 },
+      height: { min: 90, max: 720 },
+    });
+    const constraints = pickVideoConstraints(cam, { quality: '1080p' });
+    const width = constraints.width as ConstrainULongRange;
+    const height = constraints.height as ConstrainULongRange;
+    expect(width.ideal).toBeLessThanOrEqual(1280);
+    expect(height.ideal).toBeLessThanOrEqual(720);
+  });
+
+  test('auto keeps the highest supported target', () => {
+    const cam = fakeCamera({});
+    const constraints = pickVideoConstraints(cam, { quality: 'auto' });
+    const width = constraints.width as ConstrainULongRange;
+    expect(width.ideal).toBe(1920);
+  });
+});
+
 describe('CAPTURE_TARGETS shape', () => {
   test('targets are ordered best-to-worst with 30fps', () => {
     expect(CAPTURE_TARGETS.length).toBeGreaterThanOrEqual(2);
