@@ -12,9 +12,11 @@ import { useToast } from '@/components/ui/Toast';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { openStoryLayer, closeStoryLayer, longPressStartStory, longPressEndStory, resetStoryPlayback, startStoryPlayback, tapZone, type StoryPlaybackSnapshot } from '@/lib/storyPlayback';
 import { renderTextWithLinks } from '@/lib/linkify';
+import { cn } from '@/lib/utils';
+import StoryTextCanvas from '@/components/story/StoryTextCanvas';
 
 type ViewerUser = { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean };
-type Story = { id: string; userId: string; mediaUrl: string; mediaType?: string; caption?: string; views?: number; viewed?: boolean; duration?: number; likeCount?: number; reshareCount?: number; commentCount?: number; likedByMe?: boolean; resharedFromUsername?: string; user?: ViewerUser; author?: ViewerUser };
+type Story = { id: string; userId: string; mediaUrl: string; mediaType?: string; caption?: string; textStyle?: string | null; views?: number; viewed?: boolean; duration?: number; likeCount?: number; reshareCount?: number; commentCount?: number; likedByMe?: boolean; resharedFromUsername?: string; user?: ViewerUser; author?: ViewerUser };
 type StoryGroup = { user: ViewerUser; stories: Story[]; hasUnviewed: boolean };
 type Viewer = { id: string; viewedAt: string; user: ViewerUser };
 type StoryComment = { id: string; content: string; createdAt: string; user: ViewerUser };
@@ -584,11 +586,7 @@ const creator = current.group.user || {};
       {/* Media */}
       <div className="absolute inset-0 grid place-items-center bg-black" onClick={handleMediaTap} onPointerDown={handleMediaPointerDown} onPointerUp={releaseLongPress} onPointerCancel={releaseLongPress} onPointerLeave={releaseLongPress} onContextMenu={event => { if (event.button === 2 && !isOwner) event.preventDefault(); }} role="presentation">
         {isText ? (
-          <div className="flex h-full w-full flex-col items-center justify-center overflow-y-auto overscroll-contain px-5 pt-[max(5.5rem,calc(env(safe-area-inset-top)+5.5rem))] pb-[max(7rem,calc(env(safe-area-inset-bottom)+7rem))] text-center">
-            <div className="mx-auto w-full min-w-0 max-w-[min(540px,calc(100%-2.5rem))] rounded-2xl border border-white/[0.06] bg-gradient-to-br from-[#1a1a1c] to-[#0e0e10] px-6 py-10 shadow-[0_20px_60px_rgba(0,0,0,.5)]">
-              <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-2xl font-semibold leading-relaxed text-[#f5f5f5]">{renderTextWithLinks(current.story.caption || '', 'linkify')}</p>
-            </div>
-          </div>
+          <StoryTextCanvas caption={current.story.caption} styleJson={current.story.textStyle} className="h-full w-full" />
         ) : isVideo ? (
           // eslint-disable-next-line jsx-a11y/media-has-caption
           <video
@@ -617,7 +615,7 @@ const creator = current.group.user || {};
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/70 via-transparent to-black/75" />
 
       {/* Progress segments (one per story from the current user) */}
-      <div className="absolute inset-x-0 top-0 z-20 flex gap-1 px-2 pt-[max(0.75rem,env(safe-area-inset-top))]">
+      <div className="absolute inset-x-0 top-0 z-30 flex gap-[3px] px-2 pt-[max(0.7rem,env(safe-area-inset-top))]">
         {groupStories.map((story, segmentIndex) => {
           const isCurrentSegment = storyIndexInGroup === segmentIndex;
           const isDone = isCurrentSegment ? false : (segmentIndex < storyIndexInGroup || story.viewed);
@@ -627,9 +625,12 @@ const creator = current.group.user || {};
               : Math.min(1, tick / (Number(story.duration) > 0 ? Number(story.duration) : DEFAULT_DURATION))
             : 0;
           return (
-            <div key={story.id} className="h-0.5 flex-1 overflow-hidden rounded-full bg-white/25">
+            <div key={story.id} className="h-[3px] flex-1 overflow-hidden rounded-full bg-white/15 shadow-[0_1px_3px_rgba(0,0,0,0.45)]">
               <div
-                className="h-full rounded-full bg-white transition-[width] duration-100 ease-linear"
+                className={cn(
+                  'h-full rounded-full transition-[width] duration-100 ease-linear',
+                  isCurrentSegment ? 'bg-[linear-gradient(90deg,#dfbd55,#c9a227)]' : 'bg-white'
+                )}
                 style={{ width: `${Math.round((isDone ? 1 : ratio) * 100)}%` }}
               />
             </div>
@@ -638,41 +639,50 @@ const creator = current.group.user || {};
       </div>
 
       {/* Header */}
-      <header className="absolute inset-x-0 top-0 z-10 flex items-center gap-3 px-4 pb-4 pt-[max(1.25rem,calc(env(safe-area-inset-top)+1.25rem))]">
-        <button type="button" onClick={() => router.replace('/home')} aria-label="Back" className="grid h-11 w-11 place-items-center rounded-full bg-black/45 backdrop-blur"><ArrowLeft size={20}/></button>
-        <Avatar src={creator.avatar} alt={creator.username || 'Story owner'} size="sm"/>
-        <div className="min-w-0">
-          <span className="flex items-center gap-1.5"><b className="truncate text-sm">{creator.fullName || creator.username || 'VANTA'}</b>{creator.verified && <VerificationBadge verified size="sm" />}</span>
-          {creator.username && (
-            <button type="button" onClick={() => router.push(`/profile/${creator.username}`)} className="block max-w-[200px] truncate text-[11px] text-white/60">@{creator.username}</button>
-          )}
-        </div>
+      <header className="absolute inset-x-0 top-0 z-20 flex items-center gap-3 px-4 pb-4 pt-[max(1.25rem,calc(env(safe-area-inset-top)+1.25rem))]">
+        <button type="button" onClick={() => router.replace('/home')} aria-label="Back to Home" className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-black/45 text-white/90 backdrop-blur transition hover:bg-black/60"><ArrowLeft size={20}/></button>
+        <button type="button" onClick={() => creator.username && router.push(`/profile/${creator.username}`)} aria-label="Open profile" className="flex min-w-0 items-center gap-3 text-left">
+          <span className="relative">
+            <Avatar src={creator.avatar} alt={creator.username || 'Story owner'} size="sm" />
+            {current.story && !current.story.viewed && (
+              <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#050505] bg-[#c9a227]" aria-hidden="true" />
+            )}
+          </span>
+          <span className="min-w-0">
+            <span className="flex items-center gap-1.5"><b className="truncate text-sm text-white">{creator.fullName || creator.username || 'VANTA'}</b>{creator.verified && <VerificationBadge verified size="xs" />}</span>
+            {creator.username && (
+              <span className="block max-w-[190px] truncate text-[11px] text-white/55">@{creator.username}</span>
+            )}
+          </span>
+        </button>
         <div className="ml-auto flex items-center gap-2">
           {isOwner && (
-            <button type="button" onClick={() => void openViewers()} className="inline-flex min-h-9 items-center gap-1.5 rounded-full bg-black/45 px-3 text-[11px] text-[#c8c8cc] backdrop-blur" aria-label="Open Story viewers">
+            <button type="button" onClick={() => void openViewers()} className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-white/10 bg-black/40 px-3 text-[11px] font-medium text-[#dfbd55] backdrop-blur transition hover:bg-black/60" aria-label="Open Story viewers">
               <Eye size={14}/>{compact(current.story.views || 0)} views
             </button>
           )}
-          <button type="button" onClick={() => { pauseStory('share'); setShareOpen(true); }} aria-label="Share story" className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white/80 backdrop-blur">
+          <button type="button" onClick={() => { pauseStory('share'); setShareOpen(true); }} aria-label="Share story" className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-black/40 text-white/85 backdrop-blur transition hover:bg-black/60">
             <Share2 size={16}/>
           </button>
           {isOwner && (
-            <button type="button" onClick={() => { pauseStory('delete'); setDeleteConfirmOpen(true); }} aria-label="Delete story" className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white/80 backdrop-blur">
+            <button type="button" onClick={() => { pauseStory('delete'); setDeleteConfirmOpen(true); }} aria-label="Delete story" className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-black/40 text-white/85 backdrop-blur transition hover:bg-black/60">
               <Trash2 size={16}/>
             </button>
           )}
-          <button type="button" onClick={() => router.replace('/home')} aria-label="Close story" className="grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white/80 backdrop-blur"><X size={18}/></button>
+          <button type="button" onClick={() => router.replace('/home')} aria-label="Close story" className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-black/40 text-white/85 backdrop-blur transition hover:bg-black/60"><X size={18}/></button>
         </div>
       </header>
-{/* Caption */}
-      <div className="absolute inset-x-0 bottom-0 z-10 p-4 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
-        {current.story.resharedFromUsername && (
-          <p className="mb-2 flex items-center gap-1.5 text-xs text-white/60">
-            <Repeat size={13}/> Reshared from @{current.story.resharedFromUsername}
-          </p>
-        )}
-        {current.story.caption && <p className="mb-3 max-w-lg text-sm leading-6 text-white/90">{current.story.caption}</p>}
-      </div>
+{/* Caption (media stories — TEXT stories render inside their own canvas) */}
+      {!isText && (
+        <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/75 via-black/35 to-transparent px-4 pb-[max(6.5rem,calc(env(safe-area-inset-bottom)+6.5rem))] pr-28 pt-12">
+          {current.story.resharedFromUsername && (
+            <p className="mb-2 flex items-center gap-1.5 text-xs text-white/70">
+              <Repeat size={13}/> Reshared from @{current.story.resharedFromUsername}
+            </p>
+          )}
+          {current.story.caption && <p className="max-w-lg text-sm leading-6 text-white/95">{current.story.caption}</p>}
+        </div>
+      )}
 
 {/* Story actions — owner sees engagement stats; viewers see Like → Comment → Reshare */}
       <div className="absolute bottom-0 right-0 z-10 flex flex-col items-center gap-3 p-3 pb-[max(1.15rem,env(safe-area-inset-bottom))]">

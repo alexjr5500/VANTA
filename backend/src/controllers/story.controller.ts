@@ -83,7 +83,8 @@ export const createTextStory = async (req: AuthRequest, res: Response): Promise<
     }))?.verified === true;
 
     const text = typeof req.body?.text === "string" ? req.body.text : "";
-    const story = await storyService.createTextStory(userId, text, { isVerified });
+    const textStyle = typeof req.body?.textStyle === "string" ? req.body.textStyle : undefined;
+    const story = await storyService.createTextStory(userId, text, { isVerified, textStyle });
 
     res.status(201).json(story);
   } catch (error) {

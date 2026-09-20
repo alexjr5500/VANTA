@@ -30,6 +30,7 @@ import CreatePostModal from '@/components/create/CreatePostModal';
 import GoLiveModal from '@/components/create/GoLiveModal';
 import ReelUploader from '@/components/create/ReelUploader';
 import CreateHub from '@/components/create/CreateHub';
+import StoryComposer from '@/components/story/StoryComposer';
 import { useContentCreation } from '@/components/create/ContentCreationContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { useChatUnread } from '@/context/ChatUnreadContext';
@@ -208,7 +209,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { latestNotification: notificationToast, dismissLatestNotification } = useNotifications();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isClient, setIsClient] = useState(false);
-  const postOpen = activeFlow === 'post' || activeFlow === 'story';
+  const postOpen = activeFlow === 'post';
 
   useEffect(() => {
     setIsClient(true);
@@ -321,7 +322,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </AnimatePresence>
         {!isChatPage && <>
           <CreateHub open={createHubOpen} onClose={closeCreateHub} />
-          <CreatePostModal open={postOpen} initialIntent={activeFlow === 'story' ? 'story' : 'post'} onClose={closeAll} />
+          <CreatePostModal open={postOpen} initialIntent="post" onClose={closeAll} />
+          <StoryComposer open={activeFlow === 'story'} onClose={closeAll} />
           <GoLiveModal open={activeFlow === 'live'} onClose={closeAll} />
           <ReelUploader open={activeFlow === 'reel'} onClose={closeAll} />
         </>}

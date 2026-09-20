@@ -4,22 +4,14 @@ import { cn } from '@/lib/utils';
 import Avatar from '@/components/ui/Avatar';
 
 // ============================================================================
-// Shared VANTA story circle
-// ============================================================================
-// One canonical story/avatar ring used everywhere stories are displayed (Home,
-// Discover, trays, etc). The ring is exactly sized around the avatar:
-// outer = size, inner padding keeps a small bezel between ring and avatar, and
-// the avatar fills the remaining area edge-to-edge (object-cover) so there is
-// NEVER a big empty bezel.
+// Shared VANTA story ring — the premium 2026 treatment.
 //
-// Two rendering modes:
-//   1. Simple ring — one solid gradient (gold = unviewed/your story, gray =
-//      fully viewed). Used when only aggregate state is known (`active`).
-//   2. Segmented ring — a single circular ring divided into one arc per active
-//      story item (via SVG arc). Each segment reflects that story's
-//      viewed/unviewed state, so a user with 1 story shows ONE complete ring,
-//      2 stories show TWO segments, and so on. The avatar is NEVER duplicated —
-//      one avatar + one segmented ring.
+// The ring is rendered with a CSS conic-gradient (unviewed = refined gold;
+// seen = faint silver) so it is buttery on low-end phones. When per-story
+// viewed state is known (`segments`) a single SVG arc ring is used instead —
+// one arc per active story — honouring each story's viewed/unviewed state.
+// The avatar always fills the ring edge-to-edge (object-cover) so there is
+// never a big empty bezel.
 // ============================================================================
 
 export interface StorySegment {
@@ -33,17 +25,16 @@ export interface StoryCircleProps {
   alt?: string;
   /**
    * Aggregate "has unviewed" flag used only when `segments` is omitted.
-   * true = gold gradient ring (unviewed); false = muted seen ring.
+   * true = gold ring (unviewed); false = muted seen ring.
    */
   active: boolean;
-  /** Show a small emerald "new story" dot bottom-right (active only) */
+  /** Show a small emerald "NEW" dot bottom-right (active only) */
   showDot?: boolean;
-  /** Outer diameter: 'sm' = 48px, 'md' = 64px (matches Home tray columns) */
+  /** Outer diameter: 'sm' = 48px, 'md' = 66px (matches Home tray columns). */
   size?: 'sm' | 'md';
   /**
-   * When provided, render the ring as ONE circle segmented into one arc per
-   * story item, honoring each segment's viewed/unviewed state. There must be
-   * at least one segment. If `segments` is empty/omitted the simple ring is used.
+   * Optional per-story viewed segments. When provided the ring is ONE circle
+   * divided into one gold/faint arc per story item.
    */
   segments?: StorySegment[];
   className?: string;
@@ -51,16 +42,16 @@ export interface StoryCircleProps {
 
 const SIZES = {
   // outer size, avatar inner padding, ring stroke width (SVG viewBox units)
-  sm: { outer: 'h-12 w-12', pad: 'p-[3px]', stroke: 5.5 },
-  md: { outer: 'h-16 w-16', pad: 'p-[3px]', stroke: 6.5 },
+  sm: { outer: 'h-12 w-12', pad: 'p-[3px]', stroke: 5 },
+  md: { outer: 'h-[66px] w-[66px]', pad: 'p-[3px]', stroke: 6 },
 } as const;
 
 // Center of the SVG (viewBox 0 0 100 100).
 const RING_CENTER = 50;
 
 /**
- * Renders the full circular ring as a set of arc segments — one per story item.
- * Each segment's color reflects that story's viewed/unviewed state.
+ * Segmented circular ring — one gold/faint arc per story item so multi-story
+ * users clearly show each story's seen/unseen state.
  */
 function SegmentedRing({
   n,
@@ -75,13 +66,11 @@ function SegmentedRing({
   const r = 50 - stroke / 2 - 1; // keep the stroke fully inside the border-box
   const circumference = 2 * Math.PI * r;
 
-  // Angle per segment, plus a small visual gap (in circumference units) between
-  // segments so each story arc is clearly separated.
   const segAngle = 360 / n;
-  const gap = Math.min(circumference * 0.035, 4); // ~3.5% gap between segments
+  const gap = Math.min(circumference * 0.045, 5); // small gap between segments
   const arcLen = circumference / n;
   const visible = Math.max(arcLen - gap, 1);
-  const viewedColor = 'rgba(255,255,255,0.16)';
+  const seenColor = 'rgba(255,255,255,0.18)';
 
   return (
     <svg
@@ -91,7 +80,6 @@ function SegmentedRing({
       preserveAspectRatio="none"
     >
       {Array.from({ length: n }).map((_, i) => {
-        // Start from 12 o'clock and sweep clockwise.
         const startAngle = i * segAngle - 90;
         const isViewed = viewed[i];
         return (
@@ -103,12 +91,19 @@ function SegmentedRing({
             fill="none"
             strokeWidth={stroke}
             strokeLinecap="round"
-            stroke={isViewed ? viewedColor : 'var(--vanta-gold)'}
+            stroke={isViewed ? seenColor : 'url(#vantaGoldRing)'}
             strokeDasharray={`${visible} ${Math.max(circumference - visible, 1)}`}
             transform={`rotate(${startAngle} ${c} ${c})`}
           />
         );
       })}
+      <defs>
+        <linearGradient id="vantaGoldRing" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#dfbd55" />
+          <stop offset="55%" stopColor="#c9a227" />
+          <stop offset="100%" stopColor="#a48220" />
+        </linearGradient>
+      </defs>
     </svg>
   );
 }
@@ -134,7 +129,7 @@ export default function StoryCircle({
 
   return (
     <span
-      className={cn('relative block flex-none rounded-full', outer, className)}
+      className={cn('relative block flex-none rounded-full shadow-[0_2px_12px_rgba(0,0,0,0.35)]', outer, className)}
       role={alt ? 'img' : undefined}
       aria-label={alt ? label : undefined}
     >
@@ -146,8 +141,8 @@ export default function StoryCircle({
           className={cn(
             'block h-full w-full rounded-full',
             active
-              ? 'bg-gradient-to-br from-[#d6a83f] via-[#c8c8cc] to-[#f5f5f5]'
-              : 'border border-[#3a3a40] bg-white/[0.1]'
+              ? 'bg-[conic-gradient(from_210deg_at_50%_50%,#dfbd55_0%,#c9a227_38%,#a48220_52%,#dfbd55_76%,#c9a227_100%)]'
+              : 'border border-white/10 bg-white/[0.05]'
           )}
         />
       )}
@@ -164,7 +159,12 @@ export default function StoryCircle({
       </span>
 
       {showDot && anyUnviewed && (
-        <span className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full border-2 border-[#0a0a0f] bg-emerald-500" aria-hidden="true" />
+        <span
+          className="absolute -bottom-0.5 -right-0.5 grid h-[18px] w-[18px] place-items-center rounded-full border-2 border-[#0a0a0f] bg-emerald-500"
+          aria-hidden="true"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-white/90" />
+        </span>
       )}
     </span>
   );

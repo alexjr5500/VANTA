@@ -316,6 +316,10 @@ model Story {
   mediaUrl  String
   mediaType String      @default("IMAGE")
   caption   String?
+  // JSON styling payload for TEXT (Status) stories — font family, size, color,
+  // alignment, weight, style, line-height and the curated background key used to
+  // render the Status exactly as the creator designed it in the composer.
+  textStyle String?
   duration  Int         @default(5000)
   viewedBy  StoryView[]
   likes     StoryLike[]

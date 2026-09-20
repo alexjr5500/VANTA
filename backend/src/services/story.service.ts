@@ -3,6 +3,42 @@ import { contentViewService } from "./content-view.service";
 
 const STORY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+// ============================================================================
+// Status hard limits (2026 product rules). A Status is the text a user posts
+// to their Story/Status tray — whether authored as a plain Status or as a
+// designed Text Story. Both composer paths funnel into the SAME Story row, so
+// the limits are enforced once here (server-side, never client-supplied) and
+// the database can never receive invalid Status content.
+// ============================================================================
+export const STATUS_MAX_CHARS = 700;
+export const STATUS_MAX_LINES = 10;
+
+/** Count text length in Unicode code points (emoji like "👨👩👧" count once, not per UTF-16 half). */
+export function countStatusChars(text: string): number {
+  return Array.from(text || "").length;
+}
+
+/** Count logical lines. Any of \n, \r\n or \r terminate a line. */
+export function countStatusLines(text: string): number {
+  if (!text) return 0;
+  return text.split(/\r\n|\r|\n/).length;
+}
+
+/**
+ * Validate Status content. Throws a human readable error when the text exceeds
+ * 700 characters or 10 lines. Enforced on BOTH ends (backend + frontend).
+ */
+export function assertValidStatusText(text: string, label = "Status"): void {
+  const chars = countStatusChars(text);
+  if (chars > STATUS_MAX_CHARS) {
+    throw new Error(`${label} is too long (${chars}/${STATUS_MAX_CHARS} characters). Please shorten it.`);
+  }
+  const lines = countStatusLines(text);
+  if (lines > STATUS_MAX_LINES) {
+    throw new Error(`${label} cannot exceed ${STATUS_MAX_LINES} lines.`);
+  }
+}
+
 // Daily Status/Story quota for a standard (non-verified) user.
 // A "status post" is ONE published Story row. A Story is a single piece of
 // media + optional caption, so one Story with multiple media is represented as
@@ -45,6 +81,11 @@ export class StoryService {
     const isVerified = Boolean(options?.isVerified);
     const expiresAt = new Date(Date.now() + STORY_TTL_MS);
 
+    // Caption is Status content (shown in the tray/viewer), so the same hard
+    // limits apply. `trim()` prevents whitespace-only captions from counting.
+    const normalizedCaption = typeof caption === "string" ? caption.trim() : undefined;
+    if (normalizedCaption) assertValidStatusText(normalizedCaption, "Status caption");
+
     // Enforce the per-day quota atomically with the insert so concurrent uploads
     // cannot collectively exceed the limit for a normal user. Verified users
     // (`isVerified` is always resolved from the server-side User record — never
@@ -56,7 +97,7 @@ export class StoryService {
           userId,
           mediaUrl,
           mediaType,
-          caption,
+          caption: normalizedCaption,
           expiresAt,
         },
         include: {
@@ -84,6 +125,11 @@ export class StoryService {
       throw new Error("Story not found or expired");
     }
 
+    // Reshare caption is Status content on the caller's tray — enforce the same
+    // hard limits (700 chars / 10 lines) before publishing the new row.
+    const reshareCaption = typeof caption === "string" && caption.trim() ? caption.trim() : undefined;
+    if (reshareCaption) assertValidStatusText(reshareCaption, "Status caption");
+
     // Resharing publishes a new Story row on the caller's Status, so it must
     // respect the same daily quota (atomically) as any other story upload.
     return prisma.$transaction(async tx => {
@@ -93,7 +139,7 @@ export class StoryService {
           userId,
           mediaUrl: original.mediaUrl,
           mediaType: original.mediaType === "VIDEO" ? "VIDEO" : "IMAGE",
-          caption: typeof caption === "string" && caption.trim() ? caption.trim() : undefined,
+          caption: reshareCaption,
           resharedFromId: original.id,
           resharedFromUserId: original.userId,
           resharedFromUsername: original.user?.username || null,
@@ -110,14 +156,23 @@ export class StoryService {
    * Create a text-only Story/Status (no media/background image required).
    * The text lives in `caption` and the row is typed as `mediaType: "TEXT"`,
    * so the existing Story model/APIs/delete/engagement flows work unchanged.
+   * Options may carry the `textStyle` JSON payload authored by the premium
+   * text canvas so the viewer renders the exact design.
    */
-  async createTextStory(userId: string, text: string, options?: { isVerified?: boolean }) {
+  async createTextStory(userId: string, text: string, options?: { isVerified?: boolean; textStyle?: string }) {
     const trimmed = typeof text === "string" ? text.trim() : "";
     if (!trimmed) throw new Error("Text story cannot be empty");
-    if (trimmed.length > 5000) throw new Error("Text story is too long");
+    // Hard Status limits — 700 characters & 10 lines, independently enforced
+    // on the backend. This is the single funnel for EVERY Status/Text Story.
+    assertValidStatusText(trimmed);
 
     const isVerified = Boolean(options?.isVerified);
     const expiresAt = new Date(Date.now() + STORY_TTL_MS);
+    // Only persist a well-formed style payload (small JSON string). Anything
+    // larger than 8KB is rejected so the DB never stores junk.
+    const textStyle = typeof options?.textStyle === "string" && options.textStyle.length <= 8192
+      ? options.textStyle
+      : undefined;
 
     const story = await prisma.$transaction(async tx => {
       await this.assertCanCreateStory(tx, userId, isVerified);
@@ -128,6 +183,7 @@ export class StoryService {
           mediaUrl: "",
           mediaType: "TEXT",
           caption: trimmed,
+          textStyle,
           expiresAt,
         },
         include: {

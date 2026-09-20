@@ -5,7 +5,7 @@ jest.mock('../prisma', () => ({ prisma: {
 } }));
 
 import { prisma } from '../prisma';
-import { StoryService, DAILY_STATUS_LIMIT } from '../services/story.service';
+import { StoryService, DAILY_STATUS_LIMIT, STATUS_MAX_CHARS, STATUS_MAX_LINES, countStatusChars, countStatusLines } from '../services/story.service';
 
 const db = prisma as jest.Mocked<typeof prisma>;
 const service = new StoryService();
@@ -133,5 +133,99 @@ describe('StoryService.createTextStory (text-only Story/Status)', () => {
     await service.createTextStory('user-v', 'VIP text', { isVerified: true });
     expect(db.story.count).not.toHaveBeenCalled();
     expect(db.story.create).toHaveBeenCalled();
+  });
+});
+
+describe('StoryService Status hard limits (700 chars / 10 lines)', () => {
+  const tx = { story: { count: db.story.count, create: db.story.create } };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (db.$transaction as jest.Mock).mockImplementation(async (callback: any) => callback(tx));
+    (db.story.count as jest.Mock).mockResolvedValue(0);
+    (db.story.create as jest.Mock).mockResolvedValue({ id: 'status' });
+  });
+
+  it('counts characters as Unicode code points (emoji / surrogate pairs count once)', () => {
+    // 👨👩👧 = ZWJ sequence: 5 code points (incl. ZWJ / VS16) but 11 UTF-16 units.
+    expect(countStatusChars('👨👩👧')).toBe(countStatusChars('👨') + countStatusChars('👩') + countStatusChars('👧'));
+    expect(countStatusChars('')).toBe(0);
+    expect(countStatusChars('Hello')).toBe(5);
+  });
+
+  it('counts logical lines for \\n, \\r\\n and \\r', () => {
+    expect(countStatusLines('a\nb\nc')).toBe(3);
+    expect(countStatusLines('a\r\nb\rc')).toBe(3);
+    expect(countStatusLines('one line')).toBe(1);
+  });
+
+  it('accepts exactly 700 characters', async () => {
+    await service.createTextStory('user-1', 'a'.repeat(STATUS_MAX_CHARS), { isVerified: false });
+    expect(db.story.create).toHaveBeenCalled();
+  });
+
+  it('rejects 701 characters', async () => {
+    await expect(service.createTextStory('user-1', 'a'.repeat(STATUS_MAX_CHARS + 1), { isVerified: false }))
+      .rejects.toThrow(`Status is too long (${STATUS_MAX_CHARS + 1}/${STATUS_MAX_CHARS} characters)`);
+    expect(db.story.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts exactly 10 lines', async () => {
+    await service.createTextStory('user-1', Array.from({ length: STATUS_MAX_LINES }, () => 'line').join('\n'), { isVerified: false });
+    expect(db.story.create).toHaveBeenCalled();
+  });
+
+  it('rejects an 11th line (even an empty one)', async () => {
+    const elevenLines = Array.from({ length: STATUS_MAX_LINES + 1 }, () => 'line').join('\n');
+    await expect(service.createTextStory('user-1', elevenLines, { isVerified: false }))
+      .rejects.toThrow(`Status cannot exceed ${STATUS_MAX_LINES} lines.`);
+    expect(db.story.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects pasted oversize content (limit cannot be bypassed via one string)', async () => {
+    const overflow = `x\n${'y'.repeat(STATUS_MAX_CHARS)}`;
+    await expect(service.createTextStory('user-1', overflow, { isVerified: false }))
+      .rejects.toThrow('Status is too long');
+    expect(db.story.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects excessive whitespace-only-padded content over the limit', async () => {
+    const padded = ` ${'word '.repeat(STATUS_MAX_CHARS)} `;
+    await expect(service.createTextStory('user-1', padded, { isVerified: false }))
+      .rejects.toThrow('Status is too long');
+    expect(db.story.create).not.toHaveBeenCalled();
+  });
+
+  it('persists a valid textStyle payload', async () => {
+    const style = JSON.stringify({ font: 'display', size: 42, color: '#dfbd55', align: 'center' });
+    await service.createTextStory('user-1', 'Styled', { isVerified: false, textStyle: style });
+    expect(db.story.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ mediaType: 'TEXT', caption: 'Styled', textStyle: style }),
+    }));
+  });
+
+  it('rejects an oversized textStyle payload', async () => {
+    const hugeStyle = '{' + 'x'.repeat(9000) + '}';
+    await service.createTextStory('user-1', 'Styled', { isVerified: false, textStyle: hugeStyle });
+    const callArg = (db.story.create as jest.Mock).mock.calls[0][0];
+    expect(callArg.data.textStyle).toBeUndefined();
+  });
+
+  it('enforces the same limits on media story captions', async () => {
+    await expect(
+      service.createStory('user-1', 'https://cdn/photo.jpg', 'IMAGE', 'x'.repeat(STATUS_MAX_CHARS + 1), { isVerified: false })
+    ).rejects.toThrow('Status caption is too long');
+    expect(db.story.create).not.toHaveBeenCalled();
+  });
+
+  it('enforces the same limits on reshare captions', async () => {
+    (db.story.findUnique as jest.Mock).mockResolvedValue({
+      id: 'orig-1', mediaUrl: 'https://cdn/orig.jpg', mediaType: 'IMAGE',
+      user: { id: 'owner', username: 'owner' }, expiresAt: new Date(Date.now() + 3600000),
+    });
+    await expect(
+      service.reshareStory('user-1', 'orig-1', Array.from({ length: STATUS_MAX_LINES + 1 }, () => 'line').join('\n'), { isVerified: false })
+    ).rejects.toThrow('Status caption cannot exceed');
+    expect(db.story.create).not.toHaveBeenCalled();
   });
 });
