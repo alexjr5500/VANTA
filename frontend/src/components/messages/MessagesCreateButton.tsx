@@ -80,7 +80,7 @@ export default function MessagesCreateButton({
                     onChange={(event) => onSearch(event.target.value)}
                     placeholder="Search people"
                     autoFocus
-                    className="h-11 w-full rounded-xl border border-white/[0.08] bg-[#161616] pl-9 pr-4 text-sm text-white outline-none placeholder:text-[#666] focus:border-white/20"
+                    className="h-11 w-full rounded-xl border border-white/[0.08] bg-[#161616] pl-9 pr-4 text-sm text-white outline-none placeholder:text-[#666]"
                   />
                 </div>
               </div>

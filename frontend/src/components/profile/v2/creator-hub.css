@@ -225,7 +225,7 @@
   width: 1px;
   background: rgba(245, 245, 245, 0.06);
 }
-.profile-stats strong { color: var(--profile-text); font-size: 15px; font-weight: 720; line-height: 1; }
+.profile-stats strong { color: var(--profile-text); font-size: 15px; font-weight: 600; line-height: 1; }
 .profile-stats span { color: #858585; font-size: 10px; letter-spacing: 0; white-space: nowrap; }
 .profile-stats button:hover span { color: var(--profile-muted); }
 
