@@ -108,6 +108,12 @@ function BalanceSkeleton() {
 // MAIN BALANCE PAGE
 // ============================================================================
 
+type BalanceTab = 'overview' | 'transactions' | 'gifts' | 'earnings' | 'withdrawals' | 'security';
+
+const BALANCE_TABS: readonly BalanceTab[] = ['overview', 'transactions', 'gifts', 'earnings', 'withdrawals', 'security'];
+const balanceTabOf = (value: string | null | undefined): BalanceTab =>
+  BALANCE_TABS.includes(value as BalanceTab) ? (value as BalanceTab) : 'overview';
+
 export default function BalancePage() {
   const { token, user } = useAuth();
   const router = useRouter();
@@ -119,7 +125,7 @@ export default function BalancePage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'overview' | 'transactions' | 'gifts' | 'earnings' | 'withdrawals' | 'security'>('overview');
+  const [activeTab, setActiveTab] = useState<BalanceTab>('overview');
   const [showBuyModal, setShowBuyModal] = useState(false);
   const [showSendModal, setShowSendModal] = useState(false);
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
@@ -127,16 +133,38 @@ export default function BalancePage() {
   const [hideBalance, setHideBalance] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  // Deep links (e.g. wallet notifications land on /balance/transactions, which
+  // redirects to /balance?tab=transactions) must select the requested tab on
+  // first mount. This runs once after hydration; the activeTab state then owns
+  // the view and the URL is kept in sync for shareable/refreshable state.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const requested = new URLSearchParams(window.location.search).get('tab');
+    setActiveTab(balanceTabOf(requested));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Switch tabs and keep the `?tab=` query in sync so reloads stay on the view. */
+  const changeTab = useCallback((tab: BalanceTab) => {
+    setActiveTab(tab);
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (tab === 'overview') params.delete('tab');
+    else params.set('tab', tab);
+    const search = params.toString();
+    router.replace(search ? `/balance?${search}` : '/balance', { scroll: false });
+  }, [router]);
+
   const fetchWallet = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     setError(null);
     try {
       const [walletData, txData, giftData, withdrawalData] = await Promise.all([
-        apiGet<any>('/api/wallets/me', token),
-        apiGet<any>('/api/wallets/transactions', token).catch(() => ({ transactions: [] })),
-        apiGet<any>('/api/wallets/gift-history', token).catch(() => ({ sentGifts: [], receivedGifts: [] })),
-        apiGet<any>('/api/wallets/withdrawals/history', token).catch(() => ({ withdrawals: [] })),
+        apiGet<any>('/api/wallets/me', token, { skipCache: true }),
+        apiGet<any>('/api/wallets/transactions', token, { skipCache: true }).catch(() => ({ transactions: [] })),
+        apiGet<any>('/api/wallets/gift-history', token, { skipCache: true }).catch(() => ({ sentGifts: [], receivedGifts: [] })),
+        apiGet<any>('/api/wallets/withdrawals/history', token, { skipCache: true }).catch(() => ({ withdrawals: [] })),
       ]);
       const loadedBalance = Number(walletData?.coinBalance);
       if (!Number.isSafeInteger(loadedBalance) || loadedBalance < 0) throw new Error('The Balance service returned invalid account data.');
@@ -421,7 +449,7 @@ export default function BalancePage() {
         ].map(tab => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
+            onClick={() => changeTab(tab.id as BalanceTab)}
             className={cn(
                'min-h-9 px-3 py-2 rounded-md text-[11px] font-medium whitespace-nowrap transition-all',
               activeTab === tab.id ? 'bg-white text-black' : 'text-[#8A8A8A] hover:text-white'
@@ -448,7 +476,7 @@ export default function BalancePage() {
                 <h2 className="text-sm font-semibold text-[#F5F5F5]">Recent activity</h2>
               </div>
               <button
-                onClick={() => setActiveTab('transactions')}
+                onClick={() => changeTab('transactions')}
                 className="flex items-center gap-1 text-xs text-[#8A8A8A] hover:text-white transition"
               >
                 View all <ChevronRight size={12} />
@@ -509,7 +537,7 @@ export default function BalancePage() {
 
               </div>
               <button
-                onClick={() => setActiveTab('gifts')}
+                onClick={() => changeTab('gifts')}
                 className="flex items-center gap-1 text-xs text-[#8A8A8A] hover:text-white transition"
               >
                 View all <ChevronRight size={12} />
@@ -563,7 +591,7 @@ export default function BalancePage() {
                   <h2 className="text-base font-bold text-[#F5F5F5]">Creator Earnings</h2>
                 </div>
                 <button
-                  onClick={() => setActiveTab('earnings')}
+                  onClick={() => changeTab('earnings')}
                   className="flex items-center gap-1 text-xs text-[#8A8A8A] hover:text-white transition"
                 >
                   View all <ChevronRight size={12} />

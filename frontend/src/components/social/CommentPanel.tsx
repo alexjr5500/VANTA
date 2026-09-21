@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AtSign, Check, ChevronDown, ChevronUp, Copy, Edit3, Flag, Heart, Loader2, MessageCircle, MoreHorizontal, Reply, Send, Smile, Trash2, X } from 'lucide-react';
+import { AtSign, Check, ChevronDown, ChevronUp, Copy, Edit3, Flag, Heart, Loader2, MessageCircle, MoreHorizontal, RefreshCw, Reply, Send, Smile, Trash2, X } from 'lucide-react';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/apiClient';
 import { createSocket } from '@/lib/socketClient';
 import Avatar from '@/components/ui/Avatar';
@@ -26,10 +26,12 @@ export default function CommentPanel({ postId, postAuthor, initialCount, token, 
   // two comment models (replies, like/update/report) are guarded below.
   const base = kind === 'reel' ? '/api/reels' : '/api/feed';
   const inputRef = useRef<HTMLInputElement>(null);
+  const submittingRef = useRef(false);
   const [comments, setComments] = useState<CommentItem[]>([]);
   const [cursor, setCursor] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [sort, setSort] = useState<'newest' | 'top'>('newest');
   const [search, setSearch] = useState('');
   const [text, setText] = useState('');
@@ -45,6 +47,7 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
 
   const load = useCallback(async (reset = true) => {
     if (reset) setLoading(true); else setLoadingMore(true);
+    setLoadError(false);
     try {
       const query = new URLSearchParams({ limit: '20', sort });
       if (!reset && cursor) query.set('cursor', cursor);
@@ -52,11 +55,18 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
       const result = await apiGet<{ items: CommentItem[]; nextCursor?: string }>(`${base}/${postId}/comments?${query}`, token, { skipCache: true });
       setComments(previous => reset ? result.items : [...previous, ...result.items.filter(item => !previous.some(existing => existing.id === item.id))]);
       setCursor(result.nextCursor);
-    } catch (error: any) { toast.error('Comments unavailable', error.message); }
+    } catch (error: any) { setLoadError(true); toast.error('Comments unavailable', error.message); }
     finally { setLoading(false); setLoadingMore(false); }
   }, [base, cursor, postId, search, sort, token, toast]);
 
   useEffect(() => { void load(true); inputRef.current?.focus(); }, [sort]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Escape closes the sheet (Escape is ignored while a comment is submitting).
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !submittingRef.current) onClose(); };
+    addEventListener('keydown', onKey);
+    return () => removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   useEffect(() => {
     const socket = createSocket(token, `comments:${postId}`);
@@ -105,7 +115,7 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
   };
 
   const submit = async (event?: FormEvent) => {
-    event?.preventDefault(); const clean = text.trim(); if (!clean || submitting) return; setSubmitting(true);
+    event?.preventDefault(); const clean = text.trim(); if (!clean || submitting || submittingRef.current) return; submittingRef.current = true; setSubmitting(true);
     try {
       // Reel comment editing is not supported by the backend (/api/reels has no PUT).
       if (kind === 'post' && editing) { const updated = await apiPut<CommentItem>(`${base}/${postId}/comments/${editing.id}`, { content: clean }, token); setComments(items => items.map(item => item.id === updated.id ? { ...item, ...updated } : item)); setEditing(null); setText(''); setEmojiOpen(false); return; }
@@ -120,7 +130,7 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
       onCountChange(kind === 'reel' ? comments.length + 1 : (result as { commentCount: number }).commentCount);
       setReplyTo(null); setText(''); setEmojiOpen(false);
     } catch (error: any) { toast.error('Comment not saved', error.message); }
-    finally { setSubmitting(false); }
+    finally { setSubmitting(false); submittingRef.current = false; }
   };
 
   const remove = async (comment: CommentItem) => {
@@ -138,7 +148,7 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
 
   const CommentRow = ({ comment, depth = 0 }: { comment: CommentItem; depth?: number }) => <article className="group border-b border-white/[0.05] px-3 py-3" style={{ marginLeft: Math.min(depth, 4) * 14 }}><div className="flex gap-3"><Avatar src={comment.user.avatar} alt={comment.user.username} size="sm" /><div className="min-w-0 flex-1"><div className="flex items-center gap-1 text-xs"><strong className="text-white">{comment.user.fullName || comment.user.username}</strong>{comment.user.verified && <VerificationBadge verified size="xs" className="align-[-1px]" />}{comment.user.role === 'CREATOR' && <span className="rounded bg-fuchsia-500/15 px-1.5 py-0.5 text-[9px] text-fuchsia-200">CREATOR</span>}<span className="text-white/35">@{comment.user.username} · {timeAgo(comment.createdAt)}</span>{comment.edited && <span className="text-white/30">· edited</span>}</div><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-white/80">{renderTextWithLinks(comment.content, 'linkify')}</p><div className="mt-2 flex items-center gap-1.5 text-[12px] text-white/50"><button onClick={() => toggleLike(comment)} aria-label={comment.liked ? 'Unlike comment' : 'Like comment'} className={`rounded-full px-2.5 py-1 transition hover:bg-white/[0.06] ${comment.liked ? 'text-[#f2c75c]' : 'hover:text-white'}`}><Heart size={13} className="mr-1 inline" fill={comment.liked ? 'currentColor' : 'none'} />Like {comment._count?.likes || 0}</button><button onClick={() => { setReplyTo(comment); inputRef.current?.focus(); }} aria-label="Reply to comment" className="rounded-full px-2.5 py-1 transition hover:bg-white/[0.06] hover:text-white"><Reply size={13} className="mr-1 inline" />Reply</button><button onClick={() => setMenu(menu === comment.id ? null : comment.id)} aria-label="More comment actions"><MoreHorizontal size={15} /></button></div>{menu === comment.id && <div className="mt-2 flex flex-wrap gap-2 rounded-xl border border-white/10 bg-white/[.04] p-2 text-[11px] text-white/70"><button onClick={() => { navigator.clipboard.writeText(comment.content); setMenu(null); toast.success('Comment copied'); }}><Copy size={12} className="mr-1 inline" />Copy</button>{comment.userId === currentUser?.id && <><button onClick={() => { setEditing(comment); setText(comment.content); setMenu(null); inputRef.current?.focus(); }}><Edit3 size={12} className="mr-1 inline" />Edit</button><button onClick={() => void remove(comment)} className="text-rose-300"><Trash2 size={12} className="mr-1 inline" />Delete</button></>}<button onClick={() => void report(comment)} className="text-amber-200"><Flag size={12} className="mr-1 inline" />Report</button></div>}{(comment._count?.replies || 0) > 0 && <div className="mt-3">{!expanded[comment.id] ? <button onClick={() => void loadReplies(comment)} className="text-xs font-semibold text-[#c8c8cc]">View {comment._count?.replies} {comment._count?.replies === 1 ? 'reply' : 'replies'} <ChevronDown size={13} className="inline" /></button> : <><button onClick={() => setExpanded(items => ({ ...items, [comment.id]: false }))} className="text-xs font-semibold text-[#c8c8cc]">Hide replies <ChevronUp size={13} className="inline" /></button>{replyLoading === comment.id ? <Loader2 size={14} className="ml-2 inline animate-spin" /> : comment.replies?.map(reply => <CommentRow key={reply.id} comment={reply} depth={depth + 1} />)}{replyCursors[comment.id] && <button onClick={() => void loadReplies(comment, false)} className="mt-2 text-xs text-white/50">Load more replies</button>}</>}</div>}</div></div></article>;
 
-  return <AnimatePresence><motion.div className="fixed inset-0 z-[70] bg-black/70 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} /><motion.section role="dialog" aria-modal="true" aria-labelledby="comments-title" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ duration: .2 }} className="fixed inset-x-0 bottom-0 z-[80] flex h-[var(--vanta-vh,100dvh)] w-full flex-col border-t border-white/10 bg-[#0d0d0f] shadow-2xl sm:left-1/2 sm:h-[88dvh] sm:max-w-[700px] sm:-translate-x-1/2 sm:rounded-t-lg">
+  return <AnimatePresence><motion.div className="fixed inset-0 z-[70] bg-black/70 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} /><motion.section role="dialog" aria-modal="true" aria-labelledby="comments-title" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ duration: .2 }} className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-[80] flex h-[var(--vanta-vh,100dvh)] w-full flex-col border-t border-white/10 bg-[#0d0d0f] shadow-2xl sm:left-1/2 sm:h-[88dvh] sm:max-w-[700px] sm:-translate-x-1/2 sm:rounded-t-lg">
     <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.08] px-4 py-3.5 sm:px-5">
       <div className="flex min-w-0 items-center gap-2.5">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/[0.05]"><MessageCircle size={16} className="text-[#c8c8cc]" /></span>
@@ -156,7 +166,7 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
       </span>
       <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && void load(true)} placeholder="Search comments" aria-label="Search comments" className="ml-auto min-w-0 w-40 rounded-full border border-white/10 bg-black/25 py-1.5 pl-3 pr-3 text-xs text-white outline-none placeholder:text-white/30" />
     </div>
-    <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-4 sm:px-5" onScroll={e => { const target = e.currentTarget; if (target.scrollHeight - target.scrollTop - target.clientHeight < 160 && cursor && !loadingMore) void load(false); }}>{loading ? <div className="space-y-4 py-6">{[1, 2, 3].map(item => <div key={item} className="flex animate-pulse gap-3"><div className="h-9 w-9 rounded-full bg-white/10" /><div className="h-14 flex-1 rounded-lg bg-white/[.05]" /></div>)}</div> : comments.length ? comments.map(comment => <CommentRow key={comment.id} comment={comment} />) : <div className="px-4 py-14 text-center sm:px-5"><div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-white/[0.04]"><MessageCircle size={20} className="text-white/25" /></div><p className="mt-3 text-sm font-medium text-white/55">No comments yet</p><p className="mt-1 text-xs text-white/30">Start the conversation — your thoughts belong here.</p></div>}{loadingMore && <Loader2 className="mx-auto my-4 animate-spin text-white/50" />}</div>
+    <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-4 sm:px-5" onScroll={e => { const target = e.currentTarget; if (target.scrollHeight - target.scrollTop - target.clientHeight < 160 && cursor && !loadingMore) void load(false); }}>{loading ? <div className="space-y-4 py-6">{[1, 2, 3].map(item => <div key={item} className="flex animate-pulse gap-3"><div className="h-9 w-9 rounded-full bg-white/10" /><div className="h-14 flex-1 rounded-lg bg-white/[.05]" /></div>)}</div> : loadError ? <div className="px-4 py-14 text-center sm:px-5"><div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-white/[0.04]"><MessageCircle size={20} className="text-white/25" /></div><p className="mt-3 text-sm font-medium text-white/55">Comments could not load</p><p className="mt-1 text-xs text-white/30">Check your connection and try again.</p><button type="button" onClick={() => void load(true)} className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.05] px-4 text-xs font-medium text-white transition hover:bg-white/[0.1]"><RefreshCw size={14} /> Retry</button></div> : comments.length ? comments.map(comment => <CommentRow key={comment.id} comment={comment} />) : <div className="px-4 py-14 text-center sm:px-5"><div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-white/[0.04]"><MessageCircle size={20} className="text-white/25" /></div><p className="mt-3 text-sm font-medium text-white/55">{search.trim() ? 'No matching comments' : 'No comments yet'}</p><p className="mt-1 text-xs text-white/30">{search.trim() ? 'Try a different search or clear the search to see all comments.' : 'Start the conversation — your thoughts belong here.'}</p>{search.trim() && <button type="button" onClick={() => { setSearch(''); void load(true); }} className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-white/10 bg-white/[0.05] px-3.5 text-xs font-medium text-white transition hover:bg-white/[0.1]">Clear search</button>}</div>}{loadingMore && <Loader2 className="mx-auto my-4 animate-spin text-white/50" />}</div>
     <form onSubmit={submit} className="relative shrink-0 border-t border-white/[.08] bg-[#0d0d0f] px-4 pt-3 pb-[calc(.75rem+env(safe-area-inset-bottom))] sm:px-5"><div className="mb-2 flex items-center gap-2 text-[11px] text-white/50">{replyTo && <><span>Replying to @{replyTo.user.username}</span><button type="button" onClick={() => setReplyTo(null)} aria-label="Cancel reply"><X size={12} /></button></>}{editing && <><span>Editing comment</span><button type="button" onClick={() => { setEditing(null); setText(''); }} aria-label="Cancel edit"><X size={12} /></button></>}</div><div className="flex items-center gap-2"><Avatar src={currentUser?.avatar} alt={currentUser?.username || 'Your avatar'} size="xs" /><input ref={inputRef} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submit(); } }} placeholder="Write a comment..." aria-label="Write a comment" maxLength={2000} className="min-w-0 flex-1 rounded-full border border-white/10 bg-black/25 px-3.5 py-2.5 text-sm text-white outline-none placeholder:text-white/30 focus:bg-white/[0.05]" /><button type="button" onClick={() => setEmojiOpen(value => !value)} aria-label="Add emoji" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[#858585] hover:bg-white/[.06] hover:text-white"><Smile size={17} /></button><button type="button" onClick={() => setText(value => `${value}${value ? ' ' : ''}@`)} aria-label="Mention a user" className="hidden h-9 w-9 shrink-0 place-items-center rounded-lg text-[#858585] hover:bg-white/[.06] hover:text-white sm:grid"><AtSign size={17} /></button><button type="submit" aria-label="Send comment" disabled={!text.trim() || submitting} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[#c9a227]/60 bg-[#c9a227] text-black transition hover:bg-[#f2c75c] disabled:opacity-30">{submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}</button></div>{emojiOpen && <div className="absolute bottom-16 right-4 grid w-64 max-w-[calc(100vw-2rem)] grid-cols-8 gap-1 rounded-lg border border-white/10 bg-[#151517] p-3 shadow-2xl">{EMOJIS.map(emoji => <button type="button" key={emoji} onClick={() => setText(value => value + emoji)} className="rounded-md p-1 text-lg hover:bg-white/10" aria-label={`Add ${emoji}`}>{emoji}</button>)}</div>}</form>
   </motion.section>{deleteConfirm && <><motion.div
       className="fixed inset-0 z-[90] bg-black/65 backdrop-blur-sm"

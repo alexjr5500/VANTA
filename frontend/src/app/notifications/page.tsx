@@ -192,7 +192,7 @@ export default function NotificationsPage() {
   const visibleUnread = items.some(item => !item.read);
 
   return (
-    <main className="mx-auto w-full max-w-[480px] pb-24 text-[var(--vanta-white)]">
+    <main className="mx-auto w-full max-w-[480px] pb-[calc(5rem+env(safe-area-inset-bottom))] text-[var(--vanta-white)]">
       <PageHeader
         title="Notifications"
         back
@@ -209,7 +209,7 @@ export default function NotificationsPage() {
           <div className="mb-2 flex shrink-0 rounded-md border border-white/[0.08] bg-[#101010] p-0.5" aria-label="Read status filter">{[false, true].map(value => <button key={String(value)} onClick={() => setUnreadOnly(value)} className={cn('rounded px-2.5 py-1.5 text-[11px] transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/50', unreadOnly === value ? 'bg-[#1c1c1c] text-white' : 'text-[#666] hover:text-[#b8b8b8]')}>{value ? 'Unread' : 'All'}</button>)}</div>
         </div>
 
-      <section className="overflow-hidden border-x border-b border-white/[0.06] bg-[#080808] " aria-live="polite">
+      <section className="overflow-hidden border-b border-white/[0.06] bg-[#080808]" aria-live="polite">
         {loading ? <Skeletons /> : error ? <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center"><CircleAlert size={28} className="text-[#b8b8b8]" /><h2 className="mt-4 text-base font-semibold text-white">Couldn&apos;t load your notifications.</h2><button onClick={() => void load()} className="mt-5 inline-flex items-center gap-2 rounded-md border border-white/[0.12] bg-[#161616] px-4 py-2.5 text-sm text-white hover:bg-[#1c1c1c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"><RefreshCw size={15} />Try Again</button></div> : items.length === 0 ? <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center"><div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/[0.1] bg-[#101010]"><Bell size={23} className="text-[#b8b8b8]" /></div><h2 className="mt-4 text-base font-semibold text-white">You&apos;re all caught up</h2><p className="mt-1 text-sm text-[#666]">No new activity right now.</p></div> : <div className="divide-y divide-white/[0.06]">{items.map((notification, index) => {
           const normalizedType = normalizedTypeOf(notification);
           const Icon = iconByType[normalizedType] ?? Bell;

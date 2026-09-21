@@ -50,29 +50,28 @@ export default function GiftStorePage() {
   const [searchingRecipients, setSearchingRecipients] = useState(false);
   const [featuredOnly, setFeaturedOnly] = useState(false);
 
-  useEffect(() => {
+  const fetchData = useCallback(async () => {
     if (!token) return;
-    const fetchData = async () => {
-      try {
-        setLoadError(null);
-        const [giftData, walletData] = await Promise.all([
-          apiGet<any[]>('/api/monetization/gifts', token),
-          apiGet<any>('/api/monetization/wallet', token),
-        ]);
-        setGifts(normalizeGiftCatalog(giftData) as GiftItem[]);
-        const loadedBalance = Number(walletData?.coinBalance);
-        if (!Number.isSafeInteger(loadedBalance) || loadedBalance < 0) throw new Error('The Balance service returned invalid account data.');
-        setBalance(loadedBalance);
-      } catch (error: any) {
-        const message = error?.message || 'The gift catalog could not be loaded.';
-        setLoadError(message);
-        toast.error('Gift Store unavailable', message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
+    try {
+      setLoadError(null);
+      const [giftData, walletData] = await Promise.all([
+        apiGet<any[]>('/api/monetization/gifts', token, { skipCache: true }),
+        apiGet<any>('/api/monetization/wallet', token, { skipCache: true }),
+      ]);
+      setGifts(normalizeGiftCatalog(giftData) as GiftItem[]);
+      const loadedBalance = Number(walletData?.coinBalance);
+      if (!Number.isSafeInteger(loadedBalance) || loadedBalance < 0) throw new Error('The Balance service returned invalid account data.');
+      setBalance(loadedBalance);
+    } catch (error: any) {
+      const message = error?.message || 'The gift catalog could not be loaded.';
+      setLoadError(message);
+      toast.error('Gift Store unavailable', message);
+    } finally {
+      setLoading(false);
+    }
   }, [token, toast]);
+
+  useEffect(() => { void fetchData(); }, [fetchData]);
 
   useEffect(() => {
     if (!token || !sendingGift || recipient || recipientQuery.trim().length < 2) {
@@ -121,19 +120,27 @@ export default function GiftStorePage() {
 
   const visibleCategories = useMemo(() => CATEGORIES.filter(category => category.id === 'all' || getCategoryCount(category.id) > 0), [getCategoryCount]);
 
-  if (loading) {
+  if (loading || loadError) {
     return (
-      <div className="flex min-h-[calc(100dvh-8rem)] items-center justify-center pb-24">
-        <div className="text-center">
-          <Loader2 size={32} className="animate-spin text-[#8A8A8A] mx-auto" />
-          <p className="text-sm text-gray-400 mt-3">Loading gift store...</p>
+      <div className="w-full min-w-0">
+        <PageHeader back sticky title="Gift Store" eyebrow="VANTA" />
+        <div className="mt-4 flex min-h-[55dvh] w-full min-w-0 flex-col items-center justify-center px-5 text-center">
+          {loading ? (
+            <>
+              <Loader2 size={32} className="mx-auto animate-spin text-[#8A8A8A]" />
+              <p className="mt-3 text-sm text-gray-400">Loading gift store...</p>
+            </>
+          ) : (
+            <>
+              <Gift size={28} className="mb-3 text-white/25" />
+              <h1 className="text-base font-semibold text-white">Gift Store could not load</h1>
+              <p className="mx-auto mt-2 max-w-sm text-sm leading-5 text-[#8A8A8A]">{loadError}</p>
+              <button type="button" onClick={() => void fetchData()} className="mt-5 min-h-11 rounded-lg bg-white px-5 text-sm font-semibold text-black transition hover:bg-white/90">Try again</button>
+            </>
+          )}
         </div>
       </div>
     );
-  }
-
-  if (loadError) {
-    return <div className="flex min-h-[calc(100dvh-8rem)] flex-col items-center justify-center px-5 text-center"><Gift size={28} className="mb-3 text-white/25" /><h1 className="text-base font-semibold text-white">Gift Store could not load</h1><p className="mx-auto mt-2 max-w-sm text-sm leading-5 text-[#8A8A8A]">{loadError}</p><button type="button" onClick={() => window.location.reload()} className="mt-5 min-h-11 rounded-lg bg-white px-5 text-sm font-semibold text-black">Try again</button></div>;
   }
 
   return (
@@ -160,7 +167,7 @@ export default function GiftStorePage() {
         onSuccess={() => {
           setShowPurchase(false);
           if (token) {
-            void apiGet<any>('/api/monetization/wallet', token).then(data => {
+            void apiGet<any>('/api/monetization/wallet', token, { skipCache: true }).then(data => {
               const refreshedBalance = Number(data?.coinBalance);
               if (Number.isSafeInteger(refreshedBalance) && refreshedBalance >= 0) setBalance(refreshedBalance);
             });
@@ -168,9 +175,9 @@ export default function GiftStorePage() {
         }}
       />
 
-      <div className="w-full min-w-0 space-y-4">
-        <PageHeader back title="Gift Store" eyebrow="VANTA" />
-
+      <div className="w-full min-w-0">
+        <PageHeader back sticky title="Gift Store" eyebrow="VANTA" />
+        <div className="mt-4 w-full min-w-0 space-y-4">
         <div className="rounded-lg border border-white/[0.08] bg-[#0D0D0F] p-2.5">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
@@ -216,7 +223,7 @@ export default function GiftStorePage() {
           </div>
 
           {/* Categories */}
-          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none">
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
             {visibleCategories.map((cat) => {
               const count = getCategoryCount(cat.id);
               const isActive = activeCategory === cat.id;
@@ -295,6 +302,7 @@ export default function GiftStorePage() {
 
         <p className="border-t border-white/[0.08] pt-4 text-center text-xs leading-5 text-gray-500">Recipients receive 70% of a gift&apos;s coin value, converted to earnings automatically.</p>
 
+        </div>
       </div>
     </div>
   );

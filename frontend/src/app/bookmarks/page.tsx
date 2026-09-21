@@ -72,56 +72,53 @@ export default function BookmarksPage() {
     catch { if (removed) setBookmarks(previous => [removed, ...previous]); }
   };
 
-  if (loading) {
-    return (
-      <div className="mx-auto max-w-[480px] space-y-4 pt-8">
-        <div className="skeleton h-8 w-40" />
-        <div className="skeleton h-10 w-full rounded-2xl" />
-        <div className="grid grid-cols-1  gap-4">
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className="skeleton h-64 rounded-lg" />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="mx-auto flex max-w-[480px] flex-col items-center justify-center py-24 text-center">
-        <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mb-4">
-          <Loader2 size={24} className="text-red-400" />
-        </div>
-        <h2 className="text-lg font-medium text-white/60 mb-2">Failed to load bookmarks</h2>
-        <p className="text-sm text-white/30 mb-6">{error}</p>
-        <button onClick={() => void fetchBookmarks()} className="rounded-lg bg-[#f5f5f5] px-5 py-2.5 text-sm font-semibold text-black">
-          Try Again
-        </button>
-      </div>
-    );
-  }
-
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="mx-auto max-w-[480px] space-y-5 pb-24 pt-8"
+      className="mx-auto min-h-0 w-full min-w-0 max-w-[480px] pb-[calc(5rem+env(safe-area-inset-bottom))]"
     >
-      {/* Header */}
+      {/* Header — always visible across loading, error and content states so
+          navigation and spacing stay stable while bookmarks are fetched. */}
       <PageHeader
         back
+        sticky
         title="Bookmarks"
         actions={
           bookmarks.length > 0 ? (
-            <span className="text-xs text-white/30">{bookmarks.length} items</span>
+            <span className="px-1 text-xs text-white/30">{bookmarks.length} items</span>
           ) : undefined
         }
       />
 
-      <div className="relative">
-        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
-        <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search saved posts or creators" className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-3 text-sm text-white outline-none" />
-      </div>
+      <div className="mt-4 space-y-4">
+        {loading ? (
+          <div className="space-y-4">
+            <div className="skeleton h-10 w-full rounded-lg" />
+            <div className="grid grid-cols-1 gap-4">
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} className="skeleton h-64 rounded-lg" />
+              ))}
+            </div>
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-red-500/20 bg-red-500/10">
+              <Loader2 size={24} className="text-red-400" />
+            </div>
+            <h2 className="mb-2 text-base font-semibold text-white/80">Failed to load bookmarks</h2>
+            <p className="mb-6 max-w-sm text-sm leading-5 text-white/40">{error}</p>
+            <button onClick={() => void fetchBookmarks()} className="min-h-11 rounded-lg bg-[#f5f5f5] px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-white">
+              Try Again
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* Search */}
+            <div className="relative">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+              <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search saved posts or creators" className="h-11 w-full rounded-lg border border-white/[0.08] bg-[#0D0D0F] py-2.5 pl-10 pr-3 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-white/20" />
+            </div>
 
       {/* Bookmarks Grid */}
       {bookmarks.length === 0 ? (
@@ -140,7 +137,7 @@ export default function BookmarksPage() {
           <p className="text-sm text-white/30">No saved posts match your search</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1  gap-4">
+        <div className="grid grid-cols-1 gap-4">
           {filtered.map((bookmark: any, i: number) => (
             <motion.div
               key={bookmark.id}
@@ -191,7 +188,10 @@ export default function BookmarksPage() {
           ))}
         </div>
       )}
-      {nextCursor && <button disabled={loadingMore} onClick={() => void fetchBookmarks(nextCursor)} className="mx-auto flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-5 py-2.5 text-xs font-semibold text-white/70 hover:bg-white/10 disabled:opacity-50">{loadingMore && <Loader2 size={14} className="animate-spin" />}Load more</button>}
+            {nextCursor && <button disabled={loadingMore} onClick={() => void fetchBookmarks(nextCursor)} className="mx-auto flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-5 py-2.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 disabled:opacity-50">{loadingMore && <Loader2 size={14} className="animate-spin" />}Load more</button>}
+          </>
+        )}
+      </div>
     </motion.div>
   );
 }
