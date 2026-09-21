@@ -1006,7 +1006,7 @@ export default function GoLivePage() {
         <div className="absolute inset-x-3 bottom-[58px] rounded-3xl border border-white/10 bg-black/55 px-4 pt-3 pb-2 shadow-2xl backdrop-blur-2xl">
           <div className="flex items-center gap-2.5">
             <div className="relative">
-              <Avatar src={avatar} alt={displayName} size="lg" wrapperClassName="ring-2 ring-[#D6A83F]/60" />
+              <Avatar src={avatar} alt={displayName} size="lg" wrapperClassName="rounded-full ring-2 ring-[#D6A83F]/60" />
               <span className="absolute -bottom-0.5 -right-0.5 grid h-5 w-5 place-items-center rounded-full bg-[#D6A83F] text-black">
                 <Check size={12} strokeWidth={3} />
               </span>
@@ -1161,29 +1161,30 @@ export default function GoLivePage() {
       {isLiveRoom && (
         <div className="absolute inset-0 flex flex-col" aria-label="Live room">
           {/* Top-left: streamer identity + engagement + Fan Club */}
-          <div className="flex shrink-0 items-center gap-2 px-3 pt-[calc(env(safe-area-inset-top)+8px)]">
-            <button type="button" onClick={() => router.replace(`/profile/${user?.username || ''}`)} aria-label="Your profile">
-              <Avatar src={avatar} alt={displayName} size="md" wrapperClassName="ring-2 ring-white/20" />
+          <div className="flex shrink-0 items-center gap-2.5 px-3 pt-[calc(env(safe-area-inset-top)+8px)]">
+            <button type="button" onClick={() => router.replace(`/profile/${user?.username || ''}`)} aria-label="Your profile" className="shrink-0">
+              {/* Circular profile avatar — no square box around it */}
+              <Avatar src={avatar} alt={displayName} size="md" />
             </button>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <p className="max-w-[110px] truncate text-sm font-bold text-white drop-shadow">{displayName}</p>
-                <span className="inline-flex items-center gap-1 rounded-full bg-[#D6A83F]/90 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-black">
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <p className="min-w-0 flex-1 truncate text-sm font-bold leading-none text-white drop-shadow">{displayName}</p>
+                <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-full bg-[#D6A83F] px-2 text-[9px] font-extrabold uppercase tracking-wide text-black">
                   <Radio size={9} fill="currentColor" /> LIVE
                 </span>
               </div>
-              <div className="mt-0.5 flex items-center gap-1.5">
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-white/80">
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] leading-none">
+                <span className="inline-flex items-center gap-1 font-semibold text-white/80">
                   <Eye size={10} className="text-[#F2C75C]" /> {formatNumber(viewers)} watching
                 </span>
                 <span className="text-white/35">·</span>
-                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-white/70">
+                <span className="inline-flex items-center gap-0.5 font-medium text-white/70">
                   <Clock size={10} /> {clock}
                 </span>
                 {liveGiftCount > 0 && (
                   <>
                     <span className="text-white/35">·</span>
-                    <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-[#F2C75C]">
+                    <span className="inline-flex items-center gap-0.5 font-medium text-[#F2C75C]">
                       <Gift size={10} /> {formatNumber(liveGiftCount)}
                     </span>
                   </>
@@ -1309,16 +1310,14 @@ export default function GoLivePage() {
             )}
           </div>
 
-          {/* Bottom-right: circular control rail */}
-          <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+16px)] right-3 z-10 flex flex-col items-center gap-3">
-            <LiveAction onPress={() => setChatOpen((v) => !v)} label="Chat" badge={chatLines.length}>
+          {/* Bottom-right: circular control rail — Share lives in “More”; the rail is
+              docked above the composer so the bottom chat composer is never covered */}
+          <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+64px)] right-3 z-10 flex flex-col items-center gap-2.5">
+            <LiveAction onPress={() => setChatOpen((v) => !v)} label="Chat" badge={chatLines.length} active={chatOpen}>
               <MessageCircle size={20} />
             </LiveAction>
             <LiveAction onPress={() => setSheet('guests')} label="Guests" badge={guestStage.guestCount + guestStage.pending.length}>
               <Users size={20} />
-            </LiveAction>
-            <LiveAction onPress={() => void shareLive()} label="Share" active>
-              <Share2 size={20} />
             </LiveAction>
             <LiveAction onPress={() => setSheet('beauty')} label="Beautify" active={filter !== 'none'}>
               <Wand2 size={20} />
@@ -1507,7 +1506,7 @@ export default function GoLivePage() {
               <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-[#D6A83F]/15 to-transparent" />
               <div className="relative flex flex-col items-center">
                 <div className="relative">
-                  <Avatar src={guestRequest.avatar} alt={guestRequest.username} size="xl" wrapperClassName="ring-2 ring-[#D6A83F]/60" />
+                  <Avatar src={guestRequest.avatar} alt={guestRequest.username} size="xl" wrapperClassName="rounded-full ring-2 ring-[#D6A83F]/60" />
                   <span className="absolute -bottom-1 -right-1 grid h-6 w-6 place-items-center rounded-full border-2 border-[#121216] bg-[#D6A83F] text-black">
                     <UserPlus size={12} strokeWidth={2.6} />
                   </span>
@@ -1758,24 +1757,60 @@ export default function GoLivePage() {
               )}
 
               {sheet === 'beauty' || sheet === 'effects' ? (
-                <div className="mt-3 grid grid-cols-4 gap-2">
-                  {FILTERS.map((f) => (
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => setFilter(f.id)}
-                      aria-pressed={filter === f.id}
-                      className={cn(
-                        'flex flex-col items-center gap-1 rounded-2xl border py-2.5 text-[11px] font-semibold transition active:scale-95',
-                        filter === f.id ? 'border-[#D6A83F]/70 bg-[#D6A83F]/15 text-[#F2C75C]' : 'border-white/[0.06] bg-white/[0.04] text-white/70 hover:bg-white/[0.08]',
-                      )}
-                    >
-                      <span className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl bg-[#222]">
-                        <img src={avatar || '/branding/vanta-icon-192.png'} alt="" className="h-full w-full object-cover" style={{ filter: f.css || undefined }} />
-                      </span>
-                      {f.label}
-                    </button>
-                  ))}
+                <div className="mt-3">
+                  {/* Live preview card + reset */}
+                  <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.045] px-3 py-2.5">
+                    <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full bg-[#18181b] shadow-inner">
+                      <img
+                        src={avatar || '/branding/vanta-icon-192.png'}
+                        alt="Effect preview"
+                        className="h-full w-full object-cover"
+                        style={{ filter: filterCss || undefined }}
+                      />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-white">{FILTERS.find((f) => f.id === filter)?.label || 'Original'}</p>
+                      <p className="truncate text-[10px] text-white/45">Tap a filter to preview it on your camera</p>
+                    </div>
+                    {filter !== 'none' && (
+                      <button
+                        type="button"
+                        onClick={() => setFilter('none')}
+                        className="shrink-0 rounded-full border border-white/15 bg-white/[0.07] px-2.5 py-1 text-[10px] font-bold text-white/85 transition active:scale-95 hover:bg-white/[0.12]"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Circular filter swatches */}
+                  <div className="mt-3 grid grid-cols-4 gap-2">
+                    {FILTERS.map((f) => {
+                      const selected = filter === f.id;
+                      return (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => setFilter(f.id)}
+                          aria-pressed={selected}
+                          className={cn(
+                            'flex flex-col items-center gap-1.5 rounded-2xl border py-2 text-[10px] font-semibold transition active:scale-95',
+                            selected ? 'border-[#D6A83F]/70 bg-[#D6A83F]/15 text-[#F2C75C]' : 'border-white/[0.06] bg-white/[0.04] text-white/70 hover:bg-white/[0.08]',
+                          )}
+                        >
+                          <span className={cn('relative grid h-12 w-12 place-items-center overflow-hidden rounded-full', selected ? 'ring-2 ring-[#D6A83F]/70' : 'ring-1 ring-white/15')}>
+                            <img src={avatar || '/branding/vanta-icon-192.png'} alt={f.label} className="h-full w-full object-cover" style={{ filter: f.css || undefined }} />
+                            {selected && (
+                              <span className="absolute -right-0.5 -top-0.5 grid h-4 w-4 place-items-center rounded-full bg-[#D6A83F] text-black">
+                                <Check size={9} strokeWidth={3.5} />
+                              </span>
+                            )}
+                          </span>
+                          {f.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               ) : null}
 
@@ -1818,9 +1853,12 @@ export default function GoLivePage() {
                     onPress={isLiveRoom ? () => void lk.toggleCamera() : () => cam.toggleVideo()}
                   />
                   {isLiveRoom && (
-                    <button type="button" onClick={endLiveRef.current} className="flex w-full items-center gap-3 rounded-2xl bg-rose-500/10 px-3 py-2.5 text-sm font-bold text-rose-300">
-                      <X size={16} /> End live<span className="ml-auto text-xs font-medium text-rose-300/60">Tap to stop</span>
-                    </button>
+                    <>
+                      <MoreRow icon={<Share2 size={16} />} label="Share live" onPress={() => void shareLive()} />
+                      <button type="button" onClick={endLiveRef.current} className="flex w-full items-center gap-3 rounded-2xl bg-rose-500/10 px-3 py-2.5 text-sm font-bold text-rose-300">
+                        <X size={16} /> End live<span className="ml-auto text-xs font-medium text-rose-300/60">Tap to stop</span>
+                      </button>
+                    </>
                   )}
                 </div>
               )}
@@ -1913,9 +1951,12 @@ function LiveAction({ onPress, label, badge, active, children }: { onPress: () =
         type="button"
         onClick={onPress}
         aria-label={label}
+        aria-pressed={active}
         className={cn(
           'relative grid h-12 w-12 place-items-center rounded-full border shadow-lg backdrop-blur-md transition active:scale-95',
-          active ? 'border-white/30 bg-black/50 text-white' : 'border-white/15 bg-black/40 text-white/90 hover:bg-black/60',
+          active
+            ? 'border-[#D6A83F]/80 bg-[#D6A83F]/25 text-[#F2C75C] shadow-[0_0_18px_rgba(214,168,63,0.35)]'
+            : 'border-white/15 bg-black/40 text-white/90 hover:bg-black/60',
         )}
       >
         {children}
@@ -1925,7 +1966,7 @@ function LiveAction({ onPress, label, badge, active, children }: { onPress: () =
           </span>
         )}
       </button>
-      <span className="text-[9px] font-semibold uppercase tracking-wide text-white/75 drop-shadow">{label}</span>
+      <span className={cn('text-[9px] font-semibold uppercase tracking-wide drop-shadow', active ? 'text-[#F2C75C]' : 'text-white/75')}>{label}</span>
     </div>
   );
 }
