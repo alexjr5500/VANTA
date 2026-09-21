@@ -7,6 +7,7 @@ import {
   updateGroup,
   addGroupMember,
   removeGroupMember,
+  joinGroup,
   sendGroupMessage,
   getGroupMessages,
   deleteGroup,
@@ -22,6 +23,7 @@ router.get("/:id", getGroupById);
 router.put("/:id", updateGroup);
 router.post("/:id/members", addGroupMember);
 router.delete("/:id/members/:targetUserId", removeGroupMember);
+router.post("/:id/join", joinGroup);
 router.post("/:id/messages", sendGroupMessage);
 router.get("/:id/messages", getGroupMessages);
 router.delete("/:id", deleteGroup);

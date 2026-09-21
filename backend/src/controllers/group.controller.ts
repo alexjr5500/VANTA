@@ -102,6 +102,19 @@ export const removeGroupMember = async (req: AuthRequest, res: Response): Promis
   }
 };
 
+export const joinGroup = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+
+    const result = await groupService.joinGroup(req.params.id, userId);
+    res.status(200).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(400).json({ error: message });
+  }
+};
+
 export const sendGroupMessage = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
