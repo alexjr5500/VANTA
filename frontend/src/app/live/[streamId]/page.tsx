@@ -205,6 +205,23 @@ export default function LiveViewerPage() {
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { guestStatusRef.current = guestStatus; }, [guestStatus]);
 
+  // The live elapsed-time clock. It MUST stay up here with the other hooks:
+  // React requires every render of a component to call exactly the same hooks
+  // in the same order, and this page has four early returns below (sign-in,
+  // LOADING, ERROR, ENDED). If this useState/useEffect sat under those returns,
+  // the LIVE render would invoke more hooks than the previous render and React
+  // would abort the page with "Rendered more hooks than during the previous
+  // render" — surfacing as the generic "Unable to load this content" screen.
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const startedAt = stream?.startedAt ? new Date(stream.startedAt).getTime() : 0;
+    if (phase !== 'LIVE' || !startedAt) return;
+    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    tick();
+    const t = window.setInterval(tick, 1000);
+    return () => window.clearInterval(t);
+  }, [phase, stream?.startedAt]);
+
   const burstReaction = useCallback((emoji: string) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setReactions((prev) => [...prev.slice(-14), { id, emoji }]);
@@ -690,15 +707,6 @@ const sendComment = useCallback(() => {
   const viewerCount = viewers || stream?.viewerCount || stream?._count?.viewers || 0;
   const isOwn = user?.id === stream.host.id;
   const isConnecting = connectionState === ConnectionState.Reconnecting;
-  const started = stream?.startedAt ? new Date(stream.startedAt).getTime() : null;
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    if (phase !== 'LIVE' || !started) return;
-    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)));
-    tick();
-    const t = window.setInterval(tick, 1000);
-    return () => window.clearInterval(t);
-  }, [phase, started]);
   const eSecs = elapsed % 60;
   const eMins = Math.floor(elapsed / 60) % 60;
   const eHrs = Math.floor(elapsed / 3600);
