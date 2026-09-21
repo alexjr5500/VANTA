@@ -70,9 +70,11 @@ export default function ProfileHeader({ profile, own, onFollow, onMessage, onGif
       </div>
 
       <div className="profile-stats" aria-label="Profile statistics">
-        <button onClick={() => onPeople('following')}><strong>{formatCount(stats.following)}</strong><span>Following</span></button>
+        {/* Each stat is a single horizontal track: count first, label after it
+            on the same line — 1,245 Followers / 532 Following / 87 Post / 4,821 Likes. */}
         <button onClick={() => onPeople('followers')}><strong>{formatCount(stats.followers)}</strong><span>Followers</span></button>
-        <div><strong>{formatCount(stats.posts)}</strong><span>Posts</span></div>
+        <button onClick={() => onPeople('following')}><strong>{formatCount(stats.following)}</strong><span>Following</span></button>
+        <div><strong>{formatCount(stats.posts)}</strong><span>Post</span></div>
         <div><strong>{formatCount(stats.likes)}</strong><span>Likes</span></div>
       </div>
     </div>

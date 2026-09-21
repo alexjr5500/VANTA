@@ -203,18 +203,20 @@
   padding: 12px 0;
   border-top: 1px solid rgba(245, 245, 245, 0.08);
 }
-/* One clean statistics component: each cell is a fixed grid track with the
-   number above its label, all four aligned and evenly spaced. The vertical
+/* One clean statistics component: each cell is a single horizontal track with
+   the count before its label — "1,245 Followers" / "532 Following" /
+   "87 Post" / "4,821 Likes". All four tracks stay evenly spaced and the
    hairline separators keep the row scannable without adding bulk. */
 .profile-stats > * {
   position: relative;
-  display: grid;
-  gap: 3px;
-  justify-items: center;
-  align-content: start;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+  white-space: nowrap;
+  min-width: 0;
   color: inherit;
   text-align: center;
-  min-width: 0;
 }
 .profile-stats > * + *::before {
   content: "";
@@ -225,9 +227,16 @@
   width: 1px;
   background: rgba(245, 245, 245, 0.06);
 }
-.profile-stats strong { color: var(--profile-text); font-size: 15px; font-weight: 600; line-height: 1; }
-.profile-stats span { color: #858585; font-size: 10px; letter-spacing: 0; white-space: nowrap; }
+.profile-stats strong { color: var(--profile-text); font-size: 15px; font-weight: 650; line-height: 1; font-variant-numeric: tabular-nums; }
+.profile-stats span { color: #8c8c8c; font-size: 11px; letter-spacing: 0; white-space: nowrap; }
 .profile-stats button:hover span { color: var(--profile-muted); }
+
+/* Narrow phones: two tracks per row so the count + label pair never clips or
+   overflows at 320px. The count still sits on the same line as its label. */
+@media (max-width: 380px) {
+  .profile-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 9px; }
+  .profile-stats > * + *::before { display: none; }
+}
 
 .profile-tabs {
   position: sticky;
