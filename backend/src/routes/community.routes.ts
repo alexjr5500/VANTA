@@ -4,6 +4,8 @@ import {
   createCommunity,
   getCommunities,
   getCommunityById,
+  getDiscoverCommunities,
+  getDiscoverCommunityById,
   joinCommunity,
   leaveCommunity,
   createCommunityPost,
@@ -16,6 +18,13 @@ const router = Router();
 
 // Public routes
 router.get("/", getCommunities);
+
+// Communities discovery directory (public Groups & Channels). Registered
+// BEFORE /:id so these dedicated routes always win over the legacy community
+// by-id/segment handlers.
+router.get("/discover", authenticateJWT, getDiscoverCommunities);
+router.get("/discover/:id", authenticateJWT, getDiscoverCommunityById);
+
 router.get("/:id", getCommunityById);
 router.get("/:id/posts", getCommunityPosts);
 

@@ -246,6 +246,34 @@ export class GroupService {
     return added;
   }
 
+  /**
+   * Self-join a PUBLIC group. Private groups are rejected, mirroring the
+   * channel self-join flow so public Groups can be discovered and joined from
+   * the Communities discovery directory.
+   */
+  async joinGroup(groupId: string, userId: string) {
+    const group: any = await prisma.group.findUnique({ where: { id: groupId } });
+    if (!group) throw new Error("Group not found");
+    if (group.conversationId) {
+      const conversation = await prisma.conversation.findUnique({
+        where: { id: group.conversationId },
+        select: { visibility: true },
+      });
+      if (conversation?.visibility === "PRIVATE") throw new Error("This group is private");
+    }
+    const existing = await prisma.groupMember.findUnique({
+      where: { groupId_userId: { groupId, userId } },
+    });
+    if (existing) return existing;
+
+    const joined = await prisma.groupMember.create({
+      data: { groupId, userId },
+      include: { user: { select: { id: true, username: true, avatar: true } } },
+    });
+    if (group?.conversationId) await prisma.participant.upsert({ where: { userId_conversationId: { userId, conversationId: group.conversationId } }, create: { userId, conversationId: group.conversationId }, update: {} });
+    return joined;
+  }
+
   async removeMember(groupId: string, userId: string, requesterId: string) {
     const group: any = await prisma.group.findUnique({ where: { id: groupId } });
     if (!group) throw new Error("Group not found");

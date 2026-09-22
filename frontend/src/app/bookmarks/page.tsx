@@ -5,8 +5,7 @@ import { motion } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
 import { apiDelete, apiGet } from '@/lib/apiClient';
 import { createSocket } from '@/lib/socketClient';
-import { Bookmark, Search, Loader2, FileText, FolderOpen } from 'lucide-react';
-import PageHeader from '@/components/ui/PageHeader';
+import { Bookmark, Search, Loader2, FileText, FolderOpen, ArrowLeft } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import Avatar from '@/components/ui/Avatar';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
@@ -80,16 +79,13 @@ export default function BookmarksPage() {
     >
       {/* Header — always visible across loading, error and content states so
           navigation and spacing stay stable while bookmarks are fetched. */}
-      <PageHeader
-        back
-        sticky
-        title="Bookmarks"
-        actions={
-          bookmarks.length > 0 ? (
-            <span className="px-1 text-xs text-white/30">{bookmarks.length} items</span>
-          ) : undefined
-        }
-      />
+      <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[#080808]/90 px-4 backdrop-blur-xl">
+        <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><ArrowLeft size={20} /></button>
+        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[#f5f5f5]">Bookmarks</h1>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {bookmarks.length > 0 && <span className="px-1 text-xs text-white/30">{bookmarks.length} items</span>}
+        </div>
+      </header>
 
       <div className="mt-4 space-y-4">
         {loading ? (

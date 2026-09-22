@@ -10,11 +10,10 @@ import {
   Plus, ArrowUpRight, ArrowDownLeft, Gift, Loader2,
   History, Search, Shield, Ban, X,
   ArrowUpFromLine, Download, ChevronRight,
-  Wallet, Sparkles, TrendingUp, DollarSign, Lock, Eye, EyeOff
+  Wallet, Sparkles, TrendingUp, DollarSign, Lock, Eye, EyeOff, ArrowLeft
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
-import PageHeader from '@/components/ui/PageHeader';
 import GiftArtwork from '@/components/gifts/GiftArtwork';
 import { formatCoinsCompact } from '@/lib/wallet';
 import BuyCoinsModal from '@/components/wallet/BuyCoinsModal';
@@ -310,25 +309,22 @@ export default function BalancePage() {
       animate={{ opacity: 1 }}
       className="mx-auto min-h-[calc(100dvh-5rem)] w-full min-w-0 space-y-3 pb-[calc(5rem+env(safe-area-inset-bottom))]"
     >
-      {/* Header — sticky: stays fixed at the top while the balance and transaction
-          content scroll beneath it. Matches the canonical VANTA sticky header
-          styling (blur surface + mobile safe-area inset). */}
-      <PageHeader
-        back
-        sticky
-        title="Balance"
-        eyebrow="VANTA"
-        actions={
+      {/* Header — Discover-style full-bleed sticky bar that stays fixed at the top
+          while the balance and transaction content scroll beneath it. */}
+      <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[#080808]/90 px-4 backdrop-blur-xl">
+        <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><ArrowLeft size={20} /></button>
+        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[#f5f5f5]">Balance</h1>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           <button
             type="button"
             onClick={() => setHideBalance(!hideBalance)}
             aria-label={hideBalance ? 'Show balance' : 'Hide balance'}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-white/[0.08] bg-[#0D0D0F] text-[#8A8A8A] transition hover:text-white"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[#0D0D0F] text-[#8A8A8A] transition hover:text-white"
           >
             {hideBalance ? <EyeOff size={18} /> : <Eye size={18} />}
           </button>
-        }
-      />
+        </div>
+      </header>
 
       {/* Main Balance Card */}
       <motion.section
