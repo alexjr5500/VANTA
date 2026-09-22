@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState, useMemo } from 'react';
-import { Crown, Flame, Gift, Heart, Loader2, Search, Star, X, SlidersHorizontal } from 'lucide-react';
-import PageHeader from '@/components/ui/PageHeader';
+import { ArrowLeft, Crown, Flame, Gift, Heart, Loader2, Search, Star, X, SlidersHorizontal } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
 import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
@@ -34,6 +34,7 @@ const CATEGORIES = [
 ];
 
 export default function GiftStorePage() {
+  const router = useRouter();
   const { token, user } = useAuth();
   const toast = useToast();
   const [gifts, setGifts] = useState<GiftItem[]>([]);
@@ -123,7 +124,10 @@ export default function GiftStorePage() {
   if (loading || loadError) {
     return (
       <div className="w-full min-w-0">
-        <PageHeader back sticky title="Gift Store" eyebrow="VANTA" />
+        <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[#080808]/90 px-4 backdrop-blur-xl">
+          <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><ArrowLeft size={20} /></button>
+          <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[#f5f5f5]">Gift Store</h1>
+        </header>
         <div className="mt-4 flex min-h-[55dvh] w-full min-w-0 flex-col items-center justify-center px-5 text-center">
           {loading ? (
             <>
@@ -144,7 +148,7 @@ export default function GiftStorePage() {
   }
 
   return (
-    <div className="min-h-[calc(100dvh-5rem)] w-full min-w-0 overflow-x-hidden pb-[calc(5rem+env(safe-area-inset-bottom))]">
+    <div className="min-h-[calc(100dvh-5rem)] w-full min-w-0 pb-[calc(5rem+env(safe-area-inset-bottom))]">
       {sendingGift && !recipient && (
         <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 p-0 backdrop-blur-md  " onClick={() => setSendingGift(null)}>
           <section role="dialog" aria-modal="true" aria-label="Choose a gift recipient" className="w-full max-w-[480px] rounded-t-xl border border-white/10 bg-[#0D0D0F]/98 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 shadow-2xl" onClick={event => event.stopPropagation()}>
@@ -176,7 +180,10 @@ export default function GiftStorePage() {
       />
 
       <div className="w-full min-w-0">
-        <PageHeader back sticky title="Gift Store" eyebrow="VANTA" />
+        <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[#080808]/90 px-4 backdrop-blur-xl">
+          <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><ArrowLeft size={20} /></button>
+          <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[#f5f5f5]">Gift Store</h1>
+        </header>
         <div className="mt-4 w-full min-w-0 space-y-4">
         <div className="rounded-lg border border-white/[0.08] bg-[#0D0D0F] p-2.5">
           <div className="flex items-center justify-between gap-3">

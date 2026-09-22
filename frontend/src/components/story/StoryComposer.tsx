@@ -8,7 +8,6 @@ import {
   Image as ImageIcon,
   MessagesSquare,
   Sparkles,
-  Type,
   Video,
   X,
 } from 'lucide-react';
@@ -54,8 +53,7 @@ export const STORY_MENU_ITEMS: StoryComposerMenuItem[] = [
   { id: 'media', icon: Camera, label: 'Camera', description: 'Capture a photo instantly', accent: 'bg-[#dce7ff] text-[#17264a]', mediaSource: 'camera-photo' },
   { id: 'media', icon: ImageIcon, label: 'Photo', description: 'Choose a photo from your gallery', accent: 'bg-[#dff2e7] text-[#0f3d24]', mediaSource: 'gallery-image' },
   { id: 'media', icon: Video, label: 'Video', description: 'Record or pick a short video', accent: 'bg-[#f7e5d8] text-[#5a2b10]', mediaSource: 'gallery-video' },
-  { id: 'text', icon: Type, label: 'Text Story', description: 'Design a premium text canvas', accent: 'bg-[#f2dfb1] text-[#5a3a00]' },
-  { id: 'status', icon: MessagesSquare, label: 'Status', description: 'Write a Status · up to 700 characters', accent: 'bg-white/[0.07] text-[#c9a227]' },
+  { id: 'status', icon: MessagesSquare, label: 'Text Story', description: 'Write a Status · up to 700 characters', accent: 'bg-white/[0.07] text-[#c9a227]' },
 ];
 
 /**

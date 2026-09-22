@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import PageHeader from '@/components/ui/PageHeader';
 import {
+  ArrowLeft,
   AtSign,
   Bell,
   Check,
@@ -193,17 +193,14 @@ export default function NotificationsPage() {
 
   return (
     <main className="mx-auto w-full max-w-[480px] pb-[calc(5rem+env(safe-area-inset-bottom))] text-[var(--vanta-white)]">
-      <PageHeader
-        title="Notifications"
-        back
-        sticky
-        actions={
-          <>
-            {visibleUnread && <button onClick={markAllRead} disabled={markingAll} className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-[#C8C8CC] transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-50" aria-label="Mark all notifications as read">{markingAll ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}</button>}
-            <button onClick={() => router.push('/settings/notifications')} className="flex h-10 w-10 items-center justify-center rounded-lg text-[#C8C8CC] transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50" aria-label="Notification settings"><Settings size={19} /></button>
-          </>
-        }
-      />
+      <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[#080808]/90 px-4 backdrop-blur-xl">
+        <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><ArrowLeft size={20} /></button>
+        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[#f5f5f5]">Notifications</h1>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {visibleUnread && <button onClick={markAllRead} disabled={markingAll} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#C8C8CC] transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-50" aria-label="Mark all notifications as read">{markingAll ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}</button>}
+          <button onClick={() => router.push('/settings/notifications')} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#C8C8CC] transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50" aria-label="Notification settings"><Settings size={19} /></button>
+        </div>
+      </header>
       <div className="mt-2 flex items-end justify-between gap-4 border-b border-white/[0.06]">
           <div className="flex min-w-0 gap-5 overflow-x-auto" role="tablist" aria-label="Notification categories">{filters.map(filter => <button key={filter.id} role="tab" aria-selected={filterId === filter.id} onClick={() => setFilterId(filter.id)} className={cn('relative shrink-0 pb-3 text-xs font-medium transition focus-visible:outline-none focus-visible:text-white', filterId === filter.id ? 'text-white after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-[#b8b8b8]' : 'text-[#666] hover:text-[#b8b8b8]')}>{filter.label}</button>)}</div>
           <div className="mb-2 flex shrink-0 rounded-md border border-white/[0.08] bg-[#101010] p-0.5" aria-label="Read status filter">{[false, true].map(value => <button key={String(value)} onClick={() => setUnreadOnly(value)} className={cn('rounded px-2.5 py-1.5 text-[11px] transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/50', unreadOnly === value ? 'bg-[#1c1c1c] text-white' : 'text-[#666] hover:text-[#b8b8b8]')}>{value ? 'Unread' : 'All'}</button>)}</div>
