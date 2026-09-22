@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, Film, RefreshCw, Scissors, Upload } from 'lucide-react';
+import { Check, Film, RefreshCw, RotateCcw, Scissors, Upload } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/Toast';
 import {
@@ -204,6 +204,10 @@ export default function VideoTrimEditor({
   const canContinue =
     isReady && !isPlayerError && !error && duration > 0 && trimEnd - trimStart >= VIDEO_MIN_GAP_SECONDS;
 
+  // Reset restores the FULL source range (undo trimming in one tap). Disabled
+  // while the selection already covers the whole timeline.
+  const canResetTrim = isReady && duration > 0 && (trimStart > 0.01 || trimEnd < duration - 0.01);
+
   const handleFileInput = (event: React.ChangeEvent<HTMLInputElement>) => {
     const candidate = event.target.files?.[0];
     event.target.value = '';
@@ -285,6 +289,12 @@ export default function VideoTrimEditor({
     }
   }, []);
 
+  // Reset restores the FULL source range (undo trimming in one tap).
+  const handleResetTrim = useCallback(() => {
+    handleRangeChange(0, duration);
+    setPlayhead(previewRef.current?.currentTime ?? 0);
+  }, [duration, handleRangeChange]);
+
   const handleSeek = useCallback(
     (time: number) => {
       const video = previewRef.current;
@@ -309,11 +319,16 @@ export default function VideoTrimEditor({
   const handleTimeUpdate = useCallback(() => {
     const video = previewRef.current;
     if (!video) return;
-    setPlayhead(video.currentTime);
-    if (step === 'edit' && video.currentTime >= trimEnd) {
-      video.pause();
+    // Confine preview playback to the selected range: when the playhead reaches
+    // the end of the selection, loop back to its start so what plays is exactly
+    // the trimmed range (modern social-editor preview behaviour).
+    if (step === 'edit' && !video.paused && video.currentTime >= trimEnd - 0.03) {
+      video.currentTime = trimStart;
+      setPlayhead(trimStart);
+      return;
     }
-  }, [step, trimEnd]);
+    setPlayhead(video.currentTime);
+  }, [step, trimStart, trimEnd]);
 
   // ---- Trim & capture ------------------------------------------------------
 
@@ -555,6 +570,17 @@ export default function VideoTrimEditor({
                     className="btn-ghost min-h-11 shrink-0 px-4"
                   >
                     Replace Video
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetTrim}
+                    disabled={!canResetTrim}
+                    className="btn-ghost min-h-11 shrink-0 px-4"
+                    aria-label="Reset trim selection"
+                    title="Reset trim selection"
+                  >
+                    <RotateCcw size={15} />
+                    Reset
                   </button>
                   <button
                     type="button"

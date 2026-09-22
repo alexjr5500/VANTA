@@ -16,8 +16,11 @@ import {
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
-import { publishMediaStory, uploadStoryMedia } from '@/lib/storyApi';
+import { createStoryDraft } from '@/lib/storyApi';
 import { notifyStoryFeedChanged } from '@/lib/storyEvents';
+import { startUpload } from '@/lib/uploads/store';
+import VideoTrimModal from '@/components/video/VideoTrimModal';
+import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 import { normalizeStatusEditorValue, statusCounts, STATUS_MAX_CHARS } from '@/lib/statusLimits';
 
 export type MediaStorySource = 'camera-photo' | 'camera-video' | 'gallery-image' | 'gallery-video';
@@ -49,9 +52,7 @@ export default function StoryMediaEditor({ source, onBack, onClose }: StoryMedia
 
   const [draft, setDraft] = useState<DraftMedia | null>(null);
   const [caption, setCaption] = useState('');
-  const [uploading, setUploading] = useState(false);
-  const [uploadPercent, setUploadPercent] = useState(0);
-  const [uploadedId, setUploadedId] = useState<string | null>(null);
+  const [trimFile, setTrimFile] = useState<File | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState('');
   const [mediaError, setMediaError] = useState('');
@@ -65,7 +66,9 @@ export default function StoryMediaEditor({ source, onBack, onClose }: StoryMedia
   const objectUrlRef = useRef<string | null>(null);
 
   const counts = useMemo(() => statusCounts(caption), [caption]);
-  const isReady = Boolean(draft && uploadedId && !uploading && !publishing);
+  // The composer never blocks on an upload: once a file is selected it is ready
+  // to publish, and the transfer itself runs in the background afterwards.
+  const isReady = Boolean(draft && !publishing);
 
   // Clean up object URLs on unmount.
   useEffect(() => () => {
@@ -107,63 +110,70 @@ export default function StoryMediaEditor({ source, onBack, onClose }: StoryMedia
       return { file, objectUrl, kind: isImage ? 'image' : 'video' };
     });
     setCaption('');
-    setUploadedId(null);
     setError('');
   }, []);
 
-  // Upload the chosen file to the existing pipeline once.
-  useEffect(() => {
-    if (!draft || !token || uploadedId || uploading) return;
-    let cancelled = false;
-    setUploading(true);
-    setUploadPercent(0);
-    void uploadStoryMedia(draft.file, token, percent => {
-      if (!cancelled) setUploadPercent(percent);
-    })
-      .then(result => {
-        if (cancelled) return;
-        setUploadedId(result.id);
-        setUploadPercent(100);
-      })
-      .catch((reason: any) => {
-        if (cancelled) return;
-        setUploadedId(null);
-        setError(reason?.message || 'The media could not be uploaded. Please retry.');
-      })
-      .finally(() => {
-        if (!cancelled) setUploading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, token]);
+  // Apply the shared trimmer result: the trimmed file replaces the draft file so
+  // ONLY the selected range is uploaded (the real WebM re-encode from the engine).
+  const handleTrimConfirm = useCallback((result: VideoTrimResult) => {
+    setTrimFile(null);
+    if (!result.file) return;
+    setDraft(previous => {
+      if (previous) URL.revokeObjectURL(previous.objectUrl);
+      const objectUrl = URL.createObjectURL(result.file);
+      objectUrlRef.current = objectUrl;
+      return { file: result.file, objectUrl, kind: 'video' };
+    });
+    setError('');
+  }, []);
 
   const publish = useCallback(async () => {
-    if (!token || !draft || !uploadedId || publishing) return;
+    if (!token || !draft || publishing) return;
     setPublishing(true);
     setError('');
     try {
-      const normalizedCaption = normalizeStatusEditorValue(caption);
-      await publishMediaStory(token, uploadedId, normalizedCaption.trim() || undefined);
+      const normalizedCaption = normalizeStatusEditorValue(caption).trim() || undefined;
+
+      // 1. Create an instant Story draft (UPLOADING) — no media yet.
+      const story = await createStoryDraft(token, normalizedCaption);
+
+      // 2. Hand the media to the background upload manager. The composer closes
+      //    immediately; the resumable chunk transfer runs (real byte progress,
+      //    global indicator) while the user navigates anywhere in VANTA. The
+      //    Story flips to PUBLISHED only when the media reaches storage.
+      startUpload({
+        kind: 'story',
+        file: draft.file,
+        draftId: story.id,
+        token,
+        meta: {
+          caption: normalizedCaption,
+          mimeType:
+            draft.file.type ||
+            (draft.kind === 'video'
+              ? draft.file.name.toLowerCase().endsWith('.mp4')
+                ? 'video/mp4'
+                : 'video/webm'
+              : 'image/jpeg'),
+        },
+      });
       notifyStoryFeedChanged();
-      toast.success(`${draft.kind === 'video' ? 'Video' : 'Photo'} story published`);
+      toast.success(`${draft.kind === 'video' ? 'Video' : 'Photo'} story is publishing in the background`);
       onClose();
     } catch (reason: any) {
       setError(reason?.message || 'Your story could not be published. Please try again.');
-    } finally {
       setPublishing(false);
     }
-  }, [publishing, draft, caption, uploadedId, token, onClose, toast]);
+  }, [publishing, draft, caption, token, onClose, toast]);
 
   const discard = useCallback(() => {
     if (draft) URL.revokeObjectURL(draft.objectUrl);
     objectUrlRef.current = null;
     setDraft(null);
     setCaption('');
-    setUploadedId(null);
-    setUploadPercent(0);
+    setTrimFile(null);
     setError('');
+    setMediaError('');
   }, [draft]);
 
   const sourceLabel = source.startsWith('camera')
@@ -232,14 +242,7 @@ export default function StoryMediaEditor({ source, onBack, onClose }: StoryMedia
                 <video src={draft.objectUrl} playsInline muted loop className="absolute inset-0 h-full w-full object-cover" />
               )}
 
-              {uploading && (
-                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/65 backdrop-blur-[2px]">
-                  <Loader2 size={26} className="animate-spin text-[#dfbd55]" />
-                  <p className="text-xs text-white/70">Uploading {uploadPercent}%</p>
-                </div>
-              )}
-
-              {caption.trim() && !uploading && (
+              {caption.trim() && (
                 <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 to-transparent px-4 pb-4 pt-10">
                   <p className="whitespace-pre-wrap break-words text-left text-[15px] font-medium leading-snug text-white">
                     {caption}
@@ -268,6 +271,9 @@ export default function StoryMediaEditor({ source, onBack, onClose }: StoryMedia
         <MediaAction label="Front cam" icon={Camera} onClick={() => openPickerFor('image', false)} />
         {draft && (
           <MediaAction label="Retake" icon={RefreshCw} onClick={() => openPickerFor(draft.kind === 'image' ? 'image' : 'video', true)} />
+        )}
+        {draft && draft.kind === 'video' && (
+          <MediaAction label="Trim" icon={Video} onClick={() => setTrimFile(draft.file)} />
         )}
       </div>
 
@@ -306,9 +312,22 @@ export default function StoryMediaEditor({ source, onBack, onClose }: StoryMedia
           className="flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[#c9a227] text-[15px] font-bold text-black transition hover:bg-[#dfbd55] active:scale-[0.99] disabled:opacity-30"
         >
           {publishing ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
-          {publishing ? 'Publishing…' : uploading ? `Uploading ${uploadPercent}%` : 'Publish Story'}
+          {publishing ? 'Publishing…' : 'Publish Story'}
         </button>
       </footer>
+
+      {/* Shared video trimmer — lets the user cut the Story video to the range
+          they want before it is uploaded in the background. */}
+      <VideoTrimModal
+        open={Boolean(trimFile)}
+        file={trimFile}
+        onClose={() => setTrimFile(null)}
+        onConfirm={handleTrimConfirm}
+        title="Trim Story Video"
+        subtitle="Preview and trim the timeline before publishing"
+        confirmLabel="Use this video"
+        trimActionLabel="Trim & Preview"
+      />
     </div>
   );
 }

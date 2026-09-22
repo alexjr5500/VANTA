@@ -140,6 +140,9 @@ model User {
   cryptoPayments       CryptoPayment[]
   verificationHistory  VerificationHistory[]
 
+  // Resumable (chunked) upload sessions
+  uploadSessions UploadSession[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -206,6 +209,37 @@ model UploadedFile {
   @@index([recordType, recordId])
   @@index([category, createdAt])
   @@index([deletedAt])
+}
+
+// Resumable / chunked upload session. Large media (Stories, Reels, Chat
+// attachments) is sliced into fixed-size parts browser-side and streamed to
+// `/api/upload/chunk/part`; the server stages each part under the upload
+// storage directory and reassembles the final file through the existing
+// uploadService. Interrupted transfers resume from the parts already received
+// instead of restarting from zero. All sessions are owned by a single user and
+// are therefore authenticated + authorized per user.
+model UploadSession {
+  id             String   @id @default(cuid())
+  userId         String
+  fileName       String
+  fileSize       Int
+  mimeType       String
+  category       String // story, reel, post-media, message, generic, ...
+  chunkSize      Int
+  totalChunks    Int
+  receivedChunks Int      @default(0)
+  receivedBytes  Int      @default(0)
+  status         String   @default("ACTIVE") // ACTIVE | COMPLETE | FAILED | CANCELLED
+  recordType     String? // e.g. Story, Video - bound at session creation
+  recordId       String? // draft record the composed file will be linked to
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  expiresAt      DateTime
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([recordType, recordId])
+  @@index([expiresAt])
 }
 
 model TrustedDevice {
@@ -313,9 +347,17 @@ model Story {
   id        String      @id @default(cuid())
   userId    String
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mediaUrl  String
+  // Nullable while a Story/Status is being uploaded in the background (draft
+  // -> UPLOADING -> PUBLISHED). Unpublished drafts are never returned by the
+  // read endpoints, so a Story without media is never exposed to other users.
+  mediaUrl  String?
   mediaType String      @default("IMAGE")
   caption   String?
+  // Publishing lifecycle: "UPLOADING" (media moving to storage in the
+  // background), "PROCESSING" (optional), "PUBLISHED" (live), "FAILED" (the
+  // upload failed and the draft can be retried). Legacy rows default to
+  // "PUBLISHED" so existing production data needs no migration value.
+  publishStatus String   @default("PUBLISHED")
   // JSON styling payload for TEXT (Status) stories — font family, size, color,
   // alignment, weight, style, line-height and the curated background key used to
   // render the Status exactly as the creator designed it in the composer.
@@ -335,6 +377,7 @@ model Story {
   createdAt DateTime    @default(now())
 
   @@index([userId, expiresAt])
+  @@index([publishStatus])
   @@index([expiresAt])
   @@index([userId, createdAt, expiresAt])
   @@index([resharedFromId])
@@ -537,10 +580,16 @@ model Video {
   id           String         @id @default(cuid())
   title        String
   description  String?
-  videoUrl     String
+  // Nullable while the Reel media is moving to storage in the background
+  // (draft -> UPLOADING -> PUBLISHED). Reels with a null URL and a non-PUBLISHED
+  // lifecycle are never returned by feed/detail endpoints.
+  videoUrl     String?
   thumbnailUrl String?
   duration     Float?
   views        Int            @default(0)
+  // Publishing lifecycle, mirroring Story.publishStatus. Legacy rows default to
+  // "PUBLISHED" so existing production data needs no migration value.
+  publishStatus String         @default("PUBLISHED")
   creatorId    String
   creator      User           @relation("CreatorVideos", fields: [creatorId], references: [id], onDelete: Cascade)
   likes        VideoLike[]
@@ -554,6 +603,7 @@ model Video {
   @@index([views, createdAt])
   @@index([createdAt])
   @@index([title])
+  @@index([publishStatus])
   @@index([creatorId, views, createdAt])
   @@index([duration, createdAt])
 }

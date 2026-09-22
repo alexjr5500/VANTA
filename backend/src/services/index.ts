@@ -40,6 +40,7 @@ export {
   ALLOWED_AUDIO_TYPES,
   ALLOWED_DOC_TYPES,
 } from "./upload.service";
+export { chunkUploadService, ChunkUploadService, uploadChunk, UPLOAD_CHUNK_SIZE } from "./chunk-upload.service";
 export { feedService, FeedService } from "./feed.service";
 export { monetizationService, MonetizationService } from "./monetization.service";
 

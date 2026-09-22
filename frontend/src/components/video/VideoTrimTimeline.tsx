@@ -105,6 +105,11 @@ export default function VideoTrimTimeline({
   const trackRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragMode>(null);
   const [dragging, setDragging] = useState<DragMode>(null);
+  // Coalesce rapid pointer moves to one flush per animation frame so handle drags
+  // and scrubbing stay smooth on low-end phones while remaining accurate (the
+  // LAST pointer position of each frame always wins).
+  const rafRef = useRef<number | null>(null);
+  const lastPointerArgsRef = useRef<{ mode: DragMode; clientX: number } | null>(null);
 
   const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
   const startPct = safeDuration > 0 ? (start / safeDuration) * 100 : 0;
@@ -122,11 +127,24 @@ export default function VideoTrimTimeline({
   const startDrag = (mode: Exclude<DragMode, null>) => {
     dragRef.current = mode;
     setDragging(mode);
+    // Subtle haptic on grab/release (iOS Safari + supported Android browsers)
+    // gives drag feedback without any visual noise.
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate?.(6);
+    }
   };
 
   const endDrag = () => {
     dragRef.current = null;
     setDragging(null);
+    if (rafRef.current !== null) {
+      window.cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    lastPointerArgsRef.current = null;
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate?.([4]);
+    }
   };
 
   const matchHandle = (event: React.PointerEvent) =>
@@ -136,30 +154,58 @@ export default function VideoTrimTimeline({
     if (matchHandle(event)) return;
     event.preventDefault();
     startDrag('seek');
+    // Capture the pointer so scrubbing continues smoothly even when the finger
+    // drifts outside the track, and the page cannot hijack the gesture.
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // pointer capture can be unsupported in a few embedded browsers — scrub
+      // still works via the move handler while the finger stays on the track.
+    }
     onSeek(timeFromPointer(event.clientX));
+  };
+
+  const flushDraggedFrame = () => {
+    rafRef.current = null;
+    const args = lastPointerArgsRef.current;
+    lastPointerArgsRef.current = null;
+    if (!args) return;
+    const time = timeFromPointer(args.clientX);
+    if (args.mode === 'seek') {
+      onSeek(time);
+    } else if (args.mode === 'start') {
+      onRangeChange(clampTime(time, 0, end - VIDEO_MIN_GAP_SECONDS), end);
+    } else if (args.mode === 'end') {
+      onRangeChange(start, clampTime(time, start + VIDEO_MIN_GAP_SECONDS, safeDuration));
+    }
+  };
+
+  const scheduleDragMove = (mode: Exclude<DragMode, null>, clientX: number) => {
+    lastPointerArgsRef.current = { mode, clientX };
+    if (rafRef.current !== null) return; // one flush per animation frame
+    rafRef.current = window.requestAnimationFrame(flushDraggedFrame);
   };
 
   const handleTrackPointerMove = (event: React.PointerEvent) => {
     if (dragRef.current !== 'seek') return;
-    onSeek(timeFromPointer(event.clientX));
+    scheduleDragMove('seek', event.clientX);
   };
 
   const handleHandlePointerDown = (which: 'start' | 'end', event: React.PointerEvent) => {
     event.preventDefault();
     event.stopPropagation();
     startDrag(which);
-    event.currentTarget.setPointerCapture(event.pointerId);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // ignore — drag still tracks while the finger stays on the handle.
+    }
   };
 
   const handleHandlePointerMove = (event: React.PointerEvent) => {
     const mode = dragRef.current;
     if (mode !== 'start' && mode !== 'end') return;
-    const time = timeFromPointer(event.clientX);
-    if (mode === 'start') {
-      onRangeChange(clampTime(time, 0, end - VIDEO_MIN_GAP_SECONDS), end);
-    } else {
-      onRangeChange(start, clampTime(time, start + VIDEO_MIN_GAP_SECONDS, safeDuration));
-    }
+    scheduleDragMove(mode, event.clientX);
   };
 
   const handleHandleKeyDown = (which: 'start' | 'end', event: React.KeyboardEvent) => {

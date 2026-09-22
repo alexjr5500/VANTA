@@ -23,7 +23,7 @@ describe('StoryService daily Status upload limit', () => {
     (db.story.create as jest.Mock).mockResolvedValue({ id: 'story-7' });
     await service.createStory('user-1', 'https://cdn/photo.jpg', 'IMAGE', undefined, { isVerified: false });
     expect(db.story.count).toHaveBeenCalledWith({
-      where: { userId: 'user-1', createdAt: { gte: expect.any(Date) } },
+      where: { userId: 'user-1', createdAt: { gte: expect.any(Date) }, publishStatus: 'PUBLISHED' },
     });
     expect(db.story.create).toHaveBeenCalled();
   });

@@ -55,6 +55,69 @@ export const createStory = async (req: AuthRequest, res: Response): Promise<void
   }
 };
 
+// Create an instant Story draft (no media yet). The media uploads in the
+// background through the resumable pipeline and the record is finalized (PUBLISHED)
+// only when the media URL actually exists — a draft is never visible to other users.
+
+export const createStoryDraft = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    const caption = typeof req.body?.caption === "string" ? req.body.caption : undefined;
+    const story = await storyService.createStoryDraft(userId, caption);
+    res.status(201).json(story);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(400).json({ error: message });
+  }
+};
+
+// Flip a draft back to UPLOADING for a retry attempt (idempotent).
+export const setStoryUploading = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    const story = await storyService.setStoryUploading(userId, req.params.id);
+    res.status(200).json(story);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(400).json({ error: message });
+  }
+};
+
+// Bind the uploaded media to a Story draft and publish it (PUBLISHED). The daily
+// Status quota is enforced here, server-side.
+export const finalizeStory = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    const fileId = typeof req.body?.fileId === "string" ? req.body.fileId : undefined;
+    if (!fileId) { res.status(400).json({ error: "fileId is required" }); return; }
+    const isVerified = (await prisma.user.findUnique({
+      where: { id: userId },
+      select: { verified: true },
+    }))?.verified === true;
+    const story = await storyService.finalizeStoryMedia(userId, req.params.id, fileId, { isVerified });
+    res.status(200).json(story);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(message.startsWith("Story") ? 404 : 400).json({ error: message });
+  }
+};
+
+// Mark a Story draft FAILED when its background upload could not complete.
+export const failStoryMedia = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    const story = await storyService.failStoryMedia(userId, req.params.id);
+    res.status(200).json(story);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(400).json({ error: message });
+  }
+};
+
 export const getStatusUsage = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;

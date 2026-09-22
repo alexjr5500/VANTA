@@ -52,6 +52,9 @@ export class StoryService {
    * Enforce the daily Status/Story upload quota for a normal user (server-side,
    * never client-supplied). Verified users have no limit.
    *
+   * Only PUBLISHED rows count toward the quota — background drafts (UPLOADING)
+   * or FAILED stories do not consume the user's daily allowance.
+   *
    * Concurrency-safe: the count + create happen inside a single transaction so
    * a standard user cannot slip past the limit via simultaneous requests.
    */
@@ -60,7 +63,7 @@ export class StoryService {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
     const publishedToday = await tx.story.count({
-      where: { userId, createdAt: { gte: startOfDay } },
+      where: { userId, createdAt: { gte: startOfDay }, publishStatus: "PUBLISHED" },
     });
     if (publishedToday >= DAILY_STATUS_LIMIT) {
       throw new Error(`You've reached today's Status limit of ${DAILY_STATUS_LIMIT} posts.`);
@@ -72,7 +75,7 @@ export class StoryService {
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
     const used = await prisma.story.count({
-      where: { userId, createdAt: { gte: startOfDay } },
+      where: { userId, createdAt: { gte: startOfDay }, publishStatus: "PUBLISHED" },
     });
     return { used, limit: DAILY_STATUS_LIMIT };
   }
@@ -107,6 +110,106 @@ export class StoryService {
     });
 
     return story;
+  }
+
+  /**
+   * Create an instant Story draft (no media yet) when the user presses
+   * "Publish Story". The media is then uploaded in the background and the
+   * record flips to PUBLISHED via `finalizeStoryMedia` — the user is never
+   * blocked on an upload screen.
+   */
+  async createStoryDraft(userId: string, caption?: string) {
+    const normalizedCaption = typeof caption === "string" ? caption.trim() : undefined;
+    if (normalizedCaption) assertValidStatusText(normalizedCaption, "Status caption");
+
+    // Keep stray drafts bounded so a user cannot spam unlimited ghost records.
+    const existingDrafts = await prisma.story.count({
+      where: { userId, publishStatus: { in: ["UPLOADING", "FAILED"] } },
+    });
+    if (existingDrafts >= 10) {
+      throw new Error("You have too many pending Story uploads. Retry or remove them first.");
+    }
+
+    const story = await prisma.story.create({
+      data: {
+        userId,
+        mediaUrl: null,
+        mediaType: "IMAGE",
+        caption: normalizedCaption,
+        publishStatus: "UPLOADING",
+        expiresAt: new Date(Date.now() + STORY_TTL_MS),
+      },
+      include: {
+        user: { select: { id: true, username: true, avatar: true } },
+      },
+    });
+    return story;
+  }
+
+  /** Re-open a failed draft for another upload attempt. */
+  async setStoryUploading(userId: string, storyId: string) {
+    const story = await prisma.story.findUnique({ where: { id: storyId } });
+    if (!story || story.userId !== userId) throw new Error("Story not found");
+    await prisma.story.update({
+      where: { id: storyId },
+      data: { publishStatus: "UPLOADING", mediaUrl: null },
+    });
+    return prisma.story.findUnique({
+      where: { id: storyId },
+      include: { user: { select: { id: true, username: true, avatar: true } } },
+    });
+  }
+
+  /**
+   * Finalize a Story draft once its media finished uploading. Enforces the daily
+   * quota atomically with the publish so a normal user cannot bypass it through
+   * concurrent uploads, and never publishes a Story until its media URL exists.
+   */
+  async finalizeStoryMedia(userId: string, storyId: string, fileId: string, options?: { isVerified?: boolean }) {
+    const isVerified = Boolean(options?.isVerified);
+    const file = await prisma.uploadedFile.findUnique({ where: { id: fileId } });
+    if (!file || file.deletedAt || file.userId !== userId) {
+      throw new Error("Uploaded story media was not found or is not owned by you");
+    }
+    if (!file.url) {
+      throw new Error("Uploaded story media has no storage URL — cannot publish.");
+    }
+
+    const story = await prisma.$transaction(async (tx) => {
+      const draft = await tx.story.findUnique({ where: { id: storyId } });
+      if (!draft || draft.userId !== userId) throw new Error("Story not found");
+      await this.assertCanCreateStory(tx, userId, isVerified);
+      return tx.story.update({
+        where: { id: storyId },
+        data: {
+          mediaUrl: file.url,
+          mediaType: file.fileType === "VIDEO" ? "VIDEO" : "IMAGE",
+          publishStatus: "PUBLISHED",
+          caption: typeof draft.caption === "string" ? draft.caption : undefined,
+        },
+        include: {
+          user: { select: { id: true, username: true, avatar: true } },
+        },
+      });
+    });
+
+    // Make sure the UploadedFile row is linked to the concrete Story record.
+    await prisma.uploadedFile
+      .update({ where: { id: file.id }, data: { recordType: "Story", recordId: story.id, category: "story" } })
+      .catch(() => undefined);
+    return story;
+  }
+
+  /** Mark a Story draft FAILED (its background upload could not complete). */
+  async failStoryMedia(userId: string, storyId: string) {
+    const story = await prisma.story.findUnique({ where: { id: storyId } });
+    if (!story || story.userId !== userId) throw new Error("Story not found");
+    if (story.publishStatus === "PUBLISHED") return story;
+    return prisma.story.update({
+      where: { id: storyId },
+      data: { publishStatus: "FAILED" },
+      include: { user: { select: { id: true, username: true, avatar: true } } },
+    });
   }
 
   /**
@@ -239,7 +342,7 @@ export class StoryService {
   async getActiveStories(currentUserId?: string) {
     const now = new Date();
     const stories = await prisma.story.findMany({
-      where: { expiresAt: { gt: now } },
+      where: { expiresAt: { gt: now }, publishStatus: "PUBLISHED" },
       orderBy: { createdAt: "desc" },
       include: {
         user: { select: { id: true, username: true, avatar: true, verified: true } },
@@ -296,7 +399,7 @@ export class StoryService {
 
   async getStoryById(storyId: string) {
     const story = await prisma.story.findUnique({
-      where: { id: storyId },
+      where: { id: storyId, publishStatus: "PUBLISHED" },
       include: {
         user: { select: { id: true, username: true, avatar: true } },
       },
@@ -343,7 +446,7 @@ export class StoryService {
 
   private async requireActiveStory(storyId: string) {
     const story = await prisma.story.findUnique({ where: { id: storyId } });
-    if (!story || story.expiresAt.getTime() <= Date.now()) {
+    if (!story || story.expiresAt.getTime() <= Date.now() || story.publishStatus !== "PUBLISHED") {
       throw new Error("Story not found or expired");
     }
     return story;

@@ -32,6 +32,8 @@ import ReelUploader from '@/components/create/ReelUploader';
 import CreateHub from '@/components/create/CreateHub';
 import StoryComposer from '@/components/story/StoryComposer';
 import { useContentCreation } from '@/components/create/ContentCreationContext';
+import { UploadManagerProvider } from '@/components/upload/UploadManagerContext';
+import UploadIndicator from '@/components/upload/UploadIndicator';
 import { useNotifications } from '@/context/NotificationContext';
 import { useChatUnread } from '@/context/ChatUnreadContext';
 import { useCalls } from '@/context/CallContext';
@@ -337,6 +339,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <GoLiveModal open={activeFlow === 'live'} onClose={closeAll} />
           <ReelUploader open={activeFlow === 'reel'} onClose={closeAll} />
         </>}
+        {/* Global background-upload indicator — always mounted so an in-progress
+            Story/Reel upload stays visible and controllable while the user
+            navigates anywhere in VANTA. */}
+        <UploadManagerProvider>
+          <UploadIndicator />
+        </UploadManagerProvider>
         {/* Main Content Area */}
         {/* min-w-0 is essential: as a flex-1 item, <main> otherwise defaults to
             min-width:auto (= its content's min-content width). Wide intrinsic

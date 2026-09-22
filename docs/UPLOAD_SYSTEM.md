@@ -55,6 +55,36 @@ To add trimming to a future video upload flow: render `<VideoTrimModal>` (or `<V
 
 Browsers/download managers occasionally tag real video files (usually `.mp4`) as `text/plain`, `application/octet-stream` or empty. The trimmer accepts those by filename extension so the user can still trim them, but uploading the raw part is rejected by the backend multer allow-list with `File type text/plain is not allowed`. `normalizeVideoFileForUpload()` re-tags any file to a clean base `video/mp4` / `video/webm` (and strips codec parameters like `video/webm;codecs=vp9,opus`) before it leaves `VideoTrimEditor`, so every flow uploads a valid video part. Regression coverage: `backend/src/__tests__/reel-upload-multer.test.ts`.
 
+## Background publishing + resumable (chunked) uploads
+
+Story and Reel publishing is **non-blocking**. Selecting/editing media never forces
+the user to sit on an upload screen:
+
+- `Publish Story` / `Post Reel` creates an **instant draft** (`POST /api/stories/draft`
+  or `POST /api/reels`) with `publishStatus = "UPLOADING"` and **no media URL yet**,
+  then hands the file to the frontend background upload manager and closes the editor.
+- The media is streamed in **resumable chunks** through the existing storage provider
+  (local disk or the auto-detected Cloudinary pipeline) via:
+  - `POST /api/upload/chunk/init` — validate declared size/type, create an `UploadSession`.
+  - `POST /api/upload/chunk/part` — stream one 5 MiB part (XHR, real byte progress).
+  - `GET  /api/upload/chunk/:sessionId` — report received parts (used to **resume** after a failure instead of restarting from zero).
+  - `POST /api/upload/chunk/complete` — reassemble + persist through `uploadService.uploadFile`.
+  - `POST /api/upload/chunk/:sessionId/abort` / `fail` — cancel / mark failed.
+- Only after the upload completes is the draft **finalized** (`POST /api/stories/:id/finalize`
+  or `POST /api/reels/:id/finalize`) which sets the real media URL and flips the record
+  to `PUBLISHED`. Drafts (UPLOADING/PROCESSING/FAILED) are never returned by the
+  Story tray, Reel feed, or detail endpoints, so no broken post is ever exposed.
+
+The reusable engine lives in `frontend/src/lib/uploads/store.ts` (module singleton +
+`UploadManagerContext`), the global progress indicator is
+`frontend/src/components/upload/UploadIndicator.tsx` (mounted once in `AppLayout`),
+and both Story and Reel flows use the same infrastructure — progress, completion,
+failure, retry (resume) and cancel are handled in one place.
+
+Schema: `Story.mediaUrl` is now nullable, `Story`/`Video` gained a `publishStatus`
+column (default `"PUBLISHED"` so legacy rows need no backfill) and `UploadSession`
+tracks each resumable transfer. Migration: `backend/prisma/migrations/20260922000000_background_uploads`.
+
 ## Verification
 
 Run `npm --prefix backend run build`, `npm --prefix backend test -- --runInBand src/__tests__/upload.service.test.ts`, and `npx --prefix frontend tsc -p frontend/tsconfig.json --noEmit`. Manual smoke tests should cover profile avatar/banner replace/delete, post image/video, story, reel, live thumbnail, message attachment, group/channel/community images, verification documents, invalid MIME/signature, limits, unauthenticated requests, retry, and storage persistence after restart.

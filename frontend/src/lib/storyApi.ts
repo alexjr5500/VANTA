@@ -168,6 +168,27 @@ export function publishMediaStory(
   );
 }
 
+/** Create an instant Story draft (no media yet). Media uploads in the
+ *  background and the draft is finalized (PUBLISHED) via `finalizeStoryMedia`. */
+export function createStoryDraft(token: string, caption?: string): Promise<StoryItem> {
+  return apiPost<StoryItem>('/api/stories/draft', { caption: caption || undefined }, token);
+}
+
+/** Re-open a failed Story draft for a retry upload attempt. */
+export function setStoryUploading(token: string, storyId: string): Promise<StoryItem> {
+  return apiPost<StoryItem>(`/api/stories/${encodeURIComponent(storyId)}/uploading`, {}, token);
+}
+
+/** Bind uploaded media to a Story draft and publish it (PUBLISHED). */
+export function finalizeStoryMedia(token: string, storyId: string, fileId: string): Promise<StoryItem> {
+  return apiPost<StoryItem>(`/api/stories/${encodeURIComponent(storyId)}/finalize`, { fileId }, token);
+}
+
+/** Mark a Story draft FAILED (its background upload could not complete). */
+export function failStoryMedia(token: string, storyId: string): Promise<StoryItem> {
+  return apiPost<StoryItem>(`/api/stories/${encodeURIComponent(storyId)}/fail`, {}, token);
+}
+
 /** Record a Story view (deduplicated server-side). */
 export function recordStoryView(storyId: string, token?: string): Promise<{ counted: boolean; views: number }> {
   return apiPost<{ counted: boolean; views: number }>(

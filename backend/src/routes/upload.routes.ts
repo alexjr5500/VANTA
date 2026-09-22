@@ -9,6 +9,7 @@ import {
   uploadBannerMulter,
   uploadThumbnail,
   uploadDocument,
+  uploadChunk,
 } from "../services";
 import {
   uploadFile,
@@ -30,6 +31,14 @@ import {
   uploadReel,
   uploadReelWithThumbnail,
 } from "../controllers/upload.controller";
+import {
+  initChunkUpload,
+  uploadChunkPart,
+  getChunkUploadState,
+  completeChunkUpload,
+  abortChunkUpload,
+  failChunkUpload,
+} from "../controllers/upload-chunk.controller";
 
 const router = Router();
 
@@ -123,6 +132,32 @@ router.post("/verification", uploadDocument.single("document"), uploadVerificati
 
 // Message attachment upload
 router.post("/message", upload.single("file"), uploadMessageAttachment);
+
+// ============================================================================
+// RESUMABLE / CHUNKED UPLOADS (large Stories, Reels, attachments)
+// ============================================================================
+
+// Create a resumable upload session. Declared sizes/types are validated here so
+// oversized or disallowed files fail fast before any bytes are transferred.
+router.post("/chunk/init", initChunkUpload);
+
+// Stream one part of the file. The chunk multer stages the part at
+// `.chunks/<sessionId>/<index>.part` without a MIME filter (parts are opaque
+// byte slices); bounds/sizes are validated per-session in the controller.
+router.post("/chunk/part", uploadChunk.single("chunk"), uploadChunkPart);
+
+// Report which parts have already arrived — used by the client to resume an
+// interrupted transfer instead of restarting from zero.
+router.get("/chunk/:sessionId", getChunkUploadState);
+
+// Reassemble + persist through the existing upload pipeline, then finalize.
+router.post("/chunk/complete", completeChunkUpload);
+
+// Abort/cancel an active session (removes staged parts).
+router.post("/chunk/:sessionId/abort", abortChunkUpload);
+
+// Mark a session FAILED when a workflow error prevented completion.
+router.post("/chunk/:sessionId/fail", failChunkUpload);
 
 // ============================================================================
 // REELS

@@ -2,13 +2,14 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Clapperboard, Upload, X, Camera } from 'lucide-react';
+import { Clapperboard, Loader2, Upload, X, Camera } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { apiUpload } from '@/lib/apiClient';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import Avatar from '@/components/ui/Avatar';
 import { validateVideoFile } from '@/lib/videoTrim';
+import { createReelDraft } from '@/lib/reelApi';
+import { startUpload } from '@/lib/uploads/store';
 import VideoTrimEditor, { type VideoTrimResult, type VideoTrimReviewContext } from '@/components/video/VideoTrimEditor';
 
 interface ReelUploaderProps {
@@ -34,8 +35,13 @@ const STEP_SUBTITLES: Record<Step, string> = {
  * Uses the shared <VideoTrimEditor /> for the entire trimming experience —
  * the same component that powers Post, Story, Chat and any future video
  * upload flow. Reel-specific metadata (title + description) is injected into
- * the shared review step via `reviewExtras`; publishing still goes through
- * the existing `/api/upload/reel` endpoint with the real trimmed file.
+ * the shared review step via `reviewExtras`.
+ *
+ * Publishing is NON-BLOCKING: "Post Reel" creates an instant Reel draft, then
+ * hands the trimmed file to the background upload manager. The editor closes
+ * immediately and the real byte-based transfer continues (with the global
+ * upload indicator) while the user navigates anywhere in VANTA. The Reel only
+ * becomes visible (PUBLISHED) after its media actually reaches storage.
  */
 export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
   const { token, user } = useAuth();
@@ -49,7 +55,6 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
 
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [dragActive, setDragActive] = useState(false);
 
@@ -65,7 +70,6 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
     setFormError(null);
     setTitle('');
     setDescription('');
-    setUploadProgress(0);
     setSubmitting(false);
     setDragActive(false);
   }, []);
@@ -102,21 +106,36 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
       return;
     }
     setSubmitting(true);
-    setUploadProgress(0);
     setFormError(null);
     try {
-      const form = new FormData();
-      form.append('video', result.file);
-      form.append('title', title.trim() || 'Untitled Reel');
-      form.append('description', description.trim());
-      await apiUpload('/api/upload/reel', form, token, 'POST', setUploadProgress);
-      showToast?.({ type: 'success', title: 'Reel posted', message: 'Your trimmed Reel is live on VANTA.' });
+      const reelTitle = title.trim() || 'Untitled Reel';
+      const reelDescription = description.trim() || undefined;
+      const draft = await createReelDraft(token, { title: reelTitle, description: reelDescription });
+
+      // Hand the trimmed file to the reusable background upload manager. The
+      // editor closes right away; the upload runs (with real byte progress) in
+      // the global indicator while the user continues using VANTA.
+      startUpload({
+        kind: 'reel',
+        file: result.file,
+        draftId: draft.video.id,
+        token,
+        meta: {
+          title: reelTitle,
+          description: reelDescription,
+          duration: result.duration,
+          mimeType:
+            result.file.type ||
+            (result.file.name.toLowerCase().endsWith('.mp4') ? 'video/mp4' : 'video/webm'),
+        },
+      });
+
+      showToast?.({ type: 'success', title: 'Reel is publishing', message: 'Your Reel is uploading in the background — you’ll see live progress at the bottom of the screen.' });
       onClose();
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'The Reel could not be uploaded. Please try again.';
+      const message = error instanceof Error ? error.message : 'Could not start publishing your Reel. Please try again.';
       setFormError(message);
-      showToast?.({ type: 'error', title: 'Upload failed', message });
-    } finally {
+      showToast?.({ type: 'error', title: 'Publish failed', message });
       setSubmitting(false);
     }
   };
@@ -239,16 +258,13 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
               </div>
             </div>
 
-            {/* Upload progress while publishing */}
+            {/* Starting publish (brief — the actual upload runs in the background) */}
             {submitting && (
               <div className="shrink-0 border-b border-white/[0.06] px-4 py-2">
-                <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-[#c9a227] to-[#dfbd55]"
-                    style={{ width: `${Math.min(100, Math.max(0, uploadProgress))}%` }}
-                  />
-                </div>
-                <p className="mt-1 text-right text-[10px] tabular-nums text-white/40">Publishing… {uploadProgress}%</p>
+                <p className="flex items-center gap-2 text-[11px] text-white/45">
+                  <Loader2 size={13} className="animate-spin text-[#dfbd55]" />
+                  Preparing your Reel… the upload continues in the background.
+                </p>
               </div>
             )}
 

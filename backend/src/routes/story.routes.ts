@@ -3,6 +3,10 @@ import multer from "multer";
 import { authenticateJWT } from "../middleware/auth.middleware";
 import {
   createStory,
+  createStoryDraft,
+  setStoryUploading,
+  finalizeStory,
+  failStoryMedia,
   createTextStory,
   getStories,
   getStatusUsage,
@@ -28,6 +32,14 @@ router.get("/usage", authenticateJWT, getStatusUsage);
 // Text-only Story/Status — registered before the `/:id` routes so the literal
 // `text` path is never captured as a story id.
 router.post("/text", authenticateJWT, createTextStory);
+
+// Background-publish lifecycle (media uploads in the background, the Story flips
+// to PUBLISHED only when the media URL exists). Registered before `/:id` routes
+// so the literal `draft` id is never captured.
+router.post("/draft", authenticateJWT, createStoryDraft);
+router.post("/:id/uploading", authenticateJWT, setStoryUploading);
+router.post("/:id/finalize", authenticateJWT, finalizeStory);
+router.post("/:id/fail", authenticateJWT, failStoryMedia);
 
 // Public route for viewing individual stories
 router.get("/:id", getStoryById);

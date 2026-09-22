@@ -12,6 +12,116 @@ const parseLimit = (value: unknown, defaultLimit = 20) => {
 };
 
 // ============================================================================
+// REEL PUBLISHING LIFECYCLE (background upload)
+// ============================================================================
+// `Publish Reel` creates a draft (UPLOADING, no videoUrl) instantly, the media
+// uploads in the background through the resumable chunk pipeline, and the draft
+// becomes live (PUBLISHED) only when its media URL exists. Drafts are never
+// returned by the feed/detail endpoints.
+
+// Instant Reel draft — media uploads in the background afterwards.
+export const createReelDraft = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    const title = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 120) : "Untitled Reel";
+    const description = typeof req.body?.description === "string" ? req.body.description.trim() : undefined;
+    if (!title) { res.status(400).json({ error: "Reel title is required" }); return; }
+
+    const pending = await prisma.video.count({
+      where: { creatorId: userId, publishStatus: { in: ["UPLOADING", "FAILED"] } },
+    });
+    if (pending >= 10) {
+      res.status(400).json({ error: "You have too many pending Reel uploads. Retry or remove them first." });
+      return;
+    }
+
+    const video = await prisma.video.create({
+      data: { title, description, videoUrl: null, creatorId: userId, publishStatus: "UPLOADING" },
+    });
+    res.status(201).json({ message: "Reel draft created", video });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(400).json({ error: message });
+  }
+};
+
+// Re-open a failed draft for another upload attempt.
+export const setReelUploading = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    const reel = await prisma.video.findUnique({ where: { id: req.params.id } });
+    if (!reel || reel.creatorId !== userId) { res.status(404).json({ error: "Reel not found" }); return; }
+    if (reel.publishStatus === "PUBLISHED") { res.status(200).json({ video: reel }); return; }
+    const updated = await prisma.video.update({
+      where: { id: reel.id },
+      data: { publishStatus: "UPLOADING", videoUrl: null },
+    });
+    res.status(200).json({ video: updated });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(400).json({ error: message });
+  }
+};
+
+// Bind uploaded media to a Reel draft and publish it (PUBLISHED).
+export const finalizeReel = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    const reel = await prisma.video.findUnique({ where: { id: req.params.id } });
+    if (!reel || reel.creatorId !== userId) { res.status(404).json({ error: "Reel not found" }); return; }
+
+    const fileId = typeof req.body?.fileId === "string" ? req.body.fileId : undefined;
+    if (!fileId) { res.status(400).json({ error: "fileId is required" }); return; }
+    const file = await prisma.uploadedFile.findUnique({ where: { id: fileId } });
+    if (!file || file.deletedAt || file.userId !== userId || file.fileType !== "VIDEO") {
+      res.status(403).json({ error: "Uploaded Reel media was not found, is not owned by you, or is not a video" });
+      return;
+    }
+    if (!file.url) { res.status(400).json({ error: "Uploaded Reel media has no storage URL" }); return; }
+
+    const duration = typeof req.body?.duration === "number" && Number.isFinite(req.body.duration)
+      ? Math.max(0, Math.min(req.body.duration, 86_400))
+      : null;
+
+    const updated = await prisma.video.update({
+      where: { id: reel.id },
+      data: {
+        videoUrl: file.url,
+        thumbnailUrl: reel.thumbnailUrl || null,
+        duration: duration ?? reel.duration,
+        publishStatus: "PUBLISHED",
+      },
+    });
+    await prisma.uploadedFile
+      .update({ where: { id: file.id }, data: { recordType: "Video", recordId: updated.id, category: "reel" } })
+      .catch(() => undefined);
+    res.status(200).json({ message: "Reel published", video: updated });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(400).json({ error: message });
+  }
+};
+
+// Mark a Reel draft FAILED when its background upload could not complete.
+export const failReel = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    const reel = await prisma.video.findUnique({ where: { id: req.params.id } });
+    if (!reel || reel.creatorId !== userId) { res.status(404).json({ error: "Reel not found" }); return; }
+    if (reel.publishStatus === "PUBLISHED") { res.status(200).json({ video: reel }); return; }
+    const updated = await prisma.video.update({ where: { id: reel.id }, data: { publishStatus: "FAILED" } });
+    res.status(200).json({ video: updated });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(400).json({ error: message });
+  }
+};
+
+// ============================================================================
 // GET REELS
 // ============================================================================
 
@@ -117,7 +227,7 @@ export const deleteReelComment = async (req: AuthRequest, res: Response): Promis
 export const getReelById = async (req: Request, res: Response): Promise<void> => {
   try {
     const reel = await prisma.video.findUnique({
-      where: { id: req.params.id },
+      where: { id: req.params.id, publishStatus: "PUBLISHED" },
       include: {
         creator: {
           select: {
