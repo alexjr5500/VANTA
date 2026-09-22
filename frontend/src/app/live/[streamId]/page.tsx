@@ -5,9 +5,11 @@
  * -----------------
  * Opens an active live stream as a full-screen mobile experience.
  *
- * The real host video (LiveKit) fills the entire viewport; all controls float
- * over it: top-left streamer card + Fan Club, top-right viewer count + exit,
- * bottom-right circular rail (Chat / Gift / Share / More). Comments, gifts,
+ * The real host video (LiveKit) fills the entire viewport; a polished editorial
+ * header floats over the top (leave control, host avatar + handle + LIVE/time,
+ * Fan Club chip, viewer count), the bottom-left clusters pinned message + live
+ * chat + quick reactions, and a bottom-right vertical action rail keeps
+ * Like / Chat / Gift / Share / More one thumb-tap away. Comments, gifts,
  * reactions and viewer-join notices stream in as live overlays through the
  * existing live Socket.IO channels — nothing here is mocked.
  */
@@ -17,12 +19,14 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useParams, useRouter } from 'next/navigation';
 import {
   AlertTriangle,
+  ArrowDown,
   Check,
   Crown,
   Ellipsis,
   Eye,
   Flag,
   Gift,
+  Heart,
   Loader2,
   MessageCircle,
   Mic,
@@ -195,6 +199,8 @@ export default function LiveViewerPage() {
   const socketRef = useRef<Socket | null>(null);
   const cleanupRef = useRef<() => void>(() => undefined);
   const streamIdRef = useRef(streamId);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatStickRef = useRef(true);
   const phaseRef = useRef<ViewerPhase>('LOADING');
   const guestStatusRef = useRef(guestStatus);
   const loadStreamRef = useRef<() => Promise<void>>(async () => undefined);
@@ -221,6 +227,30 @@ export default function LiveViewerPage() {
     const t = window.setInterval(tick, 1000);
     return () => window.clearInterval(t);
   }, [phase, stream?.startedAt]);
+
+  // Chat keep-at-bottom: the mere presence of a new message must never yank a
+  // viewer who scrolled up to read. We follow only while the scroller is within
+  // ~90px of the bottom and offer a jump-down pill otherwise. All of these live
+  // above the early returns (same rules as the elapsed clock) so the LIVE block
+  // below can attach them to the chat sheet freely.
+  const handleChatScroll = useCallback(() => {
+    const el = chatScrollRef.current;
+    if (el) chatStickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+  }, []);
+
+  const jumpToChatBottom = useCallback(() => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    chatStickRef.current = true;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }, []);
+
+  useEffect(() => {
+    if (sheet !== 'chat') return;
+    if (!chatStickRef.current) return;
+    const el = chatScrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }, [messages.length, sheet]);
 
   const burstReaction = useCallback((emoji: string) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -662,9 +692,11 @@ const sendComment = useCallback(() => {
 
   if (phase === 'LOADING') {
     return (
-      <main className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-[#050505] text-white">
-        <Loader2 size={28} className="animate-spin text-[#F2C75C]" />
-        <p className="text-sm text-white/50">Opening live stream…</p>
+      <main className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-4 bg-[#050505] text-white">
+        <div className="relative grid h-16 w-16 place-items-center rounded-full border border-[var(--vanta-gold)]/30 bg-white/[0.03] shadow-lg">
+          <Loader2 size={26} className="animate-spin text-[#F2C75C]" />
+        </div>
+        <p className="text-sm font-medium text-white/55">Opening live stream…</p>
       </main>
     );
   }
@@ -721,14 +753,21 @@ const sendComment = useCallback(() => {
         ) : remoteVideo ? (
           <ViewerVideo stream={remoteVideo} />
         ) : (
-          <div className="flex h-full w-full items-center justify-center bg-[#050505]">
-            <Loader2 size={26} className="animate-spin text-[#F2C75C]" />
+          <div className="relative flex h-full w-full items-center justify-center bg-[#050505]">
+            <span className="pointer-events-none flex flex-col items-center gap-3">
+              <span className="grid h-16 w-16 place-items-center rounded-full border border-[var(--vanta-gold)]/30 bg-black/45 shadow-lg backdrop-blur-md">
+                <Loader2 size={24} className="animate-spin text-[#F2C75C]" />
+              </span>
+              <span className="rounded-full border border-white/10 bg-black/45 px-3.5 py-1.5 text-[11px] font-semibold text-white/80 shadow backdrop-blur-md">
+                Connecting to {stream.host.username}&apos;s live&hellip;
+              </span>
+            </span>
           </div>
         )}
       </div>
 
       {/* Legibility gradient */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/65" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/65 via-black/10 to-black/75" />
 
       {/* Floating join notice */}
       <AnimatePresence>
@@ -738,7 +777,7 @@ const sendComment = useCallback(() => {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.25 }}
-            className="pointer-events-none absolute left-1/2 top-[calc(env(safe-area-inset-top)+64px)] z-20 -translate-x-1/2 rounded-full border border-white/15 bg-black/55 px-3.5 py-1.5 text-[11px] font-semibold text-white/90 backdrop-blur-md"
+            className="pointer-events-none absolute left-1/2 top-[calc(env(safe-area-inset-top)+108px)] z-20 -translate-x-1/2 rounded-full border border-white/15 bg-black/55 px-3.5 py-1.5 text-[11px] font-semibold text-white/90 backdrop-blur-md"
           >
             {joinNotice.joined ? <><span className="text-emerald-300">●</span> {joinNotice.username} joined</> : <><span className="text-white/40">○</span> {joinNotice.username} left</>}
           </motion.div>
@@ -755,7 +794,7 @@ const sendComment = useCallback(() => {
               animate={{ opacity: [0, 1, 1, 0], y: -170, scale: [0.5, 1.2, 1.4, 1.2] }}
               exit={{ opacity: 0 }}
               transition={{ duration: 2.2, times: [0, 0.15, 0.7, 1] }}
-              className="absolute bottom-[36%] left-1/2 -ml-3 text-3xl drop-shadow-lg"
+              className="absolute bottom-[32%] left-1/2 -ml-3 text-3xl drop-shadow-lg"
               aria-hidden
             >
               {r.emoji}
@@ -767,38 +806,85 @@ const sendComment = useCallback(() => {
       {/* Gift animations from any viewer */}
       <GiftAnimationOverlay events={giftAnimations} />
 
-      {/* Top-left: streamer card + Fan Club */}
-      <div className="absolute left-3 top-[calc(env(safe-area-inset-top)+8px)] z-20 flex items-center gap-2">
-        <button type="button" onClick={() => router.push(`/profile/${stream.host.username}`)} aria-label="Host profile" className="shrink-0">
-          <Avatar src={stream.host.avatar} alt={stream.host.username} size="md" wrapperClassName="ring-2 ring-white/20" />
-        </button>
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            <p className="max-w-[120px] truncate text-sm font-bold text-white drop-shadow">{stream.host.username}</p>
-            {stream.host.verified && <VerificationBadge size="xs" />}
-{/* Top-right: viewer count + exit */}
-      <div className="absolute right-3 top-[calc(env(safe-area-inset-top)+8px)] z-20 flex items-center gap-2">
-        {isConnecting && (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/20 px-2.5 py-1 text-[10px] font-bold text-amber-300 backdrop-blur-md">
-            <Loader2 size={11} className="animate-spin" /> Syncing
-          </span>
-        )}
-        <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/15 bg-black/45 px-3 text-xs font-bold text-white backdrop-blur-md tabular-nums">
-          <Eye size={13} className="text-[#F2C75C]" /> {formatNumber(viewerCount)}
-        </span>
-        <button type="button" onClick={handleLeave} aria-label="Leave live" className="grid h-9 w-9 place-items-center rounded-full border border-white/20 bg-black/50 text-white backdrop-blur-md transition active:scale-95 hover:bg-black/70">
-          <X size={17} strokeWidth={2.6} />
-        </button>
-      </div>
+      {/* Viewer header — editorial over-video band */}
+      <div className="absolute inset-x-0 top-0 z-30">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/80 via-black/45 to-black/5" />
+        <div className="relative flex min-w-0 items-center gap-2 px-2.5 pb-1.5 pt-[calc(env(safe-area-inset-top)+4px)]">
+          <button
+            type="button"
+            onClick={handleLeave}
+            aria-label="Leave live"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-black/50 text-white shadow-lg backdrop-blur-md transition active:scale-95 hover:bg-black/70"
+          >
+            <X size={18} strokeWidth={2.6} />
+          </button>
 
-      {/* Pinned message (compact overlay above chat) */}
+          <button
+            type="button"
+            onClick={() => router.push(`/profile/${stream.host.username}`)}
+            aria-label={`View ${stream.host.username}'s profile`}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          >
+            <span className="relative shrink-0">
+              <Avatar src={stream.host.avatar} alt={stream.host.username} size="md" wrapperClassName="ring-2 ring-[#F2C75C]/70" />
+              <span className="absolute -bottom-0.5 -right-0.5">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-[#F2C75C]/80" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#F2C75C]" />
+                </span>
+              </span>
+            </span>
+            <span className="min-w-0">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="max-w-[112px] truncate text-sm font-extrabold text-white drop-shadow">@{stream.host.username}</span>
+                {stream.host.verified && <VerificationBadge size="xs" />}
+              </span>
+              <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] leading-none text-white/90 tabular-nums drop-shadow">
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#D6A83F]/95 px-1.5 py-0.5 text-[8px] font-extrabold uppercase tracking-wide text-black">
+                  <Radio size={8} fill="currentColor" /> LIVE
+                </span>
+                <span>{streamClock || '0:00'}</span>
+                {stream.categoryName && <span className="max-w-[88px] truncate text-white/55"> · {stream.categoryName}</span>}
+              </span>
+            </span>
+          </button>
+
+          {!isOwn && (
+            <button
+              type="button"
+              onClick={() => void toggleFollow()}
+              disabled={followBusy}
+              aria-label={following ? 'Leave Fan Club' : 'Join Fan Club'}
+              className={cn(
+                'inline-flex h-9 shrink-0 items-center gap-1 rounded-full px-3 text-[11px] font-extrabold shadow-md transition active:scale-95 disabled:opacity-60',
+                following ? 'border border-[#D6A83F]/40 bg-black/55 text-[#F2C75C] backdrop-blur-md' : 'bg-gradient-to-r from-[#D6A83F] to-[#F2C75C] text-black',
+              )}
+            >
+              <Crown size={12} fill="currentColor" />
+              {following ? 'Fan Club' : 'Join'}
+            </button>
+          )}
+
+          <span className="flex shrink-0 items-center gap-1.5">
+            {isConnecting && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/20 px-2 py-1 text-[10px] font-bold text-amber-300 backdrop-blur-md">
+                <Loader2 size={11} className="animate-spin" /> Syncing
+              </span>
+            )}
+            <span className="inline-flex h-9 items-center gap-1.5 rounded-full border border-white/15 bg-black/45 px-2.5 text-xs font-bold text-white shadow-md backdrop-blur-md tabular-nums">
+              <Eye size={13} className="text-[#F2C75C]" /> {formatNumber(viewerCount)}
+            </span>
+          </span>
+        </div>
+      </div>
+{/* Pinned message (compact overlay above the live chat) */}
       <AnimatePresence>
         {pinnedMessage && (
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
-            className="absolute bottom-[104px] left-3 z-20 mr-20 max-w-[70%] rounded-xl border border-[#D6A83F]/25 bg-black/55 px-3 py-1.5 backdrop-blur-md"
+            className="pointer-events-none absolute bottom-[calc(env(safe-area-inset-bottom)+142px)] left-3 z-20 mr-24 max-w-[74%] rounded-xl border border-[#D6A83F]/25 bg-black/55 px-3 py-1.5 shadow-xl backdrop-blur-md"
           >
             <span className="flex items-start gap-1.5 text-[11px] leading-snug">
               <Pin size={11} className="mt-0.5 shrink-0 text-[#D6A83F]" />
@@ -809,7 +895,7 @@ const sendComment = useCallback(() => {
       </AnimatePresence>
 
       {/* Bottom-left: live comment overlay */}
-      <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 mr-16">
+      <div className="pointer-events-none absolute inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+52px)] z-20 mr-24 max-h-[88px] overflow-hidden">
         {messages.slice(-4).map((m) =>
           m.kind === 'system' ? (
             <p key={m.id} className="text-[11px] font-medium text-white/60 drop-shadow">{m.message}</p>
@@ -822,8 +908,20 @@ const sendComment = useCallback(() => {
         )}
       </div>
 
-      {/* Bottom-right: circular control rail */}
-      <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+16px)] right-3 z-20 flex flex-col items-center gap-3">
+      {/* Bottom-left: quick reactions */}
+      <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+10px)] left-3 z-20 flex items-center gap-1.5">
+        {REACTIONS_LIST.slice(0, 4).map((emoji) => (
+          <button key={emoji} type="button" onClick={() => sendReaction(emoji)} aria-label={`React ${emoji}`} className="grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-black/40 text-base shadow-md backdrop-blur-md transition active:scale-125">
+            {emoji}
+          </button>
+        ))}
+      </div>
+
+      {/* Bottom-right: vertical action rail */}
+      <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+12px)] right-3 z-20 flex flex-col items-center gap-2.5">
+        <RailButton onPress={() => sendReaction('❤️')} label="Like">
+          <Heart size={20} />
+        </RailButton>
         <RailButton onPress={() => setSheet('chat')} label="Chat" badge={messages.filter((m) => m.kind !== 'system').length}>
           <MessageCircle size={20} />
         </RailButton>
@@ -836,33 +934,6 @@ const sendComment = useCallback(() => {
         <RailButton onPress={() => setSheet('more')} label="More">
           <Ellipsis size={20} />
         </RailButton>
-      </div>
-
-      {/* Bottom-center: quick reactions */}
-      <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+20px)] left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full border border-white/10 bg-black/40 px-1.5 py-1 backdrop-blur-lg">
-        {REACTIONS_LIST.slice(0, 4).map((emoji) => (
-          <button key={emoji} type="button" onClick={() => sendReaction(emoji)} aria-label={`React ${emoji}`} className="grid h-8 w-8 place-items-center rounded-full text-base transition active:scale-125">
-            {emoji}
-          </button>
-        ))}
-      </div>
-          </div>
-          <div className="mt-0.5 flex items-center gap-1.5">
-            <span className="inline-flex items-center gap-1 rounded-full bg-[#D6A83F]/90 px-1.5 py-0.5 text-[8px] font-extrabold uppercase tracking-wide text-black">
-              <Radio size={8} fill="currentColor" /> LIVE
-            </span>
-            <span className="text-[10px] font-semibold text-white/85 tabular-nums">{streamClock || '0:00'}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => void toggleFollow()}
-            disabled={followBusy}
-            className="mt-1 inline-flex h-6 items-center gap-1 rounded-full bg-gradient-to-r from-[#D6A83F] to-[#F2C75C] px-2.5 text-[10px] font-extrabold text-black shadow transition active:scale-95 disabled:opacity-60"
-          >
-            <Crown size={11} fill="currentColor" />
-            {following ? 'Fan Club ✓' : 'Join Fan Club'}
-          </button>
-        </div>
       </div>
 {/* Viewers sheet */}
       <AnimatePresence>
@@ -909,7 +980,7 @@ const sendComment = useCallback(() => {
               exit={{ y: 60, opacity: 0 }}
               transition={{ type: 'spring', damping: 28, stiffness: 320 }}
               onClick={(e) => e.stopPropagation()}
-              className="relative flex h-[62vh] min-h-[320px] w-full flex-col rounded-t-3xl border-t border-white/10 bg-[#0d0d0f]/97 pb-[calc(env(safe-area-inset-bottom)+var(--vanta-kb,0px)+10px)] text-white backdrop-blur-2xl"
+              className="relative mb-[var(--vanta-kb,0px)] flex h-[min(64dvh,calc(var(--vanta-vh,100dvh)-var(--vanta-kb,0px)-72px))] min-h-[300px] w-full flex-col rounded-t-3xl border-t border-white/10 bg-[#0d0d0f]/97 pb-[calc(env(safe-area-inset-bottom)+12px)] text-white backdrop-blur-2xl"
             >
               <div className="mx-auto mb-1 mt-2 h-1 w-10 rounded-full bg-white/20" />
               <div className="flex items-center justify-between px-4 pb-2">
@@ -933,7 +1004,7 @@ const sendComment = useCallback(() => {
                 )}
               </AnimatePresence>
 
-              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-2 [scrollbar-width:none]">
+              <div ref={chatScrollRef} onScroll={handleChatScroll} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-2 [scrollbar-width:none]">
                 {messages.length === 0 ? (
                   <p className="py-8 text-center text-xs text-white/40">No messages yet — say something!</p>
                 ) : (
@@ -962,8 +1033,24 @@ const sendComment = useCallback(() => {
                 )}
               </div>
 
-              <div className="mt-2 flex items-center gap-2 px-3">
-                <button type="button" onClick={() => sendReaction('❤️')} aria-label="Send heart" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-black/55 text-lg backdrop-blur-md transition active:scale-110">❤️</button>
+
+              <AnimatePresence>
+                {!chatStickRef.current && (
+                  <motion.button
+                    type="button"
+                    onClick={jumpToChatBottom}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute bottom-[calc(env(safe-area-inset-bottom)+76px)] right-4 z-20 inline-flex items-center gap-1 rounded-full border border-white/15 bg-black/60 px-3 py-1.5 text-[11px] font-semibold text-white shadow-lg backdrop-blur-md"
+                  >
+                    New messages <ArrowDown size={13} />
+                  </motion.button>
+                )}
+              </AnimatePresence>
+
+              <div className="mt-2 flex items-center gap-2 px-3 pt-1">
+                <button type="button" onClick={() => sendReaction('❤️')} aria-label="Send heart" className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/12 bg-black/55 text-lg shadow-md backdrop-blur-md transition active:scale-110">❤️</button>
                 <input
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
@@ -974,8 +1061,8 @@ const sendComment = useCallback(() => {
                   aria-label="Comment"
                   className="min-w-0 flex-1 rounded-full border border-white/12 bg-white/[0.05] px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/35 focus:border-[#D6A83F]/50"
                 />
-                <button type="button" onClick={sendComment} disabled={!comment.trim() || chatPaused} aria-label="Send comment" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#D6A83F] text-black transition active:scale-95 disabled:opacity-40">
-                  <Send size={16} />
+                <button type="button" onClick={sendComment} disabled={!comment.trim() || chatPaused} aria-label="Send comment" className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#D6A83F] text-black shadow-md transition active:scale-95 disabled:opacity-40">
+                  <Send size={17} />
                 </button>
               </div>
             </motion.div>
@@ -1112,14 +1199,14 @@ const sendComment = useCallback(() => {
  * ------------------------------------------------------------------------- */
 function RailButton({ onPress, label, badge, active, children }: { onPress: () => void; label: string; badge?: number; active?: boolean; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className="flex flex-col items-center gap-1.5">
       <button
         type="button"
         onClick={onPress}
         aria-label={label}
         className={cn(
           'relative grid h-12 w-12 place-items-center rounded-full border shadow-lg backdrop-blur-md transition active:scale-95',
-          active ? 'border-[#D6A83F]/60 bg-[#D6A83F]/25 text-white' : 'border-white/15 bg-black/45 text-white/90 hover:bg-black/60',
+          active ? 'border-[#D6A83F]/60 bg-[#D6A83F]/30 text-white' : 'border-white/[0.14] bg-black/50 text-white/90 hover:bg-black/65',
         )}
       >
         {children}
@@ -1129,7 +1216,7 @@ function RailButton({ onPress, label, badge, active, children }: { onPress: () =
           </span>
         )}
       </button>
-      <span className="text-[9px] font-semibold uppercase tracking-wide text-white/75 drop-shadow">{label}</span>
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-white/80 drop-shadow">{label}</span>
     </div>
   );
 }
