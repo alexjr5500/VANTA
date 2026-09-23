@@ -54,9 +54,9 @@ export default function IncomingCallBanner({
 
             <div className="flex items-center gap-3 px-3.5 py-3 sm:px-4">
               {/* Caller avatar */}
-              <div className="relative shrink-0">
+              <div className="relative flex h-10 w-10 shrink-0 items-center justify-center">
                 <span className="absolute -inset-[2px] rounded-full bg-gradient-to-br from-[#d6a83f] via-[#c8c8cc] to-[#f5f5f5]" aria-hidden="true" />
-                <Avatar src={peerAvatar} alt={peerName || 'Caller'} size="md" className="ring-2 ring-[#0d0d0f]" />
+                <Avatar src={peerAvatar} alt={peerName || 'Caller'} size="md" wrapperClassName="!h-full !w-full" className="ring-2 ring-[#0d0d0f]" />
                 <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-400 ring-2 ring-[#0d0d0f]" aria-hidden="true" />
               </div>
 

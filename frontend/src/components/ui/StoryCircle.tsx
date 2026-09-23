@@ -139,7 +139,7 @@ export default function StoryCircle({
         <span
           aria-hidden="true"
           className={cn(
-            'block h-full w-full rounded-full',
+            'absolute inset-0 h-full w-full rounded-full',
             active
               ? 'bg-[conic-gradient(from_210deg_at_50%_50%,#dfbd55_0%,#c9a227_38%,#a48220_52%,#dfbd55_76%,#c9a227_100%)]'
               : 'border border-white/10 bg-white/[0.05]'
