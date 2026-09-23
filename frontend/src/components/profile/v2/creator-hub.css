@@ -67,15 +67,14 @@
 .has-image .cover-monogram,
 .has-image .cover-rule { display: none; }
 
-.profile-overview { padding: 0 15px; }
-.profile-anchor-row {
-  position: relative;
-  min-height: 54px;
-  display: flex;
-  align-items: flex-start;
-  display: block;
-}
+/* flow-root contains the avatar's negative top margin so it can't collapse
+   through the overview (which would drag the absolutely-positioned header
+   actions up off the cover boundary). No clipping: the avatar still pokes up
+   over the cover edge. */
+.profile-overview { position: relative; display: flow-root; padding: 0 15px; }
 .profile-avatar {
+  position: relative;
+  z-index: 2;
   width: 96px;
   height: 96px;
   margin: -48px 0 0 0;
@@ -87,7 +86,7 @@
 }
 .profile-avatar > div,
 .profile-avatar > div > div { width: 100% !important; height: 100% !important; }
-.profile-identity { max-width: 440px; margin: 0; padding: 7px 4px 0; text-align: left; }
+.profile-identity { max-width: 440px; margin: 0; padding: 10px 4px 0; text-align: left; }
 .name-line { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
 .name-line h1 {
   overflow-wrap: anywhere;
@@ -109,33 +108,67 @@
 }
 .profile-meta {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 18px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
   justify-content: flex-start;
   margin-top: 11px;
   color: #8c8c8c;
   font-size: 12px;
 }
 .profile-meta span,
-.profile-meta a { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.profile-meta a { display: inline-flex; align-items: center; gap: 6px; min-width: 0; line-height: 1.3; }
+.profile-meta svg { flex: none; opacity: 0.85; }
 .profile-meta a { color: var(--profile-muted); text-decoration: none; }
 .profile-meta a:hover { color: var(--profile-text); }
 
+/* The action buttons live at the bottom/right edge of the cover (straddling
+   the cover → content boundary, vertically centred on the avatar's midline)
+   instead of taking up a large separate row under the identity. */
 .profile-actions {
+  position: absolute;
+  top: -18px;
+  right: 14px;
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
-  padding-top: 17px;
+  gap: 7px;
 }
-.profile-actions:has(.primary),
-.profile-actions:has(.message) { display: grid; grid-template-columns: minmax(0, 1fr) 36px 36px 36px; }
-/* Own profile: Edit Profile (fills) + Share — two clean tracks under the cover. */
-.profile-actions:has(.edit-action) { display: grid; grid-template-columns: minmax(0, 1fr) 36px; }
-.profile-button.edit-action { display: inline-flex; align-items: center; justify-content: center; gap: 7px; text-decoration: none; }
-.profile-button.share-action svg { color: var(--profile-gold); }
-.profile-button,
+.profile-pill,
 .profile-icon {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 14px;
+  border: 1px solid rgba(245, 245, 245, 0.18);
+  border-radius: 999px;
+  background: rgba(12, 12, 14, 0.78);
+  backdrop-filter: blur(10px);
+  color: var(--profile-text);
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+.profile-pill:hover,
+.profile-icon:hover { border-color: rgba(245, 245, 245, 0.36); background: rgba(24, 24, 27, 0.92); color: var(--profile-text); }
+.profile-pill.primary {
+  border-color: rgba(214, 168, 63, 0.55);
+  background: rgba(201, 162, 39, 0.16);
+  color: #f2c75c;
+}
+.profile-pill.primary:hover { border-color: rgba(242, 199, 92, 0.78); background: rgba(201, 162, 39, 0.24); color: #f2c75c; }
+.profile-pill:disabled { cursor: wait; opacity: 0.6; }
+.profile-icon { width: 34px; flex: none; padding: 0; border-radius: 50%; }
+.profile-actions .share-action:hover,
+.profile-actions .message:hover,
+.profile-actions .gift-action:hover { color: var(--profile-gold); }
+.profile-header:has(.profile-actions) .cover-brand { display: none; }
+.profile-button {
   height: 36px;
   display: inline-flex;
   align-items: center;
@@ -150,8 +183,25 @@
   font-weight: 650;
   transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
 }
-.profile-button:hover,
-.profile-icon:hover { border-color: rgba(245, 245, 245, 0.26); background: #1b1b1e; }
+.profile-icon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0;
+  border: 1px solid rgba(245, 245, 245, 0.18);
+  border-radius: 50%;
+  background: rgba(12, 12, 14, 0.78);
+  color: var(--profile-text);
+  font-size: 12px;
+  font-weight: 650;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+.profile-button:hover { border-color: rgba(245, 245, 245, 0.26); background: #1b1b1e; }
+.profile-icon:hover { border-color: rgba(245, 245, 245, 0.36); background: rgba(24, 24, 27, 0.92); }
 .profile-button.primary {
   border-color: rgba(214, 168, 63, 0.52);
   background: #18181a;
@@ -160,7 +210,6 @@
 }
 .profile-button.primary:hover { border-color: rgba(242, 199, 92, 0.72); background: #202023; }
 .profile-button:disabled { cursor: wait; opacity: 0.58; }
-.profile-icon { width: 36px; flex: none; padding: 0; }
 .profile-menu-wrap { position: relative; }
 .profile-menu {
   position: fixed;
@@ -200,43 +249,26 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
   margin-top: 14px;
-  padding: 12px 0;
+  padding: 12px 0 10px;
   border-top: 1px solid rgba(245, 245, 245, 0.08);
 }
-/* One clean statistics component: each cell is a single horizontal track with
-   the count before its label — "1,245 Followers" / "532 Following" /
-   "87 Post" / "4,821 Likes". All four tracks stay evenly spaced and the
-   hairline separators keep the row scannable without adding bulk. */
+/* One clean statistics row: four equal columns, each a compact stack with the
+   count above its label. Stays a single horizontal line at 320px because the
+   space-hungry parts ("1,245 Followers") never share a track. */
 .profile-stats > * {
   position: relative;
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  gap: 5px;
-  white-space: nowrap;
+  gap: 3px;
   min-width: 0;
   color: inherit;
   text-align: center;
 }
-.profile-stats > * + *::before {
-  content: "";
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  left: 0;
-  width: 1px;
-  background: rgba(245, 245, 245, 0.06);
-}
-.profile-stats strong { color: var(--profile-text); font-size: 15px; font-weight: 650; line-height: 1; font-variant-numeric: tabular-nums; }
-.profile-stats span { color: #8c8c8c; font-size: 11px; letter-spacing: 0; white-space: nowrap; }
+.profile-stats strong { color: var(--profile-text); font-size: 15px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.profile-stats span { color: #8c8c8c; font-size: 10px; letter-spacing: 0; white-space: nowrap; }
 .profile-stats button:hover span { color: var(--profile-muted); }
-
-/* Narrow phones: two tracks per row so the count + label pair never clips or
-   overflows at 320px. The count still sits on the same line as its label. */
-@media (max-width: 380px) {
-  .profile-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 9px; }
-  .profile-stats > * + *::before { display: none; }
-}
 
 .profile-tabs {
   position: sticky;
@@ -244,26 +276,22 @@
   z-index: 25;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(64px, 1fr);
-  overflow-x: auto;
-  border-top: 1px solid rgba(245, 245, 245, 0.08);
-  border-bottom: 1px solid rgba(245, 245, 245, 0.08);
+  grid-auto-columns: minmax(0, 1fr);
+  border-top: 1px solid rgba(245, 245, 245, 0.07);
+  border-bottom: 1px solid rgba(245, 245, 245, 0.07);
   background: rgba(5, 5, 5, 0.96);
   backdrop-filter: blur(16px);
-  scrollbar-width: none;
 }
-.profile-tabs::-webkit-scrollbar { display: none; }
 .profile-tabs button {
   position: relative;
-  height: 45px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-direction: row;
-  gap: 5px;
+  gap: 6px;
   color: #777;
-  font-size: 10px;
-  font-weight: 620;
+  font-size: 11px;
+  font-weight: 650;
   white-space: nowrap;
   transition: color 160ms ease;
 }
@@ -271,39 +299,28 @@
 .profile-tabs button::after {
   content: "";
   position: absolute;
-  right: 28%;
-  bottom: -1px;
-  left: 28%;
+  right: 22%;
+  bottom: 0;
+  left: 22%;
   height: 2px;
   background: transparent;
 }
 .profile-tabs button.active { color: var(--profile-text); }
 .profile-tabs button.active svg { color: var(--profile-gold); }
 .profile-tabs button.active::after { background: var(--profile-gold); }
-/* Collapsible icon navigation: labels stay hidden until their tab is active.
-   Exactly one tab is active at a time, so only one label is ever visible. */
-.profile-tabs .tab-label {
-  display: inline-block;
-  max-width: 0;
-  overflow: hidden;
-  opacity: 0;
-  transform: translateX(-3px);
-  white-space: nowrap;
-  transition: max-width 200ms cubic-bezier(0.4, 0, 0.2, 1), opacity 140ms ease 40ms, transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-.profile-tabs button.active .tab-label {
-  max-width: 96px;
-  opacity: 1;
-  transform: translateX(0);
-}
-.profile-content { min-height: 300px; padding-top: 4px; }
+.profile-tabs .tab-label { display: inline-block; line-height: 1; }
+.profile-content { min-height: 300px; padding-top: 0; }
 
 /* Profile post feed renders the SAME shared FeedPostCard as Home. Give the
    posts the same divider rhythm and spacing Home uses so profile posts feel
-   like part of the global feed, not a separate surface. */
+   like part of the global feed, not a separate surface — while tightening the
+   card's vertical rhythm (padding + action-row height) so more posts fit. */
 .profile-post-feed { display: flex; flex-direction: column; }
 .profile-post-feed > :not(:first-child) { border-top: 1px solid rgba(245, 245, 245, 0.06); }
-.profile-post-feed > :first-child { padding-top: 2px; }
+.profile-post-feed > :first-child { padding-top: 0; }
+.profile-post-feed article { padding-top: 6px; padding-bottom: 1px; }
+.profile-post-feed article footer { padding-top: 0; }
+.profile-post-feed article footer button { min-height: 30px; }
 
 .content-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
 .content-tile { position: relative; aspect-ratio: 4 / 5; overflow: hidden; background: var(--profile-raised); }
@@ -468,21 +485,22 @@
 
 .profile-loading,
 .content-skeleton i { display: block; background: var(--profile-raised); animation: profile-pulse 1.25s ease-in-out infinite alternate; }
-.profile-loading.cover { height: clamp(132px, 39vw, 166px); }
+.profile-loading.cover { height: clamp(148px, 43vw, 188px); }
 .profile-loading.identity {
   position: relative;
-  height: 218px;
+  height: 196px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 82px 38px 24px;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 96px 22px 20px;
   background: var(--profile-bg);
 }
-.profile-loading.identity i { position: absolute; top: -74px; left: 38px; width: 150px; height: 150px; border: 4px solid var(--profile-bg); border-radius: 50%; background: #1c1c1f; }
-.profile-loading.identity span { width: min(420px, 60%); height: 18px; background: var(--profile-raised); }
-.profile-loading.identity span:nth-of-type(2) { width: min(210px, 35%); height: 12px; }
-.profile-loading.identity b { width: min(560px, 72%); height: 54px; margin-top: 5px; background: var(--profile-raised); }
-.profile-loading.tabs { height: 49px; border-top: 1px solid rgba(245, 245, 245, 0.08); border-bottom: 1px solid rgba(245, 245, 245, 0.08); }
+.profile-loading.identity i { position: absolute; top: -46px; left: 18px; width: 96px; height: 96px; border: 4px solid var(--profile-bg); border-radius: 50%; background: #1c1c1f; }
+.profile-loading.identity span { width: 44%; height: 20px; background: var(--profile-raised); }
+.profile-loading.identity span:nth-of-type(2) { width: 26%; height: 12px; }
+.profile-loading.identity b { width: 72%; height: 46px; margin-top: 2px; background: var(--profile-raised); }
+.profile-loading.tabs { height: 44px; border-top: 1px solid rgba(245, 245, 245, 0.07); border-bottom: 1px solid rgba(245, 245, 245, 0.07); }
 .content-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; margin-top: 0; }
 .content-skeleton i { aspect-ratio: 4 / 5; }
 @keyframes profile-pulse { to { background: #1c1c1f; } }
@@ -691,15 +709,8 @@
 .cover-monogram { bottom: -24px; }
 .vanta-verified { width: 19px; height: 19px; }
 .profile-bio { margin: 12px auto 0; line-height: 1.5; }
-.profile-meta { gap: 8px 14px; font-size: 11px; }
-.profile-actions { width: 100%; }
-.profile-actions:has(.gift-action) { grid-template-columns: minmax(0, 1fr) repeat(3, 36px); }
-.profile-actions .profile-button { width: 100%; padding: 0 7px; }
-.profile-actions .share-action,
-.profile-actions .message,
-.profile-actions .gift-action { width: 36px; padding: 0; font-size: 0; }
-.profile-menu-wrap { width: 36px; }
-.profile-content { min-height: 250px; padding-top: 2px; }
+.profile-meta { gap: 6px; font-size: 12px; }
+.profile-content { min-height: 300px; padding-top: 0; }
 .content-tile,
 .content-skeleton i { aspect-ratio: 1 / 1.18; }
 .tile-overlay { inset: auto 0 0; min-height: 31px; justify-content: flex-start; padding: 6px; background: rgba(5, 5, 5, 0.7); opacity: 1; }
@@ -711,25 +722,16 @@
 .tile-fallback { gap: 7px; padding: 8px; }
 .tile-fallback svg { width: 19px; height: 19px; }
 .tile-fallback small { font-size: 9px; -webkit-line-clamp: 2; }
-.profile-loading.identity { height: 255px; align-items: center; padding: 64px 16px 18px; }
-.profile-loading.identity i { top: -48px; left: calc(50% - 50px); width: 100px; height: 100px; }
-.profile-loading.identity span { width: 52%; }
-.profile-loading.identity span:nth-of-type(2) { width: 30%; }
-.profile-loading.identity b { width: 88%; height: 62px; }
-.profile-loading.tabs { height: 45px; }
 .profile-empty,
 .local-error { min-height: 240px; }
 .about-list { margin: 18px 16px; }
 
-/* Keep the profile actions usable when the menu is opened at either edge of a phone. */
+/* Keep the profile menu usable when opened at either edge of a phone. */
 @media (max-width: 540px) {
   .profile-menu {
     overflow-y: auto;
     overscroll-behavior: contain;
   }
-
-  .profile-actions { position: relative; z-index: 41; }
-  .profile-menu-wrap { position: static; }
 }
 
 /* Followers / Following modal: near-full-width bottom sheet on small phones,
@@ -755,24 +757,14 @@
   .profile-page * { animation: none !important; transition: none !important; }
 }
 
-/* ─── Premium action row refinements ─────────────────────────────── */
-/* Own profile: Edit Profile (primary) + Share + menu  = three tracks */
-.profile-actions:has(.primary):not(:has(.gift-action)) {
-  grid-template-columns: minmax(0, 1fr) 36px 36px;
-}
-/* Other profiles: Follow + Message + Share + Gift + menu = five tracks */
-.profile-actions:has(.share-action):has(.gift-action) {
-  grid-template-columns: minmax(0, 1fr) repeat(4, 36px);
-}
-.profile-button.share-action svg { color: var(--profile-gold); }
-.profile-button.primary {
-  border-color: rgba(214, 168, 63, 0.52);
-  background: var(--gold-bg, rgba(201, 162, 39, 0.08));
-  color: #f2c75c;
-  box-shadow: inset 2px 0 0 #d6a83f, 0 8px 22px rgba(201, 162, 39, 0.1);
-}
-.profile-button.primary:hover {
-  border-color: rgba(242, 199, 92, 0.72);
-  background: var(--gold-bg-strong, rgba(201, 162, 39, 0.14));
-  color: var(--profile-text);
+/* Very narrow phones (≤360px): shrink the avatar, action buttons and their
+   gaps so the right-aligned actions never collide with the avatar on the
+   cover's edge — including the widest "Following + Message + Share + Gift"
+   action set. */
+@media (max-width: 360px) {
+  .profile-avatar { width: 84px; height: 84px; margin-top: -42px; padding: 3px; }
+  .profile-actions { gap: 5px; }
+  .profile-pill { padding: 0 10px; font-size: 10.5px; }
+  .profile-icon { width: 30px; height: 30px; }
+  .name-line h1 { font-size: 21px; }
 }

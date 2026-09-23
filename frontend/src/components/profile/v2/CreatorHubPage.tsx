@@ -22,7 +22,7 @@ const TABS: Array<{ id: ProfileTab; label: string; icon: typeof Film; ownOnly?: 
   { id: 'posts', label: 'Posts', icon: MessageCircle },
   { id: 'reels', label: 'Reels', icon: Film },
   { id: 'media', label: 'Media', icon: ImageIcon },
-  { id: 'likes', label: 'Liked', icon: Heart, ownOnly: true },
+  { id: 'likes', label: 'Likes', icon: Heart, ownOnly: true },
 ];
 
 const emptyContent = (): Record<ProfileTab, ProfileItem[]> => ({ posts: [], reels: [], live: [], media: [], likes: [], about: [] });
