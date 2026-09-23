@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { groupService } from "../services";
+import { sendError, AppError, badRequest } from "../utils/api-error";
 
 const parseLimit = (value: unknown, defaultLimit = 50) => {
   const parsed = typeof value === "string" ? parseInt(value, 10) : NaN;
@@ -11,49 +12,46 @@ const parseLimit = (value: unknown, defaultLimit = 50) => {
 export const createGroup = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
-    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
 
     const { name, description, memberIds, avatar } = req.body;
-    if (!name || !name.trim()) { res.status(400).json({ error: "Name is required" }); return; }
+    if (!name || !name.trim()) throw badRequest("VALIDATION_ERROR", "Please give your group a name.");
 
     const group = await groupService.createGroup(userId, name.trim(), description, memberIds, avatar);
     res.status(201).json(group);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    sendError(res, error, { diagnostic: { action: "createGroup" } });
   }
 };
 
 export const getMyGroups = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
-    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
 
     const groups = await groupService.getMyGroups(userId);
     res.status(200).json(groups);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    sendError(res, error, { diagnostic: { action: "getMyGroups" } });
   }
 };
 
 export const getGroupById = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
-    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
     const group = await groupService.getGroupById(req.params.id, userId);
-    if (!group) { res.status(404).json({ error: "Group not found" }); return; }
+    if (!group) throw new AppError(404, "NOT_FOUND", "This group is no longer available.");
     res.status(200).json(group);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    sendError(res, error, { diagnostic: { action: "getGroupById", id: req.params.id } });
   }
 };
 
 export const updateGroup = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
-    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
 
     const { name, description, avatar, memberIds, memberRoles, permissions } = req.body;
     const group = await groupService.updateGroup(req.params.id, userId, {
@@ -66,68 +64,62 @@ export const updateGroup = async (req: AuthRequest, res: Response): Promise<void
     });
     res.status(200).json(group);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Internal server error";
-    const status = message.includes("not found") ? 404 : message.includes("Unauthorized") || message.includes("administrators") ? 403 : 400;
-    res.status(status).json({ error: message });
+    sendError(res, error, { diagnostic: { action: "updateGroup", id: req.params.id } });
   }
 };
 
 export const addGroupMember = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
-    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
 
     const { targetUserId } = req.body;
-    if (!targetUserId) { res.status(400).json({ error: "Target user ID is required" }); return; }
+    if (!targetUserId) throw badRequest("VALIDATION_ERROR", "Please choose a member to add.");
 
     const member = await groupService.addMember(req.params.id, targetUserId, userId);
     res.status(200).json(member);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    sendError(res, error, { diagnostic: { action: "addGroupMember", id: req.params.id } });
   }
 };
 
 export const removeGroupMember = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
-    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
 
     const { targetUserId } = req.params;
     await groupService.removeMember(req.params.id, targetUserId || userId, userId);
     res.status(200).json({ message: "Member removed" });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    sendError(res, error, { diagnostic: { action: "removeGroupMember", id: req.params.id } });
   }
 };
 
 export const joinGroup = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
-    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
 
     const result = await groupService.joinGroup(req.params.id, userId);
     res.status(200).json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    sendError(res, error, { diagnostic: { action: "joinGroup", id: req.params.id } });
   }
 };
 
 export const sendGroupMessage = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
-    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
 
     const { content } = req.body;
-    if (!content || !content.trim()) { res.status(400).json({ error: "Content is required" }); return; }
+    if (!content || !content.trim()) throw badRequest("VALIDATION_ERROR", "Message content is required.");
 
     const message = await groupService.sendMessage(req.params.id, userId, content.trim());
     res.status(201).json(message);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    sendError(res, error, { diagnostic: { action: "sendGroupMessage", id: req.params.id } });
   }
 };
 
@@ -138,20 +130,18 @@ export const getGroupMessages = async (req: Request, res: Response): Promise<voi
     const messages = await groupService.getMessages(req.params.id, cursor, limit);
     res.status(200).json(messages);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    sendError(res, error, { diagnostic: { action: "getGroupMessages", id: req.params.id } });
   }
 };
 
 export const deleteGroup = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
-    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
 
     await groupService.deleteGroup(req.params.id, userId);
     res.status(200).json({ message: "Group deleted" });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Internal server error";
-    res.status(400).json({ error: message });
+    sendError(res, error, { diagnostic: { action: "deleteGroup", id: req.params.id } });
   }
 };

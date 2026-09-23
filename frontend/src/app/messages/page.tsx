@@ -30,6 +30,7 @@ import { activeReplyFor, createReply, type ReplyState } from '@/lib/replyState';
 import { isSecureMediaContext, mapMediaError } from '@/lib/mediaPermissions';
 import { addDrafts, hasBusyDraft, readyDraftCount, removeDraft, type AttachmentDraft } from '@/lib/attachmentDrafts';
 import { renderTextWithLinks } from '@/lib/linkify';
+import { friendlyError, errorMessage } from '@/lib/errors';
 
 interface Conversation {
   id: string;
@@ -550,7 +551,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       }));
       setConversations(previous => [...previous, ...next.filter((item: Conversation) => !previous.some(existing => existing.id === item.id))]);
       setConversationCursor(data?.nextCursor ?? null);
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Could not load more conversations', message: err?.message || 'Please try again.' }); }
+    } catch (err: any) { showToast?.({ type: 'error', title: 'Could not load more conversations', message: errorMessage(err, { action: 'load more conversations', fallback: 'Please try again.' }) }); }
   };
 
   const fetchMessages = useCallback(async (conversationId: string) => {
@@ -562,7 +563,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       setMessageCursor(data?.nextCursor ?? null);
       await apiPut<any>(`/api/messages/${conversationId}/read`, {}, token).catch(() => undefined);
       setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation));
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Chat unavailable', message: err?.message || 'Could not load this conversation.' }); }
+    } catch (err: any) { showToast?.({ type: 'error', title: 'Chat unavailable', message: errorMessage(err, { action: 'load this conversation', context: 'conversation', fallback: 'Could not load this conversation.' }) }); }
   }, [token, user?.id, showToast]);
 
   useEffect(() => { fetchConversations(); }, [fetchConversations]);
@@ -598,7 +599,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         if (target) target.scrollTop = (target.scrollHeight - prevScrollHeight) + prevScrollTop;
       });
       window.setTimeout(() => window.cancelAnimationFrame(raf), 5000);
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Could not load older messages', message: err?.message || 'Please try again.' }); }
+    } catch (err: any) { showToast?.({ type: 'error', title: 'Could not load older messages', message: errorMessage(err, { action: 'load older messages', fallback: 'Please try again.' }) }); }
     finally { setLoadingOlder(false); }
   };
 
@@ -736,7 +737,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     } catch (err: any) {
       if (err?.statusCode === 499) { clearVoiceState(); return; }
       setRecordingState('ready');
-      showToast?.({ type: 'error', title: 'Voice note not sent', message: err?.message || 'The recording could not be uploaded. Try again.' });
+      showToast?.({ type: 'error', title: 'Voice note not sent', message: errorMessage(err, { action: 'send the voice note', fallback: 'The recording could not be uploaded. Try again.' }) });
       return;
     }
     clearVoiceState();
@@ -897,7 +898,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       handleCloseConversation();
       fetchConversations();
     } catch (err: any) {
-      showToast?.({ type: 'error', title: 'Could not leave', message: err?.message || 'Please try again.' });
+      showToast?.({ type: 'error', title: 'Could not leave', message: errorMessage(err, { action: 'leave', context: activeConv?.type === 'channel' ? 'channel' : 'group', fallback: 'Please try again.' }) });
     } finally {
       setIsLeaving(false);
     }
@@ -940,7 +941,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       setReplyingTo(null);
     } catch (err: any) {
       setMessages(previous => previous.map(item => item.id === pendingId ? { ...item, pending: false, failed: true } : item));
-      showToast?.({ type: 'error', title: 'Message not sent', message: err?.message || 'Tap retry to send again.' });
+      showToast?.({ type: 'error', title: 'Message not sent', message: errorMessage(err, { action: 'send the message', context: 'message', fallback: 'Tap retry to send again.' }) });
       throw err;
     }
   };
@@ -951,7 +952,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       const result = await apiPut<any>(`/api/messages/message/${message.id}/reaction`, { reaction }, token);
       const updated = normalizeMessage(result.data ?? result);
       setMessages(previous => previous.map(item => item.id === updated.id ? updated : item));
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Reaction failed', message: err?.message || 'Please try again.' }); }
+    } catch (err: any) { showToast?.({ type: 'error', title: 'Reaction failed', message: errorMessage(err, { action: 'add the reaction', fallback: 'Please try again.' }) }); }
   };
 
   const toggleMessagePin = async (message: Message) => {
@@ -960,7 +961,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       const result = await apiPut<any>(`/api/messages/message/${message.id}/pin`, { pinned: !message.pinnedAt }, token);
       const updated = normalizeMessage(result.data ?? result);
       setMessages(previous => previous.map(item => item.id === updated.id ? updated : item));
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Pin failed', message: err?.message || 'Please try again.' }); }
+    } catch (err: any) { showToast?.({ type: 'error', title: 'Pin failed', message: errorMessage(err, { action: 'pin the message', fallback: 'Please try again.' }) }); }
   };
 
   const toggleMute = async () => {
@@ -1172,7 +1173,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
     if (firstError) {
       setMessages(previous => previous.map(item => item.id === pendingId ? { ...item, pending: false, uploading: false, failed: true } : item));
-      showToast?.({ type: 'error', title: 'Upload failed', message: firstError?.message || 'Tap retry to upload again.' });
+      showToast?.({ type: 'error', title: 'Upload failed', message: errorMessage(firstError, { action: 'upload the attachment', context: 'file', fallback: 'Tap retry to upload again.' }) });
       return;
     }
 
@@ -1427,7 +1428,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       createAvatarFileIdRef.current = fileId;
       setCreateAvatarFileId(fileId);
     } catch (error: any) {
-      setCreateAvatarError(error?.message || 'The image could not be uploaded right now.');
+      setCreateAvatarError(errorMessage(error, { action: 'upload the image', context: 'photo', fallback: 'The image could not be uploaded right now.' }));
     } finally {
       setIsUploadingAvatar(false);
       if (avatarInputRef.current) avatarInputRef.current.value = '';
@@ -1508,10 +1509,17 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         setCreateAvatarFileId(null);
         apiDelete<any>(`/api/upload/files/${pendingFileId}`, token).catch(() => undefined);
       }
+      // Normalize the failure into human copy and keep the modal open with the
+      // user's typed name intact so they can correct the field and retry.
+      const friendly = friendlyError(error, {
+        action: createType === 'group' ? 'create the group' : 'create the channel',
+        context: createType,
+      });
+      setCreateValidationError(friendly.message);
       showToast?.({
         type: 'error',
-        title: 'Create failed',
-        message: error?.message || 'The new conversation could not be created.',
+        title: friendly.title,
+        message: friendly.message,
       });
     } finally {
       setIsCreatingEntity(false);
@@ -1610,7 +1618,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       const form = new FormData(); form.append('avatar', file);
       const uploaded = await apiUpload<any>(`/api/upload/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}/avatar`, form, token);
       setEditAvatar(uploaded.url ?? uploaded.data?.url);
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Photo upload failed', message: err?.message || 'Please choose another image.' }); }
+    } catch (err: any) { showToast?.({ type: 'error', title: 'Photo upload failed', message: errorMessage(err, { action: 'upload the photo', context: 'photo', fallback: 'Please choose another image.' }) }); }
     finally { setIsUploadingAvatar(false); }
   };
 
@@ -1623,7 +1631,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       setManagedEntity(updated);
       setEditEntityOpen(false);
       showToast?.({ type: 'success', title: `${activeConv.type === 'group' ? 'Group' : 'Channel'} updated`, message: 'Changes are visible throughout Chat.' });
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Changes not saved', message: err?.message || 'Please try again.' }); }
+    } catch (err: any) { showToast?.({ type: 'error', title: 'Changes not saved', message: errorMessage(err, { action: 'save the changes', context: activeConv?.type === 'channel' ? 'channel' : 'group', fallback: 'Please try again.' }) }); }
     finally { setIsSavingEntity(false); }
   };
 

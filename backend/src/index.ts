@@ -16,6 +16,7 @@ import { Server } from 'socket.io';
 import { prisma } from './prisma';
 import { provisionDatabaseSchema } from './provision-db';
 import { initializeSecurity, config, rateLimiter, botProtection, auditLog } from './security';
+import { sendError, AppError } from './utils/api-error';
 import { authenticateSocket, handleConnect, handleDisconnect } from './security';
 import { buildAllowedOrigins, isOriginAllowed } from './security/cors';
 import authRoutes from './routes/auth.routes';
@@ -533,16 +534,13 @@ app.use((req: Request, res: Response, next) => {
 
 // 404 handler
 app.use((req: Request, res: Response) => {
-  res.status(404).json({
-    error: 'Not found',
-    message: `Route ${req.method} ${req.path} not found`,
+  sendError(res, new AppError(404, 'NOT_FOUND', 'The page you are looking for does not exist.'), {
+    diagnostic: { route: `${req.method} ${req.path}` },
   });
 });
 
 // Global error handler
 app.use((err: Error, req: Request, res: Response, next: any) => {
-  console.error('[ERROR]', err);
-  
   auditLog.log({
     action: 'SERVER_ERROR',
     ipAddress: req.ip,
@@ -555,12 +553,9 @@ app.use((err: Error, req: Request, res: Response, next: any) => {
     severity: 'ERROR' as any,
   });
 
-  res.status(500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'production' 
-      ? 'An unexpected error occurred' 
-      : err.message,
-  });
+  // Normalized, user-safe response. Raw internals are logged server-side in
+  // sendError and must never reach the client.
+  sendError(res, err, { diagnostic: { route: `${req.method} ${req.path}` } });
 });
 
 // ============================================================================

@@ -1,6 +1,6 @@
 import { NextFunction, Request, Response, Router } from "express";
-import multer from "multer";
 import { authenticateJWT } from "../middleware/auth.middleware";
+import { sendError } from "../utils/api-error";
 import {
   upload,
   uploadImage,
@@ -43,20 +43,9 @@ import {
 const router = Router();
 
 const handleUploadError = (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  if (err instanceof multer.MulterError) {
-    const message = err.code === "LIMIT_FILE_SIZE"
-      ? "File is too large. Please choose a smaller file."
-      : "File upload failed. Please try again.";
-    res.status(413).json({ error: message });
-    return;
-  }
-
-  if (err instanceof Error) {
-    res.status(400).json({ error: err.message });
-    return;
-  }
-
-  res.status(400).json({ error: "Upload failed" });
+  // Route-level upload failures go through the same normalized error layer as
+  // the rest of the API so clients always see { error, code }.
+  sendError(res, err, { diagnostic: { action: "upload" } });
 };
 
 router.use(authenticateJWT);

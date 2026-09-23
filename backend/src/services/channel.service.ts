@@ -1,5 +1,6 @@
 import { prisma } from "../prisma";
 import { chatService } from "./chat.service";
+import { conflict } from "../utils/api-error";
 
 export class ChannelService {
   private async withConversationSettings(channel: any) {
@@ -12,7 +13,18 @@ export class ChannelService {
 
   async createChannel(ownerId: string, name: string, description?: string, category?: string, memberIds?: string[], avatar?: string, handle?: string, visibility: string = "PUBLIC") {
     const existing = await prisma.channel.findUnique({ where: { name } });
-    if (existing) throw new Error("Channel name already exists");
+    if (existing) throw conflict("NAME_ALREADY_EXISTS", "That channel name is already in use. Please choose another one.");
+
+    // The @handle doubles as a unique public identifier (mirrors usernames).
+    // Surface a clear conflict instead of letting the unique constraint leak.
+    if (handle && handle.trim()) {
+      const normalizedHandle = handle.trim().toLowerCase();
+      const handleOwner = await prisma.conversation.findFirst({
+        where: { handle: { equals: normalizedHandle, mode: "insensitive" } },
+        select: { id: true },
+      });
+      if (handleOwner) throw conflict("USERNAME_ALREADY_EXISTS", "That username is already in use. Please choose another one.");
+    }
 
     const allMemberIds = [ownerId, ...(memberIds?.filter(id => id !== ownerId) || [])];
     const uniqueMemberIds = [...new Set(allMemberIds)];
