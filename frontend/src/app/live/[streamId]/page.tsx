@@ -7,7 +7,7 @@
  *
  * The real host video (LiveKit) fills the entire viewport; a polished editorial
  * header floats over the top (leave control, host avatar + handle + LIVE/time,
- * Fan Club chip, viewer count), the bottom-left clusters pinned message + live
+ * viewer count), the bottom-left clusters pinned message + live
  * chat + quick reactions, and a bottom-right vertical action rail keeps
  * Like / Chat / Gift / Share / More one thumb-tap away. Comments, gifts,
  * reactions and viewer-join notices stream in as live overlays through the
@@ -21,7 +21,6 @@ import {
   AlertTriangle,
   ArrowDown,
   Check,
-  Crown,
   Ellipsis,
   Eye,
   Flag,
@@ -169,8 +168,6 @@ export default function LiveViewerPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [comment, setComment] = useState('');
   const [sendingComment, setSendingComment] = useState(false);
-  const [following, setFollowing] = useState(false);
-  const [followBusy, setFollowBusy] = useState(false);
   const [sheet, setSheet] = useState<SheetId>('none');
   const [chatPaused, setChatPaused] = useState(false);
 
@@ -477,10 +474,6 @@ socket.on('guest_state', (d: any) => {
         })
         .catch(() => undefined);
 
-      apiGet<{ following: boolean }>(`/api/live/${streamIdRef.current}/following`, token, { skipCache: true })
-        .then((d) => setFollowing(!!d?.following))
-        .catch(() => undefined);
-
       apiGet<any>(`/api/live/${streamIdRef.current}/guests`, token, { skipCache: true })
         .then((d) => {
           if (!d) return;
@@ -558,22 +551,6 @@ const sendComment = useCallback(() => {
       setSendingComment(false);
     }
   }, [comment, sendingComment]);
-
-  const toggleFollow = useCallback(async () => {
-    if (!token || followBusy) return;
-    setFollowBusy(true);
-    try {
-      const d = await apiPost<{ follow?: { following: boolean } }>(`/api/live/${streamIdRef.current}/follow`, {}, token);
-      const next = !!d?.follow?.following;
-      setFollowing(next);
-      if (next) socketRef.current?.emit('live_follow', { streamId: streamIdRef.current });
-      toast.success(next ? `Following ${stream?.host?.username || ''}`.trim() : 'Unfollowed');
-    } catch (err: any) {
-      toast.error('Could not update follow', err?.message || 'Please try again.');
-    } finally {
-      setFollowBusy(false);
-    }
-  }, [token, followBusy, stream?.host?.username, toast]);
 
   const openGift = useCallback(async () => {
     if (!token) return;
@@ -826,7 +803,7 @@ const sendComment = useCallback(() => {
             className="flex min-w-0 flex-1 items-center gap-2 text-left"
           >
             <span className="relative shrink-0">
-              <Avatar src={stream.host.avatar} alt={stream.host.username} size="md" wrapperClassName="ring-2 ring-[#F2C75C]/70" />
+              <Avatar src={stream.host.avatar} alt={stream.host.username} size="md" className="ring-2 ring-[#F2C75C]/70" />
               <span className="absolute -bottom-0.5 -right-0.5">
                 <span className="relative flex h-2.5 w-2.5">
                   <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-[#F2C75C]/80" />
@@ -848,22 +825,6 @@ const sendComment = useCallback(() => {
               </span>
             </span>
           </button>
-
-          {!isOwn && (
-            <button
-              type="button"
-              onClick={() => void toggleFollow()}
-              disabled={followBusy}
-              aria-label={following ? 'Leave Fan Club' : 'Join Fan Club'}
-              className={cn(
-                'inline-flex h-9 shrink-0 items-center gap-1 rounded-full px-3 text-[11px] font-extrabold shadow-md transition active:scale-95 disabled:opacity-60',
-                following ? 'border border-[#D6A83F]/40 bg-black/55 text-[#F2C75C] backdrop-blur-md' : 'bg-gradient-to-r from-[#D6A83F] to-[#F2C75C] text-black',
-              )}
-            >
-              <Crown size={12} fill="currentColor" />
-              {following ? 'Fan Club' : 'Join'}
-            </button>
-          )}
 
           <span className="flex shrink-0 items-center gap-1.5">
             {isConnecting && (
@@ -1115,15 +1076,6 @@ const sendComment = useCallback(() => {
                 <button type="button" onClick={() => setSheet('none')} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full bg-white/[0.06] text-white/70"><X size={15} /></button>
               </div>
               <div className="mt-3 space-y-1.5">
-                {!isOwn && (
-                  <button type="button" onClick={() => void toggleFollow()} disabled={followBusy} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90 transition active:scale-[0.99]">
-                    <span className="grid h-9 w-9 place-items-center rounded-full bg-[#D6A83F]/15 text-[#F2C75C]"><Crown size={16} /></span>
-                    <span className="flex-1 text-left">
-                      <span className="block text-sm font-semibold">{following ? 'Leave Fan Club' : 'Join Fan Club'}</span>
-                      <span className="block text-[11px] text-white/50">Support {stream.host.username} with exclusive perks</span>
-                    </span>
-                  </button>
-                )}
                 {!isOwn && guestStatus === 'idle' && (
                   <button type="button" onClick={requestToJoin} disabled={guestCapacity.count >= guestCapacity.limit || stream.allowGuests === false} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90 transition active:scale-[0.99] disabled:opacity-50">
                     <span className="grid h-9 w-9 place-items-center rounded-full border border-[#D6A83F]/40 bg-[#D6A83F]/10 text-[#F2C75C]"><Mic size={16} /></span>
