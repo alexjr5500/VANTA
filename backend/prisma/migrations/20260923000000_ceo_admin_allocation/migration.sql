@@ -1,0 +1,17 @@
+-- ============================================================================
+-- VANTA — CEO/Admin initial allocation (1,000,000 VANTA Coins)
+-- ============================================================================
+-- One-time idempotency gate on the Wallet table.
+--
+-- The column is set exactly once (never unset) when the canonical CEO/Admin
+-- account (ceo@vanta.app) receives its one-time initial allocation of
+-- 1,000,000 VANTA Coins. It is claimed with an atomic conditional update
+-- (`UPDATE ... WHERE "ceoAllocationGrantedAt" IS NULL`), which makes repeated
+-- deployments, seed runs, restarts, logins and refreshes IMPOSSIBLE to ever
+-- grant a duplicate allocation.
+--
+-- SAFETY: purely additive and non-destructive. Existing rows simply remain
+-- NULL ("not yet allocated"). No existing column, row, balance or transaction
+-- data is modified, deleted, or reset.
+-- ============================================================================
+ALTER TABLE "Wallet" ADD COLUMN "ceoAllocationGrantedAt" TIMESTAMP(3);

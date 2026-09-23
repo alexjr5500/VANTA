@@ -658,19 +658,23 @@ async function startServer() {
       console.warn('[LiveSweep] Startup sweep skipped:', sweepError);
     }
 
-    // Seed development wallet for Admin/CEO (development only - guarded internally)
+    // CEO/Admin initial allocation: grants the canonical CEO account exactly
+    // 1,000,000 VANTA Coins ONCE through the real wallet/ledger system. The
+    // service is idempotent and database-gated — safe to run on every startup
+    // in every environment, including production (see
+    // src/services/admin-dev-wallet.service.ts).
     try {
       const { seedAdminDevWallet } = await import('./services/admin-dev-wallet.service');
       const devWalletResult = await seedAdminDevWallet(prisma);
       if (devWalletResult.action === 'granted') {
-        console.log(`[SEED] Development balance granted: ${devWalletResult.balanceAfter.toLocaleString()} VANTA Coins`);
+        console.log(`[SEED] CEO/Admin initial allocation granted: ${devWalletResult.balanceAfter.toLocaleString()} VANTA Coins`);
       } else if (devWalletResult.action === 'seed-already-available') {
-        console.log(`[SEED] Development balance already present: ${devWalletResult.balanceAfter.toLocaleString()} VANTA Coins`);
-      } else if (devWalletResult.action === 'disabled') {
-        console.log('[SEED] Development balance skipped (production environment).');
+        console.log(`[SEED] CEO/Admin initial allocation already present: ${devWalletResult.balanceAfter.toLocaleString()} VANTA Coins`);
+      } else {
+        console.log(`[SEED] ${devWalletResult.message}`);
       }
     } catch (seedError) {
-      console.warn('[SEED] Dev wallet seeding skipped:', seedError);
+      console.warn('[SEED] CEO/Admin allocation seeding skipped:', seedError);
     }
 
     // Start HTTP server

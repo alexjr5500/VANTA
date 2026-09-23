@@ -1,63 +1,93 @@
 /**
- * VANTA — Development-only Admin/CEO wallet grant.
+ * VANTA — CEO/Admin initial allocation (real, database-backed, idempotent).
  *
- * Adds a real, server-side VANTA Coin balance to the canonical administrator
- * (CEO) account so the FULL economy can be exercised during development and
- * testing (gifts, transfers, purchases, creator monetization, balance
- * deductions).
+ * Gives the designated CEO/Admin account (`ceo@vanta.app`) an initial
+ * allocation of EXACTLY 1,000,000 VANTA Coins, persisted through VANTA's
+ * existing wallet / ledger architecture:
  *
- * ────────────────────────────────────────────────────────────────────────────
- * Production safety (REQUIRED READING)
- * ────────────────────────────────────────────────────────────────────────────
- * This grant is HARD-BLOCKED when `NODE_ENV === "production"`. That is the
- * same environment convention this project already uses to guard production
- * behavior in `prisma/admin-credentials.ts` and the coin-payment
- * configuration (`src/config/coin-payments.config.ts`). No amount of
- * `ADMIN_DEV_BALANCE` in the environment can enable the grant in production —
- * `seedAdminDevWallet()` returns `{ action: "disabled" }` without touching the
- * database.
- *
- * The `ADMIN_DEV_BALANCE` variable is a **development/test-only** affordance.
- * NEVER set it (or allow it to leak) on a production deployment.
+ *   - `Wallet.coinBalance`            — authoritative spendable balance
+ *   - `WalletTransaction`             — SYSTEM_CREDIT ledger entry (rendered as
+ *                                       an incoming transaction everywhere the
+ *                                       app displays transaction history)
+ *   - `CoinTransaction`               — coin-ledger consistency entry (type ADMIN)
+ *   - `WalletAuditLog`                — audit trail
+ *   - `User.coins`                    — mirrored field surfaced by the
+ *                                       auth/account controller
+ *   - `Wallet.ceoAllocationGrantedAt` — persistent one-time grant gate
  *
  * ────────────────────────────────────────────────────────────────────────────
- * Idempotency
+ * Idempotency (REQUIRED READING)
  * ────────────────────────────────────────────────────────────────────────────
- * The grant is idempotent and never hands out repeated million-coin bonuses:
+ * The allocation is granted AT MOST ONCE per CEO account. Running migrations,
+ * deployment scripts, seed scripts, server startups, logins or refreshes
+ * repeatedly can NEVER add a second 1,000,000:
  *
- *   balance <  target  →  credit exactly (target - balance)  (a top-up)
- *   balance >= target  →  no-op, balance left untouched
+ *   1. The persistent one-time marker (`Wallet.ceoAllocationGrantedAt`) is
+ *      claimed with an atomic conditional update
+ *      (`updateMany ... WHERE "ceoAllocationGrantedAt" IS NULL`). If two
+ *      deployment processes start at the same time, exactly one claims the
+ *      allocation; every other process observes a zero-row update and becomes
+ *      a no-op. This is a hard database-level guarantee, not a best-effort
+ *      application check.
+ *   2. The wallet ledger is also checked for an existing COMPLETED allocation
+ *      transaction (by either the current reference `CEO_INITIAL_ALLOCATION`
+ *      or the legacy reference `DEV_ADMIN_BALANCE_GRANT` used by earlier
+ *      builds), so deployments that were already allocated before this guard
+ *      existed remain protected across upgrades.
+ *   3. If the CEO wallet already holds the target or more, the allocation is
+ *      treated as satisfied: it is never reduced and never credited again.
  *
- * So re-running the seed does NOT produce 2M, and a CEO who already holds more
- * than the target is never reduced.
+ * Once the CEO SPENDS or GIFTS coins, re-running the initialization never
+ * refills them — the balance behaves exactly like every other legitimate
+ * VANTA wallet. No mock balance, no fake transaction, no client-side minting.
  *
  * ────────────────────────────────────────────────────────────────────────────
- * Identity
+ * Production + environments
  * ────────────────────────────────────────────────────────────────────────────
- * The grant is tied to the canonical administrator EMAIL (`ceo@vanta.app`, the
- * same constant the seed uses to create the account). It is NOT derived from a
- * client-supplied username/role, so a normal user who renames themselves to
- * `ceo` (or `CEO`) can never claim the development balance.
+ * This is a REAL production feature: the CEO allocation is issued in every
+ * environment, including production. In production the amount is FIXED at
+ * exactly 1,000,000 VANTA Coins and can never be changed by `ADMIN_DEV_BALANCE`
+ * (a development/test-only override).
+ *
+ * ────────────────────────────────────────────────────────────────────────────
+ * Identity + security
+ * ────────────────────────────────────────────────────────────────────────────
+ * The recipient is resolved strictly by the canonical administrator EMAIL
+ * (`ceo@vanta.app`). It is NOT derived from a client-supplied username/role,
+ * so a normal user who renames themselves to `ceo` (or `CEO`) can never claim
+ * the allocation. There is no HTTP endpoint that mints coins: this function is
+ * called only from the trusted seed / server-startup paths.
  * ────────────────────────────────────────────────────────────────────────────
  */
-
-/** Canonical administrator account email. Single source of truth with the seed. */
+/** Canonical CEO/Admin account email. Single source of truth with the seed. */
 export const ADMIN_DEV_EMAIL = 'ceo@vanta.app';
 
-/** Fallback development balance target when ADMIN_DEV_BALANCE is unset/invalid. */
-export const ADMIN_DEV_BALANCE_DEFAULT = 1_000_000;
+/** The exact CEO/Admin initial allocation amount in VANTA Coins. */
+export const CEO_ADMIN_ALLOCATION_COINS = 1_000_000;
 
-/** Ledger identity used to clearly record the development administrator grant. */
+/** Fallback target when ADMIN_DEV_BALANCE is unset/invalid (non-production). */
+export const ADMIN_DEV_BALANCE_DEFAULT = CEO_ADMIN_ALLOCATION_COINS;
+
+/** Ledger identity used to clearly record the CEO/Admin initial allocation. */
 export const ADMIN_DEV_TX_TYPE = 'SYSTEM_CREDIT';
-export const ADMIN_DEV_TX_REFERENCE = 'DEV_ADMIN_BALANCE_GRANT';
-export const ADMIN_DEV_TX_DESCRIPTION = 'Development admin/CEO balance grant';
+/** Unique transaction/reference ID identifying the CEO/Admin initial allocation. */
+export const ADMIN_DEV_TX_REFERENCE = 'CEO_INITIAL_ALLOCATION';
 /**
- * Resolve the configured development balance target.
+ * Reference used by earlier builds (the former "dev admin wallet" grant). Kept
+ * so a deployment that was already allocated by an older build is never
+ * granted a SECOND time after this upgrade.
+ */
+export const ADMIN_DEV_TX_LEGACY_REFERENCE = 'DEV_ADMIN_BALANCE_GRANT';
+export const ADMIN_DEV_TX_DESCRIPTION =
+  'CEO/Admin initial allocation of 1,000,000 VANTA Coins';
+
+/**
+ * Resolve the configured non-production allocation target.
  *
  * Reads `ADMIN_DEV_BALANCE` from the environment and defaults to 1,000,000.
- * Any non-numeric, negative, or empty value falls back to the default. This
- * value is DEVELOPMENT/TEST only — the production guard is enforced separately
- * in `seedAdminDevWallet()`.
+ * Any non-numeric, negative, or empty value falls back to the default.
+ * DEV/TEST-ONLY override — production deployments ALWAYS allocate exactly
+ * `CEO_ADMIN_ALLOCATION_COINS` (1,000,000) regardless of this variable.
  */
 export function getAdminDevBalance(): number {
   const raw = process.env.ADMIN_DEV_BALANCE;
@@ -73,42 +103,51 @@ export function getAdminDevBalance(): number {
 }
 
 /**
- * True only when the application is explicitly NOT running in production.
- *
- * Uses the project's existing environment convention (`NODE_ENV ===
- * "production"` disables the mechanism — same guard `admin-credentials.ts`
- * and `coin-payments.config.ts` rely on). Development and test environments
- * are both allowed.
+ * True only when the process is explicitly NOT running in production. Used to
+ * decide whether the development/test `ADMIN_DEV_BALANCE` override may be
+ * honored. Production always uses the fixed CEO allocation amount.
  */
 export function isAdminDevEnvironment(): boolean {
   return process.env.NODE_ENV !== 'production';
 }
 
+/** Allocation target for the CURRENT environment. */
+function getResolvedTarget(): number {
+  return isAdminDevEnvironment() ? getAdminDevBalance() : CEO_ADMIN_ALLOCATION_COINS;
+}
 /**
- * Result of a development wallet grant attempt. Exposed so callers and tests
- * can assert on the outcome.
+ * Result of a CEO/Admin allocation attempt. Exposed so callers and tests can
+ * assert on the outcome.
  */
 export interface AdminDevWalletResult {
   /** Which action was taken. */
   action: 'granted' | 'seed-already-available' | 'disabled' | 'admin-not-found';
-  /** The development balance target used. */
+  /** The allocation target used. */
   targetBalance: number;
   /** Balance before the operation. */
   balanceBefore: number;
   /** Balance after the operation. */
   balanceAfter: number;
-  /** Number of coins actually credited by this call (0 when no top-up). */
+  /** Number of coins actually credited by this call (0 when nothing new). */
   credited: number;
-  /** Resolved administrator account (when found). */
+  /** Resolved CEO account (when found). */
   admin?: { id: string; username: string; email: string | null };
   /** Short human-readable message. */
   message: string;
 }
 
+/** Wallet row subset used by the allocation logic. */
+export interface AdminDevWalletRow {
+  id?: string;
+  userId: string;
+  coinBalance: number;
+  ceoAllocationGrantedAt?: Date | null;
+}
+
 /**
- * Minimal subset of the Prisma client used by the dev wallet grant. Accepting
+ * Minimal subset of the Prisma client used by the CEO allocation. Accepting
  * the client as a parameter (instead of importing the singleton) keeps the
- * grant deterministic and trivially unit-testable with a stub.
+ * operation deterministic and trivially unit-testable with a stub.
  */
 export interface AdminDevPrisma {
   user: {
@@ -118,11 +157,7 @@ export interface AdminDevPrisma {
     }): Promise<{ id: string; username: string; email: string | null; coins: number } | null>;
   };
   wallet: {
-    findUnique(args: { where: { userId: string } }): Promise<{
-      id?: string;
-      userId: string;
-      coinBalance: number;
-    } | null>;
+    findUnique(args: { where: { userId: string } }): Promise<AdminDevWalletRow | null>;
   };
   $transaction<T>(fn: (tx: AdminDevTx) => Promise<T>): Promise<T>;
 }
@@ -130,20 +165,19 @@ export interface AdminDevPrisma {
 /** Transaction-scoped subset used inside $transaction. */
 export interface AdminDevTx {
   wallet: {
-    findUnique?(args: { where: { userId: string } }): Promise<{
-      id?: string;
-      userId: string;
-      coinBalance: number;
-    } | null>;
-    create(args: { data: { userId: string; coinBalance: number } }): Promise<{
-      id: string;
-      userId: string;
-      coinBalance: number;
-    }>;
-    update(args: { where: { userId: string }; data: { coinBalance: number } }): Promise<{
-      id: string;
-      coinBalance: number;
-    }>;
+    findUnique?(args: { where: { userId: string } }): Promise<AdminDevWalletRow | null>;
+    create(args: {
+      data: { userId: string; coinBalance: number };
+    }): Promise<AdminDevWalletRow>;
+    update(args: {
+      where: { userId: string };
+      data: { coinBalance?: number; ceoAllocationGrantedAt?: Date | null };
+    }): Promise<AdminDevWalletRow>;
+    /** Atomic one-time gate: claims the allocation exactly once per account. */
+    updateMany(args: {
+      where: { userId: string; ceoAllocationGrantedAt: null };
+      data: { ceoAllocationGrantedAt: Date };
+    }): Promise<{ count: number }>;
   };
   transferLimit: {
     findUnique(args: { where: { walletId: string } }): Promise<unknown | null>;
@@ -151,6 +185,7 @@ export interface AdminDevTx {
   };
   walletTransaction: {
     create(args: { data: Record<string, unknown> }): Promise<unknown>;
+    findFirst(args: { where: Record<string, unknown> }): Promise<{ id: string } | null>;
   };
   coinTransaction: {
     create(args: { data: Record<string, unknown> }): Promise<unknown>;
@@ -162,32 +197,33 @@ export interface AdminDevTx {
     update(args: { where: { id: string }; data: { coins: number } }): Promise<unknown>;
   };
 }
-
 /**
- * Idempotently ensure the canonical CEO account's wallet holds at least
- * `target` VANTA Coins (defaults to the configured `ADMIN_DEV_BALANCE`).
+ * Idempotently ensure the canonical CEO account's wallet holds the CEO/Admin
+ * initial allocation (default 1,000,000 VANTA Coins).
  *
  *  - If the CEO account (identified by `ceo@vanta.app`) does not exist,
  *    returns `admin-not-found` without creating anything.
- *  - If the wallet already holds >= target, returns `seed-already-available`
- *    and leaves the balance untouched (never reduces).
- *  - Otherwise credits exactly `(target - balance)` via the existing wallet/
- *    ledger system and records `SYSTEM_CREDIT` wallet + coin transactions and
- *    a wallet audit log entry.
- *
- * Because the credited amount is derived from the CURRENT balance, re-running
- * never stacks successive 1M grants. It is safe to call on every seed.
+ *  - If the allocation was already received (DB marker or existing ledger
+ *    transaction), returns `seed-already-available` and leaves the balance
+ *    untouched — repeated seeds, startups, logins or deployments can NEVER add
+ *    a second allocation, and a spent balance is never refilled or reduced.
+ *  - Otherwise credits exactly `(target - currentBalance)` coins via the
+ *    existing wallet/ledger system: a SYSTEM_CREDIT wallet transaction, a coin
+ *    ledger entry, an audit-log row, and the `User.coins` mirror — all inside
+ *    one atomic transaction gated by the `Wallet.ceoAllocationGrantedAt`
+ *    marker.
  */
 export async function ensureAdminDevBalance(
   prisma: AdminDevPrisma,
   target?: number,
 ): Promise<AdminDevWalletResult> {
-  const targetBalance = target === undefined
-    ? getAdminDevBalance()
-    : Math.max(0, Math.floor(target));
+  const targetBalance =
+    target === undefined
+      ? getResolvedTarget()
+      : Math.max(0, Math.floor(target));
 
-  // Locate the canonical admin strictly by email. A username/role match is
-  // NEVER used, so renaming an ordinary account to "ceo" cannot impersonate.
+  // Locate the canonical CEO strictly by email. A username/role match is NEVER
+  // used, so renaming an ordinary account to "ceo" cannot impersonate.
   const admin = await prisma.user.findFirst({
     where: { email: ADMIN_DEV_EMAIL },
     select: { id: true, username: true, email: true, coins: true },
@@ -200,7 +236,7 @@ export async function ensureAdminDevBalance(
       balanceBefore: 0,
       balanceAfter: 0,
       credited: 0,
-      message: `Canonical admin (${ADMIN_DEV_EMAIL}) not found; no development balance granted.`,
+      message: `Canonical CEO admin (${ADMIN_DEV_EMAIL}) not found; no allocation granted.`,
     };
   }
 
@@ -217,29 +253,89 @@ export async function ensureAdminDevBalance(
       });
     }
 
+    const walletId = wallet.id!;
     const balanceBefore = wallet.coinBalance;
-    if (balanceBefore >= targetBalance) {
-      return { balanceBefore, balanceAfter: balanceBefore, credited: 0, toggled: false, walletId: wallet.id };
+
+    // 1) Existing ledger transaction (covers deployments allocated before the
+    //    marker column existed, including the legacy reference).
+    const existingAllocationTx = await tx.walletTransaction.findFirst({
+      where: {
+        userId: admin.id,
+        type: ADMIN_DEV_TX_TYPE,
+        status: 'COMPLETED',
+        reference: { in: [ADMIN_DEV_TX_REFERENCE, ADMIN_DEV_TX_LEGACY_REFERENCE] },
+      },
+    });
+
+    const alreadyGranted =
+      Boolean(wallet.ceoAllocationGrantedAt) || Boolean(existingAllocationTx);
+
+    if (alreadyGranted) {
+      // Backfill the DB gate for pre-existing grants so it is authoritative.
+      if (!wallet.ceoAllocationGrantedAt) {
+        await tx.wallet.update({
+          where: { userId: admin.id },
+          data: { ceoAllocationGrantedAt: new Date() },
+        });
+      }
+      return {
+        granted: false,
+        balanceBefore,
+        balanceAfter: balanceBefore,
+        credited: 0,
+        walletId,
+      };
     }
 
+    // 2) Atomic DB-level gate. Exactly ONE concurrent caller can claim the
+    //    allocation; everyone else observes count === 0 and becomes a no-op.
+    const claim = await tx.wallet.updateMany({
+      where: { userId: admin.id, ceoAllocationGrantedAt: null },
+      data: { ceoAllocationGrantedAt: new Date() },
+    });
+    if (claim.count === 0) {
+      return {
+        granted: false,
+        balanceBefore,
+        balanceAfter: balanceBefore,
+        credited: 0,
+        walletId,
+      };
+    }
+
+    // 3) If the CEO already holds the target or more, the allocation is
+    //    satisfied: never reduce, never credit a second amount on top.
+    if (balanceBefore >= targetBalance) {
+      return {
+        granted: false,
+        balanceBefore,
+        balanceAfter: balanceBefore,
+        credited: 0,
+        walletId,
+      };
+    }
+
+    // 4) Credit exactly the shortfall so the balance is EXACTLY the target
+    //    (0 + 1,000,000 on a fresh CEO wallet).
     const credited = targetBalance - balanceBefore;
     const updatedWallet = await tx.wallet.update({
       where: { userId: admin.id },
       data: { coinBalance: targetBalance },
     });
-
-    // Default transfer limits for a freshly created wallet (mirrors the
-    // runtime walletService.ensureWallet behavior) so the account is consistent.
-    const existingLimit = await tx.transferLimit.findUnique({ where: { walletId: wallet.id } });
+// 5) Default transfer limits for a freshly created wallet (mirrors the
+    //    runtime walletService.ensureWallet behavior) so the account is
+    //    fully consistent with a normal runtime-created wallet.
+    const existingLimit = await tx.transferLimit.findUnique({ where: { walletId } });
     if (!existingLimit) {
-      await tx.transferLimit.create({ data: { walletId: wallet.id } });
+      await tx.transferLimit.create({ data: { walletId } });
     }
 
     const env = process.env.NODE_ENV || 'development';
-    const walletId = wallet.id;
+    const grantedAt = new Date();
 
-    // Wallet ledger entry (incoming SYSTEM_CREDIT). The frontend Balance page
-    // already treats SYSTEM_CREDIT as an incoming type, so it renders correctly.
+    // 6) Wallet ledger entry (incoming SYSTEM_CREDIT). The frontend Balance
+    //    page already treats SYSTEM_CREDIT as an incoming type, so it renders
+    //    correctly in transaction history.
     await tx.walletTransaction.create({
       data: {
         walletId,
@@ -253,15 +349,15 @@ export async function ensureAdminDevBalance(
         description: ADMIN_DEV_TX_DESCRIPTION,
         reference: ADMIN_DEV_TX_REFERENCE,
         metadata: JSON.stringify({
-          grantType: 'development-admin-balance',
-          seededBy: 'development-seed',
+          grantType: 'ceo-initial-allocation',
+          amount: credited,
           environment: env,
-          grantedAt: new Date().toISOString(),
+          grantedAt: grantedAt.toISOString(),
         }),
       },
     });
 
-    // CoinTransaction ledger (consistency with the coin ledger).
+    // 7) CoinTransaction ledger (consistency with the coin ledger).
     await tx.coinTransaction.create({
       data: {
         userId: admin.id,
@@ -271,21 +367,21 @@ export async function ensureAdminDevBalance(
         description: ADMIN_DEV_TX_DESCRIPTION,
         reference: ADMIN_DEV_TX_REFERENCE,
         metadata: JSON.stringify({
-          grantType: 'development-admin-balance',
-          seededBy: 'development-seed',
+          grantType: 'ceo-initial-allocation',
           environment: env,
+          grantedAt: grantedAt.toISOString(),
         }),
       },
     });
 
-    // Mirror the authoritative balance onto User.coins (the auth/account
-    // controller surfaces this field).
+    // 8) Mirror the authoritative balance onto User.coins (the auth/account
+    //    controller surfaces this field).
     await tx.user.update({
       where: { id: admin.id },
       data: { coins: targetBalance },
     });
 
-    // Audit trail.
+    // 9) Audit trail.
     await tx.walletAuditLog.create({
       data: {
         userId: admin.id,
@@ -297,29 +393,28 @@ export async function ensureAdminDevBalance(
           reference: ADMIN_DEV_TX_REFERENCE,
           balanceBefore,
           balanceAfter: targetBalance,
-          seededBy: 'development-seed',
         }),
       },
     });
 
     return {
+      granted: true,
       balanceBefore,
       balanceAfter: updatedWallet.coinBalance,
       credited,
-      toggled: true,
       walletId,
     };
   });
 
-  if (!outcome.toggled) {
+  if (!outcome.granted) {
     return {
       action: 'seed-already-available',
       targetBalance,
-      balanceBefore: outcome.balanceAfter,
+      balanceBefore: outcome.balanceBefore,
       balanceAfter: outcome.balanceAfter,
       credited: 0,
       admin: adminInfo,
-      message: `Development balance already available (${outcome.balanceAfter.toLocaleString()} VANTA Coins).`,
+      message: `CEO/Admin initial allocation already present (${outcome.balanceAfter.toLocaleString()} VANTA Coins).`,
     };
   }
 
@@ -330,32 +425,23 @@ export async function ensureAdminDevBalance(
     balanceAfter: outcome.balanceAfter,
     credited: outcome.credited,
     admin: adminInfo,
-    message: `Developer admin (${
-      adminInfo.email || adminInfo.username
-    }) topped up to ${outcome.balanceAfter.toLocaleString()} VANTA Coins (+${outcome.credited.toLocaleString()}).`,
+    message:
+      `CEO/Admin (${adminInfo.email || adminInfo.username}) allocated ` +
+      `${outcome.credited.toLocaleString()} VANTA Coins → balance ${outcome.balanceAfter.toLocaleString()}.`,
   };
 }
 
 /**
- * Environment-guarded entry point used by seed scripts and server startup.
+ * Entry point used by seed scripts and server startup.
  *
- * Returns `{ action: "disabled" }` WITHOUT touching the database when the
- * process is running in production. In development/test it delegates to
- * `ensureAdminDevBalance`.
+ * Grants the CEO/Admin initial allocation in EVERY environment (including
+ * production) with exactly-once, database-gated semantics — see
+ * `ensureAdminDevBalance`. Production always allocates exactly 1,000,000
+ * coins; `ADMIN_DEV_BALANCE` is a development/test-only override.
  */
 export async function seedAdminDevWallet(
   prisma: AdminDevPrisma,
   target?: number,
 ): Promise<AdminDevWalletResult> {
-  if (!isAdminDevEnvironment()) {
-    return {
-      action: 'disabled',
-      targetBalance: target === undefined ? getAdminDevBalance() : target,
-      balanceBefore: 0,
-      balanceAfter: 0,
-      credited: 0,
-      message: 'Development admin balance is disabled in production. No grant was issued.',
-    };
-  }
   return ensureAdminDevBalance(prisma, target);
 }

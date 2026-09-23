@@ -1391,6 +1391,12 @@ model LiveGiftEvent {
 model Wallet {
   id                 String              @id @default(cuid())
   coinBalance        Int                 @default(0)
+  // One-time CEO/Admin initial allocation gate. Set exactly once (never unset)
+  // when the canonical CEO account (ceo@vanta.app) receives its initial
+  // 1,000,000 VANTA Coin allocation. Claimed with an atomic conditional update
+  // so repeated deployments, seeds, startups, logins or refreshes can NEVER
+  // grant a duplicate allocation (see src/services/admin-dev-wallet.service.ts).
+  ceoAllocationGrantedAt DateTime?
   earningsBalance    Float               @default(0.0)
   lifetimeEarnings   Float               @default(0.0)
   totalCoinsPurchased Int                @default(0)

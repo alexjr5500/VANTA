@@ -199,30 +199,30 @@ async function main() {
   console.log(`✅ ${allGifts.length} gifts created`);
 
   // ============================================================================
-  // 3b. DEVELOPMENT-ONLY: Top-up the CEO/admin wallet to the configured
-  //     development balance (ADMIN_DEV_BALANCE, default 1,000,000).
-  //     This is idempotent and HARD-DISABLED in production (see
-  //     src/services/admin-dev-wallet.service.ts). It never reduces an existing
-  //     higher balance and never stacks successive grants.
+  // 3b. CEO/Admin initial allocation: grant the canonical CEO account
+  //     (ceo@vanta.app) EXACTLY 1,000,000 VANTA Coins, once, through the real
+  //     wallet/ledger system (see src/services/admin-dev-wallet.service.ts).
+  //     This is idempotent and database-gated: re-running the seed, restarting,
+  //     or redeploying can NEVER add a duplicate allocation, and a spent
+  //     balance is never refilled or reduced. Production is always exactly
+  //     1,000,000 (ADMIN_DEV_BALANCE is a development/test-only override).
   // ============================================================================
   try {
     const devWalletResult = await seedAdminDevWallet(prisma);
     if (devWalletResult.action === 'granted') {
       console.log(
-        `✅ Development balance granted: ${devWalletResult.admin?.email || devWalletResult.admin?.username} ` +
+        `✅ CEO/Admin initial allocation granted: ${devWalletResult.admin?.email || devWalletResult.admin?.username} ` +
         `→ ${devWalletResult.balanceAfter.toLocaleString()} VANTA Coins (+${devWalletResult.credited.toLocaleString()})`
       );
     } else if (devWalletResult.action === 'seed-already-available') {
       console.log(
-        `✅ Development balance already present: ${devWalletResult.balanceAfter.toLocaleString()} VANTA Coins (unchanged)`
+        `✅ CEO/Admin initial allocation already present: ${devWalletResult.balanceAfter.toLocaleString()} VANTA Coins (unchanged)`
       );
-    } else if (devWalletResult.action === 'disabled') {
-      console.log('⏭️  Development balance skipped (production environment).');
     } else {
       console.log(`ℹ️  ${devWalletResult.message}`);
     }
   } catch (seedWalletError) {
-    console.warn('⚠️  Development admin balance grant skipped:', seedWalletError);
+    console.warn('⚠️  CEO/Admin allocation grant skipped:', seedWalletError);
   }
 
   console.log('🎉 VANTA monetization seeding complete!');
