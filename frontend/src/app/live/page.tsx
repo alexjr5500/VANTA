@@ -3,11 +3,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
-import { Radio, RefreshCw, Users, Video, WifiOff, Heart, TrendingUp, Sparkles } from 'lucide-react';
+import { Radio, RefreshCw, Users, Video, WifiOff, Heart, TrendingUp, Sparkles, Menu } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
 import { openAppMenu } from '@/lib/openAppMenu';
-import PageHeader from '@/components/ui/PageHeader';
 import LiveFeaturedStream from '@/components/live/LiveFeaturedStream';
 import LiveStreamCard from '@/components/live/LiveStreamCard';
 import { cn } from '@/lib/utils';
@@ -89,11 +88,14 @@ export default function LivePage() {
       animate={{ opacity: 1 }}
       className="mx-auto min-w-0 w-full space-y-6 overflow-x-hidden pb-24"
     >
-      <PageHeader
-        title="Live"
-        eyebrow="VANTA"
-        onMenu={openAppMenu}
-        actions={
+      {/* Header — Balance-style full-bleed sticky bar that stays fixed while
+          the stream grid scrolls beneath it. Live is a primary nav destination,
+          so the leading slot is the VANTA menu toggle (same 40×40 icon button
+          language as Balance's back button). */}
+      <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[#080808]/90 px-4 backdrop-blur-xl">
+        <button type="button" onClick={openAppMenu} aria-label="Open menu" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><Menu size={20} /></button>
+        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[#f5f5f5]">Live</h1>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
           <button
             type="button"
             onClick={() => router.push('/live/go-live')}
@@ -102,8 +104,8 @@ export default function LivePage() {
             <Radio size={13} />
             Go Live
           </button>
-        }
-      />
+        </div>
+      </header>
 
       <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide" role="tablist" aria-label="Live feed">
         {TABS.map(({ id, label, icon: Icon }) => {

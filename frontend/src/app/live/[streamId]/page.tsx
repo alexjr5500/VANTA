@@ -43,6 +43,7 @@ import { ConnectionState } from 'livekit-client';
 import { useAuth } from '@/context/AuthContext';
 import { apiGet, apiPost } from '@/lib/apiClient';
 import { useLiveKit, getLiveKitToken } from '@/lib/hooks/useLiveKit';
+import { useLiveCamera, type LiveCameraError } from '@/lib/hooks/useLiveCamera';
 import { createSocket, type Socket } from '@/lib/socketClient';
 import { cn, formatNumber } from '@/lib/utils';
 import { useToast } from '@/components/ui/Toast';
@@ -159,6 +160,14 @@ export default function LiveViewerPage() {
   const { token, user } = useAuth();
 
   const { room, connect, disconnect, connectionState } = useLiveKit();
+  // Same media lifecycle as Go-Live: when the host accepts the join request the
+  // viewer acquires camera/mic through useLiveCamera and hands the verified
+  // preview stream to LiveKit's publish pipeline (see joinStage below).
+  const cam = useLiveCamera();
+  // Referentially-stable handle to the camera teardown so the memoized socket
+  // setup can release the camera without depending on the per-render `cam`
+  // object (which would recreate `loadStream` and re-fetch the stream).
+  const camStopRef = useRef(cam.stopAll);
 
   const [phase, setPhase] = useState<ViewerPhase>('LOADING');
   const [stream, setStream] = useState<StreamDetail | null>(null);
@@ -183,7 +192,6 @@ export default function LiveViewerPage() {
   const [guestStatus, setGuestStatus] = useState<'idle' | 'pending' | 'live' | 'denied'>('idle');
   const [guestRoster, setGuestRoster] = useState<{ id: string; username: string; avatar?: string | null }[]>([]);
   const [guestCapacity, setGuestCapacity] = useState({ count: 0, limit: 4 });
-  const [myStream, setMyStream] = useState<MediaStream | null>(null);
 
   // Reactions + viewer roster + join notices + pin + report.
   const [reactions, setReactions] = useState<{ id: string; emoji: string }[]>([]);
@@ -196,6 +204,9 @@ export default function LiveViewerPage() {
   const socketRef = useRef<Socket | null>(null);
   const cleanupRef = useRef<() => void>(() => undefined);
   const streamIdRef = useRef(streamId);
+  // Guards against a duplicate `guest_accepted` event racing into a second
+  // connect/publish while the first stage-join is still in flight.
+  const joiningStageRef = useRef(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatStickRef = useRef(true);
   const phaseRef = useRef<ViewerPhase>('LOADING');
@@ -291,24 +302,83 @@ export default function LiveViewerPage() {
     setGuestStatus('idle');
   }, []);
 
+  // ENSURE the camera/microphone tracks are LIVE before the room is joined.
+  // Viewers watch WITHOUT a camera, so media is only acquired once the host has
+  // accepted — `getUserMedia` resolves when the device+permission round-trip
+  // completes, so a slightly delayed camera simply waits here instead of
+  // failing the publish pre-check with a false "Camera track is not live".
+  // Uses the same useLiveCamera lifecycle as Go-Live (no duplicate stream is
+  // created when the viewer already holds a live one).
+  const ensureGuestMedia = useCallback(async (): Promise<MediaStream> => {
+    const hasLiveVideo = cam.getStream()?.getVideoTracks().some((t) => t.readyState === 'live');
+    if (!hasLiveVideo) await cam.startPreview(false);
+    const hasLiveAudio = cam.getStream()?.getAudioTracks().some((t) => t.readyState === 'live');
+    if (!hasLiveAudio) await cam.addMicrophone();
+
+    const media = cam.getStream();
+    const videoTrack = media?.getVideoTracks()[0];
+    const audioTrack = media?.getAudioTracks()[0];
+    if (!media || !videoTrack || videoTrack.readyState !== 'live') {
+      const e: LiveCameraError = { code: 'CAMERA_INITIALIZATION_FAILED', message: 'VANTA could not start a live camera track. Check that no other app is using the camera and try again.' };
+      throw e;
+    }
+    if (!audioTrack || audioTrack.readyState !== 'live') {
+      const e: LiveCameraError = { code: 'MIC_INITIALIZATION_FAILED', message: 'VANTA could not start a live microphone track. Allow microphone access and try again.' };
+      throw e;
+    }
+    return media;
+  }, [cam]);
+
   const joinStage = useCallback(async (token: string, roomName: string) => {
+    // Duplicate acceptance (double-tap or a re-sent event) must never trigger a
+    // second connect/publish — one participant, one media stream, one room.
+    if (joiningStageRef.current) return;
+    joiningStageRef.current = true;
+    setGuestStatus('pending');
     try {
       await disconnect();
-      await connect(token, roomName, { camera: true, microphone: true });
+      // 1. Media lifecycle: camera/mic must exist and be LIVE first.
+      const media = await ensureGuestMedia();
+      const previewDeviceId = media.getVideoTracks()[0]?.getSettings?.().deviceId;
+
+      // 2. Connect/join the stage AND publish: the verified preview stream is
+      //    handed to the existing LiveKit pipeline, which stops the preview and
+      //    re-acquires the SAME camera/mic, then confirms the published tracks
+      //    are live — exactly like the Go-Live flow.
+      await connect(token, roomName, {
+        camera: true,
+        microphone: true,
+        cameraDeviceId: previewDeviceId || undefined,
+        mediaStream: media,
+      });
+
+      // 3. Confirmed live → update the joined-stage UI. The preview stream is
+      //    already consumed by the publish path; the self-tile now shows the
+      //    LiveKit-published track (see stageTiles).
+      cam.stopAll();
       setGuestStatus('live');
       toast.success('You are on stage!');
     } catch (err: any) {
+      console.error('Failed to join the stage:', err);
       setGuestStatus('idle');
+      // Tear down a half-connected room / acquired media so no broken
+      // participant or lingering camera stays behind after a genuine failure.
+      try { await disconnect(); } catch { /* noop */ }
+      cam.stopAll();
       toast.error('Could not join the stage', err?.message || 'Please try again.');
+    } finally {
+      joiningStageRef.current = false;
     }
-  }, [connect, disconnect, toast]);
+  }, [cam, connect, disconnect, ensureGuestMedia, toast]);
 
   const leaveStage = useCallback(() => {
     socketRef.current?.emit('guest_leave', { streamId: streamIdRef.current });
     setGuestStatus('idle');
     if (guestStatusRef.current === 'live') disconnect();
+    // Release any preview camera/mic the lifecycle acquired.
+    cam.stopAll();
     void loadStreamRef.current?.();
-  }, [disconnect]);
+  }, [cam, disconnect]);
 
   const joinStageRef = useRef(joinStage);
   useEffect(() => { joinStageRef.current = joinStage; }, [joinStage]);
@@ -395,6 +465,7 @@ socket.on('guest_state', (d: any) => {
           setGuestStatus('idle');
           toast.info('Removed from stage', 'You are back to watching.');
           disconnect();
+          camStopRef.current();
         }
       });
       socket.on('viewer_joined', (d: any) => {
@@ -644,13 +715,29 @@ const sendComment = useCallback(() => {
       });
     });
     if (guestStatus === 'live') {
-      items.push({ id: (user as any)?.id || 'me', username: (user as any)?.username || 'You', avatar: undefined, verified: false, stream: myStream, cameraOn: true, micOn: true });
+      // Self-tile mirrors the remote-tile logic and uses the LIVE published
+      // track from LiveKit (the preview stream was stopped once the publish
+      // pipeline re-acquired the camera).
+      const localPart = (room as any)?.localParticipant;
+      const vids: MediaStreamTrack[] = [];
+      (localPart?.videoTrackPublications || new Set())?.forEach((pub: any) => {
+        if (pub?.track?.mediaStreamTrack) vids.push(pub.track.mediaStreamTrack);
+      });
+      items.push({
+        id: (user as any)?.id || 'me',
+        username: (user as any)?.username || 'You',
+        avatar: undefined,
+        verified: false,
+        stream: vids.length ? new MediaStream(vids) : null,
+        cameraOn: vids.length > 0,
+        micOn: (localPart?.audioTrackPublications?.size || 0) > 0,
+      });
     }
     const hostIndex = items.findIndex((t) => t.isHost);
     if (hostIndex > 0) { const host = items[hostIndex]; items.splice(hostIndex, 1); items.unshift(host); }
     return items.slice(0, 5);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room, stream, guestRoster, guestStatus, myStream]);
+  }, [room, stream, guestRoster, guestStatus]);
 
   const stageActive = guestStatus === 'live' || stageTiles.length > 1;
 

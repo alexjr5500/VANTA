@@ -286,16 +286,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // lets the sticky header sit flush against the shell's top edge (like Home /
   // Discover) while the Settings content scrolls beneath it.
   const isSettingsRoute = pathname?.startsWith('/settings') || pathname === '/profile/editprofile';
-  // Notifications, Bookmarks, Gift Store and Balance render the same
-  // Discover-style full-bleed sticky header, so they get the same flush-top
-  // treatment as Settings (the shell zeroes its top inset below; each page
-  // keeps `px-4` so its header can bleed edge-to-edge while the content
-  // retains its intended inset).
+  // Notifications, Bookmarks, Gift Store (canonical route /gifts), Balance and
+  // the Live feed render the same Discover-style full-bleed sticky header, so
+  // they get the same flush-top treatment as Settings (the shell zeroes its top
+  // inset below; each page keeps `px-4` so its header can bleed edge-to-edge
+  // while the content retains its intended inset).
   const isFlushHeaderRoute =
     pathname === '/notifications' ||
     pathname === '/bookmarks' ||
     pathname === '/gift-store' ||
-    pathname === '/balance';
+    pathname === '/gifts' ||
+    pathname === '/balance' ||
+    pathname === '/live';
 
   const isImmersiveSurface = isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isGoLivePage;
   const isScrollPage = !isImmersiveSurface;
