@@ -229,6 +229,25 @@
     border-radius: 6px;
   }
 
+  /* Search bars and typing fields already show focus through their own
+     border/background/caret styling, so text-entry controls opt OUT of the
+     global glow ring — otherwise every search bar and typing input flashes an
+     unwanted white focus line when clicked/tapped/focused (Discover search,
+     global search, chat/group "search people", comment + chat composers, …).
+     Accessibility is preserved:
+       - the ring still applies to buttons, links, tabs and other interactive
+         controls reached with the keyboard,
+       - each field keeps its cursor/caret, keyboard input and focus behaviour,
+       - any component's intentional :focus border/background/shadow (vanta
+         form-input, settings-input, auth inputs, …) keeps working because
+         those class-scoped rules have higher specificity than this override. */
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  [contenteditable='true']:focus-visible {
+    box-shadow: none;
+  }
+
   /* Smooth scrolling */
   html {
     scroll-behavior: smooth;

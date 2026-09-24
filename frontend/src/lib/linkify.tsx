@@ -14,6 +14,16 @@
 //  - All external links open in a new tab with `rel="noopener noreferrer"`.
 //  - Only http(s) and `www.` (prefixed with https) are treated as links, so
 //    javascript:/data: URIs and other dangerous schemes are never rendered.
+//
+// Mentions:
+//  - When the `mentions` option is enabled, an `@username` token (start of the
+//    text or after whitespace, 2-30 chars of [a-zA-Z0-9_]) is rendered as a
+//    link to that user's VANTA profile (`/profile/<username>`). This mirrors
+//    the backend mention matcher in feed.service.ts, so comment mentions are
+//    detected and remain clickable. The `@` stays visible but is never treated
+//    as part of the username; the profile target uses the canonical lowercase
+//    username, matching VANTA's mention lookup rules. `@` inside a word
+//    ("a@b.com") is left untouched.
 // ============================================================================
 
 import { createElement, Fragment, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
@@ -28,6 +38,16 @@ const URL_PATTERN =
 // or `https://` for bare `www.` — never javascript:, data: etc.
 const SAFE_SCHEME = /^(https?:\/\/)/i;
 
+// Mirrors the backend mention matcher (`mentionNames` in feed.service.ts):
+// an `@username` token at the start of the text or after whitespace, using the
+// same charset/length limits VANTA stores usernames with (2-30 of \w).
+const MENTION_PATTERN = /(?:^|\s)@([a-zA-Z0-9_]{2,30})\b/g;
+
+export interface LinkifyOptions {
+  /** Render @username tokens as links to the user's VANTA profile. */
+  mentions?: boolean;
+}
+
 /** Normalise a detected URL token into a safe, openable href. */
 export function safeUrlHref(match: string): string {
   if (SAFE_SCHEME.test(match)) return match;
@@ -35,12 +55,51 @@ export function safeUrlHref(match: string): string {
   return `https://${match}`;
 }
 
+/** Split a plain text segment into React nodes, linking @username mentions. */
+function renderMentions(text: string, enabled: boolean, linkClassName: string | undefined, keyRef: { current: number }): ReactNode[] {
+  if (!enabled) {
+    return [createElement(Fragment, { key: keyRef.current++ }, text)];
+  }
+
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+  MENTION_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MENTION_PATTERN.exec(text)) !== null) {
+    // The match may include leading whitespace (e.g. " @alex"); keep that
+    // whitespace plain and link only the "@username" token itself.
+    const username = match[1];
+    // Offset of the "@" within the match, then within the whole text segment.
+    const atIndex = match.index + (match[0].length - username.length - 1);
+
+    if (atIndex > lastIndex) {
+      nodes.push(createElement(Fragment, { key: keyRef.current++ }, text.slice(lastIndex, atIndex)));
+    }
+    nodes.push(
+      createElement('a', {
+        key: keyRef.current++,
+        href: `/profile/${username.toLowerCase()}`,
+        className: linkClassName,
+        onClick: (event: ReactMouseEvent) => event.stopPropagation(),
+      }, `@${username}`),
+    );
+
+    lastIndex = atIndex + username.length + 1;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(createElement(Fragment, { key: keyRef.current++ }, text.slice(lastIndex)));
+  }
+
+  return nodes;
+}
+
 /** Split a string into linkable pieces. Returns an array of React nodes. */
-export function renderTextWithLinks(text: string, linkClassName?: string): ReactNode[] {
+export function renderTextWithLinks(text: string, linkClassName?: string, options?: LinkifyOptions): ReactNode[] {
   if (!text) return [];
   const result: ReactNode[] = [];
+  const keyRef = { current: 0 };
   let lastIndex = 0;
-  let key = 0;
 
   URL_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -48,9 +107,9 @@ export function renderTextWithLinks(text: string, linkClassName?: string): React
     const urlToken = match[0];
     const start = match.index;
 
-    // Leading text before this URL (plain, unlinked).
+    // Leading text before this URL (plain, unlinked — mentions opt-in).
     if (start > lastIndex) {
-      result.push(createElement(Fragment, { key: key++ }, text.slice(lastIndex, start)));
+      result.push(...renderMentions(text.slice(lastIndex, start), Boolean(options?.mentions), linkClassName, keyRef));
     }
 
     const href = safeUrlHref(urlToken);
@@ -58,7 +117,7 @@ export function renderTextWithLinks(text: string, linkClassName?: string): React
       createElement(
         'a',
         {
-          key: key++,
+          key: keyRef.current++,
           href,
           target: '_blank',
           rel: 'noopener noreferrer',
@@ -74,7 +133,7 @@ export function renderTextWithLinks(text: string, linkClassName?: string): React
 
   // Trailing plain text after the last URL.
   if (lastIndex < text.length) {
-    result.push(createElement(Fragment, { key: key++ }, text.slice(lastIndex)));
+    result.push(...renderMentions(text.slice(lastIndex), Boolean(options?.mentions), linkClassName, keyRef));
   }
 
   return result;

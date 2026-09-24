@@ -59,3 +59,39 @@ describe('renderTextWithLinks', () => {
     expect(stripReact(renderTextWithLinks('just plain text'))).toBe('just plain text');
   });
 });
+
+describe('renderTextWithLinks — @username mentions', () => {
+  it('keeps @username plain by default (no behavior change)', () => {
+    expect(stripReact(renderTextWithLinks('Hey @alex!'))).toBe('Hey @alex!');
+  });
+
+  it('links a mention at the start of the text when enabled', () => {
+    const output = stripReact(renderTextWithLinks('@alex great post', 'linkify', { mentions: true }));
+    expect(output).toContain('A[/profile/alex]@alex');
+    expect(output).toContain(' great post');
+  });
+
+  it('links an embedded mention and keeps surrounding text intact', () => {
+    const output = stripReact(renderTextWithLinks('Let me tag @alex here', 'linkify', { mentions: true }));
+    expect(output).toBe('Let me tag A[/profile/alex]@alex here');
+  });
+
+  it('preserves the visible @ and links the canonical lowercase profile', () => {
+    // VANTA stores usernames lowercase and mention lookup lowercases, so
+    // @Alex navigates to /profile/alex while the visible text keeps @Alex.
+    const output = stripReact(renderTextWithLinks('@Alex', 'linkify', { mentions: true }));
+    expect(output).toContain('A[/profile/alex]@Alex');
+  });
+
+  it('does not turn email-style @ or non-username @ text into mentions', () => {
+    const output = stripReact(renderTextWithLinks('mail me at alex@example.com or @x', 'linkify', { mentions: true }));
+    expect(output).toBe('mail me at alex@example.com or @x');
+  });
+
+  it('links URLs and mentions together without corrupting either', () => {
+    const output = stripReact(renderTextWithLinks('@alex check https://t.me/alphidrop now', 'linkify', { mentions: true }));
+    expect(output).toContain('A[/profile/alex]@alex');
+    expect(output).toContain('A[https://t.me/alphidrop]https://t.me/alphidrop');
+    expect(output).toContain(' now');
+  });
+});

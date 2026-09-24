@@ -15,12 +15,20 @@ export class SearchService {
       // SQLite's default text comparison is case-insensitive for ASCII.
       const lowerQuery = query.toLowerCase();
 
+      // Username lookups treat a single LEADING "@" as a mention prefix, so
+      // "alex" and "@alex" resolve to the same user/profile. "@" is never part
+      // of a stored username, so it is stripped here before matching. @ inside
+      // a query ("a@b", "foo@bar.com") is left untouched and searches without
+      // "@" behave exactly as before. This also means autocomplete-style user
+      // searches ("@alex") reuse the existing user lookup API unchanged.
+      const userQuery = query.startsWith("@") && query.length > 1 ? query.slice(1) : query;
+
       if (!type || type === "users" || type === "all") {
         results.users = await prisma.user.findMany({
           where: {
             OR: [
-              { username: { contains: query } },
-              { fullName: { contains: query } },
+              { username: { contains: userQuery } },
+              { fullName: { contains: userQuery } },
             ],
             status: "ACTIVE",
           },
