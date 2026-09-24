@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import { MicOff, VideoOff } from 'lucide-react';
+import { stageLayoutFor } from './liveStageLayout';
 
 export interface StageParticipant {
   id: string;
@@ -118,42 +119,43 @@ function Tile({ p, className, showCameraOff }: { p: StageParticipant; className?
 
 export default function LiveParticipantGrid({ participants }: { participants: StageParticipant[] }) {
   const tiles = participants.length > 0 ? participants : [];
+  const layout = stageLayoutFor(tiles.length);
 
   return (
-    <div className="absolute inset-0 flex flex-col gap-1.5 p-1.5 md:flex-row md:gap-2 md:p-2">
-      {tiles.length === 1 && (
-        <Tile className="flex-1" p={tiles[0]} />
+    <div className={layout.containerClass}>
+      {layout.arrangement === 'solo' && tiles.length === 1 && (
+        <Tile className={layout.hostTileClass} p={tiles[0]} />
       )}
 
-      {tiles.length === 2 && (
+      {layout.arrangement === 'split' && tiles.length === 2 && (
         <>
-          <Tile className="min-h-[38dvh] flex-1" p={tiles[0]} />
-          <Tile className="min-h-[38dvh] flex-1" p={tiles[1]} />
+          <Tile className={layout.hostTileClass} p={tiles[0]} />
+          <Tile className={layout.guestTileClass} p={tiles[1]} />
         </>
       )}
 
-      {(tiles.length === 3 || tiles.length === 4) && (
+      {layout.arrangement === 'host-col' && (tiles.length === 3 || tiles.length === 4) && (
         <>
           {/* Host: full height on desktop, top on mobile */}
-          <div className="flex h-[46dvh] flex-1 md:h-auto md:w-[60%] lg:w-[64%]">
-            <Tile className="h-full w-full" p={tiles[0]} />
+          <div className={layout.hostWrapperClass}>
+            <Tile className={layout.hostTileClass} p={tiles[0]} />
           </div>
-          <div className="flex flex-1 flex-col gap-1.5 md:gap-2">
+          <div className={layout.guestAreaClass}>
             {tiles.slice(1).map((p) => (
-              <Tile key={p.id} className="min-h-[22dvh] flex-1 md:min-h-0" p={p} />
+              <Tile key={p.id} className={layout.guestTileClass} p={p} />
             ))}
           </div>
         </>
       )}
 
-      {tiles.length === 5 && (
+      {layout.arrangement === 'host-col-grid' && tiles.length === 5 && (
         <>
-          <div className="flex h-[46dvh] flex-1 md:h-auto md:w-[56%] lg:w-[60%]">
-            <Tile className="h-full w-full" p={tiles[0]} />
+          <div className={layout.hostWrapperClass}>
+            <Tile className={layout.hostTileClass} p={tiles[0]} />
           </div>
-          <div className="grid flex-1 grid-cols-2 gap-1.5 md:gap-2">
+          <div className={layout.guestAreaClass}>
             {tiles.slice(1).map((p) => (
-              <Tile key={p.id} className="min-h-[22dvh] md:min-h-0" p={p} />
+              <Tile key={p.id} className={layout.guestTileClass} p={p} />
             ))}
           </div>
         </>
