@@ -4,6 +4,9 @@ jest.mock('../prisma', () => ({ prisma: {
   message: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), findMany: jest.fn(), count: jest.fn() },
   uploadedFile: { findMany: jest.fn(), updateMany: jest.fn() },
   messageRead: { createMany: jest.fn() }, user: { count: jest.fn() },
+  blockedUser: { findFirst: jest.fn() },
+  follow: { findUnique: jest.fn() },
+  userSettings: { findUnique: jest.fn(), findMany: jest.fn() },
   $transaction: jest.fn(),
 } }));
 
@@ -169,7 +172,59 @@ describe('ChatService security and persistence', () => {
     (db.conversation.findUnique as jest.Mock).mockResolvedValue({ id: 'conversation', participants: [{ userId: 'reader' }] });
     (db.message.findMany as jest.Mock).mockResolvedValue([{ id: 'one' }, { id: 'two' }]);
     (db.messageRead.createMany as jest.Mock).mockResolvedValue({ count: 2 });
-    await expect(service.markMessagesAsRead('conversation', 'reader')).resolves.toEqual({ count: 2 });
+    (db.userSettings.findUnique as jest.Mock).mockResolvedValue({ readReceipts: true });
+    await expect(service.markMessagesAsRead('conversation', 'reader')).resolves.toEqual({ count: 2, receiptsHidden: false });
     expect(db.messageRead.createMany).toHaveBeenCalledWith({ data: [{ messageId: 'one', userId: 'reader' }, { messageId: 'two', userId: 'reader' }] });
+  });
+
+  it('hides the read receipt broadcast when the reader disabled read receipts', async () => {
+    (db.conversation.findUnique as jest.Mock).mockResolvedValue({ id: 'conversation', participants: [{ userId: 'reader' }] });
+    (db.message.findMany as jest.Mock).mockResolvedValue([{ id: 'one' }]);
+    (db.messageRead.createMany as jest.Mock).mockResolvedValue({ count: 1 });
+    (db.userSettings.findUnique as jest.Mock).mockResolvedValue({ readReceipts: false });
+    await expect(service.markMessagesAsRead('conversation', 'reader')).resolves.toEqual({ count: 1, receiptsHidden: true });
+  });
+
+  it('rejects a direct message when the recipient does not accept messages', async () => {
+    (db.conversation.findUnique as jest.Mock).mockResolvedValue({
+      id: 'conversation', isGroup: false, type: 'DIRECT',
+      participants: [{ userId: 'sender', role: 'MEMBER' }, { userId: 'target', role: 'MEMBER' }],
+    });
+    (db.blockedUser.findFirst as jest.Mock).mockResolvedValue(null);
+    (db.userSettings.findUnique as jest.Mock).mockResolvedValue({ privacyMessages: 'noone' });
+    await expect(service.sendMessage('conversation', 'sender', 'hi')).rejects.toThrow('not accepting messages');
+  });
+
+  it('rejects a direct message from a blocked account', async () => {
+    (db.conversation.findUnique as jest.Mock).mockResolvedValue({
+      id: 'conversation', isGroup: false, type: 'DIRECT',
+      participants: [{ userId: 'sender', role: 'MEMBER' }, { userId: 'target', role: 'MEMBER' }],
+    });
+    (db.blockedUser.findFirst as jest.Mock).mockResolvedValue({ id: 'block1' });
+    await expect(service.sendMessage('conversation', 'sender', 'hi')).rejects.toThrow('Messaging with this account is not allowed');
+  });
+
+  it('requires the recipient to follow the sender when messages are limited to people they follow', async () => {
+    (db.conversation.findUnique as jest.Mock).mockResolvedValue({
+      id: 'conversation', isGroup: false, type: 'DIRECT',
+      participants: [{ userId: 'sender', role: 'MEMBER' }, { userId: 'target', role: 'MEMBER' }],
+    });
+    (db.blockedUser.findFirst as jest.Mock).mockResolvedValue(null);
+    (db.userSettings.findUnique as jest.Mock).mockResolvedValue({ privacyMessages: 'following' });
+    (db.follow.findUnique as jest.Mock).mockResolvedValue(null);
+    await expect(service.sendMessage('conversation', 'sender', 'hi')).rejects.toThrow('only accepts messages from accounts it follows');
+  });
+
+  it('allows a direct message when the recipient accepts from everyone', async () => {
+    (db.conversation.findUnique as jest.Mock).mockResolvedValue({
+      id: 'conversation', isGroup: false, type: 'DIRECT',
+      participants: [{ userId: 'sender', role: 'MEMBER' }, { userId: 'target', role: 'MEMBER' }],
+    });
+    (db.blockedUser.findFirst as jest.Mock).mockResolvedValue(null);
+    (db.userSettings.findUnique as jest.Mock).mockResolvedValue({ privacyMessages: 'everyone' });
+    (db.message.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: 'm', ...data }));
+    (db.conversation.update as jest.Mock).mockResolvedValue({});
+    const result = await service.sendMessage('conversation', 'sender', 'hello');
+    expect(result).toBeDefined();
   });
 });

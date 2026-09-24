@@ -189,6 +189,32 @@ export class UserService {
     };
   }
 
+  /**
+   * Enforce the account-privacy rule for a target profile. Viewing a private
+   * account is allowed only to the owner and to accounts the owner follows.
+   * All other viewers are rejected at the service layer so alternate/malicious
+   * clients cannot read a private profile.
+   */
+  async canViewProfile(targetUserId: string, viewerId?: string): Promise<boolean> {
+    if (viewerId && viewerId === targetUserId) return true;
+    const targetSettings = await prisma.userSettings.findUnique({
+      where: { userId: targetUserId },
+      select: { privacyProfile: true },
+    });
+    if (targetSettings?.privacyProfile !== 'private') return true;
+    if (!viewerId) return false;
+    // The owner's followers can view the private profile.
+    const following = await prisma.follow.findUnique({
+      where: {
+        followerId_followingId: {
+          followerId: viewerId,
+          followingId: targetUserId,
+        },
+      },
+    });
+    return Boolean(following);
+  }
+
   async getPublicProfileByUsername(username: string, currentUserId?: string) {
     const user = await prisma.user.findUnique({
       where: { username },
@@ -208,6 +234,13 @@ export class UserService {
 
     if (!user) {
       throw new Error('Profile not found');
+    }
+
+    // Private accounts are only readable by the owner and the accounts the
+    // owner follows. Enforced here (service layer) so an alternate client can
+    // never read a private profile directly.
+    if (!(await this.canViewProfile(user.id, currentUserId))) {
+      throw new Error('This profile is private');
     }
 
     const currentStream = await prisma.liveStream.findFirst({
@@ -461,13 +494,19 @@ export class UserService {
     if (!user) {
       throw new Error('Profile not found');
     }
+    if (!(await this.canViewProfile(user.id, viewerId))) {
+      throw new Error('This profile is private');
+    }
     return this.getUserPosts(user.id, viewerId, cursor, limit);
   }
 
-  async getPublicUserMediaByUsername(username: string, cursor?: string, limit: number = 12) {
+  async getPublicUserMediaByUsername(username: string, cursor?: string, limit: number = 12, viewerId?: string) {
     const user = await prisma.user.findUnique({ where: { username } });
     if (!user) {
       throw new Error('Profile not found');
+    }
+    if (!(await this.canViewProfile(user.id, viewerId))) {
+      throw new Error('This profile is private');
     }
     return this.getProfileMedia(user.id, cursor, limit);
   }
@@ -622,6 +661,44 @@ export class UserService {
       settings.theme = theme;
     }
 
+    if (data.themeMode !== undefined) {
+      const mode = data.themeMode.trim().toLowerCase();
+      if (!['dark', 'light', 'system'].includes(mode)) {
+        throw new Error('Theme mode must be dark, light, or system');
+      }
+      settings.themeMode = mode;
+    }
+
+    if (data.accent !== undefined) {
+      const accent = data.accent.trim().toLowerCase();
+      if (!['gold', 'monochrome'].includes(accent)) {
+        throw new Error('Accent must be gold or monochrome');
+      }
+      settings.accent = accent;
+    }
+
+    if (data.density !== undefined) {
+      const density = data.density.trim().toLowerCase();
+      if (!['comfortable', 'compact'].includes(density)) {
+        throw new Error('Density must be comfortable or compact');
+      }
+      settings.density = density;
+    }
+
+    if (data.language !== undefined) {
+      const language = data.language.trim().toLowerCase();
+      if (!language || language.length > 32) {
+        throw new Error('Language must be a valid locale code');
+      }
+      settings.language = language;
+    }
+
+    for (const key of ['readReceipts', 'activityStatus', 'typingIndicators', 'messagePreviews', 'chatNotifications'] as const) {
+      if (data[key] !== undefined) {
+        settings[key] = Boolean(data[key]);
+      }
+    }
+
     if (data.privacyProfile !== undefined) {
       const value = data.privacyProfile.trim().toLowerCase();
       if (!['public', 'private'].includes(value)) {
@@ -674,6 +751,9 @@ export class UserService {
     if (data.pushAlerts !== undefined) updates.pushAlerts = Boolean(data.pushAlerts);
     if (data.chatAlerts !== undefined) updates.chatAlerts = Boolean(data.chatAlerts);
     if (data.liveAlerts !== undefined) updates.liveAlerts = Boolean(data.liveAlerts);
+    for (const key of ['likesAlerts', 'commentsAlerts', 'mentionsAlerts', 'followersAlerts', 'groupAlerts', 'channelAlerts', 'liveInteractionsAlerts'] as const) {
+      if (data[key] !== undefined) updates[key] = Boolean(data[key]);
+    }
 
     return prisma.notificationPreferences.upsert({
       where: { userId },
@@ -860,6 +940,32 @@ export class UserService {
     }
     if (target.id === currentUserId) {
       throw new Error('Cannot follow yourself');
+    }
+
+    // Enforce the target's follow privacy setting server-side. A private
+    // request from an unauthorized account must be rejected here — hiding the
+    // follow button in the UI is never sufficient.
+    const targetSettings = await prisma.userSettings.findUnique({
+      where: { userId: target.id },
+      select: { privacyFollows: true, privacyProfile: true },
+    });
+    const privacyFollows = targetSettings?.privacyFollows || 'everyone';
+    if (privacyFollows !== 'everyone' && currentUserId !== target.id) {
+      if (privacyFollows === 'noone') {
+        throw new Error('This account does not accept new followers');
+      }
+      // 'followers' — only accounts the target already follows may follow back.
+      const targetFollowsUser = await prisma.follow.findUnique({
+        where: {
+          followerId_followingId: {
+            followerId: target.id,
+            followingId: currentUserId,
+          },
+        },
+      });
+      if (!targetFollowsUser) {
+        throw new Error('This account only accepts followers from accounts it follows');
+      }
     }
 
     const existing = await prisma.follow.findUnique({

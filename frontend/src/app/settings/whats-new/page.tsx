@@ -61,7 +61,7 @@ export default function WhatsNewPage() {
                 key={i}
                 className="flex items-start gap-3.5 px-4 py-4"
               >
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] border border-[rgba(59,130,246,0.25)] bg-[rgba(59,130,246,0.08)] text-[#7cabff]">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] border border-[var(--settings-accent-border)] bg-[var(--settings-accent-soft)] text-[var(--settings-accent-text)]">
                   <Icon size={17} strokeWidth={1.9} />
                 </span>
                 <div className="min-w-0 flex-1">

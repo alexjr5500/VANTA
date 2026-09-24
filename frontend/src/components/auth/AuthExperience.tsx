@@ -5,7 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { ArrowRight, Check, Eye, EyeOff, Loader2, LockKeyhole, Mail, UserRound, X } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
-import { authLogin, authRegister } from '@/lib/authApi';
+import { authLogin, authRegister, authComplete2FALogin } from '@/lib/authApi';
 import { apiGet } from '@/lib/apiClient';
 import { ApiError } from '@/lib/api';
 import VantaLogo from '@/components/ui/VantaLogo';
@@ -42,6 +42,12 @@ export default function AuthExperience({ mode }: Props) {
   const [terms, setTerms] = useState(false); const [remember, setRemember] = useState(false);
   const [show, setShow] = useState(false); const [busy, setBusy] = useState(false);
   const [error, setError] = useState(''); const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  // Two-factor step: a login held for 2FA stores the userId here and the
+  // form switches to the code-collection screen until verification succeeds.
+  const [twoFactorUserId, setTwoFactorUserId] = useState<string | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorError, setTwoFactorError] = useState('');
+  const [twoFactorBusy, setTwoFactorBusy] = useState(false);
   const [availability, setAvailability] = useState<Availability>('idle');
   const strength = useMemo(() => [password.length >= 8, /[A-Z]/.test(password) && /[a-z]/.test(password), /\d/.test(password), /[^A-Za-z0-9]/.test(password)].filter(Boolean).length, [password]);
   const destination = safeDestination(params.get('redirect') || params.get('next'));
@@ -81,9 +87,35 @@ export default function AuthExperience({ mode }: Props) {
       const response = register
         ? await authRegister({ email: email.trim(), username: username.trim().replace(/^@/, ''), password, fullName: fullName.trim() || undefined })
         : await authLogin({ identifier: identifier.trim(), password, rememberMe: remember });
+      // The backend holds the login for two-factor verification (it never
+      // issues a token until the authenticator/backup code is confirmed).
+      if (!register && (response as any).requiresTwoFactor) {
+        setTwoFactorUserId((response as any).userId as string);
+        return;
+      }
       if (!response.user || !response.token) throw new Error('Invalid authentication response');
       await login(response.user, response.token, response.refreshToken); router.replace(destination);
     } catch (caughtError) { setError(message(caughtError)); } finally { setBusy(false); }
+  };
+
+  const submit2FA = async (event: FormEvent) => {
+    event.preventDefault();
+    if (twoFactorBusy || !twoFactorUserId) return;
+    if (twoFactorCode.trim().length < 6) {
+      setTwoFactorError('Enter the 6-digit code from your authenticator app.');
+      return;
+    }
+    setTwoFactorBusy(true); setTwoFactorError('');
+    try {
+      const response = await authComplete2FALogin(twoFactorUserId, twoFactorCode.trim());
+      if (!response.user || !response.token) throw new Error('Invalid authentication response');
+      await login(response.user, response.token, response.refreshToken);
+      router.replace(destination);
+    } catch (caughtError) {
+      setTwoFactorError(message(caughtError));
+    } finally {
+      setTwoFactorBusy(false);
+    }
   };
 
   return (
@@ -96,7 +128,17 @@ export default function AuthExperience({ mode }: Props) {
           <h1 id="auth-title">{register ? 'Create your account' : 'Welcome back'}</h1>
           <p>{register ? 'Start creating, connecting, and going live on VANTA.' : 'Sign in to continue creating, connecting, and going live.'}</p>
         </header>
-        <form className="auth-form" onSubmit={submit} noValidate>
+        <form className="auth-form" onSubmit={twoFactorUserId ? submit2FA : submit} noValidate>
+              {twoFactorUserId && (
+                <div className="auth-field">
+                  <label htmlFor="twofa">Authentication code</label>
+                  <div className="auth-input-wrap"><LockKeyhole size={17} /><input id="twofa" className="auth-input" inputMode="numeric" maxLength={6} value={twoFactorCode} onChange={(event) => setTwoFactorCode(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} placeholder="6-digit code" autoFocus aria-invalid={!!twoFactorError} aria-describedby={twoFactorError ? 'twofa-error' : undefined} /></div>
+                  {twoFactorError && <span className="auth-field-error" id="twofa-error"><X size={12} />{twoFactorError}</span>}
+                  <button type="button" className="auth-link" style={{ marginTop: 10 }} onClick={() => { setTwoFactorUserId(null); setTwoFactorCode(''); setTwoFactorError(''); }}>Back to sign in</button>
+                </div>
+              )}
+              {!twoFactorUserId && (
+              <>
               {register && <Field id="fullName" label="Full name" value={fullName} onChange={setFullName} placeholder="Your name" optional />}
               {register && <Field id="username" label="Username" value={username} onChange={setUsername} placeholder="Choose a username" status={availability} error={fieldErrors.username} />}
               <Field id={register ? 'email' : 'identifier'} label={register ? 'Email address' : 'Email or username'} value={register ? email : identifier} onChange={register ? setEmail : setIdentifier} placeholder={register ? 'you@example.com' : 'Email address or username'} type={register ? 'email' : 'text'} error={register ? fieldErrors.email : fieldErrors.identifier} />
@@ -108,8 +150,10 @@ export default function AuthExperience({ mode }: Props) {
               </div>
               {!register && <div className="auth-login-options"><label className="auth-check"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} /><span>Remember me</span></label><Link className="auth-link" href="/forgot-password">Forgot password?</Link></div>}
               {register && <><label className={`auth-check ${fieldErrors.terms ? 'invalid' : ''}`}><input type="checkbox" checked={terms} onChange={(event) => setTerms(event.target.checked)} required /><span>I agree to the <Link className="auth-link" href="/terms">Terms of Service</Link> and <Link className="auth-link" href="/privacy">Privacy Policy</Link>.</span></label>{fieldErrors.terms && <span className="auth-field-error auth-terms-error"><X size={12} />{fieldErrors.terms}</span>}</>}
+              </>)}
               {error && <div className="auth-error" role="alert"><X size={15} />{error}</div>}
-              <button className="auth-submit" type="submit" disabled={busy || (register && availability === 'checking')} aria-busy={busy} data-loading={busy}><span className="auth-submit-content">{busy ? <><Loader2 className="spin" size={18} aria-hidden="true" /><span>{register ? 'Creating account…' : 'Signing in…'}</span></> : <>{register ? 'Create account' : 'Sign In'}<ArrowRight size={17} aria-hidden="true" /></>}</span></button>
+              {twoFactorUserId && twoFactorError && <div className="auth-error" role="alert"><X size={15} />{twoFactorError}</div>}
+              <button className="auth-submit" type="submit" disabled={busy || twoFactorBusy || (register && availability === 'checking')} aria-busy={busy || twoFactorBusy} data-loading={busy || twoFactorBusy}><span className="auth-submit-content">{busy || twoFactorBusy ? <><Loader2 className="spin" size={18} aria-hidden="true" /><span>{register ? 'Creating account…' : twoFactorUserId ? 'Verifying…' : 'Signing in…'}</span></> : <>{register ? 'Create account' : twoFactorUserId ? 'Verify & sign in' : 'Sign In'}<ArrowRight size={17} aria-hidden="true" /></>}</span></button>
         </form>
         <div className="auth-switch"><span>{register ? 'Already have an account?' : 'Don\'t have an account?'}</span><Link className="auth-link" href={register ? '/login' : '/register'}>{register ? 'Sign in' : 'Create account'}</Link></div>
         <footer className="auth-legal"><Link href="/terms">Terms</Link><i /><Link href="/privacy">Privacy</Link></footer>

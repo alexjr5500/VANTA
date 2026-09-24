@@ -1,11 +1,11 @@
-'use client';
+﻿'use client';
 
-/* ═══════════════════════════════════════════════════════════════
-   Notifications Settings — redesigned
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   Notifications Settings â€” redesigned
    Logical groups, a single master control, short descriptions and
    quiet toggles. Changes save immediately with a subtle inline
-   confirmation — no modals, no noise.
-   ═══════════════════════════════════════════════════════════════ */
+   confirmation â€” no modals, no noise.
+   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -25,15 +25,23 @@ import { useToast } from '@/components/ui/Toast';
 import {
   SettingsGroup,
   ToggleRow,
-  useLocalPrefs,
 } from '@/components/settings/SettingsUI';
 
-/* Backend persisted channels (existing /api/settings/notifications contract) */
+/* Backend persisted channels (existing /api/settings/notifications contract).
+   Every category below is a real column on NotificationPreferences and is
+   enforced by notificationService.shouldDeliver when events are created. */
 interface BackendPrefs {
   pushAlerts: boolean;
   emailAlerts: boolean;
   chatAlerts: boolean;
   liveAlerts: boolean;
+  likesAlerts: boolean;
+  commentsAlerts: boolean;
+  mentionsAlerts: boolean;
+  followersAlerts: boolean;
+  groupAlerts: boolean;
+  channelAlerts: boolean;
+  liveInteractionsAlerts: boolean;
 }
 
 const BACKEND_DEFAULTS: BackendPrefs = {
@@ -41,10 +49,6 @@ const BACKEND_DEFAULTS: BackendPrefs = {
   emailAlerts: true,
   chatAlerts: true,
   liveAlerts: true,
-};
-
-/* Granular categories — persisted locally (no backend column exists) */
-const LOCAL_DEFAULTS = {
   likesAlerts: true,
   commentsAlerts: true,
   mentionsAlerts: true,
@@ -55,7 +59,6 @@ const LOCAL_DEFAULTS = {
 };
 
 type BackendKey = keyof BackendPrefs;
-type LocalKey = keyof typeof LOCAL_DEFAULTS;
 
 export default function NotificationSettingsPage() {
   const { token } = useAuth();
@@ -67,11 +70,6 @@ export default function NotificationSettingsPage() {
   const [savedKey, setSavedKey] = useState<string | null>(null);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const { prefs: local, set: setLocal, hydrated } = useLocalPrefs(
-    'vanta_notif_categories',
-    LOCAL_DEFAULTS
-  );
 
   const flagSaved = (key: string) => {
     setSavedKey(key);
@@ -113,19 +111,14 @@ export default function NotificationSettingsPage() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
-        await apiPut('/api/settings/notifications', next, token);
+        await apiPut('/api/settings/notifications', { [key]: value }, token);
         flagSaved(key);
       } catch {
+        // Revert the UI to the actual saved value on failure.
         setBackend((prev) => ({ ...prev, [key]: !value }));
         toast.error('Could not save', 'Please try again.');
       }
     }, 320);
-  };
-
-  /* Toggle a locally-persisted category (instant) */
-  const toggleLocal = (key: LocalKey, value: boolean) => {
-    setLocal(key, value);
-    flagSaved(key);
   };
 
   const paused = !backend.pushAlerts;
@@ -146,7 +139,7 @@ export default function NotificationSettingsPage() {
           automatically.
         </p>
       </div>
-{loading && !hydrated ? (
+{loading ? (
         <div className="space-y-4">
           <div className="skeleton h-24 w-full rounded-[var(--radius-md)]" />
           <div className="skeleton h-52 w-full rounded-[var(--radius-md)]" />
@@ -154,7 +147,7 @@ export default function NotificationSettingsPage() {
         </div>
       ) : (
         <div className="space-y-6">
-          {/* ── Push Notifications — master control ── */}
+          {/* â”€â”€ Push Notifications â€” master control â”€â”€ */}
           <SettingsGroup
             icon={BellRing}
             title="Push Notifications"
@@ -169,8 +162,8 @@ export default function NotificationSettingsPage() {
               saved={savedKey === 'pushAlerts'}
             />
             {paused && (
-              <div className="flex items-center gap-2.5 bg-[rgba(59,130,246,0.06)] px-4 py-3">
-                <Info size={13} className="shrink-0 text-[#7cabff]" aria-hidden="true" />
+              <div className="flex items-center gap-2.5 bg-[var(--settings-accent-softer)] px-4 py-3">
+                <Info size={13} className="shrink-0 text-[var(--settings-accent-text)]" aria-hidden="true" />
                 <p className="text-xs leading-relaxed text-white/40">
                   Notifications are paused. Turn on Allow Notifications to
                   manage the categories below.
@@ -187,7 +180,7 @@ export default function NotificationSettingsPage() {
             />
           </SettingsGroup>
 
-          {/* ── Social Activity ── */}
+          {/* â”€â”€ Social Activity â”€â”€ */}
           <SettingsGroup
             icon={Heart}
             title="Social Activity"
@@ -197,8 +190,8 @@ export default function NotificationSettingsPage() {
               icon={Heart}
               title="Likes & Reactions"
               description="When someone likes or reacts to your content."
-              checked={local.likesAlerts}
-              onChange={(v) => toggleLocal('likesAlerts', v)}
+              checked={backend.likesAlerts}
+              onChange={(v) => toggleBackend('likesAlerts', v)}
               disabled={paused}
               saved={savedKey === 'likesAlerts'}
             />
@@ -206,8 +199,8 @@ export default function NotificationSettingsPage() {
               icon={MessageSquare}
               title="Comments"
               description="When someone comments on your posts."
-              checked={local.commentsAlerts}
-              onChange={(v) => toggleLocal('commentsAlerts', v)}
+              checked={backend.commentsAlerts}
+              onChange={(v) => toggleBackend('commentsAlerts', v)}
               disabled={paused}
               saved={savedKey === 'commentsAlerts'}
             />
@@ -215,8 +208,8 @@ export default function NotificationSettingsPage() {
               icon={AtSign}
               title="Mentions"
               description="When someone mentions you."
-              checked={local.mentionsAlerts}
-              onChange={(v) => toggleLocal('mentionsAlerts', v)}
+              checked={backend.mentionsAlerts}
+              onChange={(v) => toggleBackend('mentionsAlerts', v)}
               disabled={paused}
               saved={savedKey === 'mentionsAlerts'}
             />
@@ -224,13 +217,13 @@ export default function NotificationSettingsPage() {
               icon={UserPlus}
               title="New Followers"
               description="When someone follows you."
-              checked={local.followersAlerts}
-              onChange={(v) => toggleLocal('followersAlerts', v)}
+              checked={backend.followersAlerts}
+              onChange={(v) => toggleBackend('followersAlerts', v)}
               disabled={paused}
               saved={savedKey === 'followersAlerts'}
             />
           </SettingsGroup>
-{/* ── Messages ── */}
+{/* â”€â”€ Messages â”€â”€ */}
           <SettingsGroup
             icon={MessageSquare}
             title="Messages"
@@ -249,8 +242,8 @@ export default function NotificationSettingsPage() {
               icon={UserPlus}
               title="Group Messages"
               description="Notifications from groups you're a member of."
-              checked={local.groupAlerts}
-              onChange={(v) => toggleLocal('groupAlerts', v)}
+              checked={backend.groupAlerts}
+              onChange={(v) => toggleBackend('groupAlerts', v)}
               disabled={paused}
               saved={savedKey === 'groupAlerts'}
             />
@@ -258,14 +251,14 @@ export default function NotificationSettingsPage() {
               icon={Radio}
               title="Channel Updates"
               description="Notifications from channels you follow."
-              checked={local.channelAlerts}
-              onChange={(v) => toggleLocal('channelAlerts', v)}
+              checked={backend.channelAlerts}
+              onChange={(v) => toggleBackend('channelAlerts', v)}
               disabled={paused}
               saved={savedKey === 'channelAlerts'}
             />
           </SettingsGroup>
 
-          {/* ── Live ── */}
+          {/* â”€â”€ Live â”€â”€ */}
           <SettingsGroup icon={Radio} title="Live" description="Streaming moments">
             <ToggleRow
               icon={Radio}
@@ -280,8 +273,8 @@ export default function NotificationSettingsPage() {
               icon={BellRing}
               title="Live Interactions"
               description="Important interactions involving your live streams."
-              checked={local.liveInteractionsAlerts}
-              onChange={(v) => toggleLocal('liveInteractionsAlerts', v)}
+              checked={backend.liveInteractionsAlerts}
+              onChange={(v) => toggleBackend('liveInteractionsAlerts', v)}
               disabled={paused}
               saved={savedKey === 'liveInteractionsAlerts'}
             />
@@ -297,3 +290,6 @@ export default function NotificationSettingsPage() {
     </div>
   );
 }
+
+
+

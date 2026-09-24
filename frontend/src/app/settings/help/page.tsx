@@ -7,9 +7,10 @@
 
 import { useState } from 'react';
 import { ChevronDown, HelpCircle, Mail } from 'lucide-react';
-import Link from 'next/link';
 import PageHeader from '@/components/ui/PageHeader';
 import { SettingsGroup } from '@/components/settings/SettingsUI';
+import { SocialLinks } from '@/components/ui/SocialLinks';
+import { VANTA_SOCIAL_LINKS, VANTA_SUPPORT_EMAIL } from '@/lib/socialLinks';
 import { cn } from '@/lib/utils';
 
 const FAQS = [
@@ -93,11 +94,31 @@ export default function HelpCenterPage() {
             Contact support
           </p>
           <p className="text-xs text-white/30">
-            Our team replies within a day.
+            Email our team at {VANTA_SUPPORT_EMAIL} — we reply within a day.
           </p>
-          <Link href="/contact" className="btn-accent mt-3">
-            Contact Support
-          </Link>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+            <a
+              href={`mailto:${VANTA_SUPPORT_EMAIL}`}
+              className="btn-accent"
+            >
+              <Mail size={14} aria-hidden="true" />
+              Email Support
+            </a>
+            {VANTA_SOCIAL_LINKS.map((link) => (
+              <a
+                key={link.platform}
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-[10px] border border-white/[0.08] px-3 py-2 text-xs text-white/50 transition-colors hover:bg-white/[0.05] hover:text-white"
+              >
+                {link.label}
+              </a>
+            ))}
+          </div>
+          <div className="mt-2">
+            <SocialLinks iconSize="sm" />
+          </div>
         </div>
       </SettingsGroup>
     </div>

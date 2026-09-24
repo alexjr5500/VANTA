@@ -4,8 +4,7 @@
    Settings — hub
    Clean, premium category navigation. Every category opens its own
    focused page, and returning restores your scroll position.
-   Blue is the single accent; every surface inherits VANTA's dark
-   design system.
+   Accent tokens follow the user's selected accent (Gold/Monochrome).
    ═══════════════════════════════════════════════════════════════ */
 
 import { useEffect, useState } from 'react';
@@ -36,6 +35,10 @@ interface ProfileData {
 
 interface PrivacyData {
   theme?: string;
+  themeMode?: string;
+  accent?: string;
+  density?: string;
+  language?: string;
   privacyProfile?: string;
 }
 
@@ -76,6 +79,11 @@ export default function SettingsPage() {
 
   const privacyValue = privacy.privacyProfile === 'private' ? 'Private' : 'Public';
 
+  const themeModeLabel = privacy.themeMode === 'light' ? 'Light' : privacy.themeMode === 'system' ? 'System' : 'Dark';
+  const accentLabel = privacy.accent === 'gold' ? 'Gold' : 'Monochrome';
+  const densityLabel = privacy.density === 'compact' ? 'Compact' : 'Comfortable';
+  const languageLabel = privacy.language || 'English';
+
   return (
     <div className="space-y-8 pb-24">
       <PageHeader
@@ -112,7 +120,7 @@ export default function SettingsPage() {
                   @{profile?.username || 'username'}
                 </span>
               </span>
-              <span className="shrink-0 rounded-full bg-[rgba(59,130,246,0.10)] px-3 py-1 text-[10px] font-semibold text-[#7cabff]">
+              <span className="shrink-0 rounded-full bg-[var(--settings-accent-soft)] px-3 py-1 text-[10px] font-semibold text-[var(--settings-accent-text)]">
                 View profile
               </span>
               <ChevronRight
@@ -190,7 +198,14 @@ export default function SettingsPage() {
               icon={Palette}
               title="Theme & appearance"
               description="Dark, light and accent color"
-              value={privacy.theme === 'light' ? 'Light' : 'Dark'}
+              value={`${themeModeLabel} · ${accentLabel} · ${densityLabel}`}
+            />
+          <SettingsLink
+              href="/settings/language"
+              icon={Palette}
+              title="Language"
+              description="Display language"
+              value={languageLabel}
             />
           </SettingsGroup>
 
@@ -206,7 +221,7 @@ export default function SettingsPage() {
               href="/settings/device"
               icon={Info}
               title="Device & storage"
-              description="Clear cache and manage downloads"
+              description="Clear cache and manage stored data"
             />
           </SettingsGroup>
 

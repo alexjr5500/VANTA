@@ -239,6 +239,71 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 };
 
 // ============================================================================
+// LOGIN COMPLETION WITH TWO-FACTOR AUTH
+// ============================================================================
+
+/**
+ * Completes a login that was held for two-factor verification. The initial
+ * login returns `{ requiresTwoFactor: true, userId }`; the client prompts for
+ * the authenticator/backup code and calls this endpoint to finish signing in.
+ * A valid TOTP or backup code issues the same token pair a normal login would.
+ */
+export const completeLogin2FA = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId, token } = req.body;
+    if (typeof userId !== 'string' || typeof token !== 'string' || !userId || !token.trim()) {
+      res.status(400).json({ error: 'userId and verification token are required' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, username: true, fullName: true, role: true, status: true, twoFactorEnabled: true },
+    });
+
+    if (!user || user.status !== 'ACTIVE') {
+      res.status(401).json({ error: 'This account cannot sign in' });
+      return;
+    }
+    if (!user.twoFactorEnabled) {
+      res.status(400).json({ error: 'Two-factor authentication is not enabled for this account' });
+      return;
+    }
+
+    const result = await twoFactorAuth.verifyLogin(user.id, token.trim());
+    if (!result.valid) {
+      res.status(401).json({ error: 'Invalid verification code' });
+      return;
+    }
+
+    const userAgent = req.headers['user-agent']?.toString();
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const deviceFingerprint = (req as any).deviceFingerprint;
+
+    const tokenPair = sessionManager.generateTokenPair(user.id, user.role, '');
+    const session = await sessionManager.createSession(user.id, tokenPair.accessToken, tokenPair.refreshToken, userAgent, ipAddress, deviceFingerprint);
+    const finalPair = sessionManager.generateTokenPair(user.id, user.role, session.id);
+    await prisma.session.update({ where: { id: session.id }, data: { token: finalPair.accessToken, refreshToken: finalPair.refreshToken } });
+
+    await botProtection.recordLoginAttempt(user.id, true, req);
+    await auditLog.log({ userId: user.id, action: 'LOGIN_SUCCESS_2FA', ipAddress, userAgent, severity: 'INFO' });
+    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+
+    res.status(200).json({
+      message: 'Logged in successfully',
+      token: finalPair.accessToken,
+      refreshToken: finalPair.refreshToken,
+      expiresIn: finalPair.expiresIn,
+      twoFactorVerified: true,
+      user: { id: user.id, email: user.email, username: user.username, fullName: user.fullName, role: user.role },
+    });
+  } catch (error) {
+    console.error('[Auth] 2FA login completion failed', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Unable to complete 2FA login. Please try again.' });
+  }
+};
+
+// ============================================================================
 // LOGOUT
 // ============================================================================
 

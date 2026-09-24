@@ -192,7 +192,11 @@ export const markMessagesRead = async (req: AuthRequest, res: Response): Promise
     }
 
     const result = await chatService.markMessagesAsRead(conversationId, userId);
-    await broadcastMessageEvent(conversationId, 'messages:read', { conversationId, readerId: userId, count: result.count });
+    // Do not broadcast a read-receipt event when the reader disabled read
+    // receipts — their read state stays private.
+    if (!result.receiptsHidden) {
+      await broadcastMessageEvent(conversationId, 'messages:read', { conversationId, readerId: userId, count: result.count });
+    }
     // Keep the Notifications badge in sync: reading a chat clears its message notifications.
     await notificationService.markConversationNotificationsRead(userId, conversationId);
     await emitChatUnreadCounts(conversationId);

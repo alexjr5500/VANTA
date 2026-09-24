@@ -127,12 +127,26 @@ export const handleChatSocket = (io: Server) => {
       }
     });
 
+    // Typing indicators respect the sender's "typing indicators" preference:
+    // when disabled, the user's typing activity is never relayed to others.
+    const canSignalTyping = async (): Promise<boolean> => {
+      try {
+        const settings = await prisma.userSettings.findUnique({
+          where: { userId },
+          select: { typingIndicators: true },
+        });
+        return settings?.typingIndicators !== false;
+      } catch {
+        return true;
+      }
+    };
+
     socket.on('typing', async (data) => {
       const { conversationId } = data;
-      if (await chatService.isParticipant(conversationId, userId)) socket.to(`conversation_${conversationId}`).emit('user_typing', { userId, conversationId });
+      if (await chatService.isParticipant(conversationId, userId) && await canSignalTyping()) socket.to(`conversation_${conversationId}`).emit('user_typing', { userId, conversationId });
     });
-    socket.on('typing:start', async (data) => { if (await chatService.isParticipant(data?.conversationId, userId)) socket.to(`conversation_${data.conversationId}`).emit('typing:changed', { ...data, userId, typing: true }); });
-    socket.on('typing:stop', async (data) => { if (await chatService.isParticipant(data?.conversationId, userId)) socket.to(`conversation_${data.conversationId}`).emit('typing:changed', { ...data, userId, typing: false }); });
+    socket.on('typing:start', async (data) => { if (await chatService.isParticipant(data?.conversationId, userId) && await canSignalTyping()) socket.to(`conversation_${data.conversationId}`).emit('typing:changed', { ...data, userId, typing: true }); });
+    socket.on('typing:stop', async (data) => { if (await chatService.isParticipant(data?.conversationId, userId) && await canSignalTyping()) socket.to(`conversation_${data.conversationId}`).emit('typing:changed', { ...data, userId, typing: false }); });
 
     socket.on('read_messages', async (data) => {
       const { conversationId } = data;

@@ -64,6 +64,7 @@ jest.mock('../prisma', () => ({
       count: jest.fn(),
     },
     userSettings: {
+      findUnique: jest.fn(),
       upsert: jest.fn(),
     },
     notificationPreferences: {
@@ -175,6 +176,7 @@ describe('UserService', () => {
     test('should return public profile', async () => {
       const mockUserWithFollow = { ...mockUser, _count: { followers: 5, following: 3, posts: 2 } };
       (prisma.user.findUnique as jest.Mock).mockResolvedValue(mockUserWithFollow);
+      (prisma.userSettings.findUnique as jest.Mock).mockResolvedValue({ privacyProfile: 'public' });
       (prisma.follow.findUnique as jest.Mock).mockResolvedValue(null);
 
       const result = await userService.getPublicProfileByUsername('testuser', 'currentUser');
@@ -185,6 +187,21 @@ describe('UserService', () => {
     test('should throw Error if profile not found', async () => {
       (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
       await expect(userService.getPublicProfileByUsername('nonexistent')).rejects.toThrow('Profile not found');
+    });
+
+    test('should reject viewers of a private profile who are not followers', async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue({ ...mockUser, id: 'privatest' });
+      (prisma.userSettings.findUnique as jest.Mock).mockResolvedValue({ privacyProfile: 'private' });
+      (prisma.follow.findUnique as jest.Mock).mockResolvedValue(null);
+      await expect(userService.getPublicProfileByUsername('testuser', 'otherUser')).rejects.toThrow('private');
+    });
+
+    test('should allow followers to view a private profile', async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue({ ...mockUser, id: 'privatest', _count: { followers: 5, following: 3, posts: 2 } });
+      (prisma.userSettings.findUnique as jest.Mock).mockResolvedValue({ privacyProfile: 'private' });
+      (prisma.follow.findUnique as jest.Mock).mockResolvedValue({ id: 'followview' });
+      const result = await userService.getPublicProfileByUsername('testuser', 'otherUser');
+      expect(result).toBeDefined();
     });
   });
 
@@ -256,6 +273,7 @@ describe('UserService', () => {
     test('should follow a user', async () => {
       const targetUser = { ...mockUser, id: 'user2', username: 'targetuser' };
       (prisma.user.findUnique as jest.Mock).mockResolvedValue(targetUser);
+      (prisma.userSettings.findUnique as jest.Mock).mockResolvedValue({ privacyFollows: 'everyone', privacyProfile: 'public' });
       (prisma.follow.findUnique as jest.Mock).mockResolvedValue(null);
       (prisma.follow.create as jest.Mock).mockResolvedValue({ id: 'follow1' });
 
@@ -266,6 +284,31 @@ describe('UserService', () => {
     test('should throw when following yourself', async () => {
       (prisma.user.findUnique as jest.Mock).mockResolvedValue(mockUser);
       await expect(userService.followUser('user1', 'testuser')).rejects.toThrow('Cannot follow yourself');
+    });
+
+    test('should reject followers when the target disabled follows', async () => {
+      const targetUser = { ...mockUser, id: 'user2', username: 'targetuser' };
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(targetUser);
+      (prisma.userSettings.findUnique as jest.Mock).mockResolvedValue({ privacyFollows: 'noone', privacyProfile: 'public' });
+      await expect(userService.followUser('user1', 'targetuser')).rejects.toThrow('does not accept new followers');
+    });
+
+    test('should reject followers when the target only accepts accounts it follows', async () => {
+      const targetUser = { ...mockUser, id: 'user2', username: 'targetuser' };
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(targetUser);
+      (prisma.userSettings.findUnique as jest.Mock).mockResolvedValue({ privacyFollows: 'followers', privacyProfile: 'public' });
+      (prisma.follow.findUnique as jest.Mock).mockResolvedValue(null);
+      await expect(userService.followUser('user1', 'targetuser')).rejects.toThrow('only accepts followers from accounts it follows');
+    });
+
+    test('should allow followers when the target follows them back', async () => {
+      const targetUser = { ...mockUser, id: 'user2', username: 'targetuser' };
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(targetUser);
+      (prisma.userSettings.findUnique as jest.Mock).mockResolvedValue({ privacyFollows: 'followers', privacyProfile: 'public' });
+      (prisma.follow.findUnique as jest.Mock).mockResolvedValue({ id: 'f1' });
+      (prisma.follow.create as jest.Mock).mockResolvedValue({ id: 'follow1' });
+      const result = await userService.followUser('user1', 'targetuser');
+      expect(result).toBeDefined();
     });
   });
 

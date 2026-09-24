@@ -23,6 +23,76 @@ function conversationPermissions(value: string | null | undefined): Record<strin
   }
 }
 
+/**
+ * Enforce the recipient's "who can message me" privacy rule for direct
+ * messages. This runs server-side on every DM start and send so an alternate
+ * or malicious client cannot bypass the account's messaging preference.
+ */
+async function assertDirectMessageAllowed(senderId: string, recipientId: string): Promise<void> {
+  if (senderId === recipientId) return;
+
+  // Blocked accounts can never message or be messaged.
+  const blocked = await prisma.blockedUser.findFirst({
+    where: {
+      OR: [
+        { userId: senderId, targetId: recipientId },
+        { userId: recipientId, targetId: senderId },
+      ],
+    },
+    select: { id: true },
+  });
+  if (blocked) {
+    throw new Error("Messaging with this account is not allowed");
+  }
+
+  const recipientSettings = await prisma.userSettings.findUnique({
+    where: { userId: recipientId },
+    select: { privacyMessages: true },
+  });
+  const privacyMessages = recipientSettings?.privacyMessages || "everyone";
+  if (privacyMessages === "noone") {
+    throw new Error("This account is not accepting messages");
+  }
+  if (privacyMessages === "following") {
+    // Only accounts the recipient follows may message them.
+    const recipientFollowsSender = await prisma.follow.findUnique({
+      where: {
+        followerId_followingId: {
+          followerId: recipientId,
+          followingId: senderId,
+        },
+      },
+      select: { id: true },
+    });
+    if (!recipientFollowsSender) {
+      throw new Error("This account only accepts messages from accounts it follows");
+    }
+  }
+}
+
+/**
+ * Hides read-receipt entries whose owner disabled read receipts. The viewer
+ * always keeps their own read entries so their local read/unread state stays
+ * accurate; senders never see a "Seen" state for a reader who opted out.
+ */
+async function sanitizeReadReceipts<T extends { reads?: { userId: string }[] }>(
+  items: T[],
+  viewerId?: string
+): Promise<T[]> {
+  const readerIds = [...new Set(items.flatMap(item => (item.reads || []).map(read => read.userId)))];
+  if (!readerIds.length) return items;
+  const hiddenPrefs = await prisma.userSettings.findMany({
+    where: { userId: { in: readerIds }, readReceipts: false },
+    select: { userId: true },
+  });
+  if (!hiddenPrefs.length) return items;
+  const hiddenIds = new Set(hiddenPrefs.map(pref => pref.userId));
+  return items.map(item => ({
+    ...item,
+    reads: (item.reads || []).filter(read => !hiddenIds.has(read.userId) || read.userId === viewerId),
+  }));
+}
+
 // Shared include shape so call-history (and any future system) messages match
 // the exact payload shape the chat socket/client expects for a normal message.
 const messageInclude = {
@@ -142,6 +212,12 @@ export class ChatService {
       })
     );
 
+    // Senders must not see a preview read state from participants who disabled
+    // read receipts.
+    await Promise.all(enriched.map(async conversation => {
+      conversation.lastMessage = (await sanitizeReadReceipts(conversation.lastMessage ? [conversation.lastMessage] : [], userId))[0] || null;
+    }));
+
     return { conversations: enriched, nextCursor: hasMore ? page[page.length - 1]?.id : null };
   }
 
@@ -178,8 +254,10 @@ export class ChatService {
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
     });
     const hasMore = messages.length > pageSize;
-    const page = hasMore ? messages.slice(0, -1) : messages;
+    let page = hasMore ? messages.slice(0, -1) : messages;
     const nextCursor = hasMore ? page[page.length - 1]?.id : null;
+    // Remove read-receipt entries from participants who disabled read receipts.
+    page = await sanitizeReadReceipts(page, userId);
     return { messages: page.reverse(), nextCursor };
   }
 
@@ -192,6 +270,14 @@ export class ChatService {
     const participant = conversation?.participants.find((p: any) => p.userId === senderId);
     if (!conversation || !participant) {
       throw new Error("Conversation not found or unauthorized");
+    }
+    // Enforce the recipient's messaging privacy for private 1-to-1 chats.
+    // Group and channel messages are governed by their own membership rules.
+    if (!conversation.isGroup && conversation.type !== "GROUP" && conversation.type !== "CHANNEL") {
+      const peerId = conversation.participants.find((p: any) => p.userId !== senderId)?.userId;
+      if (peerId) {
+        await assertDirectMessageAllowed(senderId, peerId);
+      }
     }
     if (conversation.type === "CHANNEL" && !["OWNER", "ADMIN", "MODERATOR"].includes(participant.role)) {
       throw new Error("Only channel administrators can publish posts");
@@ -402,6 +488,14 @@ export class ChatService {
     if (!conversationId || !senderId || !messageId) return;
 
     try {
+      const conversation = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        select: { type: true, isGroup: true },
+      });
+      const conversationType = conversation?.type || (conversation?.isGroup ? "GROUP" : "DIRECT");
+      // Group/channel messages map to their own notification categories so the
+      // granular "Group Messages" / "Channel Updates" toggles are respected.
+      const notificationType = conversationType === "GROUP" ? "group" : conversationType === "CHANNEL" ? "channel" : "message";
       const participants = await prisma.participant.findMany({
         where: { conversationId },
         select: { userId: true },
@@ -411,7 +505,13 @@ export class ChatService {
         .filter(participant => participant.userId !== senderId)
         .map(participant =>
           notificationService
-            .notifyNewMessage(participant.userId, senderUsername, conversationId, senderId, messageId)
+            .createNotification(
+              participant.userId,
+              notificationType,
+              conversationType === "GROUP" || conversationType === "CHANNEL" ? "Group Activity" : "New Message",
+              `${senderUsername} sent a message`,
+              { actorId: senderId, conversationId, senderUsername, entityType: "conversation", entityId: conversationId, referenceKey: messageId ? `message:${messageId}` : undefined }
+            )
             .catch((error: any) => console.error(`[chat] notification failed for ${participant.userId}:`, error?.message || error))
         ));
     } catch (error: any) {
@@ -449,7 +549,16 @@ export class ChatService {
       await prisma.messageRead.createMany({ data: records });
     }
 
-    return { count: records.length };
+    // When the reading user has disabled read receipts, their read state is
+    // tracked locally (unread counts still clear) but is never broadcast to the
+    // other participants as a "messages:read" event.
+    const settings = await prisma.userSettings.findUnique({
+      where: { userId },
+      select: { readReceipts: true },
+    });
+    const receiptsHidden = settings?.readReceipts === false && records.length > 0;
+
+    return { count: records.length, receiptsHidden };
   }
 
   async searchMessages(conversationId: string, userId: string, query: string) {
@@ -482,7 +591,7 @@ export class ChatService {
       take: 100,
     });
 
-    return messages;
+    return sanitizeReadReceipts(messages, userId);
   }
 
   async createConversation(userIds: string[], name?: string, isGroup: boolean = false, options?: { type?: "DIRECT" | "GROUP" | "CHANNEL"; avatar?: string; description?: string; handle?: string; visibility?: string; createdById?: string }) {
@@ -493,10 +602,23 @@ export class ChatService {
     if (uniqueUserIds.length < 2 && !isGroup) {
       throw new Error("At least two users are required to start a conversation");
     }
+
+    const type = options?.type || (isGroup ? "GROUP" : "DIRECT");
+
+    // Enforce every other participant's "who can message me" rule when a new
+    // private direct conversation is being started. Groups and channels are
+    // governed by their own membership and permission systems.
+    if (type === "DIRECT") {
+      const creatorId = options?.createdById || uniqueUserIds[0];
+      for (const recipientId of uniqueUserIds) {
+        if (recipientId === creatorId) continue;
+        await assertDirectMessageAllowed(creatorId, recipientId);
+      }
+    }
+
     const activeUsers = await prisma.user.count({ where: { id: { in: uniqueUserIds }, status: "ACTIVE" } });
     if (activeUsers !== uniqueUserIds.length) throw new Error("One or more participants do not exist");
 
-    const type = options?.type || (isGroup ? "GROUP" : "DIRECT");
     const existing = type === "DIRECT" ? await prisma.conversation.findFirst({
       where: {
         isGroup: false,

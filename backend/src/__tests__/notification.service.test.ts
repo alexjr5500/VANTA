@@ -132,6 +132,30 @@ describe('NotificationService', () => {
       const result = await notificationService.shouldDeliver('user1', 'custom_type');
       expect(result).toBe(true);
     });
+
+    test('should suppress a like when only likesAlerts is disabled', async () => {
+      (prisma.notificationPreferences.findUnique as jest.Mock).mockResolvedValue({ pushAlerts: true, likesAlerts: false });
+      const result = await notificationService.shouldDeliver('user1', 'like');
+      expect(result).toBe(false);
+    });
+
+    test('should suppress a follow when the master pushAlerts is off even if followersAlerts is on', async () => {
+      (prisma.notificationPreferences.findUnique as jest.Mock).mockResolvedValue({ pushAlerts: false, followersAlerts: true });
+      const result = await notificationService.shouldDeliver('user1', 'follow');
+      expect(result).toBe(false);
+    });
+
+    test('should suppress group notifications via groupAlerts', async () => {
+      (prisma.notificationPreferences.findUnique as jest.Mock).mockResolvedValue({ chatAlerts: true, groupAlerts: false });
+      const result = await notificationService.shouldDeliver('user1', 'group');
+      expect(result).toBe(false);
+    });
+
+    test('should deliver a like when both master and granular are enabled', async () => {
+      (prisma.notificationPreferences.findUnique as jest.Mock).mockResolvedValue({ pushAlerts: true, likesAlerts: true });
+      const result = await notificationService.shouldDeliver('user1', 'like');
+      expect(result).toBe(true);
+    });
   });
 
   describe('notifyFollow', () => {

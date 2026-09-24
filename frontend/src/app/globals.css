@@ -1821,3 +1821,136 @@
     background: var(--settings-accent-soft);
   }
 }
+/* ═══════════════════════════════════════════════════════════════════
+   THEME, ACCENT & DENSITY — REAL SETTINGS APPLIED AT THE `<html>` ROOT
+   The ThemeContext sets:
+     <html data-theme="dark|light" data-accent="gold|monochrome" data-density="comfortable|compact">
+   These rules translate those attributes into actual UI changes.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Settings accent tokens (default = monochrome, matching the app's
+      existing silver/white appearance). data-accent re-maps them. ── */
+:root {
+  --settings-accent: #b8b8b8;
+  --settings-accent-strong: #f5f5f5;
+  --settings-accent-soft: rgba(184, 184, 184, 0.1);
+  --settings-accent-softer: rgba(184, 184, 184, 0.06);
+  --settings-accent-border: rgba(184, 184, 184, 0.3);
+  --settings-accent-ring: rgba(184, 184, 184, 0.45);
+  --settings-accent-text: #e8e8e8;
+}
+
+/* Gold accent — VANTA's existing gold visual language (see --vanta-gold
+   and --gradient-gold tokens at the top of this file). */
+html[data-accent="gold"] {
+  --settings-accent: var(--vanta-gold);
+  --settings-accent-strong: var(--vanta-gold-bright);
+  --settings-accent-soft: rgba(201, 162, 39, 0.12);
+  --settings-accent-softer: rgba(201, 162, 39, 0.07);
+  --settings-accent-border: rgba(201, 162, 39, 0.35);
+  --settings-accent-ring: rgba(201, 162, 39, 0.5);
+  --settings-accent-text: #e8c96a;
+
+  /* Re-map the shared accent tokens used across the product */
+  --gold: var(--vanta-gold);
+  --gold-bright: var(--vanta-gold-bright);
+  --gradient-gold: linear-gradient(135deg, #dfbd55 0%, #c9a227 58%, #a48220 100%);
+  --gradient-gold-subtle: linear-gradient(135deg, rgba(242, 199, 92, 0.16) 0%, rgba(214, 168, 63, 0.06) 50%, transparent 100%);
+}
+
+/* Monochrome accent — the original VANTA silvery look */
+html[data-accent="monochrome"] {
+  --settings-accent: #b8b8b8;
+  --settings-accent-strong: #f5f5f5;
+  --settings-accent-soft: rgba(184, 184, 184, 0.1);
+  --settings-accent-softer: rgba(184, 184, 184, 0.06);
+  --settings-accent-border: rgba(184, 184, 184, 0.3);
+  --settings-accent-ring: rgba(184, 184, 184, 0.45);
+  --settings-accent-text: #e8e8e8;
+
+  --gold: #f5f5f5;
+  --gold-bright: #ffffff;
+  --gradient-gold: linear-gradient(135deg, #ffffff 0%, #b8b8b8 100%);
+  --gradient-gold-subtle: linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0%, rgba(184, 184, 184, 0.06) 50%, transparent 100%);
+}
+
+/* ── Light theme — flips the variable-driven design system to light.
+      Surfaces that hard-code a dark container (media, post cards, etc.)
+      intentionally stay dark so content contrast is never broken. ── */
+html.light {
+  color-scheme: light;
+  --vanta-black: #f5f5f7;
+  --vanta-obsidian: #ffffff;
+  --vanta-panel: #fafafa;
+  --vanta-surface: #f1f1f3;
+  --vanta-elevated: #e9e9eb;
+  --vanta-graphite: #d8d8da;
+  --vanta-gray: #8a8a8a;
+  --vanta-gray-light: #666666;
+  --vanta-silver: #444444;
+  --vanta-white: #17171a;
+
+  --background: #f5f5f7;
+  --background-secondary: #ffffff;
+  --background-tertiary: #fafafa;
+  --foreground: #17171a;
+  --foreground-secondary: rgba(20, 20, 25, 0.7);
+  --foreground-tertiary: rgba(20, 20, 25, 0.45);
+
+  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-border: rgba(20, 20, 25, 0.08);
+  --glass-hover: rgba(20, 20, 25, 0.05);
+  --glass-strong: rgba(255, 255, 255, 0.85);
+  --glass-active: rgba(20, 20, 25, 0.08);
+  --glass-glow: rgba(20, 20, 25, 0.03);
+
+  --gold-glow: 0 8px 24px rgba(160, 120, 20, 0.12);
+  --gold-glow-strong: 0 12px 30px rgba(160, 120, 20, 0.16);
+  --gold-border: rgba(160, 120, 20, 0.3);
+  --gold-border-strong: rgba(160, 120, 20, 0.5);
+  --gold-bg: rgba(160, 120, 20, 0.08);
+  --gold-bg-strong: rgba(160, 120, 20, 0.14);
+}
+
+/* Keep settings surfaces readable in light mode */
+html.light .settings-card {
+  background: var(--background-secondary);
+  border-color: rgba(20, 20, 25, 0.08);
+}
+html.light .settings-input {
+  @apply border-white/15 bg-white text-[var(--foreground)];
+  border: 1px solid rgba(20, 20, 25, 0.12);
+  color: var(--foreground);
+  background: #ffffff;
+}
+html.light .settings-input::placeholder {
+  color: rgba(20, 20, 25, 0.35);
+}
+html.light .btn-accent {
+  color: #ffffff;
+}
+html.light body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* ── Compact density — tightens spacing/rows across the app uniformly. ── */
+html[data-density="compact"] {
+  --density-scale: 0.85;
+}
+html[data-density="compact"] .min-h-\[62px\] { min-height: 50px; }
+html[data-density="compact"] .min-h-12 { min-height: 2.6rem; }
+html[data-density="compact"] .py-3 { padding-top: 0.6rem; padding-bottom: 0.6rem; }
+html[data-density="compact"] .py-4 { padding-top: 0.8rem; padding-bottom: 0.8rem; }
+html[data-density="compact"] .px-4 { padding-left: 0.85rem; padding-right: 0.85rem; }
+html[data-density="compact"] .px-5 { padding-left: 1rem; padding-right: 1rem; }
+html[data-density="compact"] .gap-3\.5 { gap: 0.6rem; }
+html[data-density="compact"] .gap-3 { gap: 0.65rem; }
+html[data-density="compact"] .space-y-8 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.5rem; }
+html[data-density="compact"] .space-y-6 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.15rem; }
+html[data-density="compact"] .space-y-5 > :not([hidden]) ~ :not([hidden]) { margin-top: 1rem; }
+html[data-density="compact"] .space-y-4 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.8rem; }
+html[data-density="compact"] .space-y-3 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.6rem; }
+html[data-density="compact"] .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.45rem; }
+html[data-density="compact"] .space-y-1\.5 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.3rem; }
+html[data-density="compact"] .space-y-1 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.25rem; }

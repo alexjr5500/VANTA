@@ -3,8 +3,9 @@
 /* ═══════════════════════════════════════════════════════════════
    VANTA Settings UI kit
    A small, consistent set of surfaces for the Settings experience.
-   Blue is the single accent. Surfaces, radii, spacing and type all
-   inherit the existing VANTA design system.
+   Accent tokens are driven by the user's Accent setting (Gold or
+   Monochrome) via the --settings-accent* variables. Surfaces, radii,
+   spacing and type all inherit the existing VANTA design system.
    ═══════════════════════════════════════════════════════════════ */
 
 import React, {
@@ -20,15 +21,17 @@ import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { storage } from '@/lib/platformStorage';
 
-/* Blue accent — single source of truth for the Settings experience */
+/* Accent — driven by the user's selected Accent setting (Gold/Monochrome).
+   The `--settings-accent*` tokens are re-mapped at the <html> root by the
+   data-accent attribute (see globals.css). */
 export const ACCENT = {
-  bg: 'bg-[#3b82f6]',
-  solid: '#3b82f6',
-  strong: '#2563eb',
-  text: 'text-[#7cabff]',
-  soft: 'bg-[rgba(59,130,246,0.10)]',
-  softer: 'bg-[rgba(59,130,246,0.06)]',
-  border: 'border-[rgba(59,130,246,0.30)]',
+  bg: 'bg-[var(--settings-accent)]',
+  solid: 'var(--settings-accent)',
+  strong: 'var(--settings-accent-strong)',
+  text: 'text-[var(--settings-accent-text)]',
+  soft: 'bg-[var(--settings-accent-soft)]',
+  softer: 'bg-[var(--settings-accent-softer)]',
+  border: 'border-[var(--settings-accent-border)]',
 };
 
 type IconComponent = React.ComponentType<{
@@ -160,7 +163,7 @@ export function SavedChip({ visible = true }: { visible?: boolean }) {
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.85 }}
           transition={{ duration: 0.16, ease: 'easeOut' }}
-          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[rgba(59,130,246,0.10)] px-2 py-0.5 text-[10px] font-semibold text-[#7cabff]"
+          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--settings-accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--settings-accent-text)]"
         >
           <Check size={9} strokeWidth={3} aria-hidden="true" />
           saved
@@ -195,9 +198,9 @@ export function SettingsToggle({
       onClick={() => onChange(!checked)}
       className={cn(
         'relative h-6 w-11 shrink-0 rounded-full outline-none transition-colors duration-200',
-        'focus-visible:ring-2 focus-visible:ring-[rgba(59,130,246,0.45)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0d0d0f]',
+        'focus-visible:ring-2 focus-visible:ring-[var(--settings-accent-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0d0d0f]',
         disabled && 'cursor-not-allowed',
-        checked ? 'bg-[#3b82f6]' : 'bg-white/[0.14]'
+        checked ? 'bg-[var(--settings-accent)]' : 'bg-white/[0.14]'
       )}
     >
       <span
@@ -234,7 +237,7 @@ export function SettingsGroup({
         <div className="flex items-center gap-2 px-1">
           {Icon && (
             <span
-              className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-[rgba(59,130,246,0.10)] text-[#7cabff]"
+              className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-[var(--settings-accent-soft)] text-[var(--settings-accent-text)]"
               aria-hidden="true"
             >
               <Icon size={12} strokeWidth={2.5} />
@@ -345,7 +348,7 @@ export function ToggleRow({
         <span
           className={cn(
             'grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-white/[0.06] bg-white/[0.03] transition-colors',
-            checked ? 'text-[#7cabff]' : 'text-white/40'
+            checked ? 'text-[var(--settings-accent-text)]' : 'text-white/40'
           )}
           aria-hidden="true"
         >
@@ -486,7 +489,7 @@ export function SelectRow({
                     className={cn(
                       'flex w-full items-center justify-between gap-3 rounded-[10px] border px-3.5 py-3 text-left transition-colors',
                       selected
-                        ? 'border-[rgba(59,130,246,0.35)] bg-[rgba(59,130,246,0.08)]'
+                        ? 'border-[var(--settings-accent-border)] bg-[var(--settings-accent-soft)]'
                         : 'border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04]'
                     )}
                   >
@@ -504,7 +507,7 @@ export function SelectRow({
                       <Check
                         size={16}
                         strokeWidth={2.5}
-                        className="shrink-0 text-[#7cabff]"
+                        className="shrink-0 text-[var(--settings-accent-text)]"
                         aria-hidden="true"
                       />
                     )}

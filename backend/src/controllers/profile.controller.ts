@@ -207,7 +207,8 @@ export const getPublicProfile = async (req: Request, res: Response): Promise<voi
     res.status(200).json(profile);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(404).json({ error: message });
+    const status = message.toLowerCase().includes('private') ? 403 : 404;
+    res.status(status).json({ error: message });
   }
 };
 
@@ -223,7 +224,8 @@ export const getPublicProfilePosts = async (req: Request, res: Response): Promis
     res.status(200).json(posts);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(404).json({ error: message });
+    const status = message.toLowerCase().includes('private') ? 403 : 404;
+    res.status(status).json({ error: message });
   }
 };
 
@@ -232,11 +234,13 @@ export const getPublicProfileMedia = async (req: Request, res: Response): Promis
     const username = getParamString(req.params.username);
     const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const limit = parseLimit(req.query.limit, 12);
-    const media = await userService.getPublicUserMediaByUsername(username, cursor, limit);
+    const viewerId = (req as AuthRequest).user?.userId;
+    const media = await userService.getPublicUserMediaByUsername(username, cursor, limit, viewerId);
     res.status(200).json(media);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(404).json({ error: message });
+    const status = message.toLowerCase().includes('private') ? 403 : 404;
+    res.status(status).json({ error: message });
   }
 };
 

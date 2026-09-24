@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
 import { useAuth } from '@/context/AuthContext';
+import { useContentPrefs } from '@/lib/useContentPrefs';
 import { useContentCreation } from '@/components/create/ContentCreationContext';
 import { useToast } from '@/components/ui/Toast';
 import Avatar from '@/components/ui/Avatar';
@@ -542,6 +543,11 @@ function ReelCard({ reel, index, active, nearby, muted, paused, videos, sections
   const lastTap = useRef(0);
   const followed = !!(reel.author.following || reel.author.isFollowing || reel.isFollowing);
 
+  // Device-local Autoplay preference: when disabled, active reels load but do
+  // not start until the user taps.
+  const { prefs: contentPrefs, hydrated: contentPrefsReady } = useContentPrefs();
+  const autoplayEnabled = contentPrefsReady ? contentPrefs.autoplay : true;
+
   const likeWithFeedback = () => {
     if (!reel.isLiked) onLike();
     setLikedPulse(true);
@@ -572,7 +578,7 @@ function ReelCard({ reel, index, active, nearby, muted, paused, videos, sections
     setVideoError('');
     setVideoLoading(true);
     video?.load();
-    if (active && !paused) void video?.play().catch(() => {});
+    if (active && !paused && autoplayEnabled) void video?.play().catch(() => {});
   };
 
   return (
@@ -586,7 +592,7 @@ function ReelCard({ reel, index, active, nearby, muted, paused, videos, sections
               src={resolveMediaUrl(reel.videoUrl)}
               poster={resolveMediaUrl(reel.thumbnailUrl)}
               preload={active ? 'auto' : 'metadata'}
-              autoPlay={active && !paused}
+              autoPlay={active && !paused && autoplayEnabled}
               loop
               playsInline
               muted={muted}

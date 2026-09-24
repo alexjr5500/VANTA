@@ -27,32 +27,28 @@ import {
   SelectRow,
   SettingsGroup,
   ToggleRow,
-  useLocalPrefs,
 } from '@/components/settings/SettingsUI';
 
 interface PrivacySettings {
   privacyProfile: string;
   privacyMessages: string;
   privacyFollows: string;
+  activityStatus: boolean;
+  readReceipts: boolean;
 }
 
 const PRIVACY_DEFAULTS: PrivacySettings = {
   privacyProfile: 'public',
   privacyMessages: 'everyone',
   privacyFollows: 'everyone',
+  activityStatus: true,
+  readReceipts: true,
 };
 
 interface UserReference {
   id: string;
   username: string;
 }
-
-const LOCAL_DEFAULTS = {
-  activityStatus: true,
-  readReceipts: true,
-};
-
-type LocalKey = keyof typeof LOCAL_DEFAULTS;
 
 export default function PrivacySettingsPage() {
   const { token } = useAuth();
@@ -73,11 +69,6 @@ export default function PrivacySettingsPage() {
   useEffect(() => {
     privacyRef.current = privacy;
   }, [privacy]);
-
-  const { prefs: local, set: setLocal } = useLocalPrefs(
-    'vanta_privacy_extras',
-    LOCAL_DEFAULTS
-  );
 
   const flagSaved = (key: string) => {
     setSavedKey(key);
@@ -118,24 +109,21 @@ export default function PrivacySettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity churns on each render; load-once behaviour is intentional
   }, [token]);
 
-  const updatePrivacy = (key: keyof PrivacySettings, value: string) => {
+  const updatePrivacy = (key: keyof PrivacySettings, value: string | boolean) => {
     if (!token) return;
     const next = { ...privacyRef.current, [key]: value };
     setPrivacy(next);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
-        await apiPut('/api/settings/privacy', next, token);
+        await apiPut('/api/settings/privacy', { [key]: value }, token);
         flagSaved(key);
       } catch {
+        // Revert the UI to the actual saved value on failure.
+        setPrivacy(privacyRef.current);
         toast.error('Could not save', 'Please try again.');
       }
     }, 320);
-  };
-
-  const toggleLocal = (key: LocalKey, value: boolean) => {
-    setLocal(key, value);
-    flagSaved(key);
   };
 
   const addBlocked = async () => {
@@ -273,16 +261,16 @@ return (
               icon={Eye}
               title="Activity status"
               description="Show when you're active to people who follow you."
-              checked={local.activityStatus}
-              onChange={(v) => toggleLocal('activityStatus', v)}
+              checked={privacy.activityStatus}
+              onChange={(v) => updatePrivacy('activityStatus', v)}
               saved={savedKey === 'activityStatus'}
             />
             <ToggleRow
               icon={EyeOff}
               title="Read receipts"
               description="Let people see when you've read their messages."
-              checked={local.readReceipts}
-              onChange={(v) => toggleLocal('readReceipts', v)}
+              checked={privacy.readReceipts}
+              onChange={(v) => updatePrivacy('readReceipts', v)}
               saved={savedKey === 'readReceipts'}
             />
           </SettingsGroup>

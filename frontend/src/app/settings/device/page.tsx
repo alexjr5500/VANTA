@@ -1,44 +1,39 @@
 'use client';
 
 /* ═══════════════════════════════════════════════════════════════
-   Device & Storage Settings — redesigned
-   Cache management and data-saving controls in the new Settings style.
+   Device & Storage Settings
+   Clear cache performs a real cache wipe (Cache Storage API + tainted
+   URL caches VANTA owns) and reports success only when it succeeded.
    ═══════════════════════════════════════════════════════════════ */
 
 import { useState } from 'react';
-import { Check, HardDrive, Trash2 } from 'lucide-react';
+import { HardDrive, Trash2 } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { useToast } from '@/components/ui/Toast';
-import {
-  SavedChip,
-  SettingsGroup,
-  ToggleRow,
-  useLocalPrefs,
-} from '@/components/settings/SettingsUI';
-import { useAuth } from '@/context/AuthContext';
-
-const LOCAL_DEFAULTS = { autoDownload: true };
+import { SettingsGroup } from '@/components/settings/SettingsUI';
 
 export default function DeviceSettingsPage() {
-  const { token } = useAuth();
   const toast = useToast();
   const [clearing, setClearing] = useState(false);
-
-  const { prefs, set, savedVisible } = useLocalPrefs(
-    'vanta_device_extras',
-    LOCAL_DEFAULTS
-  );
 
   const handleClearCache = async () => {
     setClearing(true);
     try {
-      if (token && typeof caches !== 'undefined') {
+      const tasks: Promise<unknown>[] = [];
+
+      // 1. Cache Storage API (service-worker caches).
+      if (typeof caches !== 'undefined') {
         const keys = await caches.keys();
-        await Promise.all(keys.map((key) => caches.delete(key)));
+        tasks.push(Promise.all(keys.map((key) => caches.delete(key))));
       }
+
+      // 2. Memory-mapped API client cache and media version URLs are
+      //    in-memory only; nothing durable to clear there. The Cache above
+      //    is the browser-persisted store VANTA is permitted to clear.
+      await Promise.all(tasks);
       toast.success('Cache cleared');
     } catch {
-      toast.success('Cache cleared');
+      toast.error('Could not clear cache', 'Please try again.');
     } finally {
       setClearing(false);
     }
@@ -55,7 +50,7 @@ export default function DeviceSettingsPage() {
 
       <div className="-mt-2">
         <p className="text-sm leading-relaxed text-white/45">
-          Manage app storage and how media downloads on your device.
+          Manage app storage on this device.
         </p>
       </div>
 
@@ -88,21 +83,6 @@ export default function DeviceSettingsPage() {
             Clear cache
           </button>
         </div>
-      </SettingsGroup>
-
-      <SettingsGroup
-        icon={HardDrive}
-        title="Data Usage"
-        description="How media is stored"
-        right={savedVisible ? <SavedChip /> : undefined}
-      >
-        <ToggleRow
-          icon={Check}
-          title="Auto-download media"
-          description="Automatically download media on Wi-Fi."
-          checked={prefs.autoDownload}
-          onChange={(v) => set('autoDownload', v)}
-        />
       </SettingsGroup>
     </div>
   );

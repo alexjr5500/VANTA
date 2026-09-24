@@ -32,21 +32,46 @@ const DEFAULT_PREFERENCES = {
 
 const normalizeType = (type: string) => type.trim().toLowerCase();
 
-// Map notification types to the user preference flag they respect
-const preferenceKeyForType: Record<string, keyof typeof DEFAULT_PREFERENCES> = {
-  follow: "pushAlerts",
-  like: "pushAlerts",
-  comment: "pushAlerts",
-  gift: "pushAlerts",
-  mention: "pushAlerts",
+// Map every notification type to (a) its granular category preference and
+// (b) the master channel that gates it. Both must be enabled for delivery so
+// the category toggles and the master switches independently control behavior.
+const GRANULAR_PREFERENCE_KEY: Record<string, string> = {
+  follow: "followersAlerts",
+  like: "likesAlerts",
+  comment: "commentsAlerts",
+  mention: "mentionsAlerts",
   message: "chatAlerts",
+  group: "groupAlerts",
+  channel: "channelAlerts",
   live: "liveAlerts",
   stream: "liveAlerts",
+  live_interaction: "liveInteractionsAlerts",
   // wallet, system and milestone updates are important - only gated by push
   wallet: "pushAlerts",
   system: "pushAlerts",
   milestone: "pushAlerts",
+  gift: "pushAlerts",
 };
+
+const MASTER_PREFERENCE_KEY: Record<string, keyof typeof DEFAULT_PREFERENCES> = {
+  follow: "pushAlerts",
+  like: "pushAlerts",
+  comment: "pushAlerts",
+  mention: "pushAlerts",
+  message: "chatAlerts",
+  group: "chatAlerts",
+  channel: "chatAlerts",
+  live: "liveAlerts",
+  stream: "liveAlerts",
+  live_interaction: "liveAlerts",
+  wallet: "pushAlerts",
+  system: "pushAlerts",
+  milestone: "pushAlerts",
+  gift: "pushAlerts",
+};
+
+// Legacy map kept for callers that only care about the master channel.
+const preferenceKeyForType: Record<string, keyof typeof DEFAULT_PREFERENCES> = MASTER_PREFERENCE_KEY;
 
 export class NotificationService {
   async getNotifications(
@@ -141,7 +166,7 @@ export class NotificationService {
     const updated = await prisma.notification.updateMany({
       where: {
         userId,
-        type: { in: ["message", "MESSAGE"] },
+        type: { in: ["message", "MESSAGE", "group", "GROUP", "channel", "CHANNEL"] },
         entityId: conversationId,
         read: false,
       },
@@ -181,18 +206,22 @@ export class NotificationService {
    * Returns true when no explicit preference exists (defaults are enabled).
    */
   async shouldDeliver(userId: string, type: string): Promise<boolean> {
-    const channel = preferenceKeyForType[normalizeType(type)];
-    if (!channel) return true;
+    const normalized = normalizeType(type);
+    const master = MASTER_PREFERENCE_KEY[normalized];
+    const granular = GRANULAR_PREFERENCE_KEY[normalized];
+    if (!master && !granular) return true;
 
     const prefs = await prisma.notificationPreferences.findUnique({
       where: { userId },
-      select: { [channel]: true },
     });
 
-    // No stored preferences -> respect default (enabled)
-    if (!prefs) return DEFAULT_PREFERENCES[channel];
+    // No stored preferences -> respect defaults (enabled)
+    if (!prefs) return true;
 
-    return prefs[channel];
+    // The master channel and the granular category must both be enabled.
+    const masterAllowed = DEFAULT_PREFERENCES[master] === true ? prefs[master] !== false : prefs[master] !== false;
+    const granularAllowed = granular ? prefs[granular as keyof typeof prefs] !== false : true;
+    return masterAllowed && granularAllowed;
   }
 
   async createNotification(

@@ -1,11 +1,14 @@
 'use client';
 
 /* ═══════════════════════════════════════════════════════════════
-   Content & Media Settings — new focused page
-   Autoplay, data usage, quality, downloads and sensitive content.
+   Content & Media Settings
+   Autoplay and data-usage preferences are device-local (per-device
+   behavior) and are actually consumed by the app's video surfaces
+   through useContentPrefs. Settings that VANTA does not implement
+   (offline downloads) are intentionally not offered.
    ═══════════════════════════════════════════════════════════════ */
 
-import { Play, Shield, HardDrive, Wifi, Video, SlidersHorizontal } from 'lucide-react';
+import { Play, Shield, Wifi, Video, SlidersHorizontal } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import {
   SavedChip,
@@ -20,7 +23,6 @@ const LOCAL_DEFAULTS = {
   autoplay: true,
   lowerData: false,
   quality: 'auto' as string,
-  saveToDevice: false,
   hideSensitive: true,
 };
 
@@ -45,7 +47,7 @@ export default function ContentMediaSettingsPage() {
 
       <div className="-mt-2">
         <p className="text-sm leading-relaxed text-white/45">
-          Control how content plays, saves and uses your data.
+          Control how content plays and uses your data on this device.
         </p>
       </div>
 
@@ -89,19 +91,12 @@ export default function ContentMediaSettingsPage() {
           checked={prefs.lowerData}
           onChange={(v) => toggle('lowerData', v)}
         />
-        <ToggleRow
-          icon={HardDrive}
-          title="Download to device"
-          description="Allow saving content for offline viewing."
-          checked={prefs.saveToDevice}
-          onChange={(v) => toggle('saveToDevice', v)}
-        />
       </SettingsGroup>
 
       <SettingsGroup
         icon={SlidersHorizontal}
         title="Sensitive Content"
-        description="What you're comfortable seeing"
+        description="What you&apos;re comfortable seeing"
         right={savedVisible ? <SavedChip /> : undefined}
       >
         <ToggleRow
@@ -113,12 +108,12 @@ export default function ContentMediaSettingsPage() {
         />
       </SettingsGroup>
 
-      <SettingsGroup icon={HardDrive} title="Storage">
+      <SettingsGroup icon={SlidersHorizontal} title="Storage">
         <SettingsLink
           href="/settings/device"
-          icon={HardDrive}
+          icon={SlidersHorizontal}
           title="Device & storage"
-          description="Clear cache and manage downloaded media"
+          description="Clear cache and manage stored data"
         />
       </SettingsGroup>
     </div>

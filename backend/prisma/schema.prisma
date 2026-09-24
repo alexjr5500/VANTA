@@ -1008,6 +1008,15 @@ model UserSettings {
   userId            String   @unique
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   theme             String   @default("dark")
+  themeMode         String   @default("dark")
+  accent            String   @default("monochrome")
+  density           String   @default("comfortable")
+  language          String   @default("en")
+  readReceipts      Boolean  @default(true)
+  activityStatus    Boolean  @default(true)
+  typingIndicators  Boolean  @default(true)
+  messagePreviews   Boolean  @default(true)
+  chatNotifications Boolean  @default(true)
   privacyProfile    String   @default("public")
   privacyMessages   String   @default("everyone")
   privacyFollows    String   @default("everyone")
@@ -1021,15 +1030,22 @@ model UserSettings {
 }
 
 model NotificationPreferences {
-  id          String   @id @default(cuid())
-  userId      String   @unique
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  emailAlerts Boolean  @default(true)
-  pushAlerts  Boolean  @default(true)
-  chatAlerts  Boolean  @default(true)
-  liveAlerts  Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                     String   @id @default(cuid())
+  userId                 String   @unique
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailAlerts            Boolean  @default(true)
+  pushAlerts             Boolean  @default(true)
+  chatAlerts             Boolean  @default(true)
+  liveAlerts             Boolean  @default(true)
+  likesAlerts            Boolean  @default(true)
+  commentsAlerts         Boolean  @default(true)
+  mentionsAlerts         Boolean  @default(true)
+  followersAlerts        Boolean  @default(true)
+  groupAlerts            Boolean  @default(true)
+  channelAlerts          Boolean  @default(true)
+  liveInteractionsAlerts Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 }
 
 model BlockedUser {
