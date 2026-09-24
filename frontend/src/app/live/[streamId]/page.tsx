@@ -136,7 +136,7 @@ const CHAT_RECONCILE: { idOf: (l: ChatLineLike) => unknown; fingerprintOf: (l: C
 };
 
 /** Attaches a MediaStream (remote host video) to a <video>. */
-function ViewerVideo({ stream }: { stream: MediaStream | null }) {
+function ViewerVideo({ stream, muted = false }: { stream: MediaStream | null; muted?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const video = videoRef.current;
@@ -147,9 +147,26 @@ function ViewerVideo({ stream }: { stream: MediaStream | null }) {
       return;
     }
     video.srcObject = stream;
+    video.muted = muted;
     video.play().catch(() => undefined);
-  }, [stream]);
-  return <video ref={videoRef} playsInline autoPlay className="h-full w-full object-cover" aria-label="Live stream" />;
+  }, [stream, muted]);
+  useEffect(() => {
+    // Browsers defer audible autoplay until the first interaction. On any
+    // pointer/touch/key, retry the deferred remote audio (mirrors Reels).
+    const retry = () => {
+      const video = videoRef.current;
+      if (video && stream && !document.hidden) void video.play().catch(() => undefined);
+    };
+    window.addEventListener('pointerdown', retry);
+    window.addEventListener('touchstart', retry);
+    window.addEventListener('keydown', retry);
+    return () => {
+      window.removeEventListener('pointerdown', retry);
+      window.removeEventListener('touchstart', retry);
+      window.removeEventListener('keydown', retry);
+    };
+  }, [stream, muted]);
+  return <video ref={videoRef} playsInline autoPlay muted={muted} className="h-full w-full object-cover" aria-label="Live stream" />;
 }
 
 export default function LiveViewerPage() {
@@ -566,7 +583,10 @@ socket.on('guest_state', (d: any) => {
     void loadStream();
   }, [loadStream]);
 
-  // Attach the host's remote video track(s) once the room is connected.
+  // Attach the host's remote video AND audio tracks once the room is connected.
+  // The combined MediaStream is handed to a <video> element, whose browser
+  // pipeline plays both. (Previously only videoTrackPublications were captured,
+  // so viewers received video with no audible track — Task 4.)
   useEffect(() => {
     if (!room || phase !== 'LIVE') return;
     const lkRoom = room as any;
@@ -574,6 +594,9 @@ socket.on('guest_state', (d: any) => {
       const tracks: MediaStreamTrack[] = [];
       lkRoom.remoteParticipants?.forEach((p: any) => {
         p.videoTrackPublications?.forEach((pub: any) => {
+          if (pub?.track?.mediaStreamTrack) tracks.push(pub.track.mediaStreamTrack);
+        });
+        p.audioTrackPublications?.forEach((pub: any) => {
           if (pub?.track?.mediaStreamTrack) tracks.push(pub.track.mediaStreamTrack);
         });
       });
@@ -693,15 +716,44 @@ const sendComment = useCallback(() => {
     }
   }, [stream?.host?.username, toast]);
 
-  // Guest stage tiles for the multi-participant grid view.
+  // Guest stage tiles for the multi-participant grid view. Both camera and
+  // microphone tracks are attached to each tile (Task 5), and the memo is
+  // invalidated the moment a remote track is subscribed so a participant's
+  // tile appears as soon as the real media exists (no stale avatar placeholders).
+  const [stageTick, setStageTick] = useState(0);
+  useEffect(() => {
+    if (!room || phase !== 'LIVE') return;
+    const lkRoom = room as any;
+    const bump = () => setStageTick((t) => t + 1);
+    lkRoom.on('trackSubscribed', bump);
+    lkRoom.on('trackUnsubscribed', bump);
+    lkRoom.on('participantConnected', bump);
+    lkRoom.on('participantDisconnected', bump);
+    return () => {
+      lkRoom.off('trackSubscribed', bump);
+      lkRoom.off('trackUnsubscribed', bump);
+      lkRoom.off('participantConnected', bump);
+      lkRoom.off('participantDisconnected', bump);
+    };
+  }, [room, phase]);
+
   const stageTiles = useMemo(() => {
     const items: StageParticipant[] = [];
     (room as any)?.remoteParticipants?.forEach((p: any) => {
       const vids: MediaStreamTrack[] = [];
+      const auds: MediaStreamTrack[] = [];
       (p.videoTrackPublications || new Set())?.forEach((pub: any) => {
         if (pub?.track?.mediaStreamTrack) vids.push(pub.track.mediaStreamTrack);
       });
+      (p.audioTrackPublications || new Set())?.forEach((pub: any) => {
+        if (pub?.track?.mediaStreamTrack) auds.push(pub.track.mediaStreamTrack);
+      });
       const isHost = p.identity === stream?.host?.id;
+      const isKnownGuest = guestRoster.some((g) => g.id === p.identity);
+      // Only host + approved guests (or anyone publishing media) become tiles.
+      // Anonymous view-only participants publish nothing and must never render
+      // as a second/third grid tile.
+      if (!isHost && !isKnownGuest && vids.length === 0 && auds.length === 0) return;
       const rosterGuest = guestRoster.find((g) => g.id === p.identity);
       items.push({
         id: p.identity,
@@ -709,35 +761,41 @@ const sendComment = useCallback(() => {
         avatar: isHost ? stream?.host?.avatar : rosterGuest?.avatar,
         verified: isHost ? !!stream?.host?.verified : false,
         isHost,
-        stream: vids.length ? new MediaStream(vids) : null,
+        stream: vids.length || auds.length ? new MediaStream([...vids, ...auds]) : null,
         cameraOn: vids.length > 0,
-        micOn: (p.audioTrackPublications?.size || 0) > 0,
+        micOn: auds.length > 0 || (p.audioTrackPublications?.size || 0) > 0,
       });
     });
     if (guestStatus === 'live') {
       // Self-tile mirrors the remote-tile logic and uses the LIVE published
       // track from LiveKit (the preview stream was stopped once the publish
-      // pipeline re-acquired the camera).
+      // pipeline re-acquired the camera). The self tile stays muted so the
+      // participant never hears their own mic echo.
       const localPart = (room as any)?.localParticipant;
       const vids: MediaStreamTrack[] = [];
+      const auds: MediaStreamTrack[] = [];
       (localPart?.videoTrackPublications || new Set())?.forEach((pub: any) => {
         if (pub?.track?.mediaStreamTrack) vids.push(pub.track.mediaStreamTrack);
+      });
+      (localPart?.audioTrackPublications || new Set())?.forEach((pub: any) => {
+        if (pub?.track?.mediaStreamTrack) auds.push(pub.track.mediaStreamTrack);
       });
       items.push({
         id: (user as any)?.id || 'me',
         username: (user as any)?.username || 'You',
         avatar: undefined,
         verified: false,
-        stream: vids.length ? new MediaStream(vids) : null,
+        stream: vids.length || auds.length ? new MediaStream([...vids, ...auds]) : null,
         cameraOn: vids.length > 0,
-        micOn: (localPart?.audioTrackPublications?.size || 0) > 0,
+        micOn: auds.length > 0 || (localPart?.audioTrackPublications?.size || 0) > 0,
+        muted: true,
       });
     }
     const hostIndex = items.findIndex((t) => t.isHost);
     if (hostIndex > 0) { const host = items[hostIndex]; items.splice(hostIndex, 1); items.unshift(host); }
     return items.slice(0, 5);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room, stream, guestRoster, guestStatus]);
+  }, [room, stream, guestRoster, guestStatus, stageTick]);
 
   const stageActive = guestStatus === 'live' || stageTiles.length > 1;
 
@@ -815,7 +873,7 @@ const sendComment = useCallback(() => {
         {stageActive ? (
           <LiveParticipantGrid participants={stageTiles} />
         ) : remoteVideo ? (
-          <ViewerVideo stream={remoteVideo} />
+          <ViewerVideo stream={remoteVideo} muted={isOwn} />
         ) : (
           <div className="relative flex h-full w-full items-center justify-center bg-[#050505]">
             <span className="pointer-events-none flex flex-col items-center gap-3">

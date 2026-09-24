@@ -46,6 +46,7 @@ import { normalizeGiftCatalog } from '@/lib/giftCatalog';
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { renderTextWithLinks } from '@/lib/linkify';
+import { feedFromSwipe, settleFeedSwipe, startFeedSwipe, trackFeedSwipe } from '@/lib/feedSwipe';
 
 type Feed = 'for-you' | 'following' | 'trending';
 type Author = {
@@ -275,6 +276,66 @@ export default function ReelsPage() {
     const reel = reels[index];
     if (reel) sections.current[reel.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [reels]);
+
+  // Feed order defines the swipe direction convention: swiping LEFT moves to
+  // the NEXT feed (For You → Following → Trending), swiping RIGHT moves BACK
+  // (Trending → Following → For You). This mirrors the tab order left→right.
+  const FEED_ORDER: Feed[] = ['for-you', 'following', 'trending'];
+
+  const applyFeedSwipe = useCallback((direction: -1 | 0 | 1) => {
+    const target = feedFromSwipe(FEED_ORDER, feed, direction);
+    if (target !== feed) setFeed(target);
+  }, [feed]);
+
+  // Horizontal swipe between feeds. Classification lives in `lib/feedSwipe`
+  // (pure + unit-tested); this effect only bridges touch events to it. The
+  // gesture may become a feed switch ONLY when the sideways displacement
+  // clearly dominates the vertical one — every other gesture (vertical swipes,
+  // taps, diagonal undershoots) is left completely to native behavior and this
+  // handler never preventDefaults it.
+  useEffect(() => {
+    const root = reelsViewport.current;
+    if (!root) return;
+    let gesture = startFeedSwipe();
+    let fromX = 0;
+    let fromY = 0;
+
+    const onStart = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      fromX = touch.clientX;
+      fromY = touch.clientY;
+      gesture = startFeedSwipe();
+    };
+    const onMove = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      const next = trackFeedSwipe(gesture, touch.clientX - fromX, touch.clientY - fromY);
+      gesture = next;
+      if (next.locked === 'horizontal' && event.cancelable) {
+        // Locked horizontal gesture: stop the browser from interpreting it as
+        // a vertical reel scroll or an OS back/forward page swipe.
+        event.preventDefault();
+      }
+    };
+    const onEnd = () => {
+      const direction = settleFeedSwipe(gesture);
+      if (direction !== 0) applyFeedSwipe(direction);
+      gesture = startFeedSwipe();
+    };
+    const onCancel = () => { gesture = startFeedSwipe(); };
+
+    root.addEventListener('touchstart', onStart, { passive: true });
+    root.addEventListener('touchmove', onMove, { passive: false });
+    root.addEventListener('touchend', onEnd);
+    root.addEventListener('touchcancel', onCancel);
+    return () => {
+      root.removeEventListener('touchstart', onStart);
+      root.removeEventListener('touchmove', onMove);
+      root.removeEventListener('touchend', onEnd);
+      root.removeEventListener('touchcancel', onCancel);
+    };
+  }, [applyFeedSwipe]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

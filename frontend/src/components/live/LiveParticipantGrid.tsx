@@ -30,9 +30,16 @@ export interface StageParticipant {
   stream: MediaStream | null;
   cameraOn: boolean;
   micOn: boolean;
+  /**
+   * True when this tile plays a participant's OWN media (self view). Self
+   * monitors stay muted so a host/guest never hears their own mic echo.
+   * Remote participants default to audible — their real audio track is
+   * attached to the tile element as part of `stream` (Task 4/5).
+   */
+  muted?: boolean;
 }
 
-function StageVideo({ stream }: { stream: MediaStream | null }) {
+function StageVideo({ stream, muted = false }: { stream: MediaStream | null; muted?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const video = videoRef.current;
@@ -43,20 +50,42 @@ function StageVideo({ stream }: { stream: MediaStream | null }) {
       return;
     }
     video.srcObject = stream;
+    video.muted = muted;
     video.play().catch(() => undefined);
-  }, [stream]);
-  return <video ref={videoRef} playsInline autoPlay muted className="h-full w-full object-cover" aria-label="Live stage participant" />;
+  }, [stream, muted]);
+  useEffect(() => {
+    // Browsers may defer audible autoplay until the first user interaction.
+    // Retry the same way the Reels feed does: as soon as the user touches/keys
+    // the page, any deferred remote audio starts.
+    const retry = () => {
+      const video = videoRef.current;
+      if (video && stream && !document.hidden) void video.play().catch(() => undefined);
+    };
+    window.addEventListener('pointerdown', retry);
+    window.addEventListener('touchstart', retry);
+    window.addEventListener('keydown', retry);
+    return () => {
+      window.removeEventListener('pointerdown', retry);
+      window.removeEventListener('touchstart', retry);
+      window.removeEventListener('keydown', retry);
+    };
+  }, [stream, muted]);
+  return <video ref={videoRef} playsInline autoPlay muted={muted} className="h-full w-full object-cover" aria-label="Live stage participant" />;
 }
 
 function Tile({ p, className, showCameraOff }: { p: StageParticipant; className?: string; showCameraOff?: boolean }) {
   const noVideo = !p.stream || !p.cameraOn;
   return (
     <div className={cn('relative overflow-hidden rounded-xl bg-[#0D0D0F]', className)}>
-      {p.stream && p.cameraOn ? (
+      {/* Remote media (video + audio) attached via srcObject. When a guest only
+          publishes audio (camera disabled), the tile still routes their mic
+          through this element — an avatar overlays the black video surface. */}
+      {p.stream && (
         <div className="absolute inset-0">
-          <StageVideo stream={p.stream} />
+          <StageVideo stream={p.stream} muted={p.muted === true} />
         </div>
-      ) : (
+      )}
+      {noVideo && (
         <div className="absolute inset-0 grid place-items-center">
           <Avatar src={p.avatar} alt={p.username} size="lg" />
         </div>

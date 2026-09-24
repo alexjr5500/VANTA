@@ -58,7 +58,6 @@ import {
   UserPlus,
   Users,
   Video,
-  VideoOff,
   Wand2,
   X,
   Zap,
@@ -77,7 +76,7 @@ import { useToast } from '@/components/ui/Toast';
 import { cn, formatNumber } from '@/lib/utils';
 import GiftAnimationOverlay from '@/components/gifts/GiftAnimationOverlay';
 import { useGiftAnimationQueue } from '@/components/gifts/useGiftAnimationQueue';
-import type { StageParticipant } from '@/components/live/LiveParticipantGrid';
+import LiveParticipantGrid, { type StageParticipant } from '@/components/live/LiveParticipantGrid';
 import { reconcileLiveChat } from '@/lib/liveChatDedupe';
 
 type Phase =
@@ -465,7 +464,7 @@ export default function GoLivePage() {
       // Ensure a live audio track exists (requests mic permission inside this
       // user gesture when the browser has not granted it yet).
       if (!cam.getStream()?.getAudioTracks().length) {
-        try { await cam.addMicrophone(); } catch { /* surfaced via error below */ }
+        try { await cam.addMicrophone(); } catch { /* mapped via cam.error below */ }
       }
 
       const state = cam.getStream();
@@ -474,6 +473,25 @@ export default function GoLivePage() {
       if (!videoTrack || videoTrack.readyState !== 'live') {
         const e: LiveCameraError = { code: 'CAMERA_INITIALIZATION_FAILED', message: 'The camera track is not live. Check that no other app is using the camera.' };
         throw e;
+      }
+
+      // The microphone is ON by default: a live audio track must exist for the
+      // stream to start. The enable flag is read from the ACTUAL track (not the
+      // hook's rendered `isAudioOn`, which is stale inside this async handler
+      // until the next render — `cam.addMicrophone()` above enables the hook
+      // state asynchronously, so a pre-await closure value would silently go
+      // live with the microphone OFF).
+      if (audioTrack) audioTrack.enabled = true;
+      const micLive = !!audioTrack && audioTrack.readyState === 'live';
+      if (!micLive) {
+        // Surface the real failure (permission denial, no device, ...) through
+        // the existing error/recovery screen instead of starting muted or
+        // pretending the mic is active.
+        const micError = cam.error ?? {
+          code: 'MIC_INITIALIZATION_FAILED',
+          message: 'VANTA could not start a live microphone track. Allow microphone access in your browser, then retry.',
+        } satisfies LiveCameraError;
+        throw micError;
       }
 
       const { stream: created } = await apiPost<{ stream: StreamDetail }>(
@@ -497,7 +515,7 @@ export default function GoLivePage() {
       const previewDeviceId = videoTrack?.getSettings?.().deviceId;
       await lk.connect(hostToken, created.liveKitRoom, {
         camera: cam.isVideoOn,
-        microphone: !!audioTrack && cam.isAudioOn,
+        microphone: micLive,
         // Pass the ACTUAL preview device so LiveKit re-acquires the same camera
         // (front/rear) the user selected instead of the default front camera.
         cameraDeviceId: previewDeviceId || undefined,
@@ -858,10 +876,11 @@ export default function GoLivePage() {
   }, [phase, lk.localParticipant, lk.room]);
 
   // ---------------------------------------------------------------------------
-  // Guest stage video — surface approved guests' published camera/mic into
-  // compact tiles alongside the host's full-bleed feed (real LiveKit tracks).
+  // Guest stage tick — remote track subscriptions/participant changes must
+  // invalidate `stageGuests` (and the host split grid) so a guest's real video
+  // appears the moment it is subscribed, never a stale placeholder.
   // ---------------------------------------------------------------------------
-  const [, setGuestTick] = useState(0);
+  const [guestTick, setGuestTick] = useState(0);
   useEffect(() => {
     if (phase !== 'LIVE' || !lk.room) return;
     const room = lk.room;
@@ -886,22 +905,29 @@ export default function GoLivePage() {
     const tiles: StageParticipant[] = [];
     room.remoteParticipants.forEach((p: any) => {
       if (!approved.has(p.identity)) return;
+      // Both the guest's camera AND microphone tracks are attached — an
+      // audio-only guest still needs their mic routed to the host (Task 5).
       const vids: MediaStreamTrack[] = [];
+      const auds: MediaStreamTrack[] = [];
       p.videoTrackPublications?.forEach((pub: any) => { if (pub?.track?.mediaStreamTrack) vids.push(pub.track.mediaStreamTrack); });
-      const hasAudio = p.audioTrackPublications?.size > 0;
+      p.audioTrackPublications?.forEach((pub: any) => { if (pub?.track?.mediaStreamTrack) auds.push(pub.track.mediaStreamTrack); });
+      const hasAudio = auds.length > 0 || p.audioTrackPublications?.size > 0;
       const guest = byId.get(p.identity);
       tiles.push({
         id: p.identity,
         username: guest?.username || p.identity,
         avatar: guest?.avatar || null,
         verified: guest?.verified,
-        stream: vids.length ? new MediaStream(vids) : null,
+        stream: vids.length || auds.length ? new MediaStream([...vids, ...auds]) : null,
         cameraOn: vids.length > 0,
         micOn: hasAudio,
       });
     });
     return tiles.slice(0, 4);
-  }, [lk.room, phase, guestStage.guests, lk.participants]);
+    // `guestTick` (not just `lk.participants`) guarantees the tiles refresh the
+    // moment a remote track is subscribed — otherwise the host would keep a
+    // placeholder/avatar tile until an unrelated room event re-rendered them.
+  }, [lk.room, phase, guestStage.guests, lk.participants, guestTick]);
 
   // ---------------------------------------------------------------------------
   // Render helpers
@@ -917,10 +943,39 @@ export default function GoLivePage() {
   const clock = `${hrs > 0 ? `${hrs}:` : ''}${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   const goalLabel = goal === 'gifts' ? 'Gifts' : goal === 'duration' ? 'Watch time' : 'Followers';
 
+  // Host LIVE-room stage. With only the host, the full device camera is the
+  // stage. The moment a guest joins, the same HOST + GUEST split grid used by
+  // the viewer experience renders both participants with their real tracks —
+  // the host tile is the locally published feed, guest tiles are the remote
+  // camera/mic MediaStreams collected in `stageGuests`.
+  const hostStageTiles = useMemo(() => {
+    if (!isLiveRoom) return [] as StageParticipant[];
+    const hostTile: StageParticipant = {
+      id: user?.id || 'host',
+      username: displayName,
+      avatar,
+      verified: !!user?.verified,
+      isHost: true,
+      stream: roomVideo || cam.stream,
+      cameraOn: lk.isCameraOn,
+      micOn: lk.isMicrophoneOn,
+      // Self-monitor is intentionally muted so the host never hears their own
+      // microphone echo from the stage tile.
+      muted: true,
+    };
+    return [hostTile, ...stageGuests].slice(0, 5);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLiveRoom, user?.id, user?.verified, displayName, avatar, roomVideo, cam.stream, lk.isCameraOn, lk.isMicrophoneOn, stageGuests]);
+
   return (
     <main className="fixed inset-0 z-40 overflow-hidden bg-black text-white">
-      {/* The real device camera fills the entire screen under every control. */}
-      <CameraFeed stream={isLiveRoom ? roomVideo || cam.stream : cam.stream} mirror={feedMirror} filterCss={filterCss} ariaLabel={isLiveRoom ? 'Live broadcast' : 'Camera preview'} />
+      {/* The stage: a solo host keeps the full-bleed camera; with guests the
+          existing split grid shows HOST + GUEST with real media tracks. */}
+      {isLiveRoom && hostStageTiles.length >= 2 ? (
+        <LiveParticipantGrid participants={hostStageTiles} />
+      ) : (
+        <CameraFeed stream={isLiveRoom ? roomVideo || cam.stream : cam.stream} mirror={feedMirror} filterCss={filterCss} ariaLabel={isLiveRoom ? 'Live broadcast' : 'Camera preview'} />
+      )}
 
       {/* Screen-edge glow so overlay controls stay legible over bright video. */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/60" />
@@ -1232,32 +1287,6 @@ export default function GoLivePage() {
               </span>
             )}
           </div>
-
-          {/* Guest stage tiles — real LiveKit camera/mic video from approved guests */}
-          {stageGuests.length > 0 && (
-            <div className="absolute left-3 top-[calc(env(safe-area-inset-top)+70px)] z-10 flex flex-col gap-2">
-              {stageGuests.map((g) => (
-                <div key={g.id} className="w-32 overflow-hidden rounded-xl border border-white/15 bg-[#0D0D0F] shadow-xl backdrop-blur-sm">
-                  <div className="relative aspect-video w-full">
-                    {g.stream && g.cameraOn ? (
-                      <video ref={(el) => { if (el) { el.srcObject = g.stream; void el.play().catch(() => undefined); } }} playsInline autoPlay muted className="h-full w-full object-cover" aria-label={`${g.username} camera`} />
-                    ) : (
-                      <div className="absolute inset-0 grid place-items-center bg-[#0D0D0F]">
-                        <Avatar src={g.avatar} alt={g.username} size="sm" />
-                      </div>
-                    )}
-                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-1.5 pb-1 pt-4">
-                      <span className="flex items-center gap-1 text-[10px] font-semibold text-white">
-                        <span className="max-w-[64px] truncate">@{g.username}</span>
-                        {!g.cameraOn && <VideoOff size={9} className="text-rose-300" />}
-                        {!g.micOn && <MicOff size={9} className="text-white/60" />}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
 
           {/* Bottom-left: host chat layer (over the video) */}
           <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10">
