@@ -130,6 +130,79 @@
 .auth-page-register .auth-header { margin-top: 40px; margin-bottom: 28px; }
 .auth-page-register .auth-form { gap: 15px; }
 .auth-page-register .auth-switch { margin-top: 24px; padding-top: 20px; }
+.auth-providers {
+  display: grid;
+  width: 100%;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 22px;
+  border-top: 1px solid rgba(255,255,255,.07);
+}
+.auth-provider-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--auth-muted);
+  font-size: 9px;
+  font-weight: 560;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.auth-provider-divider::before,.auth-provider-divider::after {
+  content: "";
+  width: 100%;
+  flex: 1;
+  height: 1px;
+  background: rgba(255,255,255,.07);
+}
+.auth-provider-btn {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 50px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid rgba(255,255,255,.13);
+  border-radius: 12px;
+  color: var(--auth-white);
+  background: linear-gradient(180deg,rgba(24,24,27,.92),rgba(15,15,17,.92));
+  box-shadow: 0 10px 26px rgba(0,0,0,.14);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 640;
+  letter-spacing: .02em;
+  cursor: pointer;
+  transition: border-color .18s ease, transform .18s ease, filter .18s ease, opacity .18s ease;
+}
+.auth-provider-btn .auth-provider-icon { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; }
+.auth-provider-btn .auth-provider-label { display: inline-flex; flex: 0 1 auto; align-items: center; justify-content: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.auth-provider-btn:active:not(:disabled) { transform: scale(.992); }
+.auth-provider-btn:disabled { opacity: .5; cursor: not-allowed; }
+.auth-provider-btn--telegram:hover { border-color: rgba(41,168,234,.45); }
+.auth-oauth-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid rgba(199,164,71,.22);
+  border-radius: 9px;
+  color: #d8c590;
+  background: rgba(199,164,71,.06);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+.auth-oauth-note svg { flex: 0 0 auto; }
+.auth-oauth-email {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--auth-silver);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.auth-oauth-email svg { flex: 0 0 auto; }
 .spin { animation: auth-spin .75s linear infinite; }
 @keyframes auth-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes auth-spin { to { transform: rotate(360deg); } }

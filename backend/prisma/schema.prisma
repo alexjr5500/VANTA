@@ -44,6 +44,12 @@ model User {
   // Trusted devices
   trustedDevices TrustedDevice[]
 
+  // External authentication provider identities (Google, Telegram, ...).
+  // This is the canonical provider -> VANTA user relationship: a provider
+  // account may belong to exactly one VANTA user (enforced by the unique
+  // [provider, providerAccountId] constraint below).
+  providerAccounts ProviderAccount[]
+
   profile           Profile?
   photos            Photo[]
   notifications     Notification[]           @relation("UserNotifications")
@@ -1106,11 +1112,42 @@ model Session {
   lastActiveAt      DateTime?
   createdAt         DateTime  @default(now())
 
+  // One-time exchange credentials used to hand the token pair back to the
+  // frontend after an OAuth provider callback without ever placing tokens in
+  // a redirect URL. Redeeming the code marks it used (set to null) and it
+  // additionally cannot outlive oauthExchangeExpiresAt.
+  oauthExchangeCode     String?   @unique
+  oauthExchangeExpiresAt DateTime?
+
   @@index([userId])
   @@index([refreshToken])
   @@index([expiresAt])
   @@index([userId, expiresAt])
   @@index([lastActiveAt])
+}
+
+// Verified external authentication provider identity (Google, Telegram).
+// One VANTA user can have multiple provider identities, but each provider
+// account (`provider` + `providerAccountId`) may belong to exactly one VANTA
+// user. Only provider-assigned identifiers are stored; display names/emails
+// are metadata, never identity.
+model ProviderAccount {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          String // "google" | "telegram"
+  providerAccountId String
+  email             String?
+  displayName       String?
+  avatarUrl         String?
+  metadata          String? // JSON: provider-specific non-sensitive claims
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@index([provider, providerAccountId])
+  @@index([provider, email])
 }
 
 // Rate limiting storage

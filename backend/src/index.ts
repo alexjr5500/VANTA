@@ -20,6 +20,7 @@ import { sendError, AppError } from './utils/api-error';
 import { authenticateSocket, handleConnect, handleDisconnect } from './security';
 import { buildAllowedOrigins, isOriginAllowed } from './security/cors';
 import authRoutes from './routes/auth.routes';
+import oauthRoutes from './routes/oauth.routes';
 import profileRoutes from './routes/profile.routes';
 import settingsRoutes from './routes/settings.routes';
 import walletRoutes from './routes/wallet.routes';
@@ -414,6 +415,10 @@ app.get('/api/version', (req: Request, res: Response) => {
 
 // Mount routes with rate limiting
 app.use('/api/auth', authRoutes);
+// Google + Telegram OAuth / OIDC (Authorization Code flow, server-side).
+// Mounted separately from /api/auth routes so the browser-facing
+// authorize/callback redirect endpoints are not blocked by the login limiter.
+app.use('/api/auth/oauth', oauthRoutes);
 
 // Protected routes with rate limiting
 app.use('/api/profiles', profileRoutes);
