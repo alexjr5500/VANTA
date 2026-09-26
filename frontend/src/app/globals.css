@@ -1587,6 +1587,41 @@
   50% { transform: translate3d(3px, -2px, 0) rotate(1.5deg); }
 }
 .giftfx-sway { animation: giftfx-sway 2.6s ease-in-out infinite; }
+
+/* VANTA premium gift effects — ember rise, cinematic burst, halo sweeps,
+   soft sway and glow pulses. GPU-friendly (transform + opacity only). */
+@keyframes giftfx-ember {
+  0% { transform: translate3d(0, 0, 0); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translate3d(var(--ex, -6px), var(--ey, -46px), 0); opacity: 0; }
+}
+.giftfx-ember { animation: giftfx-ember var(--ed, 2.4s) ease-out var(--edl, 0s) infinite; }
+
+@keyframes giftfx-burst {
+  0% { transform: scale(0.25); opacity: 0; }
+  18% { opacity: 1; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+.giftfx-burst { transform-origin: center; animation: giftfx-burst var(--bd, 3.6s) ease-out var(--bdl, 0s) infinite; }
+
+@keyframes giftfx-halo {
+  0% { transform: rotate(0deg); opacity: 0.65; }
+  50% { transform: rotate(180deg); opacity: 1; }
+  100% { transform: rotate(360deg); opacity: 0.65; }
+}
+.giftfx-halo { transform-origin: center; animation: giftfx-halo var(--hd, 6s) ease-in-out infinite; }
+
+@keyframes giftfx-sway-soft {
+  0%, 100% { transform: translateX(-1.5px) rotate(-1deg); }
+  50% { transform: translateX(1.5px) rotate(1deg); }
+}
+.giftfx-sway-soft { animation: giftfx-sway-soft 3s ease-in-out infinite; }
+
+@keyframes giftfx-glow-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.95; }
+}
+.giftfx-glow-pulse { animation: giftfx-glow-pulse var(--pd, 2.8s) ease-in-out infinite; }
 @keyframes scaleIn {
   from { opacity: 0; transform: scale(0.95); }
   to { opacity: 1; transform: scale(1); }

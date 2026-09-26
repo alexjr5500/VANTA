@@ -58,3 +58,25 @@ export function filterGiftCatalog(gifts: GiftCatalogItem[], category: GiftCatego
   const needle = query.trim().toLowerCase();
   return gifts.filter(gift => giftMatchesCategory(gift, category) && (!needle || [gift.name, gift.slug, gift.description, gift.category].some(value => value?.toLowerCase().includes(needle)))).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 }
+/**
+ * Artistic intensity tier (0-5) derived from the EXISTING catalog values.
+ * Price and rarity stay separate signals — this only maps their combination
+ * onto the artwork's visual richness (glow, aura, particles, material). It
+ * never modifies any product data.
+ *   0-1  clean premium 3D (common / < 50 coins)
+ *   2    richer clean premium (50-200 coins)
+ *   3    richer materials + glow (rare / 250-750)
+ *   4    luxury cinema 3D (legendary/epic / 1000+)
+ *   5    spectacular signature VANTA treatment (mythic / 2500+)
+ */
+export function giftVisualQuality(gift?: { price?: number; rarity?: string; impactLevel?: number; isLegendary?: boolean } | null): number {
+  if (!gift) return 1;
+  const price = Number(gift.price ?? 0);
+  const rarity = (gift.rarity || '').toLowerCase();
+  const impact = Number(gift.impactLevel ?? 0);
+  if (gift.isLegendary || rarity === 'mythic' || impact >= 5 || price >= 2500) return 5;
+  if (rarity === 'epic' || rarity === 'legendary' || impact === 4 || price >= 1000) return 4;
+  if (rarity === 'rare' || impact === 3 || (price >= 250 && price < 1000)) return 3;
+  if (impact >= 2 || (price >= 50 && price < 250)) return 2;
+  return 1;
+}

@@ -12,7 +12,7 @@ import GiftPicker from '@/components/social/GiftPicker';
 import { useToast } from '@/components/ui/Toast';
 import GiftArtwork from '@/components/gifts/GiftArtwork';
 import BuyCoinsModal from '@/components/wallet/BuyCoinsModal';
-import { normalizeGiftCatalog, type GiftCatalogItem } from '@/lib/giftCatalog';
+import { normalizeGiftCatalog, giftVisualQuality, type GiftCatalogItem } from '@/lib/giftCatalog';
 
 // Types
 type GiftItem = GiftCatalogItem & { slug: string; category: string; description: string };
@@ -300,7 +300,7 @@ export default function GiftStorePage() {
                 >
                   <div className="relative flex aspect-square w-full items-center justify-center">
                     <div className="absolute inset-3 rounded-full opacity-25 blur-2xl transition-opacity group-active:opacity-40" style={{ backgroundColor: gift.glowColor || 'transparent' }} />
-                    <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={gift.thumbnailUrl || gift.image} size={62} animate={false} />
+                    <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={gift.thumbnailUrl || gift.image} size={62} animate={false} quality={giftVisualQuality(gift)} />
                     {(gift.isLegendary || gift.isLimited) && (
                       <span
                         title={gift.isLegendary ? 'Exclusive' : 'Limited'}

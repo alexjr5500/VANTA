@@ -15,6 +15,7 @@ import {
 import { cn } from '@/lib/utils';
 import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
 import GiftArtwork from '@/components/gifts/GiftArtwork';
+import { giftVisualQuality } from '@/lib/giftCatalog';
 import { formatCoinsCompact } from '@/lib/wallet';
 import BuyCoinsModal from '@/components/wallet/BuyCoinsModal';
 
@@ -554,7 +555,7 @@ export default function BalancePage() {
                   return (
                     <div key={gift.id} className="flex items-center gap-4 p-3 rounded-2xl hover:bg-white/[0.03] transition-all">
                       <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shrink-0">
-                        {gift.gift ? <GiftArtwork slug={gift.gift.slug} name={gift.gift.name} size={38} /> : <Gift size={16} className="text-[#8A8A8A]" />}
+                        {gift.gift ? <GiftArtwork slug={gift.gift.slug} name={gift.gift.name} size={38} quality={giftVisualQuality(gift.gift)} /> : <Gift size={16} className="text-[#8A8A8A]" />}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-[#F5F5F5] truncate">
@@ -773,7 +774,7 @@ export default function BalancePage() {
                     className="flex items-center gap-4 p-4 rounded-2xl hover:bg-white/[0.03] transition-all"
                   >
                     <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shrink-0">
-                      {gift.gift ? <GiftArtwork slug={gift.gift.slug} name={gift.gift.name} size={38} /> : <Gift size={16} className="text-[#8A8A8A]" />}
+                      {gift.gift ? <GiftArtwork slug={gift.gift.slug} name={gift.gift.name} size={38} quality={giftVisualQuality(gift.gift)} /> : <Gift size={16} className="text-[#8A8A8A]" />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-[#F5F5F5] truncate">

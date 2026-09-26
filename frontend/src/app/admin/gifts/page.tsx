@@ -14,6 +14,7 @@ import type { GiftDefinition } from '@/types/admin';
 import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
 import { useToast } from '@/components/ui/Toast';
 import GiftArtwork from '@/components/gifts/GiftArtwork';
+import { giftVisualQuality } from '@/lib/giftCatalog';
 
 
 const categoryColors: Record<string, string> = {
@@ -133,7 +134,7 @@ export default function GiftsPage() {
           {filtered.map((gift, i) => (
             <motion.div key={gift.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
               className="glass rounded-[20px] p-4 border border-white/[0.06] hover:border-white/[0.12] transition-all text-center group">
-              <GiftArtwork slug={gift.slug} name={gift.name} size={76} className="mx-auto mb-2" />
+              <GiftArtwork slug={gift.slug} name={gift.name} size={76} className="mx-auto mb-2" quality={giftVisualQuality(gift)} />
               <p className="text-sm font-bold text-white">{gift.name}</p>
               <span className={`text-[10px] px-2 py-0.5 rounded-full mt-1 inline-block ${categoryColors[gift.category] || ''}`}>
                 {gift.category}
@@ -187,7 +188,7 @@ export default function GiftsPage() {
                   <tr key={gift.id} className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors">
                     <td className="py-3 px-2">
                       <div className="flex items-center gap-3">
-                        <GiftArtwork slug={gift.slug} name={gift.name} size={42} />
+                        <GiftArtwork slug={gift.slug} name={gift.name} size={42} quality={giftVisualQuality(gift)} />
                         <div>
                           <p className="text-white font-medium">{gift.name}</p>
                           <p className="text-gray-500 text-[10px] max-w-[150px] truncate">{gift.description}</p>

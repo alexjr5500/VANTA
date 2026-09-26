@@ -10,7 +10,7 @@ import { apiPost } from '@/lib/apiClient';
 import { giftRecipientCoins } from '@/lib/wallet';
 
 import { useToast } from '@/components/ui/Toast';
-import { filterGiftCatalog, visibleGiftCategories, giftCategoryCount, type GiftCatalogItem, type GiftCategoryId } from '@/lib/giftCatalog';
+import { filterGiftCatalog, visibleGiftCategories, giftCategoryCount, giftVisualQuality, type GiftCatalogItem, type GiftCategoryId } from '@/lib/giftCatalog';
 export type { GiftCatalogItem } from '@/lib/giftCatalog';
 
 interface Recipient { id: string; username: string; fullName?: string; avatar?: string }
@@ -22,7 +22,7 @@ function Visual({ gift, preview = false, size = 68 }: { gift: GiftCatalogItem; p
   if (asset && !failed) return /\.(mp4|webm)(\?|$)/i.test(asset)
     ? <video src={asset} autoPlay={preview} loop muted playsInline preload={preview ? 'metadata' : 'none'} onError={() => setFailed(true)} className="h-full w-full object-contain" />
     : <img src={asset} alt="" loading={preview ? 'eager' : 'lazy'} onError={() => setFailed(true)} className="h-full w-full object-contain" />;
-  return <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={asset} size={preview ? 168 : size} animate={preview} />;
+  return <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={asset} size={preview ? 168 : size} animate={preview} quality={giftVisualQuality(gift)} />;
 }
 
 export default function GiftPicker({ gifts, balance, recipient, token, streamId, initialGift, loading = false, loadError, onRetry, onClose, onSent }: { gifts: GiftCatalogItem[]; balance: number; recipient: Recipient; token: string; streamId?: string; initialGift?: GiftCatalogItem | null; loading?: boolean; loadError?: string; onRetry?: () => void; onClose: () => void; onSent: (_balance: number, _amount: number, _gift: GiftCatalogItem) => void }) {

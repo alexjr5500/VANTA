@@ -1,5 +1,6 @@
 'use client';
 import { AnimatePresence, motion } from 'framer-motion';
+import { giftVisualQuality } from '@/lib/giftCatalog';
 import GiftArtwork from './GiftArtwork';
 
 export type GiftEvent = { id?: string; giftId?: string; giftName?: string; giftSlug?: string; streamId?: string; artworkType?: string; amount?: number; quantity?: number; comboCount?: number; animationDuration?: number; animationType?: string; effectProfile?: string; impactLevel?: number; tier?: string; rarity?: string; glowColor?: string; particleColor?: string; animationUrl?: string; thumbnailUrl?: string; senderId?: string; senderName?: string; receiverId?: string; isAnon?: boolean; isSuper?: boolean; isLegendary?: boolean; createdAt?: string; receivedAt?: number };
@@ -62,7 +63,7 @@ export default function GiftAnimationOverlay({ events }: { events: GiftEvent[] }
       <div className="relative">
         <div className="absolute inset-0 scale-150 rounded-full blur-3xl" style={{ background: glow, opacity: cfg.glow }} />
         {Array.from({ length: cfg.particles }, (_, n) => <i key={n} className="absolute left-1/2 top-1/2 h-1.5 w-1.5 rounded-full" style={{ background: particle, opacity: tier === 'normal' ? 0.75 : 0.9, transform: `rotate(${n * (360 / cfg.particles)}deg) translateY(-${cfg.ring + (n % 3) * 18}px)` }} />)}
-        <GiftArtwork slug={event.giftSlug} name={event.giftName} artworkType={event.artworkType} assetUrl={asset} size={cfg.size} />
+        <GiftArtwork slug={event.giftSlug} name={event.giftName} artworkType={event.artworkType} assetUrl={asset} size={cfg.size} quality={giftVisualQuality({ price: event.amount, rarity: event.rarity, impactLevel: event.impactLevel, isLegendary: event.isLegendary })} />
       </div>
       <div className="mt-3 max-w-[calc(100vw-24px)] rounded-full border border-white/12 bg-black/55 px-3.5 py-1.5 text-center shadow-xl backdrop-blur-md">
         <b className={`block truncate font-semibold text-white ${cfg.label}`}>
