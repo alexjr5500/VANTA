@@ -136,6 +136,9 @@ export default function ReelsPage() {
   const loadingMoreRef = useRef(false);
   const loadRequest = useRef(0);
   const reelsViewport = useRef<HTMLElement | null>(null);
+  // Derived feed-mount signal used by the swipe effect below: the touch
+  // listeners must attach only once the scroll viewport actually exists.
+  const hasReels = reels.length > 0;
 
   const load = useCallback(async (start = 0, append = false) => {
     const requestId = ++loadRequest.current;
@@ -293,6 +296,13 @@ export default function ReelsPage() {
   // clearly dominates the vertical one — every other gesture (vertical swipes,
   // taps, diagonal undershoots) is left completely to native behavior and this
   // handler never preventDefaults it.
+  //
+  // NOTE: the listeners must be (re)attached whenever the scroll viewport
+  // element exists. On a fresh page load the feed is in a loading/empty state
+  // first, so `reelsViewport.current` is null when the effect first runs and a
+  // dependency that only tracks `feed` (applyFeedSwipe) is not enough to re-run
+  // it once reels actually mount. Depending on `loading`/`loadError`/hasReels
+  // guarantees the handlers are attached in production after the feed renders.
   useEffect(() => {
     const root = reelsViewport.current;
     if (!root) return;
@@ -335,7 +345,7 @@ export default function ReelsPage() {
       root.removeEventListener('touchend', onEnd);
       root.removeEventListener('touchcancel', onCancel);
     };
-  }, [applyFeedSwipe]);
+  }, [applyFeedSwipe, loading, loadError, hasReels]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -541,7 +551,7 @@ export default function ReelsPage() {
         <span className="absolute right-4 hidden text-[10px] uppercase text-white/35 ">{active + 1} / {reels.length}</span>
       </header>
 
-      <main ref={reelsViewport} className="h-full snap-y snap-mandatory overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="VANTA Reels feed">
+      <main ref={reelsViewport} className="h-full snap-y snap-mandatory overflow-y-auto overscroll-contain touch-pan-y [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="VANTA Reels feed">
         {reels.map((reel, index) => (
           <ReelCard
             key={reel.id}

@@ -86,7 +86,7 @@ export default function LivePage() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="mx-auto min-w-0 w-full space-y-6 overflow-x-hidden pb-24"
+      className="mx-auto min-w-0 w-full space-y-6 pb-24"
     >
       {/* Header — Balance-style full-bleed sticky bar that stays fixed while
           the stream grid scrolls beneath it. Live is a primary nav destination,
