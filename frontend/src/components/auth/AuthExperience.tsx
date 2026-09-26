@@ -84,9 +84,15 @@ export default function AuthExperience({ mode }: Props) {
   const destination = safeDestination(params.get('redirect') || params.get('next'));
 
   // Provider callback parameters appended by the backend (e.g. ?oauth=google&code=…).
-  const oauth = parseOAuthCallbackParams(window.location.search);
-  const oauthSignup = register && oauth.provider && Boolean(oauth.ticket);
-  const oauthSignin = !register && oauth.provider && Boolean(oauth.code);
+  // `window` does not exist during SSR/static generation. Reading it during the
+  // render used to throw `ReferenceError: window is not defined`, which made the
+  // production /login and /register pages return HTTP 500 for every visitor.
+  // Parse the query string only after hydration on the client.
+  const [oauthSearch, setOauthSearch] = useState('');
+  useEffect(() => { setOauthSearch(window.location.search); }, []);
+  const oauth = parseOAuthCallbackParams(oauthSearch);
+  const oauthSignup = register && Boolean(oauth.provider && oauth.ticket);
+  const oauthSignin = !register && Boolean(oauth.provider && oauth.code);
   const oauthError = !register && oauth.provider && oauth.status === 'error' ? oauthReasonMessage(oauth.reason) : '';
 useEffect(() => { if (!isLoading && token) router.replace(destination); }, [isLoading, token, router, destination]);
   useEffect(() => {

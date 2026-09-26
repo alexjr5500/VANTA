@@ -39,7 +39,7 @@ Storage choice (pick ONE):
 | `JWT_SECRET` | generated 32+ hex (`deploy/.env.production`) |
 | `JWT_REFRESH_SECRET` | generated 32+ hex |
 | `ENCRYPTION_KEY` | generated 32+ hex |
-| `FRONTEND_URL` | `https://<your-frontend>.vercel.app` |
+| `FRONTEND_URL` | `https://<your-frontend>.vercel.app` — **must be the exact, correctly-spelled frontend origin** (a typo here breaks every OAuth redirect back to the app: the backend issues `Location: <FRONTEND_URL>/login?oauth=…` for both success and error callbacks) |
 | `CORS_ALLOWED_ORIGINS` | `https://<your-frontend>.vercel.app` |
 | `UPLOAD_STORAGE_DIR` | `/data/uploads` (only with Railway volume) |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | only if Cloudinary |
@@ -48,6 +48,20 @@ Storage choice (pick ONE):
 | `LIVEKIT_API_SECRET` | LiveKit Cloud dashboard |
 | `REQUIRE_EMAIL_VERIFICATION` | `false` (MVP) |
 | `RATE_LIMIT_ENABLED` | unset (prod default on) |
+| `GOOGLE_CLIENT_ID` | Google Cloud OAuth **Web** application client ID (server-side secret; never exposed to the browser) |
+| `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth Web application client secret (server-side) |
+| `GOOGLE_OAUTH_REDIRECT_URI` | `https://<your-backend>.up.railway.app/api/auth/oauth/callback/google` — **must be registered as an Authorized redirect URI in Google Cloud Console (exact match)** |
+| `TELEGRAM_BOT_ID` | Client ID shown by @BotFather for the VANTA bot (server-side) |
+| `TELEGRAM_BOT_SECRET` | Client Secret shown by @BotFather (server-side) |
+| `TELEGRAM_OAUTH_REDIRECT_URI` | `https://<your-backend>.up.railway.app/api/auth/oauth/callback/telegram` — **must be registered with @BotFather (exact match)** |
+| `BACKEND_PUBLIC_URL` | `https://<your-backend>.up.railway.app` (base used to build provider callback URLs when the per-provider redirect-URI vars above are unset) |
+
+> **OAuth callbacks (authorization-code flow, both providers):**
+> - Start: `GET /api/auth/oauth/authorize/:provider?redirect=/reels` (302 to the provider)
+> - Callback: `GET /api/auth/oauth/callback/:provider` (provider redirect target; the `/:provider` value is `google` or `telegram`)
+> - Session hand-off: `POST /api/auth/oauth/exchange` (single-use code exchanged for the VANTA token pair)
+> - `GET /api/auth/oauth/status/:provider` reports `{ configured: true|false }`; the login UI hides a provider button while the backend reports `configured: false`, and the authorize endpoint redirects to `/login?…&reason=not-configured`.
+>
 
 **Do NOT set** `HTTPS_DEV_CERT` / `HTTPS_DEV_KEY` — dev-only absolute paths that would crash prod.
 
