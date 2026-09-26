@@ -5,15 +5,20 @@ import path from 'path';
  * Provision the PostgreSQL schema before the API starts listening.
  *
  * This is the application-level safety net for Railway: `backend/railway.json`
- * already runs `npx prisma db push` in its start command, but provisioning from
- * inside the app guarantees the schema is created even if a deployment platform
- * setting ever overrides that start command. It only runs when:
+ * already runs `npx prisma db execute` (additive sync) + `npx prisma db push`
+ * in its start command, but provisioning from inside the app guarantees the
+ * schema is created even if a deployment platform setting ever overrides that
+ * start command. It only runs when:
  *
  *   - NODE_ENV === "production" (never in local dev/tests), and
  *   - DATABASE_URL is a PostgreSQL URL (never SQLite).
  *
- * It never passes `--accept-data-loss`: if the schema diff would be destructive
- * the command fails loudly (after retries) instead of dropping data.
+ * It never passes `--accept-data-loss`: instead, an idempotent, ADDITIVE-ONLY
+ * SQL script (prisma/startup-sync.sql, checked in next to the schema) is
+ * applied first, so the reviewed additive provider-accounts/OAuth migration is
+ * never blocked by `prisma db push`'s data-loss guard. `prisma db push` still
+ * runs WITHOUT --accept-data-loss afterwards, so any genuinely destructive
+ * schema drift fails loudly (after retries) instead of dropping data.
  */
 export function provisionDatabaseSchema(options: { retries?: number; retryDelayMs?: number } = {}): void {
   const { retries = 10, retryDelayMs = 5000 } = options;
@@ -35,34 +40,49 @@ export function provisionDatabaseSchema(options: { retries?: number; retryDelayM
 
   const backendDir = path.join(__dirname, '..'); // dist/ -> backend/
   const schemaPath = path.join(backendDir, 'prisma', 'schema.prisma');
+  const syncSqlPath = path.join(backendDir, 'prisma', 'startup-sync.sql');
   const prismaCli = require.resolve('prisma/build/index.js', { paths: [backendDir] });
   const nodeBin = process.execPath || process.argv[0];
 
-  const runPush = (): void => {
+  const runSync = (): void => {
+    // 1. Idempotent, additive-only replay of the reviewed migrations so the
+    //    subsequent `prisma db push` is never blocked by (and never needs
+    //    --accept-data-loss for) pending additive changes.
+    execFileSync(
+      nodeBin,
+      [prismaCli, 'db', 'execute', '--schema', schemaPath, '--file', syncSqlPath],
+      {
+        cwd: backendDir,
+        stdio: 'inherit',
+        env: { ...process.env, PRISMA_HIDE_UPDATE_MESSAGE: '1', CHECKPOINT_DISABLE: '1' },
+      }
+    );
+    // 2. Sync any remaining (new-object) changes and FAIL LOUDLY on any
+    //    destructive drift (no --accept-data-loss, ever).
     execFileSync(
       nodeBin,
       [prismaCli, 'db', 'push', '--skip-generate', '--schema', schemaPath],
       {
         cwd: backendDir,
         stdio: 'inherit',
-        env: { ...process.env, PRISMA_HIDE_UPDATE_MESSAGE: '1' },
+        env: { ...process.env, PRISMA_HIDE_UPDATE_MESSAGE: '1', CHECKPOINT_DISABLE: '1' },
       }
     );
   };
 
   for (let attempt = 1; attempt <= retries; attempt += 1) {
     try {
-      runPush();
+      runSync();
       return;
     } catch (err) {
       if (attempt >= retries) {
         const detail = err instanceof Error ? err.message : String(err);
         throw new Error(
-          `prisma db push failed after ${retries} attempts while provisioning the PostgreSQL schema: ${detail}`
+          `prisma schema sync failed after ${retries} attempts while provisioning the PostgreSQL schema: ${detail}`
         );
       }
       console.error(
-        `[SCHEMA] prisma db push attempt ${attempt}/${retries} failed; retrying in ${retryDelayMs}ms`
+        `[SCHEMA] prisma schema sync attempt ${attempt}/${retries} failed; retrying in ${retryDelayMs}ms`
       );
       sleepSync(retryDelayMs);
     }

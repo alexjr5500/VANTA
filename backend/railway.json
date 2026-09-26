@@ -4,7 +4,7 @@
     "buildCommand": "npm install && npx prisma generate && npm run build"
   },
   "deploy": {
-    "startCommand": "(i=1; until npx prisma db push; do i=$((i+1)); if [ $i -gt 10 ]; then echo 'prisma db push failed after retries - aborting start'; exit 1; fi; echo \"Database not ready, retrying prisma db push ($i/10)\"; sleep 5; done) && node dist/index.js",
+    "startCommand": "(i=1; until npx prisma db execute --schema prisma/schema.prisma --file prisma/startup-sync.sql && npx prisma db push; do i=$((i+1)); if [ $i -gt 10 ]; then echo 'prisma schema sync failed after retries - aborting start'; exit 1; fi; echo \"Database not ready, retrying prisma schema sync ($i/10)\"; sleep 5; done) && node dist/index.js",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
