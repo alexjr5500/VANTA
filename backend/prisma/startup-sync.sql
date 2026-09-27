@@ -102,3 +102,28 @@ BEGIN
         END IF;
     END IF;
 END $$;
+
+-- ----------------------------------------------------------------------------
+-- OAuthState - short server-side OAuth `state` records (Telegram/Google).
+--
+-- The provider authorization URL carries only a short opaque state id; the
+-- full nonce/PKCE/redirect payload is stored here and consumed exactly once on
+-- the callback. Additive-only: brand-new table, no existing data is touched.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS "OAuthState" (
+    "id" TEXT NOT NULL,
+    "provider" TEXT NOT NULL,
+    "nonce" TEXT NOT NULL,
+    "redirect" TEXT NOT NULL,
+    "codeVerifier" TEXT,
+    "linkingUserId" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "consumedAt" TIMESTAMP(3),
+
+    CONSTRAINT "OAuthState_pkey" PRIMARY KEY ("id")
+);
+
+CREATE INDEX IF NOT EXISTS "OAuthState_expiresAt_idx" ON "OAuthState"("expiresAt");
+CREATE INDEX IF NOT EXISTS "OAuthState_provider_idx" ON "OAuthState"("provider");
+CREATE INDEX IF NOT EXISTS "OAuthState_consumedAt_idx" ON "OAuthState"("consumedAt");

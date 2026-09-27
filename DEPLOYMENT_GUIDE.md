@@ -158,10 +158,10 @@ Vercel will automatically deploy when you push to main branch.
 5. Choose "Web application"
 6. Add Authorized Redirect URIs (the backend callback path is `https://<backend>/api/auth/oauth/callback/google` — MISMATCH here is the #1 cause of Google login failing in production):
    - Local: `http://localhost:5000/api/auth/oauth/callback/google`
-   - Production: `https://your-railway-domain/api/auth/oauth/callback/google`
+   - Production (this deployment): `https://carefree-luck-production-8298.up.railway.app/api/auth/oauth/callback/google`
 7. Add Authorized JavaScript Origins:
    - Local: `http://localhost:3000`
-   - Production: `https://your-vercel-domain.vercel.app`
+   - Production: `https://vanta-nu.vercel.app`
 8. Copy Client ID and Client Secret
 
 ### Update Environment Variables
@@ -170,9 +170,18 @@ Set on the backend (Railway) — do **not** set OAuth secrets in frontend (Verce
 ```
 GOOGLE_CLIENT_ID=[from Google Console]
 GOOGLE_CLIENT_SECRET=[from Google Console]
-GOOGLE_OAUTH_REDIRECT_URI=https://your-railway-domain/api/auth/oauth/callback/google
+GOOGLE_OAUTH_REDIRECT_URI=https://carefree-luck-production-8298.up.railway.app/api/auth/oauth/callback/google
 ```
 `GOOGLE_OAUTH_REDIRECT_URI` registered in Google Cloud Console and the value on Railway must be byte-for-byte identical (scheme, host, path — no trailing slash, no query).
+
+> **Production safety:** the backend derives provider callback URLs from
+> `BACKEND_PUBLIC_URL` / `BACKEND_URL` (or `RAILWAY_STATIC_URL` /
+> `RAILWAY_PUBLIC_DOMAIN` when those are unset) and in production **never**
+> falls back to `localhost`. If you intentionally omit `GOOGLE_OAUTH_REDIRECT_URI`,
+> the deployment resolves to
+> `https://carefree-luck-production-8298.up.railway.app/api/auth/oauth/callback/google`
+> automatically. Leaving the variable UNSET (or removing a stale loopback value)
+> is safe; a stray `http://localhost:5000/...` value is ignored in production.
 
 ## Part 3b: Telegram OAuth Setup (OIDC authorization-code flow)
 
@@ -181,14 +190,19 @@ VANTA signs users in through Telegram's OIDC flow (not the legacy widget popup).
 1. The VANTA bot is registered with @BotFather (`@Vantalive_bot` — do NOT create a new bot).
 2. In the bot's @BotFather settings → **Login Widget / OIDC**, register the exact Allowed URL / redirect URI for the backend:
    - Local: `http://localhost:5000/api/auth/oauth/callback/telegram`
-   - Production: `https://your-railway-domain/api/auth/oauth/callback/telegram`
+   - Production (this deployment): `https://carefree-luck-production-8298.up.railway.app/api/auth/oauth/callback/telegram`
 3. @BotFather displays the **Client ID** and **Client Secret** — copy them into the backend environment:
 ```
 TELEGRAM_BOT_ID=[Client ID from @BotFather]
 TELEGRAM_BOT_SECRET=[Client Secret from @BotFather]
-TELEGRAM_OAUTH_REDIRECT_URI=https://your-railway-domain/api/auth/oauth/callback/telegram
+TELEGRAM_OAUTH_REDIRECT_URI=https://carefree-luck-production-8298.up.railway.app/api/auth/oauth/callback/telegram
 ```
 The `TELEGRAM_BOT_ID` is the OIDC client id (not the `@` username); the client secret is server-side only. The registered URL must match `TELEGRAM_OAUTH_REDIRECT_URI` exactly.
+
+> **Short OAuth state:** the Telegram authorization URL now carries only a short
+> opaque `state` id (16 random bytes → 22 base64url chars, stored server-side
+> in the `OAuthState` table), so Telegram's `state too long` rejection can no
+> longer occur while CSRF/state validation stays fully enforced.
 
 ## Part 4: Apple Sign In Setup
 

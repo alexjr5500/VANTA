@@ -658,6 +658,19 @@ async function startServer() {
       console.warn('[LiveSweep] Startup sweep skipped:', sweepError);
     }
 
+    // Remove OAuth state records whose short TTL has elapsed (expired states
+    // are already rejected by verifyOAuthState; this just keeps the table
+    // bounded across redeploys).
+    try {
+      const { sweepExpiredOAuthStates } = await import('./services/oauth.service');
+      const removed = await sweepExpiredOAuthStates();
+      if (removed > 0) {
+        console.log(`[OAuthState] Startup sweep removed ${removed} expired OAuth state record(s).`);
+      }
+    } catch (sweepError) {
+      console.warn('[OAuthState] Startup sweep skipped:', sweepError);
+    }
+
     // CEO/Admin initial allocation: grants the canonical CEO account exactly
     // 1,000,000 VANTA Coins ONCE through the real wallet/ledger system. The
     // service is idempotent and database-gated — safe to run on every startup

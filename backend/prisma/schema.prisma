@@ -1150,6 +1150,31 @@ model ProviderAccount {
   @@index([provider, email])
 }
 
+/// OAuth authorization `state` records (server-side).
+///
+/// The provider authorization URL only ever carries a SHORT opaque state id
+/// (16 random bytes -> ~22 base64url chars). The full OAuth payload — CSRF
+/// nonce, PKCE code_verifier (Telegram), post-login redirect path and optional
+/// linking user — lives here server-side, so Telegram's authorization request
+/// never exceeds its `state` length limit while CSRF/replay protection stays
+/// intact. Records are short-lived and single-use: `consumedAt` is set exactly
+/// once by the callback, and any replay / expired / unknown state is rejected.
+model OAuthState {
+  id            String    @id
+  provider      String // "google" | "telegram"
+  nonce         String
+  redirect      String
+  codeVerifier  String?
+  linkingUserId String?
+  createdAt     DateTime  @default(now())
+  expiresAt     DateTime
+  consumedAt    DateTime?
+
+  @@index([expiresAt])
+  @@index([provider])
+  @@index([consumedAt])
+}
+
 // Rate limiting storage
 model RateLimit {
   id        String   @id @default(cuid())

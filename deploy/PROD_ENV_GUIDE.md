@@ -50,11 +50,12 @@ Storage choice (pick ONE):
 | `RATE_LIMIT_ENABLED` | unset (prod default on) |
 | `GOOGLE_CLIENT_ID` | Google Cloud OAuth **Web** application client ID (server-side secret; never exposed to the browser) |
 | `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth Web application client secret (server-side) |
-| `GOOGLE_OAUTH_REDIRECT_URI` | `https://<your-backend>.up.railway.app/api/auth/oauth/callback/google` — **must be registered as an Authorized redirect URI in Google Cloud Console (exact match)** |
+| `GOOGLE_OAUTH_REDIRECT_URI` | `https://<your-backend>.up.railway.app/api/auth/oauth/callback/google` — **must be registered as an Authorized redirect URI in Google Cloud Console (exact match)**. VANTA production: `https://carefree-luck-production-8298.up.railway.app/api/auth/oauth/callback/google` (already registered) |
 | `TELEGRAM_BOT_ID` | Client ID shown by @BotFather for the VANTA bot (server-side) |
 | `TELEGRAM_BOT_SECRET` | Client Secret shown by @BotFather (server-side) |
-| `TELEGRAM_OAUTH_REDIRECT_URI` | `https://<your-backend>.up.railway.app/api/auth/oauth/callback/telegram` — **must be registered with @BotFather (exact match)** |
-| `BACKEND_PUBLIC_URL` | `https://<your-backend>.up.railway.app` (base used to build provider callback URLs when the per-provider redirect-URI vars above are unset) |
+| `TELEGRAM_OAUTH_REDIRECT_URI` | `https://<your-backend>.up.railway.app/api/auth/oauth/callback/telegram` — **must be registered with @BotFather (exact match)**. VANTA production: `https://carefree-luck-production-8298.up.railway.app/api/auth/oauth/callback/telegram` |
+| `BACKEND_PUBLIC_URL` | `https://<your-backend>.up.railway.app` (base used to build provider callback URLs when the per-provider redirect-URI vars above are unset). VANTA production: `https://carefree-luck-production-8298.up.railway.app` |
+| `OAUTH_STATE_TTL_SECONDS` | optional; seconds a server-side OAuth `state` stays valid (default `600`, max `1800`) |
 
 > **OAuth callbacks (authorization-code flow, both providers):**
 > - Start: `GET /api/auth/oauth/authorize/:provider?redirect=/reels` (302 to the provider)
@@ -62,6 +63,13 @@ Storage choice (pick ONE):
 > - Session hand-off: `POST /api/auth/oauth/exchange` (single-use code exchanged for the VANTA token pair)
 > - `GET /api/auth/oauth/status/:provider` reports `{ configured: true|false }`; the login UI hides a provider button while the backend reports `configured: false`, and the authorize endpoint redirects to `/login?…&reason=not-configured`.
 >
+> **OAuth `state`:** the provider URL carries only a short (~22-char) random
+> opaque `state` id. The full CSRF nonce / PKCE verifier / redirect payload is
+> stored server-side in the `OAuthState` table (PostgreSQL), is single-use
+> (`consumedAt`), expires after `OAUTH_STATE_TTL_SECONDS` (default 600s), and
+> every callback re-validates existence → provider → expiry → replay. This keeps
+> Telegram's authorization URL under its `state` length limit without weakening
+> CSRF protection.
 
 **Do NOT set** `HTTPS_DEV_CERT` / `HTTPS_DEV_KEY` — dev-only absolute paths that would crash prod.
 

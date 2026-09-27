@@ -51,7 +51,7 @@ export const authorize = async (req: Request, res: Response): Promise<void> => {
   }
   const redirect = safeFrontendPath(typeof req.query.redirect === 'string' ? req.query.redirect : '');
   try {
-    const { authorizeUrl } = buildAuthorizeRequest(provider, redirect);
+    const { authorizeUrl } = await buildAuthorizeRequest(provider, redirect);
     res.redirect(authorizeUrl);
   } catch (error) {
     console.error(`[OAuth] authorize(${provider}) failed:`, error instanceof Error ? error.message : error);

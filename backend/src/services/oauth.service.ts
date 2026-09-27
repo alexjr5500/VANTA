@@ -13,8 +13,12 @@ import { Request } from 'express';
 //
 //   1. GET /api/auth/oauth/authorize/:provider  -> 302 to the provider.
 //   2. Provider redirects back to /api/auth/oauth/callback/:provider with a
-//      code (+ state). The state JWT (signed, short-lived) binds the session
-//      to the CSRF nonce, PKCE verifier (Telegram) and the post-login path.
+//      code + a SHORT opaque `state` identifier. The full OAuth payload (CSRF
+//      nonce, PKCE code_verifier for Telegram, post-login path, linking user)
+//      is kept SERVER-SIDE in the OAuthState table, so the provider URL only
+//      ever carries a ~22-character random ticket. Telegram rejects `state`
+//      values that are too long; the record is additionally single-use and
+//      expires after a short TTL (see OAUTH_STATE_TTL_SECONDS).
 //   3. The backend exchanges the code (client secret stays server-side) and
 //      cryptographically verifies the ID token (iss/aud/exp + signature via
 //      the provider JWKS). The verified `sub` claim is the only identity key.
@@ -94,14 +98,93 @@ const envSeconds = (key: string, fallback: number, max: number): number => {
   const value = Number.isFinite(raw) && raw > 0 ? raw : fallback;
   return Math.min(value, max);
 };
-export const frontendBaseUrl = (): string => {
-  const configured = envStr('FRONTEND_URL');
-  return configured && !configured.startsWith('//') ? configured.replace(/\/+$/, '') : 'http://localhost:3000';
+/**
+ * Known production deployment URLs (KEEP IN SYNC with deploy/PROD_ENV_GUIDE.md
+ * and backend/src/security/cors.ts PRODUCTION_FRONTEND_ORIGIN).
+ *
+ * These are the LAST-RESORT defaults only. Railway injects its own public
+ * domain (RAILWAY_STATIC_URL / RAILWAY_PUBLIC_DOMAIN) and either can be
+ * overridden explicitly via BACKEND_PUBLIC_URL / FRONTEND_URL, but a production
+ * OAuth request must NEVER fall back to `localhost`.
+ */
+export const PRODUCTION_BACKEND_URL = 'https://carefree-luck-production-8298.up.railway.app';
+export const PRODUCTION_FRONTEND_URL = 'https://vanta-nu.vercel.app';
+
+export const isProductionEnvironment = (): boolean => process.env.NODE_ENV === 'production';
+
+/** Loopback hosts make Google return `redirect_uri_mismatch` in production. */
+const isLoopbackUrl = (value: string): boolean => {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0';
+  } catch {
+    // Malformed URLs are never valid production redirect URIs.
+    return true;
+  }
 };
 
+export const frontendBaseUrl = (): string => {
+  const configured = envStr('FRONTEND_URL');
+  if (configured && !configured.startsWith('//')) {
+    if (!isProductionEnvironment() || !isLoopbackUrl(configured)) {
+      return configured.replace(/\/+$/, '');
+    }
+    console.warn('[OAuth] Ignoring loopback FRONTEND_URL in production; using the production Vercel frontend URL.');
+  }
+  if (isProductionEnvironment()) {
+    return PRODUCTION_FRONTEND_URL;
+  }
+  return 'http://localhost:3000';
+};
+
+/**
+ * The public URL of this backend instance. Resolution order:
+ *
+ *   1. BACKEND_PUBLIC_URL / BACKEND_URL  (explicitly configured; loopback
+ *      values are IGNORED in production so an old local-dev leftover can never
+ *      produce the `redirect_uri_mismatch` failure),
+ *   2. Railway-injected RAILWAY_STATIC_URL / RAILWAY_PUBLIC_DOMAIN,
+ *   3. the known production Railway deployment URL (production only),
+ *   4. `http://localhost:5000` — LOCAL DEVELOPMENT ONLY, never in production.
+ */
 export const backendPublicBaseUrl = (): string => {
-  const configured = envStr('BACKEND_PUBLIC_URL') || envStr('BACKEND_URL');
-  return (configured || 'http://localhost:5000').replace(/\/+$/, '');
+  const configured = [envStr('BACKEND_PUBLIC_URL'), envStr('BACKEND_URL')].find(
+    (value) => value && (isProductionEnvironment() ? !isLoopbackUrl(value) : true)
+  );
+  if (configured) return configured.replace(/\/+$/, '');
+
+  const railwayStatic = envStr('RAILWAY_STATIC_URL');
+  if (railwayStatic) return railwayStatic.replace(/\/+$/, '');
+
+  const railwayDomain = envStr('RAILWAY_PUBLIC_DOMAIN');
+  if (railwayDomain) return `https://${railwayDomain.replace(/^https?:\/\//, '')}`.replace(/\/+$/, '');
+
+  if (isProductionEnvironment()) {
+    console.warn(
+      '[OAuth] BACKEND_PUBLIC_URL/BACKEND_URL unset; using the known production Railway deployment URL ' +
+        `(${PRODUCTION_BACKEND_URL}).`
+    );
+    return PRODUCTION_BACKEND_URL;
+  }
+  return 'http://localhost:5000';
+};
+
+/**
+ * Read a per-provider `*_OAUTH_REDIRECT_URI` env var. In production, loopback
+ * values are discarded (a local-dev leftover would make Google return
+ * `redirect_uri_mismatch` because Google Cloud is registered for the real
+ * backend deployment). The genuine callback is then derived from
+ * `backendPublicBaseUrl()` instead.
+ */
+const providerConfiguredRedirectUri = (envKey: string): string | undefined => {
+  const raw = envStr(envKey);
+  if (!raw) return undefined;
+  const normalized = raw.replace(/\/+$/, '');
+  if (isProductionEnvironment() && isLoopbackUrl(normalized)) {
+    console.warn(`[OAuth] Ignoring loopback ${envKey} in production; deriving the redirect URI from the Railway deployment URL.`);
+    return undefined;
+  }
+  return normalized;
 };
 
 export const providerClientConfig = (provider: OAuthProvider): { clientId: string; clientSecret: string; redirectUri: string } => {
@@ -110,13 +193,13 @@ export const providerClientConfig = (provider: OAuthProvider): { clientId: strin
     resolved = {
       clientId: envStr('GOOGLE_CLIENT_ID'),
       clientSecret: envStr('GOOGLE_CLIENT_SECRET'),
-      redirectUri: envStr('GOOGLE_OAUTH_REDIRECT_URI') || `${backendPublicBaseUrl()}/api/auth/oauth/callback/google`,
+      redirectUri: providerConfiguredRedirectUri('GOOGLE_OAUTH_REDIRECT_URI') || `${backendPublicBaseUrl()}/api/auth/oauth/callback/google`,
     };
   } else if (provider === 'telegram') {
     resolved = {
       clientId: envStr('TELEGRAM_BOT_ID'),
       clientSecret: envStr('TELEGRAM_BOT_SECRET'),
-      redirectUri: envStr('TELEGRAM_OAUTH_REDIRECT_URI') || `${backendPublicBaseUrl()}/api/auth/oauth/callback/telegram`,
+      redirectUri: providerConfiguredRedirectUri('TELEGRAM_OAUTH_REDIRECT_URI') || `${backendPublicBaseUrl()}/api/auth/oauth/callback/telegram`,
     };
   } else {
     throw new OAuthConfigError(provider);
@@ -172,24 +255,93 @@ export const generatePkceVerifier = (): string => randomBase64Url(32);
 
 export const generatePkceChallenge = (verifier: string): string => base64UrlEncode(sha256(verifier));
 
-export const issueOAuthState = (payload: Omit<OAuthState, 'type'>): string =>
-  jwt.sign({ ...payload, type: 'oauth-state' }, jwtSecret(), { expiresIn: `${stateTtlSeconds()}s` });
+/**
+ * Number of random bytes backing an OAuth state id. 16 bytes -> 22 base64url
+ * characters, far below Telegram's `state` length limit while still ~128 bits
+ * of unguessable entropy.
+ */
+const OAUTH_STATE_ID_BYTES = 16;
 
-export const verifyOAuthState = (raw: string, provider: OAuthProvider): OAuthState => {
-  let decoded: Partial<OAuthState>;
-  try {
-    decoded = jwt.verify(raw, jwtSecret()) as Partial<OAuthState>;
-  } catch {
-    // Never surface raw JWT verification errors to the client.
+/**
+ * Issue a SHORT opaque OAuth `state` identifier for the provider authorization
+ * URL. The full OAuth payload (nonce, redirect, PKCE code_verifier, linking
+ * user, expiry) is stored SERVER-SIDE in the OAuthState table; only the short
+ * random id travels to the provider — Google's long JWT-like signature would
+ * make Telegram reject the authorization request with `state too long`.
+ */
+export const issueOAuthState = async (payload: Omit<OAuthState, 'type'>): Promise<string> => {
+  const id = randomBase64Url(OAUTH_STATE_ID_BYTES);
+  const ttl = stateTtlSeconds();
+  await prisma.oAuthState.create({
+    data: {
+      id,
+      provider: payload.provider,
+      nonce: payload.nonce,
+      redirect: payload.redirect,
+      codeVerifier: payload.codeVerifier ?? null,
+      linkingUserId: payload.linkingUserId ?? null,
+      expiresAt: new Date(Date.now() + ttl * 1000),
+    },
+  });
+  return id;
+};
+
+/**
+ * Consume the short OAuth `state` received on the provider callback:
+ *
+ *   1. existence — the server-side record must exist,
+ *   2. shape     — only issued-length base64url ids are accepted,
+ *   3. provider  — must match the callback provider,
+ *   4. expiration— must not be past `expiresAt`,
+ *   5. single-use— the row is marked `consumedAt` atomically; a replay (or any
+ *      concurrent duplicate callback with the same state) is rejected.
+ *
+ * Returns the stored OAuth payload so the callback can continue the original
+ * flow (nonce/ID-token binding, PKCE verifier, redirect path, linking user).
+ */
+export const verifyOAuthState = async (raw: unknown, provider: OAuthProvider): Promise<OAuthState> => {
+  const stateRaw = typeof raw === 'string' ? raw : '';
+  // We only ever issue 22-char base64url ids; anything else is invalid up front.
+  if (!stateRaw || stateRaw.length < 16 || stateRaw.length > 64) {
     throw new OAuthError('invalid-state', 'The sign-in request could not be verified. Please try again.');
   }
-  if (!decoded || decoded.type !== 'oauth-state') {
+  const stored = await prisma.oAuthState.findUnique({ where: { id: stateRaw } });
+  if (!stored) {
     throw new OAuthError('invalid-state', 'The sign-in request could not be verified. Please try again.');
   }
-  if (decoded.provider !== provider) {
+  if (stored.provider !== provider) {
     throw new OAuthError('invalid-state', 'The sign-in request could not be verified. Please try again.');
   }
-  return decoded as OAuthState;
+  if (!stored.expiresAt || stored.expiresAt < new Date()) {
+    // Opportunistic cleanup: the record can no longer be used by anyone.
+    await prisma.oAuthState.delete({ where: { id: stored.id } }).catch(() => undefined);
+    throw new OAuthError('invalid-state', 'The sign-in request could not be verified. Please try again.');
+  }
+  // Atomic single-use gate: exactly one callback may consume this state. The
+  // `expiresAt` predicate re-checks expiry at write time (leak-proof against
+  // a race between the read above and a slow attacker).
+  const consumed = await prisma.oAuthState.updateMany({
+    where: { id: stored.id, consumedAt: null, expiresAt: { gt: new Date() } },
+    data: { consumedAt: new Date() },
+  });
+  if (consumed.count !== 1) {
+    // Already consumed (replay) or expired concurrently.
+    throw new OAuthError('invalid-state', 'The sign-in request could not be verified. Please try again.');
+  }
+  return {
+    type: 'oauth-state',
+    nonce: stored.nonce,
+    provider: stored.provider as OAuthProvider,
+    redirect: stored.redirect,
+    codeVerifier: stored.codeVerifier ?? undefined,
+    linkingUserId: stored.linkingUserId ?? undefined,
+  };
+};
+
+/** Delete every expired, never-consumed OAuth state record (startup sweep). */
+export const sweepExpiredOAuthStates = async (): Promise<number> => {
+  const result = await prisma.oAuthState.deleteMany({ where: { expiresAt: { lt: new Date() } } });
+  return result.count;
 };
 const GOOGLE_ISSUERS: [string, ...string[]] = ['https://accounts.google.com', 'accounts.google.com'];
 const TELEGRAM_ISSUER = 'https://oauth.telegram.org';
@@ -318,13 +470,13 @@ const identityFromClaims = (provider: OAuthProvider, claims: Record<string, unkn
     phoneNumber: typeof claims.phone_number === 'string' && claims.phone_number ? claims.phone_number : undefined,
   };
 };
-export const buildAuthorizeRequest = (provider: OAuthProvider, redirectUnknown: unknown, linkingUserId?: string) => {
+export const buildAuthorizeRequest = async (provider: OAuthProvider, redirectUnknown: unknown, linkingUserId?: string) => {
   const { clientId, redirectUri } = providerClientConfig(provider);
   const redirect = safeFrontendPath(redirectUnknown);
   const nonce = randomHex(16);
 
   if (provider === 'google') {
-    const state = issueOAuthState({ nonce, provider: 'google', redirect, linkingUserId });
+    const state = await issueOAuthState({ nonce, provider: 'google', redirect, linkingUserId });
     const query = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,
@@ -340,7 +492,7 @@ export const buildAuthorizeRequest = (provider: OAuthProvider, redirectUnknown: 
 
   // Telegram requires PKCE (S256).
   const codeVerifier = generatePkceVerifier();
-  const state = issueOAuthState({ nonce, provider: 'telegram', redirect, codeVerifier, linkingUserId });
+  const state = await issueOAuthState({ nonce, provider: 'telegram', redirect, codeVerifier, linkingUserId });
   const query = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -581,7 +733,7 @@ export const handleProviderCallback = async (
   stateRaw: string,
   req: Request
 ): Promise<OAuthCallbackResult> => {
-  const state = verifyOAuthState(stateRaw, provider);
+  const state = await verifyOAuthState(stateRaw, provider);
   if (typeof code !== 'string' || !code) {
     throw new OAuthError('invalid-callback', 'The sign-in could not be completed. Please try again.');
   }

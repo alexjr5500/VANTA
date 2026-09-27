@@ -38,6 +38,13 @@ jest.mock('../prisma', () => ({
       deleteMany: jest.fn(),
       findMany: jest.fn(),
     },
+    oAuthState: {
+      create: jest.fn(),
+      findUnique: jest.fn(),
+      updateMany: jest.fn(),
+      delete: jest.fn(),
+      deleteMany: jest.fn(),
+    },
   },
 }));
 
@@ -166,6 +173,26 @@ beforeEach(() => {
   (prisma.user.findUnique as jest.Mock).mockResolvedValue(mockUser());
   (prisma.user.create as jest.Mock).mockResolvedValue(mockUser());
   (prisma.user.update as jest.Mock).mockResolvedValue(mockUser());
+  const futureExpiry = new Date(Date.now() + 300_000);
+  (prisma.oAuthState.create as jest.Mock).mockImplementation(async (args: any) => ({
+    ...args.data,
+    createdAt: new Date(),
+    consumedAt: null,
+  }));
+  (prisma.oAuthState.findUnique as jest.Mock).mockResolvedValue({
+    id: 'A1b2C3d4E5f6G7h8I9j0K1',
+    provider: 'google',
+    nonce: 'nonce-1',
+    redirect: '/reels',
+    codeVerifier: null,
+    linkingUserId: null,
+    createdAt: new Date(),
+    expiresAt: futureExpiry,
+    consumedAt: null,
+  });
+  (prisma.oAuthState.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+  (prisma.oAuthState.delete as jest.Mock).mockResolvedValue({});
+  (prisma.oAuthState.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
 });
 describe('OAuth service', () => {
   describe('verifyProviderIdToken (Google)', () => {
@@ -252,7 +279,7 @@ describe('safeFrontendPath', () => {
   describe('buildAuthorizeRequest', () => {
     test('builds a Google authorize URL with state + nonce and no secret', async () => {
       const { buildAuthorizeRequest } = await import('../services/oauth.service');
-      const { authorizeUrl } = buildAuthorizeRequest('google', '/reels');
+      const { authorizeUrl } = await buildAuthorizeRequest('google', '/reels');
       expect(authorizeUrl).toContain('https://accounts.google.com/o/oauth2/v2/auth');
       expect(authorizeUrl).toContain('client_id=test-google-client');
       expect(authorizeUrl).toContain('response_type=code');
@@ -264,7 +291,7 @@ describe('safeFrontendPath', () => {
 
     test('builds a Telegram authorize URL with PKCE S256', async () => {
       const { buildAuthorizeRequest } = await import('../services/oauth.service');
-      const { authorizeUrl } = buildAuthorizeRequest('telegram', '/reels');
+      const { authorizeUrl } = await buildAuthorizeRequest('telegram', '/reels');
       expect(authorizeUrl).toContain('https://oauth.telegram.org/auth');
       expect(authorizeUrl).toContain('client_id=test-telegram-bot');
       expect(authorizeUrl).toContain('code_challenge=');
@@ -275,9 +302,155 @@ describe('safeFrontendPath', () => {
 
     test('falls back to the safe destination for an unsafe redirect', async () => {
       const { buildAuthorizeRequest, verifyOAuthState } = await import('../services/oauth.service');
-      const { state } = buildAuthorizeRequest('google', 'https://evil.io');
-      const decoded = verifyOAuthState(state, 'google');
+      const { state } = await buildAuthorizeRequest('google', 'https://evil.io');
+      const decoded = await verifyOAuthState(state, 'google');
       expect(decoded.redirect).toBe('/reels');
+    });
+  });
+describe('OAuth state (server-side short state)', () => {
+    test('issues a short opaque state id (well under Telegram limits) and stores the payload server-side', async () => {
+      const { issueOAuthState } = await import('../services/oauth.service');
+      const state = await issueOAuthState({
+        nonce: 'nonce-1',
+        provider: 'telegram' as OAuthProvider,
+        redirect: '/reels',
+        codeVerifier: 'abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNO',
+      });
+      expect(typeof state).toBe('string');
+      // Telegram rejects long `state` values; the id must stay short.
+      expect(state.length).toBeGreaterThanOrEqual(16);
+      expect(state.length).toBeLessThanOrEqual(32);
+      expect((prisma.oAuthState.create as jest.Mock)).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          provider: 'telegram',
+          nonce: 'nonce-1',
+          redirect: '/reels',
+          codeVerifier: 'abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNO',
+          expiresAt: expect.any(Date),
+        }),
+      }));
+    });
+
+    test('returns the stored payload for a valid state (existence/provider/expiry pass)', async () => {
+      const { verifyOAuthState } = await import('../services/oauth.service');
+      const decoded = await verifyOAuthState('A1b2C3d4E5f6G7h8I9j0K1', 'google' as OAuthProvider);
+      expect(decoded.type).toBe('oauth-state');
+      expect(decoded.nonce).toBe('nonce-1');
+      expect(decoded.redirect).toBe('/reels');
+      // Single-use: the row was marked consumed.
+      expect(prisma.oAuthState.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ id: 'A1b2C3d4E5f6G7h8I9j0K1', consumedAt: null }),
+        data: expect.objectContaining({ consumedAt: expect.any(Date) }),
+      }));
+    });
+
+    test('rejects a missing state record', async () => {
+      const { verifyOAuthState } = await import('../services/oauth.service');
+      (prisma.oAuthState.findUnique as jest.Mock).mockResolvedValue(null);
+      await expect(verifyOAuthState('A1b2C3d4E5f6G7h8I9j0K1', 'google' as OAuthProvider)).rejects.toBeInstanceOf(OAuthError);
+    });
+
+    test('rejects a malformed / oversized state value before touching the database', async () => {
+      const { verifyOAuthState } = await import('../services/oauth.service');
+      await expect(verifyOAuthState('', 'google' as OAuthProvider)).rejects.toBeInstanceOf(OAuthError);
+      await expect(verifyOAuthState('x'.repeat(65), 'google' as OAuthProvider)).rejects.toBeInstanceOf(OAuthError);
+      await expect(verifyOAuthState(undefined, 'google' as OAuthProvider)).rejects.toBeInstanceOf(OAuthError);
+    });
+
+    test('rejects a state issued for a different provider', async () => {
+      const { verifyOAuthState } = await import('../services/oauth.service');
+      await expect(verifyOAuthState('A1b2C3d4E5f6G7h8I9j0K1', 'telegram' as OAuthProvider)).rejects.toBeInstanceOf(OAuthError);
+    });
+
+    test('rejects an expired state and deletes the stale record', async () => {
+      const { verifyOAuthState } = await import('../services/oauth.service');
+      (prisma.oAuthState.findUnique as jest.Mock).mockResolvedValue({
+        id: 'A1b2C3d4E5f6G7h8I9j0K1',
+        provider: 'google',
+        nonce: 'nonce-1',
+        redirect: '/reels',
+        codeVerifier: null,
+        linkingUserId: null,
+        createdAt: new Date(Date.now() - 1_800_000),
+        expiresAt: new Date(Date.now() - 60_000),
+        consumedAt: null,
+      });
+      await expect(verifyOAuthState('A1b2C3d4E5f6G7h8I9j0K1', 'google' as OAuthProvider)).rejects.toBeInstanceOf(OAuthError);
+      expect(prisma.oAuthState.delete).toHaveBeenCalledWith({ where: { id: 'A1b2C3d4E5f6G7h8I9j0K1' } });
+    });
+
+    test('rejects a replayed (already-consumed) state via the atomic single-use gate', async () => {
+      const { verifyOAuthState } = await import('../services/oauth.service');
+      (prisma.oAuthState.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+      await expect(verifyOAuthState('A1b2C3d4E5f6G7h8I9j0K1', 'google' as OAuthProvider)).rejects.toBeInstanceOf(OAuthError);
+    });
+
+    test('sweeps expired state records', async () => {
+      const { sweepExpiredOAuthStates } = await import('../services/oauth.service');
+      await sweepExpiredOAuthStates();
+      expect(prisma.oAuthState.deleteMany).toHaveBeenCalledWith({ where: { expiresAt: { lt: expect.any(Date) } } });
+    });
+  });
+describe('production backend URL resolution', () => {
+    const prodBackend = 'https://carefree-luck-production-8298.up.railway.app';
+    const prodFrontend = 'https://vanta-nu.vercel.app';
+
+    afterEach(() => {
+      // Restore the suite-default dev environment for the tests that follow.
+      process.env.NODE_ENV = 'development';
+      process.env.BACKEND_PUBLIC_URL = 'http://localhost:5000';
+      process.env.GOOGLE_OAUTH_REDIRECT_URI = 'http://localhost:5000/api/auth/oauth/callback/google';
+      delete process.env.RAILWAY_STATIC_URL;
+      delete process.env.RAILWAY_PUBLIC_DOMAIN;
+    });
+
+    test('production with no env vars resolves the Google callback to the Railway deployment URL (never localhost)', async () => {
+      const { providerClientConfig, backendPublicBaseUrl, frontendBaseUrl } = await import('../services/oauth.service');
+      process.env.NODE_ENV = 'production';
+      delete process.env.BACKEND_PUBLIC_URL;
+      delete process.env.GOOGLE_OAUTH_REDIRECT_URI;
+      expect(backendPublicBaseUrl()).toBe(prodBackend);
+      expect(frontendBaseUrl()).toBe(prodFrontend);
+      expect(providerClientConfig('google').redirectUri).toBe(`${prodBackend}/api/auth/oauth/callback/google`);
+      expect(providerClientConfig('telegram').redirectUri).toBe(`${prodBackend}/api/auth/oauth/callback/telegram`);
+      expect(providerClientConfig('google').redirectUri).not.toContain('localhost');
+    });
+
+    test('production ignores loopback GOOGLE_OAUTH_REDIRECT_URI / BACKEND_PUBLIC_URL leftovers', async () => {
+      const { providerClientConfig, backendPublicBaseUrl } = await import('../services/oauth.service');
+      process.env.NODE_ENV = 'production';
+      process.env.BACKEND_PUBLIC_URL = 'http://localhost:5000';
+      process.env.GOOGLE_OAUTH_REDIRECT_URI = 'http://localhost:5000/api/auth/oauth/callback/google';
+      expect(backendPublicBaseUrl()).toBe(prodBackend);
+      expect(providerClientConfig('google').redirectUri).toBe(`${prodBackend}/api/auth/oauth/callback/google`);
+    });
+
+    test('production prefers an explicitly configured non-loopback BACKEND_PUBLIC_URL', async () => {
+      const { providerClientConfig } = await import('../services/oauth.service');
+      process.env.NODE_ENV = 'production';
+      process.env.BACKEND_PUBLIC_URL = 'https://api.van.ta';
+      delete process.env.GOOGLE_OAUTH_REDIRECT_URI;
+      expect(providerClientConfig('google').redirectUri).toBe('https://api.van.ta/api/auth/oauth/callback/google');
+    });
+
+    test('production derives the callback from Railway-injected domain env vars', async () => {
+      const { providerClientConfig } = await import('../services/oauth.service');
+      process.env.NODE_ENV = 'production';
+      delete process.env.BACKEND_PUBLIC_URL;
+      delete process.env.GOOGLE_OAUTH_REDIRECT_URI;
+      process.env.RAILWAY_PUBLIC_DOMAIN = 'carefree-luck-production-8298.up.railway.app';
+      expect(providerClientConfig('google').redirectUri).toBe(`${prodBackend}/api/auth/oauth/callback/google`);
+    });
+
+    test('local development keeps resolving to localhost when nothing else is configured', async () => {
+      const { backendPublicBaseUrl, frontendBaseUrl } = await import('../services/oauth.service');
+      process.env.NODE_ENV = 'development';
+      delete process.env.BACKEND_PUBLIC_URL;
+      delete process.env.GOOGLE_OAUTH_REDIRECT_URI;
+      delete process.env.RAILWAY_STATIC_URL;
+      delete process.env.RAILWAY_PUBLIC_DOMAIN;
+      expect(backendPublicBaseUrl()).toBe('http://localhost:5000');
+      expect(frontendBaseUrl()).toBe('http://localhost:3000');
     });
   });
 describe('handleProviderCallback', () => {
