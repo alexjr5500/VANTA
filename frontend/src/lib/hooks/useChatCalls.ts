@@ -270,7 +270,8 @@ export function useChatCalls(options: UseChatCallsOptions): UseChatCallsReturn {
     setStatus(next);
     // The ringback tone must stop the moment the call stops ringing: when the
     // callee answers, declines, cancels, when the timeout fires, or on hangup.
-    // The tone is shared by the caller (ringback) and the callee (incoming ring).
+    // It is only heard by the CALLER while waiting for an answer; the callee's
+    // incoming-call ringtone is played by the global IncomingCallBanner.
     if (
       (prev === 'outgoing' || prev === 'ringing' || prev === 'incoming') &&
       next !== 'outgoing' && next !== 'ringing' && next !== 'incoming'
@@ -777,12 +778,10 @@ const declineCall = useCallback(() => {
       setEndedReason(null);
       updateStatus('incoming');
 
-      // Audible ring on the receiving side so the recipient hears the call no
-      // matter which page they are on. Best-effort: some browsers require a
-      // user gesture before an AudioContext can start, so the banner remains
-      // the primary notification surface.
-      if (!ringbackRef.current) ringbackRef.current = new RingbackTone();
-      ringbackRef.current.start();
+      // The callee's audible ring is now the VANTA ringtone played by the
+      // global IncomingCallBanner (frontend/public/sounds/vanta-ringtone.mp3),
+      // so no synthesized tone is started here. The caller's ringback below is
+      // a separate, caller-side sound and is unchanged.
 
       // Safety net on the receiving side too: if the caller never answers or
       // the signaling is lost, an unanswered incoming call must not linger.

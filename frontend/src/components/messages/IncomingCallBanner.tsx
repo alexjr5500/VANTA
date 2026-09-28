@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Phone, PhoneOff, Video, Volume2 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
@@ -13,7 +14,14 @@ import { cn } from '@/lib/utils';
 // private 1-to-1 call arrives. The banner stays until the call is answered,
 // declined, cancelled by the caller, or times out. Answering opens the full
 // call interface (rendered globally by AppLayout); declining rejects the call.
+// The VANTA ringtone (frontend/public/sounds) plays only while an incoming call
+// is active and stops as soon as the incoming-call state ends.
 // ============================================================================
+
+// Ringtone asset served from the public/ static directory.
+const RINGTONE_SRC = '/sounds/vanta-ringtone.mp3';
+// Clearly audible without being excessively loud.
+const RINGTONE_VOLUME = 0.6;
 
 export interface IncomingCallBannerProps {
   status: CallStatus;
@@ -34,6 +42,78 @@ export default function IncomingCallBanner({
 }: IncomingCallBannerProps) {
   const isVideo = callType === 'video';
   const label = isVideo ? 'Incoming video call' : 'Incoming voice call';
+
+  // ONE audio element for the lifetime of this component, created lazily on the
+  // first incoming call and reused for every later call. Reusing a single
+  // instance guarantees an active incoming call can never have overlapping or
+  // duplicated ringtone playback, and no new object is created when the
+  // incoming-call state updates.
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const stopRingtone = () => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      try {
+        audio.pause();
+        // Rewind so the next incoming call always starts from the beginning.
+        audio.currentTime = 0;
+      } catch {
+        // Never let audio cleanup break the incoming-call UI.
+      }
+    };
+
+    // No longer an active incoming call (answered, declined, cancelled by the
+    // caller, timed out, failed, state gone, or this component unmounting):
+    // silence the ringtone immediately.
+    if (status !== 'incoming') {
+      stopRingtone();
+      return;
+    }
+
+    // Lazy single instance. `useEffect` never runs during SSR, so Audio is only
+    // ever constructed in the browser.
+    if (!audioRef.current) {
+      const audio = new Audio(RINGTONE_SRC);
+      audio.loop = true; // loop continuously while the incoming call is active
+      audio.preload = 'auto';
+      audio.volume = RINGTONE_VOLUME;
+      audioRef.current = audio;
+    }
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    // Every incoming call starts from the beginning.
+    audio.currentTime = 0;
+
+    const attemptPlay = () => {
+      const el = audioRef.current;
+      if (!el || !el.paused) return;
+      void el.play().catch(() => {
+        // Autoplay policies may reject playback because the call arrives over
+        // the socket rather than from a user gesture. Swallow the rejection so
+        // the banner keeps working — the user can still answer/decline — and
+        // retry on the next gesture via the handlers below.
+      });
+    };
+
+    attemptPlay();
+
+    // Incoming calls are not a user gesture, so some browsers refuse the first
+    // play(). Resume on the next interaction while the call is still incoming
+    // (same pattern as the call overlay's remote media).
+    const resume = () => attemptPlay();
+    window.addEventListener('pointerdown', resume, { passive: true });
+    window.addEventListener('touchstart', resume, { passive: true });
+    window.addEventListener('keydown', resume);
+
+    return () => {
+      window.removeEventListener('pointerdown', resume);
+      window.removeEventListener('touchstart', resume);
+      window.removeEventListener('keydown', resume);
+      stopRingtone();
+    };
+  }, [status]);
 
   return (
     <AnimatePresence>
