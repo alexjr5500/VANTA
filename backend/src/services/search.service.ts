@@ -1,5 +1,6 @@
 import { prisma } from "../prisma";
 import { cacheService, CACHE_KEYS, CACHE_TTL } from "./cache.service";
+import { BADGE_USER_SELECT, enrichPublicUser, enrichItemAuthors } from "./public-verification";
 
 const SEARCH_LIMIT_ALL = 5; // When searching "all" types
 const SEARCH_RESULTS_CACHE_TTL = 60_000; // 1 minute
@@ -40,6 +41,7 @@ export class SearchService {
             bio: true,
             verified: true,
             premium: true,
+            ...BADGE_USER_SELECT,
             _count: { select: { followers: true } },
           },
           take: type === "users" ? limit : SEARCH_LIMIT_ALL,
@@ -52,7 +54,15 @@ export class SearchService {
           orderBy: { createdAt: "desc" },
           take: type === "posts" ? limit : SEARCH_LIMIT_ALL,
           include: {
-            author: { select: { id: true, username: true, avatar: true, verified: true } },
+            author: {
+              select: {
+                id: true,
+                username: true,
+                avatar: true,
+                verified: true,
+                ...BADGE_USER_SELECT,
+              },
+            },
             _count: { select: { likes: true, comments: true } },
           },
         });
@@ -124,7 +134,11 @@ export class SearchService {
         });
       }
 
-      return results;
+      return {
+        ...results,
+        users: Array.isArray(results.users) ? results.users.map(enrichPublicUser) : results.users,
+        posts: Array.isArray(results.posts) ? results.posts.map(enrichItemAuthors) : results.posts,
+      };
     }, SEARCH_RESULTS_CACHE_TTL);
   }
 
@@ -141,6 +155,7 @@ export class SearchService {
             fullName: true,
             avatar: true,
             verified: true,
+            ...BADGE_USER_SELECT,
             _count: { select: { followers: true } },
           },
         }),
@@ -162,7 +177,7 @@ export class SearchService {
         }),
       ]);
 
-      return { users, streams, communities };
+      return { users: users.map(enrichPublicUser), streams, communities };
     }, CACHE_TTL.MEDIUM);
   }
 

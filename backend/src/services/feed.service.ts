@@ -3,12 +3,39 @@ import { cacheService, CACHE_KEYS, CACHE_TTL } from "./cache.service";
 import { dbPerformanceTracker } from "./monitoring.service";
 import { emitSocialEvent } from "./social-events.service";
 import { notificationService } from "./notification.service";
+import { BADGE_USER_SELECT, enrichPublicUser, enrichItemAuthors } from "./public-verification";
 
-const WITH_AUTHOR = {
-  author: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+const AUTHOR_SELECT = {
+  id: true,
+  username: true,
+  fullName: true,
+  avatar: true,
+  verified: true,
+  ...BADGE_USER_SELECT,
 } as const;
 
-const COMMENT_USER = { id: true, username: true, fullName: true, avatar: true, verified: true, role: true } as const;
+const WITH_AUTHOR = {
+  author: {
+    select: {
+      id: true,
+      username: true,
+      fullName: true,
+      avatar: true,
+      verified: true,
+      ...BADGE_USER_SELECT,
+    },
+  },
+} as const;
+
+const COMMENT_USER = {
+  id: true,
+  username: true,
+  fullName: true,
+  avatar: true,
+  verified: true,
+  role: true,
+  ...BADGE_USER_SELECT,
+} as const;
 const COMMENT_MAX_LENGTH = 2000;
 const COMMENT_FLOOD_WINDOW_MS = 15_000;
 
@@ -16,7 +43,7 @@ const normalizeComment = (content: string) => content.replace(/\s+/g, " ").trim(
 const mentionNames = (content: string) => Array.from(new Set(Array.from(content.matchAll(/(?:^|\s)@([a-zA-Z0-9_]{2,30})\b/g), match => match[1].toLowerCase())));
 
 const formatComment = (comment: any) => ({
-  ...comment,
+  ...enrichItemAuthors(comment),
   liked: Array.isArray(comment.likes) ? comment.likes.length > 0 : Boolean(comment.liked),
   likes: undefined,
   edited: new Date(comment.updatedAt).getTime() - new Date(comment.createdAt).getTime() > 1000,
@@ -57,7 +84,7 @@ export class FeedService {
       const nextCursor = posts.length > limit ? posts.pop()?.id : undefined;
 
       return {
-        items: posts.map(post => ({
+        items: posts.map(post => enrichItemAuthors({
           ...post,
           isLiked: post.likes.length > 0,
           likes: undefined,
@@ -105,7 +132,16 @@ export class FeedService {
             orderBy: { viewerCount: 'desc' },
             take: 3,
             include: {
-              host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+              host: {
+                select: {
+                  id: true,
+                  username: true,
+                  fullName: true,
+                  avatar: true,
+                  verified: true,
+                  ...BADGE_USER_SELECT,
+                },
+              },
               category: { select: { name: true } },
               _count: { select: { viewers: true, giftEvents: true } },
             },
@@ -117,8 +153,17 @@ export class FeedService {
         orderBy: [{ views: 'desc' }, { createdAt: 'desc' }],
         take: 8,
         include: {
-          creator: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
-          _count: { select: { likes: true, comments: true } },
+          creator: {
+                select: {
+                  id: true,
+                  username: true,
+                  fullName: true,
+                  avatar: true,
+                  verified: true,
+                  ...BADGE_USER_SELECT,
+                },
+              },
+              _count: { select: { likes: true, comments: true } },
         },
       });
 
@@ -153,7 +198,16 @@ export class FeedService {
         orderBy: { createdAt: 'desc' },
         take: 4,
         include: {
-          author: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+          author: {
+            select: {
+              id: true,
+              username: true,
+              fullName: true,
+              avatar: true,
+              verified: true,
+              ...BADGE_USER_SELECT,
+            },
+          },
           community: { select: { id: true, name: true, avatar: true } },
         },
       });
@@ -168,7 +222,16 @@ export class FeedService {
         orderBy: { viewerCount: 'desc' },
         take: 4,
         include: {
-          host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+          host: {
+            select: {
+              id: true,
+              username: true,
+              fullName: true,
+              avatar: true,
+              verified: true,
+              ...BADGE_USER_SELECT,
+            },
+          },
           category: { select: { name: true } },
           _count: { select: { viewers: true, giftEvents: true } },
         },
@@ -190,6 +253,7 @@ export class FeedService {
           avatar: true,
           verified: true,
           bio: true,
+          ...BADGE_USER_SELECT,
           _count: { select: { followers: true, posts: true } },
         },
       });
@@ -252,6 +316,7 @@ export class FeedService {
             fullName: post.author.fullName || post.author.username,
             avatar: post.author.avatar,
             verified: post.author.verified,
+            verificationBadge: post.author.verificationBadge || null,
           },
           community: post.community,
           likes: 0,
@@ -279,6 +344,7 @@ export class FeedService {
             fullName: creator.fullName || creator.username,
             avatar: creator.avatar,
             verified: creator.verified,
+            verificationBadge: creator.verificationBadge || null,
             bio: creator.bio,
           },
           followers: creator._count?.followers || 0,
@@ -320,7 +386,7 @@ export class FeedService {
       const nextCursor = uniqueItems.length > limit ? pageItems[pageItems.length - 1]?.id : undefined;
 
       return {
-        items: pageItems,
+        items: pageItems.map(enrichItemAuthors),
         nextCursor,
       };
     }, CACHE_TTL.SHORT);
@@ -338,6 +404,7 @@ export class FeedService {
         fullName: post.author?.fullName || post.author?.username,
         avatar: post.author?.avatar,
         verified: post.author?.verified,
+        verificationBadge: post.author?.verificationBadge || null,
       },
       likes: post._count?.likes || 0,
       comments: post._count?.comments || 0,
@@ -363,6 +430,7 @@ export class FeedService {
         fullName: video.creator?.fullName || video.creator?.username,
         avatar: video.creator?.avatar,
         verified: video.creator?.verified,
+        verificationBadge: video.creator?.verificationBadge || null,
       },
       likes: video._count?.likes || 0,
       comments: video._count?.comments || 0,
@@ -391,6 +459,7 @@ export class FeedService {
         fullName: stream.host?.fullName || stream.host?.username,
         avatar: stream.host?.avatar,
         verified: stream.host?.verified,
+        verificationBadge: stream.host?.verificationBadge || null,
       },
       category: stream.category?.name,
       likes: stream.likes || 0,
@@ -697,13 +766,23 @@ export class FeedService {
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       include: {
-        follower: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, bio: true } },
+        follower: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            avatar: true,
+            verified: true,
+            bio: true,
+            ...BADGE_USER_SELECT,
+          },
+        },
       },
     });
 
     const nextCursor = followers.length > limit ? followers.pop()?.id : undefined;
     return {
-      items: followers.map(f => f.follower),
+      items: followers.map(f => enrichPublicUser(f.follower)),
       nextCursor,
     };
   }
@@ -715,13 +794,23 @@ export class FeedService {
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       include: {
-        following: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, bio: true } },
+        following: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            avatar: true,
+            verified: true,
+            bio: true,
+            ...BADGE_USER_SELECT,
+          },
+        },
       },
     });
 
     const nextCursor = following.length > limit ? following.pop()?.id : undefined;
     return {
-      items: following.map(f => f.following),
+      items: following.map(f => enrichPublicUser(f.following)),
       nextCursor,
     };
   }

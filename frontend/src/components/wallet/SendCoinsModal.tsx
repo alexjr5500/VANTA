@@ -224,7 +224,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-white truncate">
                               {u.fullName || u.username}
-                              {u.verified && <VerificationBadge verified size="xs" className="ml-1" />}
+                              {u.verified && <VerificationBadge verified type={(u.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" className="ml-1" />}
                             </p>
                             <p className="text-[10px] text-white/40">@{u.username}</p>
                           </div>

@@ -1,5 +1,6 @@
 import { prisma } from '../prisma';
 import { v4 as uuidv4 } from 'uuid';
+import { verificationPaymentService } from './verification-payment.service';
 
 export interface VerificationStatus {
   hasBlueBadge: boolean;
@@ -12,6 +13,19 @@ export interface VerificationStatus {
   renewalDate: string | null;
   canAccessCreatorStudio: boolean;
   subscriptionEndDate: string | null;
+  // --- Paid Verified Badge information (server-authoritative) ---
+  /** Badge expiry when a paid badge is active (falls back to membership end). */
+  verificationExpiryDate: string | null;
+  /** SubscriptionPlan purchased for the active paid badge. */
+  plan: {
+    id: string;
+    name: string;
+    badgeType: string;
+    durationMonths: number;
+    price: number;
+  } | null;
+  /** Reference of the purchase that activated the current badge. */
+  purchaseReference: string | null;
 }
 
 export interface SubscriptionPlanData {
@@ -33,9 +47,16 @@ export class VerificationService {
    * Get a user's complete verification status
    */
   async getVerificationStatus(userId: string): Promise<VerificationStatus> {
-    const [badge, membership] = await Promise.all([
+    const [badge, membership, purchase] = await Promise.all([
       prisma.verificationBadge.findUnique({ where: { userId } }),
       prisma.creatorMembership.findUnique({ where: { userId } }),
+      // The most recent completed/refunded purchase that relates to the active
+      // badge entitlement (source of truth for the payment reference).
+      prisma.verificationPurchase.findFirst({
+        where: { userId, status: { in: ['COMPLETED', 'REFUNDED'] } },
+        orderBy: { confirmedAt: 'desc' },
+        select: { id: true, providerReference: true, planId: true },
+      }),
     ]);
 
     const hasBlueBadge = badge?.badgeType === 'BLUE' && badge?.status === 'ACTIVE';
@@ -58,22 +79,47 @@ export class VerificationService {
 
     const refreshedBadge = await prisma.verificationBadge.findUnique({ where: { userId } });
     const refreshedMembership = await prisma.creatorMembership.findUnique({ where: { userId } });
+    const refreshedPurchase =
+      purchase && purchase.planId && refreshedBadge?.planId === purchase.planId
+        ? purchase
+        : await prisma.verificationPurchase.findFirst({
+            where: { userId, status: { in: ['COMPLETED', 'REFUNDED'] } },
+            orderBy: { confirmedAt: 'desc' },
+            select: { id: true, providerReference: true, planId: true },
+          });
 
     const finalHasGold = refreshedBadge?.badgeType === 'GOLD' && refreshedBadge?.status === 'ACTIVE';
     const finalHasBlue = refreshedBadge?.badgeType === 'BLUE' && refreshedBadge?.status === 'ACTIVE';
     const finalMembershipActive = refreshedMembership?.status === 'ACTIVE';
 
+    let plan: VerificationStatus['plan'] = null;
+    if (refreshedBadge?.planId) {
+      const planRow = await prisma.subscriptionPlan.findUnique({
+        where: { id: refreshedBadge.planId },
+        select: { id: true, name: true, badgeType: true, durationMonths: true, price: true },
+      });
+      if (planRow) plan = planRow;
+    }
+
+    const badgeExpiry =
+      refreshedBadge?.expiresAt?.toISOString() ||
+      refreshedMembership?.endDate?.toISOString() ||
+      null;
+
     return {
       hasBlueBadge: finalHasBlue,
       hasGoldBadge: finalHasGold,
       badgeType: finalHasGold ? 'GOLD' : finalHasBlue ? 'BLUE' : 'NONE',
-      badgeStatus: refreshedBadge?.status || null,
-      membershipStatus: refreshedMembership?.status || null,
+      badgeStatus: (refreshedBadge?.status as VerificationStatus['badgeStatus']) || null,
+      membershipStatus: (refreshedMembership?.status as VerificationStatus['membershipStatus']) || null,
       membershipPlan: refreshedMembership?.planId || null,
       expiryDate: refreshedMembership?.endDate?.toISOString() || null,
       renewalDate: refreshedMembership?.renewalDate?.toISOString() || null,
       canAccessCreatorStudio: finalHasGold && finalMembershipActive,
       subscriptionEndDate: refreshedMembership?.endDate?.toISOString() || null,
+      verificationExpiryDate: (finalHasBlue || finalHasGold) ? badgeExpiry : null,
+      plan,
+      purchaseReference: refreshedPurchase?.providerReference || refreshedPurchase?.id || null,
     };
   }
 
@@ -283,74 +329,18 @@ export class VerificationService {
   /**
    * Subscribe a user to a creator membership plan
    */
-  async subscribeToPlan(
-    userId: string,
-    planId: string,
-    paymentMethod?: string,
-    paymentTxHash?: string
-  ): Promise<any> {
-    const plan = await prisma.subscriptionPlan.findUnique({ where: { id: planId } });
-    if (!plan) throw new Error('Subscription plan not found');
-    if (!plan.isActive) throw new Error('Subscription plan is not active');
-
-    const startDate = new Date();
-    const endDate = new Date(startDate);
-    endDate.setMonth(endDate.getMonth() + plan.durationMonths);
-    const renewalDate = new Date(endDate);
-    renewalDate.setDate(renewalDate.getDate() - 7); // Renewal reminder 7 days before
-
-    // Upsert membership
-    const existing = await prisma.creatorMembership.findUnique({ where: { userId } });
-    let membership;
-    if (existing) {
-      membership = await prisma.creatorMembership.update({
-        where: { userId },
-        data: {
-          planId,
-          status: 'ACTIVE',
-          startDate,
-          endDate,
-          renewalDate,
-          autoRenew: false,
-          cancelledAt: null,
-          paymentMethod: paymentMethod || existing.paymentMethod,
-          paymentTxHash: paymentTxHash || existing.paymentTxHash,
-          updatedAt: new Date(),
-        },
-      });
-    } else {
-      membership = await prisma.creatorMembership.create({
-        data: {
-          userId,
-          planId,
-          status: 'ACTIVE',
-          startDate,
-          endDate,
-          renewalDate,
-          paymentMethod,
-          paymentTxHash,
-        },
-      });
-    }
-
-    // Grant or upgrade badge to GOLD
-    await this.grantBadge(userId, 'GOLD', undefined, endDate);
-
-    await prisma.verificationHistory.create({
-      data: {
-        userId,
-        action: 'CREATOR_MEMBERSHIP_ACTIVATED',
-        details: JSON.stringify({
-          planId: plan.id,
-          planName: plan.name,
-          durationMonths: plan.durationMonths,
-          price: plan.price,
-          endDate: endDate.toISOString(),
-        }),
-      },
-    });
-
-    return { membership, plan };
+  /**
+   * Activate a creator membership plan AFTER a server-verified, completed
+   * purchase.
+   *
+   * SECURITY: the client can never activate a plan by clicking a button — it
+   * must prove a VERIFIED payment exists. `purchaseId` must reference a
+   * VerificationPurchase owned by this user whose status is COMPLETED (only a
+   * server-side verified payment can reach COMPLETED). Replay of the same
+   * purchase is idempotent.
+   */
+  async subscribeToPlan(userId: string, purchaseId: string): Promise<any> {
+    return verificationPaymentService.confirmCompletedPurchase(userId, purchaseId);
   }
 
   /**
@@ -405,7 +395,9 @@ export class VerificationService {
   }
 
   /**
-   * Check and expire all overdue memberships
+   * Check and expire all overdue memberships (called by cron or on check).
+   * Also enforces server-side expiry of over-due paid badges and stale
+   * verification purchases so expired entitlements are never displayed.
    */
   async expireOverdueMemberships(): Promise<number> {
     const now = new Date();
@@ -418,6 +410,18 @@ export class VerificationService {
 
     for (const membership of expired) {
       await this.expireMembership(membership.userId);
+    }
+
+    // Paid badge entitlements + stale purchase orders expire server-side too.
+    try {
+      await verificationPaymentService.expireOverdueBadges();
+    } catch {
+      // Non-fatal for the membership cron.
+    }
+    try {
+      await verificationPaymentService.expireStaleOrders();
+    } catch {
+      // Non-fatal for the membership cron.
     }
 
     return expired.length;
@@ -555,14 +559,37 @@ export class VerificationService {
   }
 
   /**
-   * Confirm a crypto payment
+   * Legacy compat: confirm a legacy CryptoPayment row.
+   *
+   * SECURITY: a client-supplied transaction reference is NEVER proof of
+   * payment. Badge entitlement only ever activates through the server-verified
+   * purchase flow (VerificationPurchase), so this method can no longer activate
+   * a badge. It only records the payment reference upon a matching server-side
+   * purchase confirmation.
    */
   async confirmCryptoPayment(paymentId: string, txHash: string): Promise<any> {
     const payment = await prisma.cryptoPayment.findUnique({ where: { id: paymentId } });
     if (!payment) throw new Error('Payment not found');
-    if (payment.status !== 'PENDING') throw new Error('Payment is not pending');
 
-    const updated = await prisma.cryptoPayment.update({
+    // Only acknowledge a confirmation when the user already has an authenticated
+    // server-verified purchase for the same plan. Otherwise we refuse — an
+    // unverified payment must never activate anything.
+    const verified = await prisma.verificationPurchase.findFirst({
+      where: {
+        userId: payment.userId,
+        planId: payment.planId,
+        status: 'COMPLETED',
+        providerReference: { not: null },
+      },
+      orderBy: { confirmedAt: 'desc' },
+    });
+    if (!verified) {
+      throw new Error(
+        'Payment has not been verified. Badge activation requires a server-verified payment (webhook).'
+      );
+    }
+
+    return prisma.cryptoPayment.update({
       where: { id: paymentId },
       data: {
         status: 'CONFIRMED',
@@ -571,11 +598,6 @@ export class VerificationService {
         updatedAt: new Date(),
       },
     });
-
-    // Activate subscription
-    await this.subscribeToPlan(payment.userId, payment.planId, `${payment.currency}_${payment.network}`, txHash);
-
-    return updated;
   }
 
   /**

@@ -172,7 +172,7 @@ function ConversationItem({ conv, isActive, onSelect, timeAgo }: {
         )}
         {conv.verified && (
           <span className="absolute -top-1.5 -right-1.5">
-            <VerificationBadge verified size="xs" />
+            <VerificationBadge verified type={(conv.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />
           </span>
         )}
       </div>

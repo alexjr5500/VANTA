@@ -1,6 +1,7 @@
 import { prisma } from "../prisma";
 import { emitSocialEvent, emitSocialEventToUser } from "./social-events.service";
 import { contentViewService } from "./content-view.service";
+import { BADGE_USER_SELECT, enrichItemAuthors } from "./public-verification";
 
 export class PostService {
   async savePost(userId: string, postId: string) {
@@ -40,7 +41,16 @@ export class PostService {
       include: {
         post: {
           include: {
-            author: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+            author: {
+              select: {
+                id: true,
+                username: true,
+                fullName: true,
+                avatar: true,
+                verified: true,
+                ...BADGE_USER_SELECT,
+              },
+            },
             _count: { select: { likes: true, comments: true, saves: true } },
           },
         },
@@ -49,7 +59,7 @@ export class PostService {
 
     const nextCursor = saves.length > limit ? saves.pop()?.id : undefined;
     return {
-      items: saves.map((s) => ({
+      items: saves.map((s) => enrichItemAuthors({
         ...s.post,
         savedAt: s.createdAt,
         likesCount: (s.post as any)._count.likes,
@@ -77,7 +87,16 @@ export class PostService {
     const post = await prisma.post.findUnique({
       where: { id: postId },
       include: {
-        author: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+        author: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            avatar: true,
+            verified: true,
+            ...BADGE_USER_SELECT,
+          },
+        },
         likes: userId ? { where: { userId }, select: { id: true } } : false,
         saves: userId ? { where: { userId }, select: { id: true } } : false,
         _count: { select: { likes: true, comments: true, saves: true } },
@@ -86,7 +105,7 @@ export class PostService {
 
     if (!post) throw new Error("Post not found");
 
-    return {
+    return enrichItemAuthors({
       ...post,
       isLiked: userId ? (post as any).likes?.length > 0 : false,
       isSaved: userId ? (post as any).saves?.length > 0 : false,
@@ -95,7 +114,7 @@ export class PostService {
       likesCount: (post as any)._count.likes,
       commentsCount: (post as any)._count.comments,
       savesCount: (post as any)._count.saves,
-    };
+    });
   }
 
   async viewPost(postId: string, userId: string) {

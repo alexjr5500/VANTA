@@ -3,6 +3,7 @@ import { cacheService, CACHE_KEYS, CACHE_TTL } from "./cache.service";
 import { dbPerformanceTracker } from "./monitoring.service";
 import { liveKitService } from "./livekit.service";
 import { notificationService } from "./notification.service";
+import { BADGE_USER_SELECT, enrichPublicUser, enrichItemAuthors } from "./public-verification";
 
 // ---------------------------------------------------------------------------
 // Live session heartbeat / stale-session timeout
@@ -20,6 +21,12 @@ export const LIVE_HEARTBEAT_TIMEOUT_MS = 30_000;
 export const LIVE_SESSION_SWEEP_INTERVAL_MS = 10_000;
 
 export class LiveService {
+  /** Enrich a live stream's host/co-host with public verification info. */
+  private serializeStream<T extends Record<string, any>>(stream: T | null): T | null {
+    if (!stream || typeof stream !== "object") return stream;
+    return enrichItemAuthors(stream) as T;
+  }
+
   async getActiveStreams(cursor?: string, limit: number = 20) {
     return cacheService.getOrSet(CACHE_KEYS.LIVE_STREAMS, async () => {
       const queryStart = Date.now();
@@ -30,7 +37,7 @@ export class LiveService {
         take: limit + 1,
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
         include: {
-          host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+          host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
           category: { select: { name: true } },
           _count: { select: { viewers: true, giftEvents: true } },
         },
@@ -39,7 +46,7 @@ export class LiveService {
       dbPerformanceTracker.trackQuery('LiveStream', Date.now() - queryStart, 'findManyActive');
 
       const nextCursor = streams.length > limit ? streams.pop()?.id : undefined;
-      return { items: streams, nextCursor };
+      return { items: streams.map((s) => this.serializeStream(s)), nextCursor };
     }, CACHE_TTL.SHORT);
   }
 
@@ -50,16 +57,16 @@ export class LiveService {
       const stream = await prisma.liveStream.findUnique({
         where: { id: streamId },
         include: {
-          host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, bio: true } },
+          host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT, bio: true } },
           category: { select: { name: true } },
-          coHost: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+          coHost: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
           _count: { select: { viewers: true, giftEvents: true, reactions: true } },
         },
       });
 
       dbPerformanceTracker.trackQuery('LiveStream', Date.now() - queryStart, 'findUnique');
       
-      return stream;
+      return this.serializeStream(stream);
     }, CACHE_TTL.SHORT);
   }
 
@@ -142,7 +149,7 @@ export class LiveService {
               totalViewers: 0,
             },
             include: {
-              host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+              host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
               category: { select: { name: true } },
             },
           });
@@ -173,7 +180,7 @@ export class LiveService {
                 totalViewers: 0,
               },
               include: {
-                host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+                host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
                 category: { select: { name: true } },
               },
             });
@@ -397,12 +404,12 @@ export class LiveService {
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       include: {
-        user: { select: { id: true, username: true, avatar: true, verified: true } },
+        user: { select: { id: true, username: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
       },
     });
 
     const nextCursor = messages.length > limit ? messages.pop()?.id : undefined;
-    return { items: messages.reverse(), nextCursor };
+    return { items: messages.reverse().map((m) => enrichItemAuthors(m)), nextCursor };
   }
 
   async postChatMessage(streamId: string, userId: string, message: string) {
@@ -444,7 +451,7 @@ export class LiveService {
     const chatMessage = await prisma.liveChatMessage.create({
       data: { streamId, userId, message: normalizedMessage },
       include: {
-        user: { select: { id: true, username: true, avatar: true, verified: true } },
+        user: { select: { id: true, username: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
       },
     });
 
@@ -518,14 +525,14 @@ export class LiveService {
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       include: {
-        host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+        host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
         category: { select: { name: true } },
         _count: { select: { viewers: true, giftEvents: true } },
       },
     });
 
     const nextCursor = streams.length > limit ? streams.pop()?.id : undefined;
-    return { items: streams, nextCursor };
+    return { items: streams.map((s) => this.serializeStream(s)), nextCursor };
   }
 
   async updateStream(streamId: string, hostId: string, input: Record<string, unknown>) {
@@ -566,7 +573,7 @@ export class LiveService {
 
     if (streamerIds.length === 0) return [];
 
-    return prisma.liveStream.findMany({
+    return (await prisma.liveStream.findMany({
       where: { 
         hostId: { in: streamerIds },
         active: true,
@@ -574,11 +581,11 @@ export class LiveService {
       },
       orderBy: { viewerCount: 'desc' },
       include: {
-        host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+        host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
         category: { select: { name: true } },
         _count: { select: { viewers: true } },
       },
-    });
+    })).map((s) => this.serializeStream(s));
   }
 
   async getStreamHistory(hostId: string, limit: number = 10) {
@@ -771,7 +778,7 @@ export class LiveService {
   }
 
   async getTrendingStreams(limit: number = 10) {
-    return prisma.liveStream.findMany({
+    const streams = await prisma.liveStream.findMany({
       where: { active: true, status: 'LIVE' },
       orderBy: [
         { viewerCount: 'desc' },
@@ -780,24 +787,26 @@ export class LiveService {
       ],
       take: limit,
       include: {
-        host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+        host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
         category: { select: { name: true } },
         _count: { select: { viewers: true, giftEvents: true } },
       },
     });
+    return streams.map((s) => this.serializeStream(s));
   }
 
   async getRecentlyEnded(limit: number = 10) {
-    return prisma.liveStream.findMany({
+    const streams = await prisma.liveStream.findMany({
       where: { status: 'ENDED' },
       orderBy: { endedAt: 'desc' },
       take: limit,
       include: {
-        host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+        host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
         category: { select: { name: true } },
         _count: { select: { viewers: true, giftEvents: true } },
       },
     });
+    return streams.map((s) => this.serializeStream(s));
   }
 
   async getPopularCreators(limit: number = 10) {
@@ -811,19 +820,20 @@ export class LiveService {
         fullName: true,
         avatar: true,
         verified: true,
+        ...BADGE_USER_SELECT,
         _count: { select: { streamerFollowers: true, liveStreams: true } },
       },
       orderBy: { streamerFollowers: { _count: 'desc' } },
       take: limit,
     });
-    return creators;
+    return creators.map(enrichPublicUser);
   }
 
   async getStreamAnalytics(streamId: string, hostId: string) {
     const stream = await prisma.liveStream.findUnique({
       where: { id: streamId },
       include: {
-        host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+        host: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
         category: { select: { name: true } },
         _count: { select: { viewers: true, giftEvents: true, chatMessages: true, reactions: true } },
       },
@@ -1146,8 +1156,8 @@ export class LiveService {
     const approvedIds = this.parseJsonList(stream.approvedGuests);
 
     const [pendingUsers, approvedUsers] = await Promise.all([
-      prisma.user.findMany({ where: { id: { in: pendingIds } }, select: { id: true, username: true, fullName: true, avatar: true, verified: true } }),
-      prisma.user.findMany({ where: { id: { in: approvedIds } }, select: { id: true, username: true, fullName: true, avatar: true, verified: true } }),
+      prisma.user.findMany({ where: { id: { in: pendingIds } }, select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } }),
+      prisma.user.findMany({ where: { id: { in: approvedIds } }, select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } }),
     ]);
 
     const order = (ids: string[], users: Array<{ id: string }>) => ids.map((id) => users.find((u) => u.id === id)).filter(Boolean);

@@ -280,7 +280,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                     <div className="min-w-0">
                       <p className="flex items-center gap-1.5 text-sm font-semibold text-[#f5f5f5]">
                         <span className="truncate">{user?.fullName || user?.username || 'VANTA creator'}</span>
-                        <VerificationBadge type={user?.verified ? 'BLUE' : 'NONE'} size="sm" showTooltip />
+                        <VerificationBadge type={user?.verified ? ((user.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD') : 'NONE'} size="sm" showTooltip />
                       </p>
                       <p className="truncate text-xs text-[#666]">@{user?.username || 'you'}</p>
                     </div>

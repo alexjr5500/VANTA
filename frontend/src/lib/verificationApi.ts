@@ -12,6 +12,16 @@ export interface VerificationStatus {
   renewalDate: string | null;
   canAccessCreatorStudio: boolean;
   subscriptionEndDate: string | null;
+  // Paid Verified Badge info (server-authoritative)
+  verificationExpiryDate: string | null;
+  plan: {
+    id: string;
+    name: string;
+    badgeType: string;
+    durationMonths: number;
+    price: number;
+  } | null;
+  purchaseReference: string | null;
 }
 
 export interface SubscriptionPlan {
@@ -94,13 +104,15 @@ export const submitVerificationRequest = async (
 };
 
 /**
- * Subscribe to a creator membership plan
+ * Activate a creator/badge plan entitlement ONLY from a server-verified,
+ * fully-paid purchase (idempotent replay is safe). A badge never activates
+ * from a mere click — it requires purchaseId of a COMPLETED purchase.
  */
 export const subscribeToPlan = async (
   token: string,
-  data: { planId: string; paymentMethod?: string; paymentTxHash?: string }
-): Promise<{ membership: CreatorMembership; plan: SubscriptionPlan }> => {
-  return apiPost('/api/verification/subscribe', data, token);
+  purchaseId: string
+): Promise<{ success: boolean; badge?: any; membership?: any; alreadyCompleted?: boolean }> => {
+  return apiPost('/api/verification/subscribe', { purchaseId }, token);
 };
 
 /**
@@ -142,4 +154,110 @@ export const confirmCryptoPayment = async (
   data: { paymentId: string; txHash: string }
 ): Promise<any> => {
   return apiPost('/api/verification/crypto/confirm', data, token);
+};
+
+// ============================================================================
+// VERIFIED BADGE PURCHASE FLOW
+// ============================================================================
+
+export interface BadgePurchasePlan {
+  id: string;
+  name: string;
+  badgeType: 'BLUE' | 'GOLD';
+  durationMonths: number;
+  durationLabel: string;
+  priceUSD: number;
+  description: string;
+  benefits: string[];
+  sortOrder: number;
+}
+
+export interface VerificationPurchaseInit {
+  address: string;
+  orderId: string;
+  network: string;
+  amount: number;
+  currency: string;
+  planId: string;
+  planName: string;
+  badgeType: 'BLUE' | 'GOLD';
+  durationMonths: number;
+  expiresIn: number;
+  expiresAt: string;
+  mode: 'test' | 'live';
+  simulateToken?: string;
+}
+
+export interface VerificationPurchaseRecord {
+  id: string;
+  userId: string;
+  planId: string;
+  amount: number;
+  currency: string;
+  network: string | null;
+  status: 'PENDING' | 'PROCESSING' | 'PAID' | 'COMPLETED' | 'FAILED' | 'EXPIRED' | 'CANCELLED' | 'REFUNDED';
+  providerOrderId: string | null;
+  providerReference: string | null;
+  paymentMode: string | null;
+  expiresAt: string;
+  confirmedAt: string | null;
+  createdAt: string;
+  plan?: {
+    id: string;
+    name: string;
+    badgeType: string;
+    durationMonths: number;
+    price: number;
+  };
+}
+
+/**
+ * Verified Badge purchase catalog (server-authoritative pricing).
+ */
+export const getBadgePurchasePlans = async (token: string): Promise<BadgePurchasePlan[]> => {
+  return apiGet<BadgePurchasePlan[]>('/api/verification/badge-plans', token);
+};
+
+/**
+ * Start a Verified Badge purchase (creates a PENDING order — never activates).
+ */
+export const initializeVerificationPurchase = async (
+  token: string,
+  data: { planId: string; network: string }
+): Promise<VerificationPurchaseInit> => {
+  return apiPost<VerificationPurchaseInit>('/api/verification/purchase/init', data, token);
+};
+
+/**
+ * Confirm / poll a Verified Badge purchase.
+ * Test mode: requires `testConfirmation: true` + the backend-issued
+ * simulateToken. Live mode: returns `pending` until the provider webhook
+ * verifies the payment server-side.
+ */
+export const verifyVerificationPurchase = async (
+  token: string,
+  data: { orderId: string; testConfirmation?: boolean; simulateToken?: string }
+): Promise<any> => {
+  return apiPost('/api/verification/purchase/verify', data, token);
+};
+
+/**
+ * The authenticated user's Verified Badge purchase history.
+ */
+export const getVerificationPurchases = async (token: string): Promise<{
+  purchases: VerificationPurchaseRecord[];
+  total: number;
+}> => {
+  return apiGet('/api/verification/purchases', token);
+};
+
+/**
+ * Re-activate the entitlement from one of the user's COMPLETED purchases
+ * (idempotent; only a server-verified payment can reach COMPLETED).
+ */
+export const confirmVerificationPurchase = async (
+  token: string,
+  purchaseId: string
+): Promise<any> => {
+  return apiPost('/api/verification/subscribe', { purchaseId }, token);
 };

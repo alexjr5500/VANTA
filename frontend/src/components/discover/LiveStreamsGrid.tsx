@@ -122,7 +122,7 @@ export default function LiveStreamsGrid({ streams = defaultStreams, loading }: L
                 <Avatar src={stream.creator.avatar} alt={stream.creator.name} size="xs" />
                 <div className="flex items-center gap-1">
                   <span className="text-xs text-white/50 truncate max-w-[100px]">{stream.creator.name}</span>
-                  {stream.creator.verified && <VerificationBadge verified size="xs" />}
+                  {stream.creator.verified && <VerificationBadge verified type={(stream.creator.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />}
                 </div>
               </div>
               <span className="text-[10px] text-white/30 px-2 py-0.5 rounded-full bg-white/[0.04]">{stream.category}</span>

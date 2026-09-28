@@ -16,6 +16,7 @@ export type ProfileData = ProfileItem & {
   joinedAt?: string;
   createdAt?: string;
   verified?: boolean;
+  verificationType?: 'BLUE' | 'GOLD' | string | null;
   isFollowing?: boolean;
   stats?: ProfileItem;
   _count?: ProfileItem;

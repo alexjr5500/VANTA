@@ -78,7 +78,7 @@ export class UserService {
           select: { isOnline: true, lastActive: true },
         },
         verificationBadge: {
-          select: { badgeType: true, status: true },
+          select: { badgeType: true, status: true, expiresAt: true },
         },
         creatorMembership: {
           select: { status: true, planId: true },
@@ -92,6 +92,10 @@ export class UserService {
     if (!user) {
       throw new Error('User not found');
     }
+
+    const badgeActive =
+      user.verificationBadge?.status === 'ACTIVE' &&
+      (!user.verificationBadge?.expiresAt || new Date(user.verificationBadge.expiresAt).getTime() > Date.now());
 
     // Get current live stream if any
     const currentStream = await prisma.liveStream.findFirst({
@@ -124,7 +128,7 @@ export class UserService {
       country: profile?.country || null,
       city: profile?.city || null,
       interests: profile?.interests || null,
-      verified: user.verified,
+      verified: badgeActive || Boolean(user.verified),
       premium: user.premium,
       // Creator Hub fields
       creatorCategory: profile?.creatorCategory || null,
@@ -140,9 +144,16 @@ export class UserService {
       // Online status
       isOnline: user.userPresence?.isOnline || false,
       lastActive: user.userPresence?.lastActive || null,
-      // Verification
-      verificationType: user.verificationBadge?.badgeType || (user.verified ? 'blue' : null),
+      // Verification (paid badge is ACTIVE + unexpired; explicit BLUE/GOLD type)
+      verificationType: badgeActive
+        ? user.verificationBadge.badgeType === 'BLUE'
+          ? 'BLUE'
+          : 'GOLD'
+        : (user.verified ? 'GOLD' : null),
       verificationStatus: user.verificationBadge?.status || null,
+      verificationExpiryDate: badgeActive
+        ? user.verificationBadge?.expiresAt?.toISOString?.() || null
+        : null,
       // Creator membership
       creatorMembership: user.creatorMembership?.status || null,
       // Loyalty / Creator Score

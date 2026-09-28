@@ -158,6 +158,48 @@ async function main() {
   await ensureVerifiedUser('alex', 'Alex');
   console.log('✅ Verified creator accounts ensured (@alex, @ceo)');
 
+// ============================================================================
+  // 0c. VERIFIED BADGE PLANS (Blue + Gold purchase catalog)
+  // Server-authoritative purchased plans for the paid Verified Badge system.
+  // Prices/durations MUST match src/config/verification-badge.config.ts.
+  // ============================================================================
+
+  const verifiedBadgePlans = [
+    {
+      id: 'plan_blue_1month', name: 'Blue Verified — 1 Month', durationMonths: 1, price: 1.99,
+      description: 'Blue Verified badge for 1 month.',
+      benefits: JSON.stringify(['Blue Verified badge', 'Verified account status']),
+      badgeType: 'BLUE', sortOrder: 10,
+    },
+    {
+      id: 'plan_blue_3months', name: 'Blue Verified — 3 Months', durationMonths: 3, price: 4.99,
+      description: 'Blue Verified badge for 3 months.',
+      benefits: JSON.stringify(['Blue Verified badge', 'Verified account status', 'Save vs monthly']),
+      badgeType: 'BLUE', sortOrder: 11,
+    },
+    {
+      id: 'plan_blue_6months', name: 'Blue Verified — 6 Months', durationMonths: 6, price: 8.99,
+      description: 'Blue Verified badge for 6 months.',
+      benefits: JSON.stringify(['Blue Verified badge', 'Verified account status', 'Best Blue value']),
+      badgeType: 'BLUE', sortOrder: 12,
+    },
+    {
+      id: 'plan_gold_1year', name: 'Gold Verified — 1 Year', durationMonths: 12, price: 14.99,
+      description: 'Gold Verified badge for 1 year.',
+      benefits: JSON.stringify(['Gold Verified badge', 'Creator Studio access', 'Top verified status']),
+      badgeType: 'GOLD', sortOrder: 20,
+    },
+  ];
+
+  for (const plan of verifiedBadgePlans) {
+    const { id, ...data } = plan;
+    await prisma.subscriptionPlan.upsert({
+      where: { id },
+      update: { ...data, isActive: true, currency: 'USD' },
+      create: { id, ...data, isActive: true, currency: 'USD' },
+    });
+  }
+  console.log(`✅ ${verifiedBadgePlans.length} Verified Badge plans seeded (Blue 1/3/6 mo, Gold 1 yr)`);
   // ============================================================================
   // 1. Create VANTA Packages (up to $100,000)
   // ============================================================================

@@ -1,4 +1,5 @@
 import { prisma } from "../prisma";
+import { BADGE_USER_SELECT, enrichPublicUser } from "./public-verification";
 
 // Store reference to emit notifications via socket
 let ioRef: any = null;
@@ -101,10 +102,10 @@ export class NotificationService {
     const actors = actorIds.length
       ? await prisma.user.findMany({
           where: { id: { in: actorIds } },
-          select: { id: true, username: true, fullName: true, avatar: true, verified: true },
+          select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT },
         })
       : [];
-    const actorById = new Map(actors.map(actor => [actor.id, actor]));
+    const actorById = new Map(actors.map(actor => [actor.id, enrichPublicUser(actor)]));
     const items = notifications.map(notification => ({
       ...notification,
       data: parseMetadata(notification.data),
@@ -274,7 +275,7 @@ export class NotificationService {
     const actor = actorId && prisma.user?.findUnique
       ? await prisma.user.findUnique({
           where: { id: actorId },
-          select: { id: true, username: true, fullName: true, avatar: true, verified: true },
+          select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT },
         })
       : null;
     emitToUser(userId, "new_notification", {

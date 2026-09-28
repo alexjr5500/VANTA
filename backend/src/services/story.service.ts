@@ -1,5 +1,6 @@
 import { prisma } from "../prisma";
 import { contentViewService } from "./content-view.service";
+import { BADGE_USER_SELECT, enrichPublicUser } from "./public-verification";
 
 const STORY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -324,7 +325,7 @@ export class StoryService {
     return prisma.storyComment.create({
       data: { storyId: story.id, userId, content: text },
       include: {
-        user: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+        user: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
       },
     });
   }
@@ -334,7 +335,7 @@ export class StoryService {
       where: { storyId },
       orderBy: { createdAt: "asc" },
       include: {
-        user: { select: { id: true, username: true, fullName: true, avatar: true, verified: true } },
+        user: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
       },
     });
   }
@@ -345,7 +346,7 @@ export class StoryService {
       where: { expiresAt: { gt: now }, publishStatus: "PUBLISHED" },
       orderBy: { createdAt: "desc" },
       include: {
-        user: { select: { id: true, username: true, avatar: true, verified: true } },
+        user: { select: { id: true, username: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
       },
     });
 
@@ -373,7 +374,7 @@ export class StoryService {
     for (const story of stories) {
       if (!grouped.has(story.userId)) {
         grouped.set(story.userId, {
-          user: story.user,
+          user: enrichPublicUser(story.user),
           stories: [],
           hasUnviewed: false,
         });

@@ -145,6 +145,7 @@ model User {
   creatorMembership    CreatorMembership?
   cryptoPayments       CryptoPayment[]
   verificationHistory  VerificationHistory[]
+  verificationPurchases VerificationPurchase[]
 
   // Resumable (chunked) upload sessions
   uploadSessions UploadSession[]
@@ -2755,11 +2756,64 @@ model VerificationBadge {
   revokedAt   DateTime?
   revokedBy   String?
   revokeReason String?
+  // The verified-badge purchase (VerificationPurchase) that activated this
+  // entitlement, and the SubscriptionPlan that was purchased. Set ONLY for
+  // paid badges (admin/server grants leave these null).
+  sourcePurchaseId String?
+  planId           String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   @@index([userId, status])
   @@index([badgeType, status])
+  @@index([status, expiresAt])
+}
+
+/// VerificationPurchase: Paid Verified Badge purchase orders.
+///
+/// Mirrors the proven PurchaseOrder lifecycle used by the Buy-Coins flow but
+/// is isolated so a badge purchase can NEVER credit coins and badge activation
+/// is the ONLY thing a verified payment may produce. Status lifecycle:
+///
+///   PENDING    order created, no payment processed yet — NEVER activates
+///   PROCESSING a trusted provider event is finalizing it (recoverable)
+///   PAID       provider payment verified, entitlement not yet applied
+///   COMPLETED  entitlement activated (terminal success)
+///   FAILED     payment failed / was rejected
+///   EXPIRED    order TTL elapsed before payment was completed
+///   CANCELLED  buyer/provider cancelled before payment
+///   REFUNDED   a completed purchase was reversed (original row immutable)
+///
+/// Only a server-side verified payment may move an order to PAID/COMPLETED.
+model VerificationPurchase {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId           String
+  plan             SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  amount           Float
+  currency         String   @default("USD")
+  network          String?  // usdt-bep20 | usdc-base
+  status           String   @default("PENDING")
+  // Strongest duplicate guard: in live mode this is `live:<txHash>` and is
+  // UNIQUE at the database level, so the same transaction can never be
+  // replayed against a different order.
+  providerOrderId  String?  @unique
+  providerReference String?
+  paymentMode      String?  // test | live
+  expiresAt        DateTime
+  confirmedAt      DateTime?
+  refundedAt       DateTime?
+  refundedBy       String?
+  refundReason     String?
+  metadata         String?  // JSON - event verifier details etc.
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([status, expiresAt])
+  @@index([planId])
 }
 
 /// VerificationRequest: Tracks user verification requests
@@ -2795,6 +2849,7 @@ model SubscriptionPlan {
   badgeType       String    @default("GOLD")
   memberships     CreatorMembership[]
   cryptoPayments  CryptoPayment[]
+  verificationPurchases VerificationPurchase[]
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 

@@ -10,6 +10,11 @@ import {
   createCryptoPayment,
   confirmCryptoPayment,
   expireOverdue,
+  getBadgePurchasePlans,
+  initializeVerificationPurchase,
+  verifyVerificationPurchase,
+  getVerificationPurchases,
+  verificationPurchaseWebhook,
   adminGetAllBadges,
   adminGetAllMemberships,
   adminGetPendingRequests,
@@ -20,12 +25,23 @@ import {
   adminSuspendSubscription,
   adminUpsertPlan,
   adminGetUserVerificationHistory,
+  adminGetVerificationPurchases,
+  adminVerificationPurchaseDashboard,
+  adminRefundVerificationPurchase,
 } from '../controllers/verification.controller';
 import { authenticate, requireRole, Role } from '../security';
+import { rateLimiter } from '../security/rateLimiter';
 
 const router = Router();
 
-// All routes require authentication
+// ============================================================================
+// PUBLIC PROVIDER WEBHOOK (NO session — the provider authenticates via HMAC).
+// The ONLY path that can activate a badge for a LIVE payment. Must be mounted
+// BEFORE the authenticate guard below.
+// ============================================================================
+router.post('/purchase/webhook', rateLimiter.coinWebhook, verificationPurchaseWebhook);
+
+// All remaining routes require authentication
 router.use(authenticate);
 
 // ============================================================================
@@ -38,10 +54,13 @@ router.get('/status', getVerificationStatus);
 // Get available subscription plans
 router.get('/plans', getSubscriptionPlans);
 
+// Get the Verified Badge purchase catalog (server-authoritative pricing)
+router.get('/badge-plans', getBadgePurchasePlans);
+
 // Submit a verification request
 router.post('/request', submitVerificationRequest);
 
-// Subscribe to a creator membership plan
+// Activate a creator/badge plan from a server-VERIFIED completed purchase
 router.post('/subscribe', subscribeToPlan);
 
 // Cancel current membership
@@ -54,7 +73,20 @@ router.get('/history', getVerificationHistory);
 router.get('/studio-access', checkStudioAccess);
 
 // ============================================================================
-// CRYPTO PAYMENT ROUTES
+// VERIFIED BADGE PURCHASE ROUTES (secure payment flow)
+// ============================================================================
+
+// Start a Verified Badge purchase (PENDING — never activates anything)
+router.post('/purchase/init', rateLimiter.coinPurchase, initializeVerificationPurchase);
+
+// Confirm / check a Verified Badge purchase payment
+router.post('/purchase/verify', rateLimiter.coinPurchase, verifyVerificationPurchase);
+
+// The authenticated user's Verified Badge purchase history
+router.get('/purchases', getVerificationPurchases);
+
+// ============================================================================
+// CRYPTO PAYMENT ROUTES (legacy aliases that delegate to the secure flow)
 // ============================================================================
 
 // Create a crypto payment
@@ -67,7 +99,7 @@ router.post('/crypto/confirm', confirmCryptoPayment);
 // CRON / MAINTENANCE
 // ============================================================================
 
-// Expire overdue memberships (call via cron)
+// Expire overdue memberships / paid badges / stale purchases (call via cron)
 router.post('/expire-overdue', expireOverdue);
 
 // ============================================================================
@@ -106,5 +138,10 @@ router.post('/admin/plan', adminUpsertPlan);
 
 // Get verification history for a specific user
 router.get('/admin/history/:userId', adminGetUserVerificationHistory);
+
+// Verified Badge purchase administration
+router.get('/admin/purchases', adminGetVerificationPurchases);
+router.get('/admin/purchases/dashboard', adminVerificationPurchaseDashboard);
+router.post('/admin/purchases/:purchaseId/refund', adminRefundVerificationPurchase);
 
 export default router;

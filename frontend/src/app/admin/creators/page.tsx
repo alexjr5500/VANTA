@@ -74,7 +74,7 @@ export default function CreatorsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-bold text-white">{creator.displayName || creator.username}</span>
-                  {creator.isVerified && <VerificationBadge verified size="xs" className="inline-block" />}
+                  {creator.isVerified && <VerificationBadge verified type={(creator.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" className="inline-block" />}
                   {creator.isMonetized && <DollarSign size={12} className="text-green-400" />}
                 </div>
                 <p className="text-xs text-gray-500">@{creator.username} • {creator.category}</p>

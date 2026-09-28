@@ -105,7 +105,7 @@ export default function PostDetailPage({ params }: { params: { id: string } }) {
             <div className="flex min-w-0 items-center gap-1.5">
               <Link href={`/profile/${post.author.username}`} className="flex min-w-0 items-center gap-1.5 truncate text-sm font-semibold text-[#f5f5f5]">
                 <span className="min-w-0 truncate">{post.author.fullName || post.author.username}</span>
-                {post.author.verified && <VerificationBadge verified size="xs" />}
+                {post.author.verified && <VerificationBadge verified type={(post.author.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />}
               </Link>
               <span className="shrink-0 text-[11px] text-white/40">· {timeAgo(post.createdAt)}</span>
             </div>

@@ -649,7 +649,7 @@ const creator = current.group.user || {};
             )}
           </span>
           <span className="min-w-0">
-            <span className="flex items-center gap-1.5"><b className="truncate text-sm text-white">{creator.fullName || creator.username || 'VANTA'}</b>{creator.verified && <VerificationBadge verified size="xs" />}</span>
+            <span className="flex items-center gap-1.5"><b className="truncate text-sm text-white">{creator.fullName || creator.username || 'VANTA'}</b>{creator.verified && <VerificationBadge verified type={(creator.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />}</span>
             {creator.username && (
               <span className="block max-w-[190px] truncate text-[11px] text-white/55">@{creator.username}</span>
             )}

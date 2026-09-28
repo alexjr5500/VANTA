@@ -66,7 +66,7 @@ export default function ProfileHeader({ profile, own, onFollow, onMessage, onGif
       <div className="profile-identity">
         <div className="name-line">
           <h1>{displayName}</h1>
-          {profile.verified && <VerificationBadge verified size="md" />}
+          {profile.verified && <VerificationBadge type={(profile.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="md" />}
         </div>
         <p className="profile-handle">@{profile.username}</p>
         {profile.bio && <p className="profile-bio">{profile.bio}</p>}

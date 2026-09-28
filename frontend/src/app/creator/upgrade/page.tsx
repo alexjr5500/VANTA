@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
-import { getSubscriptionPlans, getVerificationStatus, subscribeToPlan, type SubscriptionPlan, type VerificationStatus } from '@/lib/verificationApi';
+import { getSubscriptionPlans, getVerificationStatus, getBadgePurchasePlans, type SubscriptionPlan, type VerificationStatus, type BadgePurchasePlan } from '@/lib/verificationApi';
+import VerificationPurchaseModal from '@/components/verification/VerificationPurchaseModal';
 import { Crown, ShieldCheck, Sparkles, BarChart3, DollarSign, HeadphonesIcon, Zap, Star, Check, ChevronRight, Loader2, Clock, Users, Radio, TrendingUp, Gift, MessageCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Link from 'next/link';
@@ -41,6 +42,8 @@ export default function CreatorUpgradePage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [billing, setBilling] = useState<'monthly' | 'annual'>('annual');
+  const [badgePlans, setBadgePlans] = useState<BadgePurchasePlan[]>([]);
+  const [purchasePlan, setPurchasePlan] = useState<BadgePurchasePlan | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -51,7 +54,17 @@ export default function CreatorUpgradePage() {
       return;
     }
 
-    loadData();
+    const loadAll = async () => {
+      loadData();
+      try {
+        const badgeData = await getBadgePurchasePlans(token);
+        setBadgePlans(Array.isArray(badgeData) ? badgeData : []);
+      } catch {
+        setBadgePlans([]);
+      }
+    };
+    void loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const loadData = async () => {
@@ -75,20 +88,15 @@ export default function CreatorUpgradePage() {
 
   const handleSubscribe = async (planId: string) => {
     if (!token) return;
-    setSubscribing(planId);
     setError(null);
-    try {
-      await subscribeToPlan(token, { planId });
-      await loadData();
-      setSuccess(true);
-      setTimeout(() => {
-        router.push('/creator');
-      }, 2000);
-    } catch (err: any) {
-      setError(err.message || 'Subscription failed');
-    } finally {
-      setSubscribing(null);
+    // Creators purchase the GOLD Verified badge plan. The payment is verified
+    // server-side before the badge/membership activates — clicking never does.
+    const goldPlan = badgePlans.find((p) => p.badgeType === 'GOLD') || badgePlans[0];
+    if (!goldPlan) {
+      setError('Verification plans are not available right now. Please try again shortly.');
+      return;
     }
+    setPurchasePlan(goldPlan);
   };
 
   if (isLoading) {
@@ -497,6 +505,13 @@ export default function CreatorUpgradePage() {
           </button>
         </motion.div>
       </section>
+
+      <VerificationPurchaseModal
+        open={Boolean(purchasePlan)}
+        plan={purchasePlan}
+        onClose={() => setPurchasePlan(null)}
+        onSuccess={() => setSuccess(true)}
+      />
     </div>
   );
 }

@@ -159,7 +159,7 @@ export default function LiveStreamCard({ stream, ended = false, index = 0 }: Liv
             <div className="min-w-0">
               <div className="flex items-center gap-1">
                 <span className="max-w-[92px] truncate text-[11px] font-medium text-[#C8C8CC]">{host.fullName || host.username}</span>
-                {host.verified && <VerificationBadge verified size="xs" />}
+                {host.verified && <VerificationBadge verified type={(host.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />}
               </div>
               <span className="block max-w-[110px] truncate text-[10px] text-[#666]">@{host.username}</span>
             </div>

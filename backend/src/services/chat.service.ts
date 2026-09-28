@@ -1,9 +1,11 @@
 import { prisma } from "../prisma";
 import { notificationService } from "./notification.service";
+import { BADGE_USER_SELECT, enrichPublicUser } from "./public-verification";
 
 const userSelect = {
   id: true, username: true, fullName: true, avatar: true, verified: true,
   userPresence: { select: { isOnline: true, lastActive: true } },
+  ...BADGE_USER_SELECT,
 } as const;
 
 export type AttachmentInput = { fileId?: string; url?: string; fileType?: string; fileName?: string; fileSize?: number };
@@ -103,6 +105,17 @@ const messageInclude = {
   replyTo: { include: { sender: { select: { id: true, username: true } }, attachments: true } },
 } as const;
 
+/** Enrich message sender(s) with public verification info (badge type). */
+const formatMessage = (message: any): any => {
+  if (!message || typeof message !== "object") return message;
+  const out = { ...message };
+  if (out.sender) out.sender = enrichPublicUser(out.sender);
+  if (out.replyTo && out.replyTo.sender) {
+    out.replyTo = { ...out.replyTo, sender: enrichPublicUser(out.replyTo.sender) };
+  }
+  return out;
+};
+
 const formatCallDuration = (seconds: number): string => {
   const safe = Math.max(0, Math.floor(seconds || 0));
   const mins = Math.floor(safe / 60);
@@ -172,7 +185,10 @@ export class ChatService {
         const partner = type === "DIRECT"
           ? conversation.participants.find((p: any) => p.userId !== userId)?.user
           : undefined;
-        const participants = conversation.participants.map((p: any) => ({ ...p.user, role: p.role }));
+        const participants = conversation.participants.map((p: any) => ({
+          ...enrichPublicUser(p.user),
+          role: p.role,
+        }));
         const onlineMemberCount = type === "GROUP"
           ? participants.filter((p: any) => p.userPresence?.isOnline).length
           : undefined;
@@ -203,7 +219,7 @@ export class ChatService {
           mutedAt: conversation.participants.find((p: any) => p.userId === userId)?.mutedAt || null,
           memberCount: conversation.participants.length,
           onlineMemberCount,
-          partner,
+          partner: partner ? enrichPublicUser(partner) : undefined,
           lastMessage: conversation.messages[0] || null,
           unreadCount,
           participants,
@@ -258,7 +274,7 @@ export class ChatService {
     const nextCursor = hasMore ? page[page.length - 1]?.id : null;
     // Remove read-receipt entries from participants who disabled read receipts.
     page = await sanitizeReadReceipts(page, userId);
-    return { messages: page.reverse(), nextCursor };
+    return { messages: page.reverse().map(formatMessage), nextCursor };
   }
 
   async sendMessage(conversationId: string, senderId: string, content: string, type = "TEXT", attachments: AttachmentInput[] = [], replyToId?: string, storyReply?: { storyId?: string; mediaUrl?: string; caption?: string; author?: string }) {
@@ -346,7 +362,7 @@ export class ChatService {
       await tx.conversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
       return created;
     });
-    return message;
+    return formatMessage(message);
   }
 
   async editMessage(messageId: string, userId: string, content: string) {

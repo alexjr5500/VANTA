@@ -1,137 +1,19 @@
 -- ============================================================================
--- VANTA — startup schema synchronization (idempotent, additive-only)
+-- Migration: Verified Badge Payments
 -- ============================================================================
--- Runs BEFORE `prisma db push` on every production start (backend/railway.json
--- start command and backend/src/provision-db.ts) and replays the reviewed
--- additive migration
+-- Adds the paid Verified Badge purchase infrastructure:
+--   1. VerificationBadge.sourcePurchaseId + planId (paid-entitlement tracking)
+--   2. VerificationPurchase table (server-verified purchase orders)
+--   3. The four canonical Verified Badge plans (Blue 1/3/6 mo + Gold 1 yr)
 --
---     backend/prisma/migrations/20260924000000_provider_accounts_oauth/migration.sql
---
--- in a strictly idempotent AND non-destructive way:
---
---   * tables / columns / indexes are only CREATED when missing (IF NOT EXISTS
---     / catalog checks) - never dropped, never altered destructively;
---   * existing rows are never touched;
---   * therefore the `prisma db push` that follows is never blocked by (and
---     never needs --accept-data-loss for) this already-reviewed additive
---     change: once applied, `prisma db push` sees the schema as fully in sync.
---
--- This file stays strictly additive so the last line of defense is preserved:
--- `prisma db push` still runs WITHOUT --accept-data-loss, meaning any
--- genuinely destructive schema drift will abort the deployment loudly instead
--- of being applied silently.
+-- Strictly idempotent and additive (IF NOT EXISTS / catalog checks). The
+-- foreign keys are added by `prisma db push` that follows in deployment, and
+-- are therefore intentionally NOT created here (see startup-sync.sql note).
 -- ============================================================================
 
--- ----------------------------------------------------------------------------
--- ProviderAccount (Google / Telegram identity) - new table
--- ----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS "ProviderAccount" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
-    "provider" TEXT NOT NULL,
-    "providerAccountId" TEXT NOT NULL,
-    "email" TEXT,
-    "displayName" TEXT,
-    "avatarUrl" TEXT,
-    "metadata" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-    CONSTRAINT "ProviderAccount_pkey" PRIMARY KEY ("id")
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS "ProviderAccount_provider_providerAccountId_key"
-    ON "ProviderAccount"("provider", "providerAccountId");
-CREATE INDEX IF NOT EXISTS "ProviderAccount_userId_idx"
-    ON "ProviderAccount"("userId");
-CREATE INDEX IF NOT EXISTS "ProviderAccount_provider_providerAccountId_idx"
-    ON "ProviderAccount"("provider", "providerAccountId");
-CREATE INDEX IF NOT EXISTS "ProviderAccount_provider_email_idx"
-    ON "ProviderAccount"("provider", "email");
-
--- ----------------------------------------------------------------------------
--- PROVIDER NOTE: the FOREIGN KEY from ProviderAccount.userId -> User.id is NOT
--- created here. `prisma db push` (the step that always follows this script)
--- adds any missing FK constraints itself, and adding an FK is not treated as a
--- data-loss operation, so it is applied with zero warnings. Keeping the FK out
--- of this script also avoids Prisma `db execute`'s up-front model validation
--- (P1014) on a brand-new, still-empty database where the `User` table has not
--- been created yet.
--- ----------------------------------------------------------------------------
-
--- ----------------------------------------------------------------------------
--- Session.oauthExchangeCode + oauthExchangeExpiresAt - one-time OAuth session
--- hand-off credentials (single-use unique exchange code).
---
--- This is the exact change that made `prisma db push` refuse to run without
--- --accept-data-loss. It is brand-new, nullable, and written by the OAuth flow
--- with a fresh random 32-byte code (NULL otherwise), so a UNIQUE index is
--- trivially safe: Postgres unique indexes treat NULLs as distinct, existing
--- sessions are never duplicated or modified, and genuine duplicates (an
--- application bug, not user data) would make the CREATE INDEX fail loudly
--- instead of deleting anything.
--- ----------------------------------------------------------------------------
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name = 'Session'
-    ) THEN
-        IF NOT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = 'Session'
-              AND column_name = 'oauthExchangeCode'
-        ) THEN
-            ALTER TABLE "Session" ADD COLUMN "oauthExchangeCode" TEXT;
-        END IF;
-
-        IF NOT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = 'Session'
-              AND column_name = 'oauthExchangeExpiresAt'
-        ) THEN
-            ALTER TABLE "Session" ADD COLUMN "oauthExchangeExpiresAt" TIMESTAMP(3);
-        END IF;
-
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_indexes
-            WHERE schemaname = 'public' AND tablename = 'Session'
-              AND indexname = 'Session_oauthExchangeCode_key'
-        ) THEN
-            CREATE UNIQUE INDEX "Session_oauthExchangeCode_key"
-                ON "Session"("oauthExchangeCode");
-        END IF;
-    END IF;
-END $$;
-
--- ----------------------------------------------------------------------------
--- OAuthState - short server-side OAuth `state` records (Telegram/Google).
---
--- The provider authorization URL carries only a short opaque state id; the
--- full nonce/PKCE/redirect payload is stored here and consumed exactly once on
--- the callback. Additive-only: brand-new table, no existing data is touched.
--- ----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS "OAuthState" (
-    "id" TEXT NOT NULL,
-    "provider" TEXT NOT NULL,
-    "nonce" TEXT NOT NULL,
-    "redirect" TEXT NOT NULL,
-    "codeVerifier" TEXT,
-    "linkingUserId" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "expiresAt" TIMESTAMP(3) NOT NULL,
-    "consumedAt" TIMESTAMP(3),
-
-    CONSTRAINT "OAuthState_pkey" PRIMARY KEY ("id")
-);
-
-CREATE INDEX IF NOT EXISTS "OAuthState_expiresAt_idx" ON "OAuthState"("expiresAt");
-CREATE INDEX IF NOT EXISTS "OAuthState_provider_idx" ON "OAuthState"("provider");
-CREATE INDEX IF NOT EXISTS "OAuthState_consumedAt_idx" ON "OAuthState"("consumedAt");
--- ----------------------------------------------------------------------------
--- Verified Badge Payments (additive) - paid Verified Badge purchase system.
--- Replays backend/prisma/migrations/20260927000000_verified_badge_payments.
--- ----------------------------------------------------------------------------
-
+-- ---------------------------------------------------------------------------
+-- 1. VerificationBadge: new nullable columns
+-- ---------------------------------------------------------------------------
 DO $$
 BEGIN
     IF EXISTS (
@@ -165,6 +47,9 @@ BEGIN
     END IF;
 END $$;
 
+-- ---------------------------------------------------------------------------
+-- 2. VerificationPurchase table (order lifecycle + idempotency fields)
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS "VerificationPurchase" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
@@ -186,7 +71,6 @@ CREATE TABLE IF NOT EXISTS "VerificationPurchase" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
     CONSTRAINT "VerificationPurchase_pkey" PRIMARY KEY ("id")
 );
-
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -234,6 +118,10 @@ BEGIN
             ON "VerificationPurchase"("planId");
     END IF;
 END $$;
+-- ---------------------------------------------------------------------------
+-- 3. Seed the four canonical Verified Badge plans (idempotent).
+--    The FK to SubscriptionPlan is added later by `prisma db push`.
+-- ---------------------------------------------------------------------------
 DO $$
 BEGIN
     IF EXISTS (

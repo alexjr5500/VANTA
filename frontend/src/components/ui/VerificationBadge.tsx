@@ -7,7 +7,7 @@ import { Check } from 'lucide-react';
 export type VerificationBadgeSize = 'xs' | 'sm' | 'md' | 'lg';
 
 export interface VerificationBadgeProps {
-  /** 'BLUE' and 'GOLD' each render the single canonical VANTA verified badge. */
+  /** 'BLUE' and 'GOLD' each render the canonical VANTA badge seal; 'NONE' hides it. */
   type?: 'BLUE' | 'GOLD' | 'NONE';
   /** Convenience shorthand: renders the canonical badge when truthy. */
   verified?: boolean;
@@ -24,8 +24,10 @@ export interface VerificationBadgeProps {
      alternating against 8 inner notches. It has visible edges/points so it
      reads as a premium verification seal — clearly NOT a plain circle and NOT
      a conventional 5-pointed star — while staying crisp at small sizes.
-   - Color: approved VANTA gold gradient (design-system `--gradient-gold`).
-   - Stroke: consistent per size; black check on gold.
+   - Color: GOLD keeps the approved VANTA gold gradient (design-system
+     `--gradient-gold`); BLUE uses the matching VANTA blue gradient for the
+     same seal so Blue Verified and Gold Verified are unmistakably distinct.
+   - Stroke: consistent per size; dark check on both.
    Only the seal/check scale with `size`; the identity never changes. */
 const SIZES: Record<VerificationBadgeSize, { box: number; icon: number; stroke: number }> = {
   xs: { box: 14, icon: 9, stroke: 3 },
@@ -41,8 +43,20 @@ const LABEL = 'Verified account';
 const BADGE_POLYGON =
   '12,1.8 12,3.73 8.6,4.2 9.21,5.69 4.6,5.4 5.93,6.68 2.6,8.6 4.29,9.3 2.2,11.5 3.96,11.68 3.6,15.6 5.11,15.04 5.6,18.4 6.75,17.34 8.6,19.6 9.21,18.32 12,22.2 12,20.45 15.4,19.6 14.79,18.32 18.4,18.4 17.25,17.34 20.4,15.6 18.89,15.04 21.8,11.5 20.04,11.68 21.4,8.6 19.71,9.3 19.4,5.4 18.07,6.68 15.4,4.2 14.79,5.69';
 
+const GOLD_STOPS = [
+  { offset: '0%', color: '#dfbd55' },
+  { offset: '55%', color: '#c9a227' },
+  { offset: '100%', color: '#a48220' },
+];
+
+const BLUE_STOPS = [
+  { offset: '0%', color: '#7db8f5' },
+  { offset: '55%', color: '#3b82f6' },
+  { offset: '100%', color: '#2456d6' },
+];
+
 export default function VerificationBadge({
-  type = 'BLUE',
+  type = 'GOLD',
   verified,
   size = 'sm',
   showTooltip = false,
@@ -52,6 +66,8 @@ export default function VerificationBadge({
   const gradientId = useId();
   if (!active) return null;
 
+  const isBlue = type === 'BLUE';
+  const stops = isBlue ? BLUE_STOPS : GOLD_STOPS;
   const s = SIZES[size];
 
   return (
@@ -73,9 +89,9 @@ export default function VerificationBadge({
       >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor="#dfbd55" />
-            <stop offset="0.55" stopColor="#c9a227" />
-            <stop offset="1" stopColor="#a48220" />
+            {stops.map((stop) => (
+              <stop key={stop.offset} offset={stop.offset} stopColor={stop.color} />
+            ))}
           </linearGradient>
         </defs>
         {/* Body */}

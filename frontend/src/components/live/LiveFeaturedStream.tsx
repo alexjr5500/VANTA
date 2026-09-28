@@ -115,7 +115,7 @@ export default function LiveFeaturedStream({ stream }: LiveFeaturedStreamProps) 
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-lg font-bold text-white">{host.fullName || host.username || 'Creator'}</span>
-                  {host.verified && <VerificationBadge verified size="sm" />}
+                  {host.verified && <VerificationBadge verified type={(host.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="sm" />}
                 </div>
                 <p className="text-sm text-white/50">@{host.username}</p>
               </div>

@@ -89,6 +89,29 @@ export default function VerificationPage() {
         {/* Header */}
         <PageHeader title="Verification" back="/settings" />
 
+{/* Paid Verified Badge purchase entry */}
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.02 }}
+          className="mb-4 cursor-pointer rounded-2xl border border-amber-400/20 bg-gradient-to-r from-amber-500/[0.12] to-transparent p-4"
+          onClick={() => router.push('/verification/badge')}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500/15">
+                <ShieldCheck size={16} className="text-sky-400" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-white">Get a Verified Badge</p>
+                <p className="text-[11px] text-gray-400">
+                  Blue Verified from $1.99 · Gold Verified $14.99
+                </p>
+              </div>
+            </div>
+            <ChevronRight size={18} className="text-gray-500" />
+          </div>
+        </motion.div>
         {error && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
