@@ -64,6 +64,8 @@ desktop.ini
 # Local visual-checking artifacts (headless-browser profile, screenshots, scripts)
 tmp-vischeck/
 tmp-cdp/
+# Dumped webpack chunk dumps from local production visual-check runs
+tmp-prod-*.js
 
 # Temporary test marker files
 backend/jest-*-done.txt
