@@ -8,6 +8,7 @@ import { formatNumber } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
+import type { VerificationType } from '@/types/verification';
 
 interface LiveStreamCardProps {
   stream: {
@@ -30,7 +31,7 @@ interface LiveStreamCardProps {
       fullName?: string | null;
       avatar?: string | null;
       verified?: boolean;
-      verificationType?: 'BLUE' | 'GOLD' | string | null;
+      verificationType?: VerificationType | null;
     };
     _count?: {
       viewers?: number;
@@ -160,7 +161,7 @@ export default function LiveStreamCard({ stream, ended = false, index = 0 }: Liv
             <div className="min-w-0">
               <div className="flex items-center gap-1">
                 <span className="max-w-[92px] truncate text-[11px] font-medium text-[#C8C8CC]">{host.fullName || host.username}</span>
-                {host.verified && <VerificationBadge verified type={(host.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />}
+                {host.verified && host.verificationType && <VerificationBadge verified type={host.verificationType} size="xs" />}
               </div>
               <span className="block max-w-[110px] truncate text-[10px] text-[#666]">@{host.username}</span>
             </div>

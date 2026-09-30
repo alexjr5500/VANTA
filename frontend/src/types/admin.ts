@@ -1,5 +1,7 @@
 // Admin Dashboard Type Definitions
 
+import type { VerificationType } from './verification';
+
 export type AdminRole = 'SUPER_ADMIN' | 'ADMINISTRATOR' | 'MODERATOR' | 'SUPPORT_AGENT' | 'FINANCE_MANAGER' | 'CONTENT_REVIEWER';
 
 export interface AdminUser {
@@ -116,7 +118,7 @@ export interface CreatorRecord {
   monthlyEarnings: number;
   isVerified: boolean;
   /** Active paid badge tier (BLUE / GOLD). Only populated when isVerified. */
-  verificationType?: 'BLUE' | 'GOLD' | string | null;
+  verificationType?: VerificationType | null;
   isMonetized: boolean;
   subscriptionApproved: boolean;
   liveAccess: boolean;

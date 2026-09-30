@@ -110,7 +110,7 @@ export default function StoryCard({
         <span className={cn('truncate transition-colors', hasUnviewed ? 'font-semibold text-[#e8e8e8]' : 'group-hover:text-[#c8c8cc]')}>
           {name}
         </span>
-        {user.verified && <VerificationBadge verified type={(user.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />}
+        {user.verified && user.verificationType && <VerificationBadge verified type={user.verificationType} size="xs" />}
       </span>
     </button>
   );

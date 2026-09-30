@@ -1,4 +1,5 @@
 import { resolveMediaUrl } from '@/lib/mediaUrl';
+import type { VerificationType } from '@/types/verification';
 
 export type ProfileTab = 'posts' | 'reels' | 'live' | 'media' | 'likes' | 'about';
 export type ProfileItem = Record<string, any>;
@@ -16,7 +17,7 @@ export type ProfileData = ProfileItem & {
   joinedAt?: string;
   createdAt?: string;
   verified?: boolean;
-  verificationType?: 'BLUE' | 'GOLD' | string | null;
+  verificationType?: VerificationType | null;
   isFollowing?: boolean;
   stats?: ProfileItem;
   _count?: ProfileItem;

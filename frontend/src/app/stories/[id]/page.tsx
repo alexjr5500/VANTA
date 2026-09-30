@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, Check, Eye, Heart, Link2, Loader2, MessageCircle, Repeat, Send, Share2, Trash2, X } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
+import type { VerificationType } from '@/types/verification';
 import { useAuth } from '@/context/AuthContext';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
 import { useToast } from '@/components/ui/Toast';
@@ -15,7 +16,7 @@ import { renderTextWithLinks } from '@/lib/linkify';
 import { cn } from '@/lib/utils';
 import StoryTextCanvas from '@/components/story/StoryTextCanvas';
 
-type ViewerUser = { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null };
+type ViewerUser = { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean; verificationType?: VerificationType | null };
 type Story = { id: string; userId: string; mediaUrl: string; mediaType?: string; caption?: string; textStyle?: string | null; views?: number; viewed?: boolean; duration?: number; likeCount?: number; reshareCount?: number; commentCount?: number; likedByMe?: boolean; resharedFromUsername?: string; user?: ViewerUser; author?: ViewerUser };
 type StoryGroup = { user: ViewerUser; stories: Story[]; hasUnviewed: boolean };
 type Viewer = { id: string; viewedAt: string; user: ViewerUser };
@@ -649,7 +650,7 @@ const creator = current.group.user || {};
             )}
           </span>
           <span className="min-w-0">
-            <span className="flex items-center gap-1.5"><b className="truncate text-sm text-white">{creator.fullName || creator.username || 'VANTA'}</b>{creator.verified && <VerificationBadge verified type={(creator.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />}</span>
+            <span className="flex items-center gap-1.5"><b className="truncate text-sm text-white">{creator.fullName || creator.username || 'VANTA'}</b>{creator.verified && creator.verificationType && <VerificationBadge verified type={creator.verificationType} size="xs" />}</span>
             {creator.username && (
               <span className="block max-w-[190px] truncate text-[11px] text-white/55">@{creator.username}</span>
             )}

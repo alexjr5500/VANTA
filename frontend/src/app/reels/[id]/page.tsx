@@ -8,6 +8,7 @@ import { apiGet } from '@/lib/apiClient';
 import { useAuth } from '@/context/AuthContext';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import VerificationBadge from '@/components/ui/VerificationBadge';
+import type { VerificationType } from '@/types/verification';
 
 type Reel = {
   id: string;
@@ -16,7 +17,7 @@ type Reel = {
   videoUrl: string;
   thumbnailUrl?: string;
   views?: number;
-  creator: { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null };
+  creator: { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean; verificationType?: VerificationType | null };
 };
 
 export default function ReelDetailPage({ params }: { params: { id: string } }) {
@@ -56,7 +57,7 @@ export default function ReelDetailPage({ params }: { params: { id: string } }) {
           <section className="rounded-xl border border-white/10 bg-white/[.03] p-5">
             <Link href={`/profile/${reel.creator.username}`} className="flex items-center gap-3 hover:text-white/80">
               <Avatar src={reel.creator.avatar} alt={reel.creator.username} size="md" />
-              <span><strong className="block">{reel.creator.fullName || reel.creator.username}{reel.creator.verified && <VerificationBadge verified type={(reel.creator.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="sm" className="ml-1.5 inline align-[-2px]" />}</strong><small className="text-white/50">@{reel.creator.username}</small></span>
+              <span><strong className="block">{reel.creator.fullName || reel.creator.username}{reel.creator.verified && reel.creator.verificationType && <VerificationBadge verified type={reel.creator.verificationType} size="sm" className="ml-1.5 inline align-[-2px]" />}</strong><small className="text-white/50">@{reel.creator.username}</small></span>
             </Link>
             <h1 className="mt-6 text-xl font-semibold">{reel.title || 'VANTA Reel'}</h1>
             {reel.description && <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-white/65">{reel.description}</p>}

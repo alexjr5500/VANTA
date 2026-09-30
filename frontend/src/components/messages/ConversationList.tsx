@@ -6,6 +6,7 @@ import { Search, Pin, BellOff, Check, CheckCheck, MessageCircle, Archive, MoreHo
 import { cn } from '@/lib/utils';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
+import type { VerificationType } from '@/types/verification';
 
 interface Conversation {
   id: string;
@@ -23,7 +24,7 @@ interface Conversation {
   unread?: number;
   isOnline?: boolean;
   verified?: boolean;
-  verificationType?: 'BLUE' | 'GOLD' | string | null;
+  verificationType?: VerificationType | null;
   isPinned?: boolean;
   isMuted?: boolean;
   isTyping?: boolean;
@@ -171,9 +172,9 @@ function ConversationItem({ conv, isActive, onSelect, timeAgo }: {
         {conv.isOnline && (
           <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 border-2 border-[#0a0a0f]" />
         )}
-        {conv.verified && (
+        {conv.verified && conv.verificationType && (
           <span className="absolute -top-1.5 -right-1.5">
-            <VerificationBadge verified type={(conv.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />
+            <VerificationBadge verified type={conv.verificationType} size="xs" />
           </span>
         )}
       </div>

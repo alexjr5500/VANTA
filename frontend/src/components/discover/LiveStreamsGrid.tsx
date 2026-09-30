@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
+import type { VerificationType } from '@/types/verification';
 
 interface LiveStream {
   id: string;
@@ -21,7 +22,7 @@ interface LiveStream {
     username: string;
     avatar?: string;
     verified?: boolean;
-    verificationType?: 'BLUE' | 'GOLD' | string | null;
+    verificationType?: VerificationType | null;
   };
 }
 
@@ -123,7 +124,7 @@ export default function LiveStreamsGrid({ streams = defaultStreams, loading }: L
                 <Avatar src={stream.creator.avatar} alt={stream.creator.name} size="xs" />
                 <div className="flex items-center gap-1">
                   <span className="text-xs text-white/50 truncate max-w-[100px]">{stream.creator.name}</span>
-                  {stream.creator.verified && <VerificationBadge verified type={(stream.creator.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />}
+                  {stream.creator.verified && stream.creator.verificationType && <VerificationBadge verified type={stream.creator.verificationType} size="xs" />}
                 </div>
               </div>
               <span className="text-[10px] text-white/30 px-2 py-0.5 rounded-full bg-white/[0.04]">{stream.category}</span>

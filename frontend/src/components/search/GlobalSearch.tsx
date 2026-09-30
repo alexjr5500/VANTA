@@ -13,6 +13,7 @@ import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
+import type { VerificationType } from '@/types/verification';
 
 interface SearchUser {
   id: string;
@@ -21,7 +22,7 @@ interface SearchUser {
   avatar?: string;
   bio?: string;
   verified?: boolean;
-  verificationType?: 'BLUE' | 'GOLD' | string | null;
+  verificationType?: VerificationType | null;
   premium?: boolean;
   _count?: { followers: number };
 }
@@ -30,7 +31,7 @@ interface SearchPost {
   id: string;
   content: string;
   createdAt: string;
-  author: { id: string; username: string; avatar?: string; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null };
+  author: { id: string; username: string; avatar?: string; verified?: boolean; verificationType?: VerificationType | null };
   _count?: { likes: number; comments: number };
 }
 
@@ -437,7 +438,7 @@ export default function GlobalSearch() {
                               <span className="text-sm font-medium text-white truncate">
                                 {user.fullName || user.username}
                               </span>
-                              {user.verified && <VerificationBadge verified type={(user.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="sm" />}
+                              {user.verified && user.verificationType && <VerificationBadge verified type={user.verificationType} size="sm" />}
                               {user.premium && (
                                 <Crown size={10} className="text-amber-400 shrink-0" />
                               )}
@@ -593,7 +594,7 @@ export default function GlobalSearch() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5">
                               <span className="text-sm font-medium text-white truncate">@{post.author.username}</span>
-                              {post.author.verified && <VerificationBadge verified type={(post.author.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="sm" />}
+                              {post.author.verified && post.author.verificationType && <VerificationBadge verified type={post.author.verificationType} size="sm" />}
                             </div>
                             <p className="text-[11px] text-white/50 mt-0.5 line-clamp-2">{post.content}</p>
                             {post._count && (

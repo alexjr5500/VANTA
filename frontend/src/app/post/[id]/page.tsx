@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Bookmark, Eye, Heart, Loader2, MessageCircle, Share2 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
+import type { VerificationType } from '@/types/verification';
 import PageHeader from '@/components/ui/PageHeader';
 import PostMedia from '@/components/social/PostMedia';
 import CommentPanel from '@/components/social/CommentPanel';
@@ -18,7 +19,7 @@ type Post = {
   id: string; content: string; mediaUrl?: string | null; createdAt: string;
   likesCount?: number; commentsCount?: number; shareCount?: number; views?: number;
   isLiked?: boolean; liked?: boolean; saved?: boolean; shares?: number; likes?: number; comments?: number;
-  author: { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null };
+  author: { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean; verificationType?: VerificationType | null };
 };
 
 const mediaSrc = (value?: string | null) => resolveMediaUrl(value);
@@ -105,7 +106,7 @@ export default function PostDetailPage({ params }: { params: { id: string } }) {
             <div className="flex min-w-0 items-center gap-1.5">
               <Link href={`/profile/${post.author.username}`} className="flex min-w-0 items-center gap-1.5 truncate text-sm font-semibold text-[#f5f5f5]">
                 <span className="min-w-0 truncate">{post.author.fullName || post.author.username}</span>
-                {post.author.verified && <VerificationBadge verified type={(post.author.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />}
+                {post.author.verified && post.author.verificationType && <VerificationBadge verified type={post.author.verificationType} size="xs" />}
               </Link>
               <span className="shrink-0 text-[11px] text-white/40">· {timeAgo(post.createdAt)}</span>
             </div>

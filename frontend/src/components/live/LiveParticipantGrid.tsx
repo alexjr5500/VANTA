@@ -19,6 +19,7 @@ import { useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
+import type { VerificationType } from '@/types/verification';
 import { MicOff, VideoOff } from 'lucide-react';
 import { stageLayoutFor } from './liveStageLayout';
 
@@ -27,7 +28,7 @@ export interface StageParticipant {
   username: string;
   avatar?: string | null;
   verified?: boolean;
-  verificationType?: 'BLUE' | 'GOLD' | string | null;
+  verificationType?: VerificationType | null;
   isHost?: boolean;
   stream: MediaStream | null;
   cameraOn: boolean;
@@ -97,7 +98,7 @@ function Tile({ p, className, showCameraOff }: { p: StageParticipant; className?
       <div className="absolute inset-x-0 bottom-0 flex items-center gap-1.5 bg-gradient-to-t from-black/70 to-transparent px-2 pb-1.5 pt-5">
         <span className="flex min-w-0 items-center gap-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">
           <span className="shrink-0 font-semibold">{p.username}</span>
-          {p.verified && <VerificationBadge type={(p.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />}
+          {p.verified && p.verificationType && <VerificationBadge type={p.verificationType} size="xs" />}
           {p.isHost && <span className="ml-0.5 rounded bg-[#D6A83F]/25 px-1 text-[9px] font-bold uppercase tracking-wide text-[#F2C75C]">Host</span>}
         </span>
         <span className="ml-auto flex items-center gap-1">

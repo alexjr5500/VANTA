@@ -91,7 +91,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
             className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 text-left"
           >
             <span className="min-w-0 truncate text-[13px] font-semibold text-[#f5f5f5]">{creator.fullName || creator.username || 'VANTA creator'}</span>
-            {creator.verified && <VerificationBadge type={(creator.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="sm" />}
+            {creator.verified && creator.verificationType && <VerificationBadge type={creator.verificationType} size="sm" />}
             <span className="truncate text-[11px] text-[#666]">@{creator.username}</span>
             <span className="text-[11px] text-[#666]">· {relativeTime(item.createdAt)}</span>
           </button>

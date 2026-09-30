@@ -31,6 +31,7 @@ import { isSecureMediaContext, mapMediaError } from '@/lib/mediaPermissions';
 import { addDrafts, hasBusyDraft, readyDraftCount, removeDraft, type AttachmentDraft } from '@/lib/attachmentDrafts';
 import { renderTextWithLinks } from '@/lib/linkify';
 import { friendlyError, errorMessage } from '@/lib/errors';
+import type { VerificationType } from '@/types/verification';
 
 interface Conversation {
   id: string;
@@ -48,7 +49,7 @@ interface Conversation {
   online: boolean;
   username?: string;
   verified?: boolean;
-  verificationType?: 'BLUE' | 'GOLD' | string | null;
+  verificationType?: VerificationType | null;
   lastSeen?: string;
   partnerId?: string;
   nextCursor?: string | null;
@@ -522,7 +523,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         onlineMemberCount: typeof conv.onlineMemberCount === 'number' ? conv.onlineMemberCount : undefined,
         username: conv.partner?.username,
         verified: Boolean(conv.partner?.verified),
-        verificationType: (conv.partner?.verificationType as 'BLUE' | 'GOLD' | undefined) || undefined,
+        verificationType: conv.partner?.verificationType || undefined,
         lastSeen: conv.partner?.userPresence?.lastActive,
         partnerId: conv.partner?.id,
         memberCount: conv.memberCount,
@@ -549,7 +550,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       const next = (data?.conversations ?? []).map((conv: any) => ({
         id: conv.id, type: (conv.type || (conv.isGroup ? 'GROUP' : 'DIRECT')).toLowerCase(), name: conv.name || conv.partner?.fullName || conv.partner?.username || 'Conversation', avatar: conv.partner?.avatar || conv.avatar,
         lastMessage: conv.lastMessage ? { text: conv.lastMessage.content ?? '', sender: conv.lastMessage.sender?.username ?? 'Unknown', timestamp: conv.lastMessage.createdAt, read: Boolean(conv.lastMessage.read), type: conv.lastMessage.type ?? 'TEXT' } : undefined,
-        unread: conv.unreadCount ?? 0, online: (conv.type || (conv.isGroup ? 'GROUP' : 'DIRECT')).toUpperCase() === 'DIRECT' ? Boolean(conv.partner?.userPresence?.isOnline ?? conv.partner?.isOnline ?? conv.online) : false, onlineMemberCount: typeof conv.onlineMemberCount === 'number' ? conv.onlineMemberCount : undefined, username: conv.partner?.username, verified: Boolean(conv.partner?.verified), verificationType: (conv.partner?.verificationType as 'BLUE' | 'GOLD' | undefined) || undefined, lastSeen: conv.partner?.userPresence?.lastActive, partnerId: conv.partner?.id, memberCount: conv.memberCount, currentRole: conv.currentRole, entityId: conv.entityId,
+        unread: conv.unreadCount ?? 0, online: (conv.type || (conv.isGroup ? 'GROUP' : 'DIRECT')).toUpperCase() === 'DIRECT' ? Boolean(conv.partner?.userPresence?.isOnline ?? conv.partner?.isOnline ?? conv.online) : false, onlineMemberCount: typeof conv.onlineMemberCount === 'number' ? conv.onlineMemberCount : undefined, username: conv.partner?.username, verified: Boolean(conv.partner?.verified), verificationType: conv.partner?.verificationType || undefined, lastSeen: conv.partner?.userPresence?.lastActive, partnerId: conv.partner?.id, memberCount: conv.memberCount, currentRole: conv.currentRole, entityId: conv.entityId,
       }));
       setConversations(previous => [...previous, ...next.filter((item: Conversation) => !previous.some(existing => existing.id === item.id))]);
       setConversationCursor(data?.nextCursor ?? null);
@@ -1779,7 +1780,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
-                    <p className="flex items-center gap-1 text-sm font-semibold text-white truncate">{conv.name}{conv.verified && <VerificationBadge verified type={(conv.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" className="shrink-0" />}</p>
+                    <p className="flex items-center gap-1 text-sm font-semibold text-white truncate">{conv.name}{conv.verified && conv.verificationType && <VerificationBadge verified type={conv.verificationType} size="xs" className="shrink-0" />}</p>
                     {conv.lastMessage && (
                       <span className="text-[10px] text-gray-500 shrink-0 ml-2">
                         {new Date(conv.lastMessage.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
@@ -1847,7 +1848,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                 <button onClick={openConversationInfo} className="flex min-w-0 items-center gap-3 text-left" aria-label={`Open ${activeConv.name} information`}>
                  <Avatar src={activeConv.avatar} alt={activeConv.name} size="sm" className="ring-2 ring-[#d6a83f]/20" />
                 <div className="min-w-0">
-                   <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-[#f5f5f5]">{activeConv.name}{activeConv.verified && <VerificationBadge verified type={(activeConv.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="sm" className="shrink-0" />}</p>
+                   <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-[#f5f5f5]">{activeConv.name}{activeConv.verified && activeConv.verificationType && <VerificationBadge verified type={activeConv.verificationType} size="sm" className="shrink-0" />}</p>
                   <p className="truncate text-[10px] text-white/40">
                     {activeConv.type === 'channel' ? `${activeConv.memberCount || 1} subscribers · broadcast` : activeConv.type === 'group' ? (typingUserId ? `${activeConv.participants?.find((p: any) => p.id === typingUserId)?.fullName || 'Someone'} is typing…` : `${activeConv.memberCount || 1} members${activeConv.onlineMemberCount ? ` · ${activeConv.onlineMemberCount} online` : ''}`) : typingUserId ? 'Typing…' : activeConv.online ? 'Online' : activeConv.lastSeen ? `Last seen ${new Date(activeConv.lastSeen).toLocaleString()}` : 'Offline'}
                   </p>

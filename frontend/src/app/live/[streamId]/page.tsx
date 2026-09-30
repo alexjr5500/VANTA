@@ -49,6 +49,7 @@ import { cn, formatNumber } from '@/lib/utils';
 import { useToast } from '@/components/ui/Toast';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
+import type { VerificationType } from '@/types/verification';
 import GiftPicker from '@/components/social/GiftPicker';
 import GiftPickerBoundary from '@/components/social/GiftPickerBoundary';
 import { normalizeGiftCatalog, type GiftCatalogItem } from '@/lib/giftCatalog';
@@ -67,7 +68,7 @@ interface Host {
   fullName?: string | null;
   avatar?: string | null;
   verified?: boolean;
-  verificationType?: 'BLUE' | 'GOLD' | string | null;
+  verificationType?: VerificationType | null;
 }
 
 interface StreamDetail {
@@ -93,7 +94,7 @@ interface ChatMessage {
   createdAt?: string;
   kind?: 'comment' | 'system';
   meta?: { icon?: string; type?: string };
-  user?: { id: string; username: string; avatar?: string | null; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null } | null;
+  user?: { id: string; username: string; avatar?: string | null; verified?: boolean; verificationType?: VerificationType | null } | null;
 }
 
 function viewerEventLine(d: any): string | null {
@@ -960,7 +961,7 @@ const sendComment = useCallback(() => {
             <span className="min-w-0">
               <span className="flex min-w-0 items-center gap-1.5">
                 <span className="max-w-[112px] truncate text-sm font-extrabold text-white drop-shadow">@{stream.host.username}</span>
-                {stream.host.verified && <VerificationBadge type={(stream.host.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />}
+                {stream.host.verified && stream.host.verificationType && <VerificationBadge type={stream.host.verificationType} size="xs" />}
               </span>
               <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] leading-none text-white/90 tabular-nums drop-shadow">
                 <span className="inline-flex items-center gap-1 rounded-full bg-[#D6A83F]/95 px-1.5 py-0.5 text-[8px] font-extrabold uppercase tracking-wide text-black">
@@ -1127,7 +1128,7 @@ const sendComment = useCallback(() => {
                           <span className="inline-flex items-center gap-1 font-semibold text-[#D6A83F]">
                             {m.user?.username || 'user'}
                             {m.user?.id === stream.host.id && <span className="rounded bg-[#D6A83F]/20 px-1 text-[8px] font-bold uppercase tracking-wide text-[#F2C75C]">Streamer</span>}
-                            {m.user?.verified && <VerificationBadge type={(m.user?.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" />}
+                            {m.user?.verified && m.user?.verificationType && <VerificationBadge type={m.user.verificationType} size="xs" />}
                           </span>
                           <span className="ml-1 break-words text-white/90">{renderTextWithLinks(m.message, 'linkify')}</span>
                         </div>

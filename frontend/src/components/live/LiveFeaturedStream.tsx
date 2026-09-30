@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Play, Eye, Heart, Gift, Share2, Check, Radio } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
+import type { VerificationType } from '@/types/verification';
 import { formatNumber } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 
@@ -26,7 +27,7 @@ interface LiveFeaturedStreamProps {
       fullName?: string | null;
       avatar?: string | null;
       verified?: boolean;
-      verificationType?: 'BLUE' | 'GOLD' | string | null;
+      verificationType?: VerificationType | null;
     };
   } | null;
 }
@@ -116,7 +117,7 @@ export default function LiveFeaturedStream({ stream }: LiveFeaturedStreamProps) 
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-lg font-bold text-white">{host.fullName || host.username || 'Creator'}</span>
-                  {host.verified && <VerificationBadge verified type={(host.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="sm" />}
+                  {host.verified && host.verificationType && <VerificationBadge verified type={host.verificationType} size="sm" />}
                 </div>
                 <p className="text-sm text-white/50">@{host.username}</p>
               </div>

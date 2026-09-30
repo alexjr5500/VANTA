@@ -9,6 +9,7 @@ import { apiGet, apiPost } from '@/lib/apiClient';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
 import VerificationBadge from '@/components/ui/VerificationBadge';
+import type { VerificationType } from '@/types/verification';
 
 interface UserResult {
   id: string;
@@ -16,7 +17,7 @@ interface UserResult {
   fullName?: string;
   avatar?: string;
   verified?: boolean;
-  verificationType?: 'BLUE' | 'GOLD' | string | null;
+  verificationType?: VerificationType | null;
 }
 
 interface SendCoinsModalProps {
@@ -225,7 +226,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-white truncate">
                               {u.fullName || u.username}
-                              {u.verified && <VerificationBadge verified type={(u.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" className="ml-1" />}
+                              {u.verified && u.verificationType && <VerificationBadge verified type={u.verificationType} size="xs" className="ml-1" />}
                             </p>
                             <p className="text-[10px] text-white/40">@{u.username}</p>
                           </div>

@@ -1,5 +1,6 @@
 import { apiPost, apiGet } from './apiClient';
 import type { ApiResponse } from './api';
+import type { VerificationType } from '@/types/verification';
 
 export interface AuthUser {
   id: string;
@@ -12,7 +13,7 @@ export interface AuthUser {
   profile?: Record<string, unknown>;
   role?: string;
   verified?: boolean;
-  verificationType?: 'BLUE' | 'GOLD' | string | null;
+  verificationType?: VerificationType | null;
   createdAt?: string;
   emailVerified?: boolean;
   lastLoginAt?: string;

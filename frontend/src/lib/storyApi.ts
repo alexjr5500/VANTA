@@ -6,6 +6,7 @@
 // ============================================================================
 
 import { apiGet, apiPost, apiUpload } from '@/lib/apiClient';
+import type { VerificationType } from '@/types/verification';
 
 export interface StoryAuthor {
   id: string;
@@ -13,7 +14,7 @@ export interface StoryAuthor {
   fullName?: string | null;
   avatar?: string | null;
   verified?: boolean;
-  verificationType?: 'BLUE' | 'GOLD' | string | null;
+  verificationType?: VerificationType | null;
 }
 
 export interface StoryItem {

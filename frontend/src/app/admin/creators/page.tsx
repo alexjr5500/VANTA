@@ -11,6 +11,7 @@ import GlassCard from '@/components/ui/GlassCard';
 import Button from '@/components/ui/Button';
 import { getCreators, verifyCreator, toggleMonetization, approveSubscription } from '@/lib/adminApi';
 import type { CreatorRecord } from '@/types/admin';
+import type { VerificationType } from '@/types/verification';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import { useToast } from '@/components/ui/Toast';
 
@@ -47,7 +48,7 @@ export default function CreatorsPage() {
   const applyPatch = (id: string, patch: Record<string, any>) =>
     setCreators(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c));
 
-  const runVerify = async (creator: CreatorRecord, badgeType?: 'BLUE' | 'GOLD') => {
+  const runVerify = async (creator: CreatorRecord, badgeType?: VerificationType) => {
     const token = localStorage.getItem('token');
     if (!token || busyId) return;
     setBusyId(creator.id);
@@ -56,7 +57,7 @@ export default function CreatorsPage() {
       const updated = await verifyCreator(token, creator.id, badgeType);
       applyPatch(creator.id, updated);
       toast.success(updated.isVerified ? 'Creator verified' : 'Verification removed',
-        `${creator.displayName || creator.username}${updated.isVerified ? ` is now ${updated.verificationType || 'GOLD'} verified` : ' is no longer verified'}.`);
+        `${creator.displayName || creator.username}${updated.isVerified ? ` is now ${updated.verificationType ?? 'GOLD'} verified` : ' is no longer verified'}.`);
     } catch (error: any) {
       toast.error('Verification update failed', error.message || 'Please try again.');
     } finally {
@@ -130,7 +131,7 @@ export default function CreatorsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-bold text-white">{creator.displayName || creator.username}</span>
-                  {creator.isVerified && <VerificationBadge verified type={(creator.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" className="inline-block" />}
+                  {creator.isVerified && creator.verificationType && <VerificationBadge verified type={creator.verificationType} size="xs" className="inline-block" />}
                 </div>
                 <p className="text-xs text-gray-500">@{creator.username} • {creator.category}</p>
               </div>

@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
 import { createSocket } from '@/lib/socketClient';
 import { emitProfileMediaUpdate, ProfileMediaUpdate, versionMediaUrl } from '@/lib/profileMedia';
+import type { VerificationType } from '@/types/verification';
 
 export type VantaNotification = {
   id: string;
@@ -18,7 +19,7 @@ export type VantaNotification = {
   entityType?: string | null;
   entityId?: string | null;
   data?: Record<string, unknown> | string | null;
-  actor?: { id: string; username: string; fullName?: string | null; avatar?: string | null; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null } | null;
+  actor?: { id: string; username: string; fullName?: string | null; avatar?: string | null; verified?: boolean; verificationType?: VerificationType | null } | null;
 };
 
 type NotificationContextValue = {
