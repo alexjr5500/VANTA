@@ -9,11 +9,17 @@ import {
   getCoinPaymentMode,
   getTestPaymentDepositAddress,
   getCoinPaymentWebhookSecret,
+  getCoinPaymentDepositAddress,
   createCoinPaymentSimulateToken,
   isValidTransactionHash,
   validateCoinPaymentConfig,
   SUPPORTED_COIN_PAYMENT_NETWORKS,
 } from '../config/coin-payments.config';
+import { getMinBlockchainConfirmations } from '../config/blockchain-networks.config';
+import {
+  blockchainTxVerifier,
+  BlockchainTxVerificationError,
+} from './blockchain-verifier.service';
 import { VANTA_COIN_PACKAGES } from '../config/wallet.config';
 
 // ============================================================================
@@ -63,6 +69,19 @@ function networkToAsset(network: string): string | null {
 function isP2002(error: any): boolean {
   return Boolean(error) && (error.code === 'P2002' || error.code === 2002);
 }
+
+/**
+ * WebhookEvent statuses that are FINAL and must never be reprocessed.
+ * FAILED / RECEIVED events stay retryable on provider re-delivery so a
+ * transient blockchain-RPC outage never permanently swallows a payment event.
+ */
+const COIN_WEBHOOK_FINAL_STATUSES: readonly string[] = Object.freeze([
+  'PROCESSED',
+  'IGNORED',
+  'INVALID',
+  'PROCESSING',
+  'DUPLICATE',
+]);
 
 export class CoinPaymentService {
   // ============================================================
@@ -235,6 +254,8 @@ export class CoinPaymentService {
     status?: unknown;
     confirmations?: unknown;
     confirmedAt?: unknown;
+    /** Optional provider-reported receiving address — must equal the official wallet. */
+    recipient?: unknown;
   }) {
     const secret = getCoinPaymentWebhookSecret();
     if (!secret) {
@@ -267,21 +288,31 @@ export class CoinPaymentService {
       throw new PaymentWebhookError(400, 'eventId is required.');
     }
     const existingEvent = await prisma.webhookEvent.findUnique({ where: { eventId } });
-    if (existingEvent) {
-      // Replay of the exact same event — acknowledged, never double-processed.
+    if (existingEvent && COIN_WEBHOOK_FINAL_STATUSES.includes(existingEvent.status)) {
+      // FINAL event — acknowledged as a duplicate, never double-processed.
+      // FAILED / RECEIVED events are intentionally NOT final: a transient
+      // blockchain-RPC outage must be retryable, so a provider re-delivery
+      // reprocesses the SAME event row instead of being swallowed.
       return { received: true, duplicate: true, eventId };
     }
-
-    await prisma.webhookEvent.create({
-      data: {
-        provider: 'coin-payment',
-        eventId,
-        type: 'payment.confirmed',
-        rawBody: String(input.rawBody || '').slice(0, 100_000),
-        signature: input.signature,
-        status: 'RECEIVED',
-      },
-    });
+    if (existingEvent && existingEvent.status === 'PROCESSING') {
+      return { received: true, duplicate: true, eventId };
+    }
+    // Retry of a previously FAILED/RECEIVED event reuses the existing row
+    // (markEvent below updates it) instead of inserting a duplicate.
+    const isRetry = Boolean(existingEvent);
+    if (!isRetry) {
+      await prisma.webhookEvent.create({
+        data: {
+          provider: 'coin-payment',
+          eventId,
+          type: 'payment.confirmed',
+          rawBody: String(input.rawBody || '').slice(0, 100_000),
+          signature: input.signature,
+          status: 'RECEIVED',
+        },
+      });
+    }
 
     const markEvent = async (status: string, error?: string) => {
       try {
@@ -375,6 +406,69 @@ try {
         return { received: true, result: 'failed', orderId, eventId };
       }
 
+      // ---- INDEPENDENT ON-CHAIN VERIFICATION (defense in depth) ----
+      // An HMAC-authenticated provider webhook proves the payment pipeline
+      // reported the payment, but coins are ONLY credited after the backend
+      // independently inspects the real on-chain transaction: the recipient
+      // must be the OFFICIAL VANTA receiving wallet, the token contract must
+      // match the expected asset, the transferred amount must match the order,
+      // and the transaction must have enough confirmations on the expected
+      // network. Any failure — or an RPC outage — blocks crediting (fail closed).
+      const verifyingRecipient = getCoinPaymentDepositAddress();
+      if (!verifyingRecipient) {
+        await markEvent('FAILED', 'Receiving wallet is not configured');
+        return { received: true, result: 'failed', orderId, eventId };
+      }
+      if (
+        typeof input.recipient === 'string' &&
+        input.recipient.trim() &&
+        input.recipient.trim().toLowerCase() !== verifyingRecipient.toLowerCase()
+      ) {
+        await markEvent('FAILED', 'Recipient does not match the official wallet');
+        await auditLog.log({
+          action: 'PAYMENT_WEBHOOK_RECIPIENT_MISMATCH',
+          severity: 'CRITICAL',
+          metadata: { eventId, orderId, txHash, expected: verifyingRecipient },
+          ipAddress: '[webhook]',
+        });
+        return { received: true, result: 'failed', orderId, eventId };
+      }
+      let onChain: Record<string, unknown> | null = null;
+      try {
+        const verified = await blockchainTxVerifier.withRetry(() =>
+          blockchainTxVerifier.verifyTransaction({
+            txHash,
+            network,
+            expectedAmountUsd: order.amount,
+            expectedRecipient: verifyingRecipient,
+            minConfirmations: getMinBlockchainConfirmations(),
+          })
+        );
+        onChain = verified;
+      } catch (error) {
+        if (error instanceof BlockchainTxVerificationError) {
+          await markEvent(
+            'FAILED',
+            error.transient
+              ? `On-chain verification retryable: ${error.code}`
+              : `On-chain verification rejected: ${error.code}`
+          );
+          await auditLog.log({
+            action: error.transient ? 'PAYMENT_WEBHOOK_VERIFY_RETRYABLE' : 'PAYMENT_WEBHOOK_VERIFY_REJECTED',
+            severity: error.transient ? 'WARNING' : 'CRITICAL',
+            metadata: { eventId, orderId, txHash, network, code: error.code, reason: error.message.slice(0, 400) },
+            ipAddress: '[webhook]',
+          });
+          if (error.transient) {
+            // RPC outage: keep the order PENDING/PROCESSING and let the provider
+            // retry the webhook (the event row is retryable). No credit happens.
+            throw error;
+          }
+          return { received: true, result: 'failed', orderId, eventId };
+        }
+        throw error;
+      }
+
       // ---- Atomic, idempotent crediting ----
       // completeCoinPurchase flips the order to COMPLETED with a conditional
       // claim and sets providerOrderId = `live:<txHash>` (UNIQUE). If the same
@@ -393,6 +487,7 @@ try {
             amount,
             confirmations: typeof input.confirmations === 'number' ? input.confirmations : null,
             confirmedAt: typeof input.confirmedAt === 'string' && input.confirmedAt ? input.confirmedAt : null,
+            onChain: onChain || undefined,
           },
         });
       } catch (error) {

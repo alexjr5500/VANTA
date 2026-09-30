@@ -79,6 +79,24 @@ export const COIN_PAYMENT_CREDITABLE_STATUSES: readonly string[] = Object.freeze
 export const COIN_PAYMENT_ORDER_TTL_SECONDS = 30 * 60; // orders expire after 30 minutes
 
 /**
+ * THE canonical VANTA receiving wallet for verified blockchain payments.
+ *
+ * This address is the authoritative, server-side destination for every live
+ * (real-currency) USDT/USDC payment. The frontend can never override it: the
+ * client only ever receives this address for display, and the backend treats
+ * the value below (or an env override that EXACTLY matches it) as the only
+ * valid recipient during on-chain verification.
+ *
+ * Rules enforced by this module:
+ *  - If `VANTA_COIN_PAYMENT_ADDRESS` is set to a DIFFERENT address, the
+ *    official constant wins and the mismatch is surfaced in the config log.
+ *  - The address alone is never proof of payment — a payment is only accepted
+ *    after the backend independently verifies the on-chain transaction
+ *    (see src/services/blockchain-verifier.service.ts).
+ */
+export const OFFICIAL_VANTA_RECEIVING_WALLET = '0x7fa9677c65272d80b06cb0c3a9bbeeba8f95db56';
+
+/**
  * Clearly fake BEP-20-shaped address (0x + 40 hex chars) used to render the
  * test payment screen. It is unmistakably not a real deposit address.
  */
@@ -104,12 +122,33 @@ export function isCoinPaymentTestMode(): boolean {
 
 /**
  * The live deposit address buyers are told to send crypto to.
- * Returns null when live payments are not configured (the exact missing
- * configuration callers should surface).
+ *
+ * AUTHORITATIVE: `OFFICIAL_VANTA_RECEIVING_WALLET` is the receiving wallet and
+ * wins in every case. An env override is only honored when it exactly equals
+ * the official address; a differing `VANTA_COIN_PAYMENT_ADDRESS` is ignored
+ * (and the mismatch is surfaced to operators) so an operator or frontend can
+ * never silently substitute a different recipient.
  */
 export function getCoinPaymentDepositAddress(): string | null {
-  const address = (process.env.VANTA_COIN_PAYMENT_ADDRESS || '').trim();
-  return address || null;
+  const configured = (process.env.VANTA_COIN_PAYMENT_ADDRESS || '').trim();
+  if (configured && isSameEvmAddress(configured, OFFICIAL_VANTA_RECEIVING_WALLET)) {
+    return configured;
+  }
+  if (configured) {
+    console.warn(
+      '[COIN-PAYMENTS] VANTA_COIN_PAYMENT_ADDRESS is set to a different address than the OFFICIAL ' +
+        'VANTA receiving wallet (' +
+        OFFICIAL_VANTA_RECEIVING_WALLET +
+        '). The official receiving wallet is authoritative and will be used; the configured value was ignored.'
+    );
+  }
+  return OFFICIAL_VANTA_RECEIVING_WALLET;
+}
+
+/** Compare two EVM addresses case-insensitively (`0x` prefix + 40 hex chars). */
+export function isSameEvmAddress(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
 /** Test-mode deposit address used to render the (fake) payment screen. */

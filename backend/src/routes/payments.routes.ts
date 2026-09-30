@@ -39,6 +39,7 @@ router.post('/webhook', rateLimiter.coinWebhook, async (req: Request, res: Respo
       status: req.body?.status,
       confirmations: req.body?.confirmations,
       confirmedAt: req.body?.confirmedAt,
+      recipient: req.body?.recipient,
     });
 
     // Always acknowledge so the provider stops retrying; the payload tells the

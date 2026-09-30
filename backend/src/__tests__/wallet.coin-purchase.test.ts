@@ -1,4 +1,4 @@
-import { WalletService, TX_TYPES } from '../services/wallet.service';
+﻿import { WalletService, TX_TYPES } from '../services/wallet.service';
 import { prisma } from '../prisma';
 import { verifyCoinPaymentSimulateToken, COIN_PAYMENT_MODE, COIN_PAYMENT_CREDITABLE_STATUSES } from '../config/coin-payments.config';
 
@@ -218,17 +218,18 @@ describe('coin-payments config', () => {
     expect(config.errors).toEqual([]);
   });
 
-  test('live mode requires a valid payment address', () => {
+  test('live mode uses the OFFICIAL receiving wallet even without an env address', () => {
     const { validateCoinPaymentConfig } = require('../config/coin-payments.config');
     process.env.NODE_ENV = 'production';
     process.env.VANTA_COIN_PAYMENT_MODE = 'live';
     delete process.env.VANTA_COIN_PAYMENT_ADDRESS;
     const config = validateCoinPaymentConfig();
     expect(config.mode).toBe('live');
-    expect(config.errors.length).toBeGreaterThan(0);
+    expect(config.errors).toEqual([]);
+    expect(config.depositAddress.toLowerCase()).toBe('0x7fa9677c65272d80b06cb0c3a9bbeeba8f95db56');
   });
 
-  test('live mode with a malformed address is a hard configuration error', () => {
+  test('a malformed configured address is ignored - the OFFICIAL wallet wins', () => {
     const { validateCoinPaymentConfig, isValidCoinPaymentDepositAddress } = require('../config/coin-payments.config');
     process.env.NODE_ENV = 'production';
     process.env.VANTA_COIN_PAYMENT_MODE = 'live';
@@ -237,15 +238,17 @@ describe('coin-payments config', () => {
     expect(isValidCoinPaymentDepositAddress('0x' + 'a'.repeat(40))).toBe(true);
     process.env.VANTA_COIN_PAYMENT_ADDRESS = '0x1234';
     const config = validateCoinPaymentConfig();
-    expect(config.errors.length).toBeGreaterThan(0);
+    expect(config.errors).toEqual([]);
+    expect(config.depositAddress.toLowerCase()).toBe('0x7fa9677c65272d80b06cb0c3a9bbeeba8f95db56');
   });
 
-  test('valid EVM address passes live validation', () => {
+  test('valid EVM address that equals the OFFICIAL wallet passes live validation', () => {
     const { validateCoinPaymentConfig } = require('../config/coin-payments.config');
     process.env.NODE_ENV = 'production';
     process.env.VANTA_COIN_PAYMENT_MODE = 'live';
-    process.env.VANTA_COIN_PAYMENT_ADDRESS = '0x' + 'b'.repeat(40);
+    process.env.VANTA_COIN_PAYMENT_ADDRESS = '0x7fa9677c65272d80b06cb0c3a9bbeeba8f95db56';
     const config = validateCoinPaymentConfig();
     expect(config.errors).toEqual([]);
+    expect(config.depositAddress.toLowerCase()).toBe('0x7fa9677c65272d80b06cb0c3a9bbeeba8f95db56');
   });
 });

@@ -346,6 +346,7 @@ export const verificationPurchaseWebhook = async (req: Request, res: Response): 
       status: req.body?.status,
       confirmations: req.body?.confirmations,
       confirmedAt: req.body?.confirmedAt,
+      recipient: req.body?.recipient,
     });
     res.status(200).json(result);
   } catch (error) {

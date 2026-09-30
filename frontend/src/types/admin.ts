@@ -115,6 +115,8 @@ export interface CreatorRecord {
   totalEarnings: number;
   monthlyEarnings: number;
   isVerified: boolean;
+  /** Active paid badge tier (BLUE / GOLD). Only populated when isVerified. */
+  verificationType?: 'BLUE' | 'GOLD' | string | null;
   isMonetized: boolean;
   subscriptionApproved: boolean;
   liveAccess: boolean;

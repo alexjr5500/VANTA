@@ -22,6 +22,40 @@ jest.mock('../services/wallet.service', () => ({
   walletService: { ensureWallet: jest.fn(), completeCoinPurchase: jest.fn() },
 }));
 
+jest.mock('../services/blockchain-verifier.service', () => {
+  class MockBlockchainTxVerificationError extends Error {
+    code: string;
+    transient: boolean;
+    constructor(code: string, message: string, transient = false) {
+      super(message);
+      this.name = 'BlockchainTxVerificationError';
+      this.code = code;
+      this.transient = transient;
+    }
+  }
+  return {
+    blockchainTxVerifier: {
+      withRetry: jest.fn((fn: any) => fn()),
+      verifyTransaction: jest.fn(),
+    },
+    BlockchainTxVerificationError: MockBlockchainTxVerificationError,
+    BLOCKCHAIN_VERIFICATION_ERROR_CODES: {
+      INVALID_TX_HASH: 'INVALID_TX_HASH',
+      UNSUPPORTED_NETWORK: 'UNSUPPORTED_NETWORK',
+      TRANSACTION_NOT_FOUND: 'TRANSACTION_NOT_FOUND',
+      TRANSACTION_PENDING: 'TRANSACTION_PENDING',
+      TRANSACTION_FAILED: 'TRANSACTION_FAILED',
+      WRONG_NETWORK: 'WRONG_NETWORK',
+      WRONG_TOKEN: 'WRONG_TOKEN',
+      WRONG_RECIPIENT: 'WRONG_RECIPIENT',
+      AMOUNT_MISMATCH: 'AMOUNT_MISMATCH',
+      LOW_CONFIRMATIONS: 'LOW_CONFIRMATIONS',
+      RPC_UNAVAILABLE: 'RPC_UNAVAILABLE',
+      RPC_ERROR: 'RPC_ERROR',
+    },
+  };
+});
+
 jest.mock('../security/auditLog', () => ({
   auditLog: { log: jest.fn() },
 }));
@@ -37,6 +71,24 @@ jest.mock('../config/wallet.config', () => ({
 }));
 
 const { walletService } = require('../services/wallet.service');
+const { blockchainTxVerifier, BlockchainTxVerificationError, BLOCKCHAIN_VERIFICATION_ERROR_CODES } = require('../services/blockchain-verifier.service');
+
+const ON_CHAIN_VERIFIED: Record<string, unknown> = {
+  verified: true,
+  txHash: '0x' + 'a'.repeat(64),
+  network: 'usdt-bep20',
+  chainId: 56,
+  chainName: 'BNB Smart Chain (BEP-20)',
+  asset: 'USDT',
+  tokenContract: '0x55d398326f99059ff775485246999027b3197955',
+  recipient: '0x7fa9677c65272d80b06cb0c3a9bbeeba8f95db56',
+  sender: '0x' + 'c'.repeat(40),
+  amount: 5,
+  confirmations: 12,
+  blockNumber: 100,
+  blockHash: '0x' + 'f'.repeat(64),
+  verifiedAt: '2026-09-29T00:00:00.000Z',
+};
 
 const PENDING_ORDER: any = {
   id: 'order_live_1',
@@ -128,26 +180,29 @@ describe('CoinPaymentService.initializeCoinPurchase', () => {
     expect(payload.address).toBeTruthy(); // clearly-fake test address
   });
 
-  test('live mode without a configured address stays disabled and never falls back to test', async () => {
+  test('live mode ALWAYS uses the OFFICIAL receiving wallet server-side', async () => {
     process.env.NODE_ENV = 'production';
     process.env.VANTA_COIN_PAYMENT_MODE = 'live';
     delete process.env.VANTA_COIN_PAYMENT_ADDRESS;
 
-    await expect(coinPaymentService.initializeCoinPurchase('user1', 'pkg_popular', 'usdt-bep20'))
-      .rejects.toBeInstanceOf(CoinPaymentUnavailableError);
-    expect(prisma.purchaseOrder.create).not.toHaveBeenCalled();
+    const payload = await coinPaymentService.initializeCoinPurchase('user1', 'pkg_popular', 'usdt-bep20');
+    expect(payload.mode).toBe(COIN_PAYMENT_MODE.LIVE);
+    // The official VANTA receiving wallet is authoritative even without env config.
+    expect(payload.address.toLowerCase()).toBe('0x7fa9677c65272d80b06cb0c3a9bbeeba8f95db56');
+    expect(prisma.purchaseOrder.create).toHaveBeenCalledTimes(1);
   });
 
-  test('live mode with a valid address creates a live PENDING order (no simulate token)', async () => {
+  test('live mode ignores a DIFFERENT configured address (no silent substitution)', async () => {
     process.env.NODE_ENV = 'production';
     process.env.VANTA_COIN_PAYMENT_MODE = 'live';
-    process.env.VANTA_COIN_PAYMENT_ADDRESS = '0x' + 'b'.repeat(40);
+    process.env.VANTA_COIN_PAYMENT_ADDRESS = '0x' + 'b'.repeat(40); // attacker/operator-provided DIFFERENT wallet
     process.env.VANTA_COIN_PAYMENT_WEBHOOK_SECRET = 'live-secret';
 
     const payload = await coinPaymentService.initializeCoinPurchase('user1', 'pkg_popular', 'usdt-bep20');
     expect(payload.mode).toBe(COIN_PAYMENT_MODE.LIVE);
     expect(payload.simulateToken).toBeUndefined();
-    expect(payload.address).toBe('0x' + 'b'.repeat(40));
+    // The backend never substitutes the configured address for the official one.
+    expect(payload.address.toLowerCase()).toBe('0x7fa9677c65272d80b06cb0c3a9bbeeba8f95db56');
   });
 });
 describe('CoinPaymentService.processPaymentWebhook', () => {
@@ -161,6 +216,7 @@ describe('CoinPaymentService.processPaymentWebhook', () => {
     (prisma.webhookEvent.create as jest.Mock).mockResolvedValue({ id: 'evt1' });
     (prisma.webhookEvent.update as jest.Mock).mockResolvedValue({});
     (prisma.purchaseOrder.findUnique as jest.Mock).mockResolvedValue(PENDING_ORDER);
+    (blockchainTxVerifier.verifyTransaction as jest.Mock).mockResolvedValue(ON_CHAIN_VERIFIED);
     (walletService.completeCoinPurchase as jest.Mock).mockResolvedValue({
       alreadyCompleted: false,
       coins: 500,
@@ -202,16 +258,74 @@ describe('CoinPaymentService.processPaymentWebhook', () => {
 
     expect(result.received).toBe(true);
     expect(result.alreadyCompleted).toBe(false);
+    expect(blockchainTxVerifier.verifyTransaction).toHaveBeenCalledTimes(1);
+    const verifyCall = (blockchainTxVerifier.verifyTransaction as jest.Mock).mock.calls[0][0];
+    expect(verifyCall.txHash).toBe(TX_HASH);
+    expect(verifyCall.network).toBe('usdt-bep20');
+    // The backend always verifies against the OFFICIAL receiving wallet — never
+    // against any address the client or provider could influence.
+    expect(verifyCall.expectedRecipient.toLowerCase()).toBe('0x7fa9677c65272d80b06cb0c3a9bbeeba8f95db56');
     expect(walletService.completeCoinPurchase).toHaveBeenCalledTimes(1);
     const call = (walletService.completeCoinPurchase as jest.Mock).mock.calls[0];
     expect(call[0]).toBe('user1');
     expect(call[1]).toBe('order_live_1');
     expect(call[2].mode).toBe(COIN_PAYMENT_MODE.LIVE);
     expect(call[2].providerOrderId).toBe(TX_HASH);
+    expect(call[2].verification.onChain).toBe(ON_CHAIN_VERIFIED);
   });
-test('duplicate webhook event is idempotent — never credits twice', async () => {
+
+  test('an on-chain verification rejection (wrong recipient) blocks crediting', async () => {
     const body = eventBody();
-    (prisma.webhookEvent.findUnique as jest.Mock).mockResolvedValue({ id: 'evt1', eventId: body.eventId });
+    const { BlockchainTxVerificationError } = require('../services/blockchain-verifier.service');
+    (blockchainTxVerifier.verifyTransaction as jest.Mock).mockRejectedValue(
+      new BlockchainTxVerificationError(BLOCKCHAIN_VERIFICATION_ERROR_CODES.WRONG_RECIPIENT, 'no transfer to official wallet')
+    );
+
+    const result = await coinPaymentService.processPaymentWebhook({
+      rawBody: JSON.stringify(body),
+      signature: sign(body),
+      eventId: body.eventId, orderId: body.orderId, txHash: body.txHash, network: body.network,
+      asset: body.asset, amount: body.amount, status: body.status,
+    });
+
+    expect(result.result).toBe('failed');
+    expect(walletService.completeCoinPurchase).not.toHaveBeenCalled();
+  });
+
+  test('a transient on-chain RPC failure is retryable and never credits', async () => {
+    const body = eventBody();
+    const { BlockchainTxVerificationError } = require('../services/blockchain-verifier.service');
+    (blockchainTxVerifier.verifyTransaction as jest.Mock).mockRejectedValue(
+      new BlockchainTxVerificationError(BLOCKCHAIN_VERIFICATION_ERROR_CODES.RPC_UNAVAILABLE, 'upstream down', true)
+    );
+
+    await expect(coinPaymentService.processPaymentWebhook({
+      rawBody: JSON.stringify(body),
+      signature: sign(body),
+      eventId: body.eventId, orderId: body.orderId, txHash: body.txHash, network: body.network,
+      asset: body.asset, amount: body.amount, status: body.status,
+    })).rejects.toBeInstanceOf(BlockchainTxVerificationError);
+    expect(walletService.completeCoinPurchase).not.toHaveBeenCalled();
+  });
+
+  test('a recipient that is not the official wallet blocks crediting', async () => {
+    const body = eventBody();
+    const result = await coinPaymentService.processPaymentWebhook({
+      rawBody: JSON.stringify(body),
+      signature: sign(body),
+      eventId: body.eventId, orderId: body.orderId, txHash: body.txHash, network: body.network,
+      asset: body.asset, amount: body.amount, status: body.status,
+      recipient: '0x' + 'd'.repeat(40), // attacker-controlled recipient
+    });
+
+    expect(result.result).toBe('failed');
+    expect(walletService.completeCoinPurchase).not.toHaveBeenCalled();
+    expect(blockchainTxVerifier.verifyTransaction).not.toHaveBeenCalled();
+  });
+
+  test('duplicate webhook event is idempotent — never credits twice', async () => {
+    const body = eventBody();
+    (prisma.webhookEvent.findUnique as jest.Mock).mockResolvedValue({ id: 'evt1', eventId: body.eventId, status: 'PROCESSED' });
 
     const result = await coinPaymentService.processPaymentWebhook({
       rawBody: JSON.stringify(body),

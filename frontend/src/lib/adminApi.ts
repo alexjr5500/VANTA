@@ -82,9 +82,10 @@ export const forceLogout = (token: string, userId: string): Promise<any> => {
 // CREATOR MANAGEMENT
 // ==========================================
 
-export const getCreators = (token: string, params?: { search?: string; category?: string; page?: number }): Promise<CreatorRecord[]> => {
+export const getCreators = async (token: string, params?: { search?: string; category?: string; page?: number }): Promise<CreatorRecord[]> => {
   const query = new URLSearchParams(params as any).toString();
-  return apiGet<CreatorRecord[]>(`/api/admin/creators?${query}`, token);
+  const data = await apiGet<{ creators: CreatorRecord[]; total: number }>(`/api/admin/creators?${query}`, token);
+  return data.creators ?? [];
 };
 
 export const verifyCreator = (token: string, creatorId: string): Promise<any> => {

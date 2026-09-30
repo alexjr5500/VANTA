@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../prisma';
 import { moderationService, walletService, userService, adminService, adService, coinPaymentService } from '../services';
 import { AuthenticatedRequest } from '../security';
+import { BADGE_USER_SELECT, isBadgeRowActive } from '../services/public-verification';
 
 // ============================================================================
 // DASHBOARD
@@ -168,17 +169,40 @@ export const deleteUser = async (req: AuthenticatedRequest, res: Response): Prom
 
 export const getCreators = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const limit = parseInt(req.query.limit as string) || 50;
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
     const offset = parseInt(req.query.offset as string) || 0;
+    const page = parseInt(req.query.page as string);
+    const skip = page && page > 1 ? (page - 1) * limit : offset;
+    const search = (req.query.search as string)?.trim() ?? '';
+    const category = (req.query.category as string)?.trim() ?? '';
+
+    const where: any = {
+      OR: [
+        { role: 'CREATOR' },
+        { premium: true },
+      ],
+    };
+    if (search) {
+      where.AND = [
+        {
+          OR: [
+            { username: { contains: search, mode: 'insensitive' } },
+            { fullName: { contains: search, mode: 'insensitive' } },
+            { profile: { is: { fullName: { contains: search, mode: 'insensitive' } } } },
+          ],
+        },
+      ];
+    }
+    if (category) {
+      where.AND = [
+        ...(where.AND || []),
+        { profile: { is: { creatorCategory: category } } },
+      ];
+    }
 
     const [creators, total] = await Promise.all([
       prisma.user.findMany({
-        where: {
-          OR: [
-            { role: 'CREATOR' },
-            { premium: true },
-          ],
-        },
+        where,
         select: {
           id: true,
           username: true,
@@ -188,30 +212,112 @@ export const getCreators = async (req: AuthenticatedRequest, res: Response): Pro
           verified: true,
           premium: true,
           earnings: true,
+          bio: true,
+          avatar: true,
+          status: true,
           createdAt: true,
+          profile: { select: { avatarUrl: true, bio: true, fullName: true, creatorCategory: true } },
+          verificationBadge: BADGE_USER_SELECT.verificationBadge,
+          creatorMembership: { select: { status: true, endDate: true } },
+          liveStreams: { orderBy: { startedAt: 'desc' }, take: 1, select: { startedAt: true } },
           _count: {
             select: {
               followers: true,
               videos: true,
               liveStreams: true,
+              creatorSubscriptions: { where: { status: 'ACTIVE' } },
             },
           },
         },
         take: limit,
-        skip: offset,
+        skip,
         orderBy: { createdAt: 'desc' },
       }),
-      prisma.user.count({
+      prisma.user.count({ where }),
+    ]);
+
+    const ids = creators.map((c) => c.id);
+
+    // Batch-aggregate derived metrics — user.findMany cannot SUM relations.
+    const [videoViews, liveStreamViews, monthlyGifts] = await Promise.all([
+      prisma.video.groupBy({
+        by: ['creatorId'],
+        where: { creatorId: { in: ids }, publishStatus: 'PUBLISHED' },
+        _sum: { views: true },
+      }),
+      prisma.liveStream.groupBy({
+        by: ['hostId'],
+        where: { hostId: { in: ids } },
+        _sum: { totalViewers: true },
+      }),
+      prisma.giftTransaction.groupBy({
+        by: ['receiverId'],
         where: {
-          OR: [
-            { role: 'CREATOR' },
-            { premium: true },
-          ],
+          receiverId: { in: ids },
+          status: 'COMPLETED',
+          createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
         },
+        _sum: { amount: true },
       }),
     ]);
 
-    res.status(200).json({ creators, total });
+    const videoViewsBy = new Map(videoViews.map((v) => [v.creatorId, v._sum.views || 0] as const));
+    const liveViewsBy = new Map(liveStreamViews.map((l) => [l.hostId, l._sum.totalViewers || 0] as const));
+    const monthlyGiftsBy = new Map(monthlyGifts.map((g) => [g.receiverId, g._sum.amount || 0] as const));
+
+    const now = Date.now();
+    const records = creators.map((user, index) => {
+      const badgeActive = isBadgeRowActive(user.verificationBadge);
+      const serverVerified = Boolean(user.verified);
+      const membershipActive =
+        user.creatorMembership?.status === 'ACTIVE' &&
+        (!user.creatorMembership.endDate || user.creatorMembership.endDate.getTime() > now);
+
+      return {
+        id: user.id,
+        userId: user.id,
+        username: user.username,
+        email: user.email,
+        status: user.status,
+        avatar: user.profile?.avatarUrl || user.avatar || undefined,
+        displayName: user.fullName?.trim() || user.profile?.fullName?.trim() || user.username,
+        bio: user.profile?.bio || user.bio || undefined,
+        followers: user._count?.followers || 0,
+        subscribers: user._count?.creatorSubscriptions || 0,
+        totalViews: (videoViewsBy.get(user.id) || 0) + (liveViewsBy.get(user.id) || 0),
+        totalEarnings: Number(user.earnings || 0),
+        monthlyEarnings: monthlyGiftsBy.get(user.id) || 0,
+        isVerified: serverVerified || badgeActive,
+        // Mirror the app-wide badge serialization (public-verification.ts):
+        // an ACTIVE paid badge wins; otherwise the legacy server-verified
+        // identity keeps the Gold badge. `isVerified` gates badge rendering,
+        // so a SUSPENDED/EXPIRED badge can never display to admins.
+        verificationType: badgeActive
+          ? user.verificationBadge?.badgeType === 'BLUE'
+            ? 'BLUE'
+            : 'GOLD'
+          : serverVerified
+            ? 'GOLD'
+            : user.verificationBadge?.badgeType || null,
+        isMonetized: Boolean(user.premium),
+        subscriptionApproved: membershipActive,
+        liveAccess: Boolean(user.premium) || membershipActive,
+        ranking: index + 1 + skip,
+        category: user.profile?.creatorCategory || 'General',
+        joinedAt: user.createdAt.toISOString(),
+        lastStream: user.liveStreams?.[0]?.startedAt?.toISOString() || undefined,
+        performance: {
+          viewsGrowth: 0,
+          followerGrowth: 0,
+          earningsGrowth: 0,
+          avgWatchTime: 0,
+          engagementRate: 0,
+          topStreams: user._count?.liveStreams || 0,
+        },
+      };
+    });
+
+    res.status(200).json({ creators: records, total });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });

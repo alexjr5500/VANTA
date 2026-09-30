@@ -7,7 +7,7 @@ import { apiGet, apiPost } from '@/lib/apiClient';
 import {
   ShieldCheck, Crown, Check, X, Clock, Loader2, Search,
   Users, BadgeCheck, Ban, AlertCircle, ChevronRight, Eye,
-  Filter, RefreshCw, UserCheck, UserX, DollarSign, Calendar
+  Filter, RefreshCw, UserCheck, UserX, DollarSign, Calendar, History
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -40,7 +40,27 @@ interface AdminRequest {
   user: { id: string; username: string; fullName: string; email: string; avatar: string | null };
 }
 
-type Tab = 'requests' | 'badges' | 'memberships' | 'plans';
+interface AdminPurchase {
+  id: string;
+  userId: string;
+  planId: string;
+  amount: number;
+  currency: string;
+  network: string | null;
+  status: string;
+  providerOrderId: string | null;
+  providerReference: string | null;
+  paymentMode: string | null;
+  expiresAt: string;
+  confirmedAt: string | null;
+  refundedAt: string | null;
+  refundReason: string | null;
+  createdAt: string;
+  user: { id: string; username: string; email: string; fullName: string };
+  plan: { id: string; name: string; badgeType: string; durationMonths: number };
+}
+
+type Tab = 'requests' | 'badges' | 'memberships' | 'plans' | 'purchases';
 
 export default function AdminVerificationPage() {
   const { user, token } = useAuth();
@@ -53,6 +73,7 @@ export default function AdminVerificationPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [purchases, setPurchases] = useState<AdminPurchase[]>([]);
 
   useEffect(() => {
     if (token) loadData();
@@ -72,6 +93,12 @@ export default function AdminVerificationPage() {
       } else if (activeTab === 'memberships') {
         const data = await apiGet<AdminMembership[]>('/api/verification/admin/memberships', token);
         setMemberships(data);
+      } else if (activeTab === 'purchases') {
+        const data = await apiGet<{ purchases: AdminPurchase[]; total: number }>(
+          '/api/verification/admin/purchases?limit=100',
+          token
+        );
+        setPurchases(data.purchases || []);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load data');
@@ -96,10 +123,29 @@ export default function AdminVerificationPage() {
     }
   };
 
+  const handleRefund = async (purchaseId: string) => {
+    if (!token) return;
+    const reason = prompt('Refund reason:');
+    if (!reason) return;
+    setActionLoading(`refund-${purchaseId}`);
+    setError(null);
+    setSuccess(null);
+    try {
+      await apiPost(`/api/verification/admin/purchases/${purchaseId}/refund`, { reason }, token);
+      setSuccess('Purchase refunded. If it sourced an active badge, the badge was revoked.');
+      loadData();
+    } catch (err: any) {
+      setError(err.message || 'Refund failed');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: 'requests', label: 'Verification Requests', icon: UserCheck },
     { id: 'badges', label: 'Badges', icon: ShieldCheck },
     { id: 'memberships', label: 'Memberships', icon: Crown },
+    { id: 'purchases', label: 'Purchases', icon: History },
     { id: 'plans', label: 'Plans', icon: DollarSign },
   ];
 
@@ -351,6 +397,74 @@ export default function AdminVerificationPage() {
                   </div>
                 </motion.div>
               ))
+            )}
+          </div>
+        ) : activeTab === 'purchases' ? (
+          <div className="space-y-3">
+            {purchases.length === 0 ? (
+              <div className="text-center py-16 text-gray-500">
+                <History size={40} className="mx-auto mb-3 opacity-30" />
+                <p className="text-sm">No Verified Badge purchases recorded yet</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {purchases.map((p) => (
+                  <motion.div
+                    key={p.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="glass rounded-2xl border border-white/[0.06] p-4"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-white">
+                          {p.plan?.name || 'Verified Badge'} — ${p.amount.toFixed(2)} {p.currency}
+                        </p>
+                        <p className="text-[10px] text-gray-400">
+                          @{p.user?.username || p.userId} · {new Date(p.createdAt).toLocaleDateString()}
+                        </p>
+                        <p className="text-[10px] text-gray-500 font-mono truncate">
+                          {p.network ? `${p.network.toUpperCase()} · ` : ''}
+                          {p.providerReference ? `tx ${p.providerReference.slice(0, 18)}…` : 'no tx reference'}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                          <span className={cn(
+                            'text-[10px] font-semibold uppercase tracking-wide',
+                            p.status === 'COMPLETED' ? 'text-emerald-400'
+                              : p.status === 'REFUNDED' || p.status === 'FAILED' || p.status === 'CANCELLED' ? 'text-red-300'
+                              : p.status === 'PENDING' || p.status === 'PROCESSING' || p.status === 'PAID' ? 'text-amber-300'
+                              : 'text-gray-400'
+                          )}>
+                            {p.status}
+                          </span>
+                          {p.status === 'COMPLETED' && (
+                            <button
+                              onClick={() => handleRefund(p.id)}
+                              disabled={actionLoading === `refund-${p.id}`}
+                              className="ml-1 p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors"
+                              title="Refund purchase"
+                            >
+                              {actionLoading === `refund-${p.id}` ? <Loader2 size={12} className="animate-spin" /> : <Ban size={12} />}
+                            </button>
+                          )}
+                        </div>
+                        {p.confirmedAt && (
+                          <p className="text-[10px] text-gray-500">
+                            Paid: {new Date(p.confirmedAt).toLocaleDateString()}
+                          </p>
+                        )}
+                        {p.refundedAt && (
+                          <p className="text-[10px] text-gray-500">
+                            Refunded: {new Date(p.refundedAt).toLocaleDateString()}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
             )}
           </div>
         ) : activeTab === 'plans' ? (

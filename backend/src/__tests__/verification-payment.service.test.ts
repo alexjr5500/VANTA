@@ -1,4 +1,4 @@
-import { verificationPaymentService, VerificationPaymentWebhookError } from '../services/verification-payment.service';
+﻿import { verificationPaymentService, VerificationPaymentWebhookError } from '../services/verification-payment.service';
 import { COIN_PAYMENT_MODE, createCoinPaymentSimulateToken } from '../config/coin-payments.config';
 import { prisma } from '../prisma';
 import { CryptoUtils } from '../security/crypto';
@@ -18,6 +18,59 @@ jest.mock('../prisma', () => ({
 
 jest.mock('../security/auditLog', () => ({ auditLog: { log: jest.fn() } }));
 jest.mock('../services/notification.service', () => ({ notificationService: { createNotification: jest.fn() } }));
+
+jest.mock('../services/blockchain-verifier.service', () => {
+  class MockBlockchainTxVerificationError extends Error {
+    code: string;
+    transient: boolean;
+    constructor(code: string, message: string, transient = false) {
+      super(message);
+      this.name = 'BlockchainTxVerificationError';
+      this.code = code;
+      this.transient = transient;
+    }
+  }
+  return {
+    blockchainTxVerifier: {
+      withRetry: jest.fn((fn: any) => fn()),
+      verifyTransaction: jest.fn(),
+    },
+    BlockchainTxVerificationError: MockBlockchainTxVerificationError,
+    BLOCKCHAIN_VERIFICATION_ERROR_CODES: {
+      INVALID_TX_HASH: 'INVALID_TX_HASH',
+      UNSUPPORTED_NETWORK: 'UNSUPPORTED_NETWORK',
+      TRANSACTION_NOT_FOUND: 'TRANSACTION_NOT_FOUND',
+      TRANSACTION_PENDING: 'TRANSACTION_PENDING',
+      TRANSACTION_FAILED: 'TRANSACTION_FAILED',
+      WRONG_NETWORK: 'WRONG_NETWORK',
+      WRONG_TOKEN: 'WRONG_TOKEN',
+      WRONG_RECIPIENT: 'WRONG_RECIPIENT',
+      AMOUNT_MISMATCH: 'AMOUNT_MISMATCH',
+      LOW_CONFIRMATIONS: 'LOW_CONFIRMATIONS',
+      RPC_UNAVAILABLE: 'RPC_UNAVAILABLE',
+      RPC_ERROR: 'RPC_ERROR',
+    },
+  };
+});
+
+const { blockchainTxVerifier } = require('../services/blockchain-verifier.service');
+
+const ON_CHAIN_VERIFIED: Record<string, unknown> = {
+  verified: true,
+  txHash: '0x' + 'b'.repeat(64),
+  network: 'usdt-bep20',
+  chainId: 56,
+  chainName: 'BNB Smart Chain (BEP-20)',
+  asset: 'USDT',
+  tokenContract: '0x55d398326f99059ff775485246999027b3197955',
+  recipient: '0x7fa9677c65272d80b06cb0c3a9bbeeba8f95db56',
+  sender: '0x' + 'c'.repeat(40),
+  amount: 1.99,
+  confirmations: 12,
+  blockNumber: 100,
+  blockHash: '0x' + 'f'.repeat(64),
+  verifiedAt: '2026-09-29T00:00:00.000Z',
+};
 
 const BLUE_1M_PLAN: any = { id: 'plan_blue_1month', name: 'Blue Verified - 1 Month', badgeType: 'BLUE', durationMonths: 1, price: 1.99, currency: 'USD', isActive: true };
 const GOLD_1Y_PLAN: any = { id: 'plan_gold_1year', name: 'Gold Verified - 1 Year', badgeType: 'GOLD', durationMonths: 12, price: 14.99, currency: 'USD', isActive: true };
@@ -184,6 +237,7 @@ describe('processPaymentWebhook (LIVE payments)', () => {
     (prisma.verificationBadge.findUnique as jest.Mock).mockResolvedValue(null);
     (prisma.verificationBadge.create as jest.Mock).mockResolvedValue({ id: 'badge1', badgeType: 'BLUE', status: 'ACTIVE' });
     (prisma.verificationHistory.create as jest.Mock).mockResolvedValue({});
+    (blockchainTxVerifier.verifyTransaction as jest.Mock).mockResolvedValue(ON_CHAIN_VERIFIED);
   });
 
   test('rejects a webhook with a missing signature', async () => {
@@ -231,11 +285,54 @@ describe('processPaymentWebhook (LIVE payments)', () => {
       txHash: body.txHash, network: body.network, asset: body.asset, amount: body.amount, status: body.status,
     });
     expect(result.status).toBe('COMPLETED');
+    expect(blockchainTxVerifier.verifyTransaction).toHaveBeenCalledTimes(1);
+    const verifyArgs = (blockchainTxVerifier.verifyTransaction as jest.Mock).mock.calls[0][0];
+    expect(verifyArgs.txHash).toBe('0x' + 'b'.repeat(64));
+    expect(verifyArgs.expectedRecipient.toLowerCase()).toBe('0x7fa9677c65272d80b06cb0c3a9bbeeba8f95db56');
     expect(prisma.verificationBadge.create).toHaveBeenCalled();
   });
 
+  test('an on-chain rejection blocks badge activation', async () => {
+    const body = { ...eventBody(), eventId: 'evt-onchain-reject' };
+    const { BlockchainTxVerificationError, BLOCKCHAIN_VERIFICATION_ERROR_CODES } = require('../services/blockchain-verifier.service');
+    (blockchainTxVerifier.verifyTransaction as jest.Mock).mockRejectedValue(
+      new BlockchainTxVerificationError(BLOCKCHAIN_VERIFICATION_ERROR_CODES.WRONG_NETWORK, 'chain mismatch')
+    );
+    const result = await verificationPaymentService.processPaymentWebhook({
+      rawBody: JSON.stringify(body), signature: sign(body), eventId: body.eventId, orderId: body.orderId,
+      txHash: body.txHash, network: body.network, asset: body.asset, amount: body.amount, status: body.status,
+    });
+    expect(result.result).toBe('failed');
+    expect(prisma.verificationBadge.create).not.toHaveBeenCalled();
+  });
+
+  test('a transient on-chain RPC failure is retryable and never activates', async () => {
+    const body = { ...eventBody(), eventId: 'evt-rpc-out' };
+    const { BlockchainTxVerificationError, BLOCKCHAIN_VERIFICATION_ERROR_CODES } = require('../services/blockchain-verifier.service');
+    (blockchainTxVerifier.verifyTransaction as jest.Mock).mockRejectedValue(
+      new BlockchainTxVerificationError(BLOCKCHAIN_VERIFICATION_ERROR_CODES.RPC_UNAVAILABLE, 'rpc down', true)
+    );
+    await expect(verificationPaymentService.processPaymentWebhook({
+      rawBody: JSON.stringify(body), signature: sign(body), eventId: body.eventId, orderId: body.orderId,
+      txHash: body.txHash, network: body.network, asset: body.asset, amount: body.amount, status: body.status,
+    })).rejects.toBeInstanceOf(BlockchainTxVerificationError);
+    expect(prisma.verificationBadge.create).not.toHaveBeenCalled();
+  });
+
+  test('a recipient that is not the official wallet blocks activation', async () => {
+    const body = { ...eventBody(), eventId: 'evt-recipient' };
+    const result = await verificationPaymentService.processPaymentWebhook({
+      rawBody: JSON.stringify(body), signature: sign(body), eventId: body.eventId, orderId: body.orderId,
+      txHash: body.txHash, network: body.network, asset: body.asset, amount: body.amount, status: body.status,
+      recipient: '0x' + 'e'.repeat(40),
+    });
+    expect(result.result).toBe('failed');
+    expect(prisma.verificationBadge.create).not.toHaveBeenCalled();
+    expect(blockchainTxVerifier.verifyTransaction).not.toHaveBeenCalled();
+  });
+
   test('duplicate webhook event is idempotent — never activates twice', async () => {
-    (prisma.webhookEvent.findUnique as jest.Mock).mockResolvedValue({ id: 'evt', eventId: 'evt-1' });
+    (prisma.webhookEvent.findUnique as jest.Mock).mockResolvedValue({ id: 'evt', eventId: 'evt-1', status: 'PROCESSED' });
     const body = eventBody();
     const result = await verificationPaymentService.processPaymentWebhook({
       rawBody: JSON.stringify(body), signature: sign(body), eventId: body.eventId, orderId: body.orderId,
