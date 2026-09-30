@@ -12,6 +12,7 @@ export interface AuthUser {
   profile?: Record<string, unknown>;
   role?: string;
   verified?: boolean;
+  verificationType?: 'BLUE' | 'GOLD' | string | null;
   createdAt?: string;
   emailVerified?: boolean;
   lastLoginAt?: string;

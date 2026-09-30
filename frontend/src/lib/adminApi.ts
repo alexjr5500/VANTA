@@ -88,8 +88,8 @@ export const getCreators = async (token: string, params?: { search?: string; cat
   return data.creators ?? [];
 };
 
-export const verifyCreator = (token: string, creatorId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/creators/${creatorId}/verify`, {}, token);
+export const verifyCreator = (token: string, creatorId: string, badgeType?: 'BLUE' | 'GOLD'): Promise<any> => {
+  return apiPost<any>(`/api/admin/creators/${creatorId}/verify`, badgeType ? { badgeType } : {}, token);
 };
 
 export const toggleMonetization = (token: string, creatorId: string): Promise<any> => {

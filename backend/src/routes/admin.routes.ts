@@ -12,6 +12,9 @@ import {
   approveWithdrawal,
   rejectWithdrawal,
   getCreators,
+  verifyCreator,
+  toggleMonetization,
+  approveSubscription,
   getCommunities,
   getLiveStreams,
   getWalletTransactions,
@@ -76,6 +79,9 @@ router.get('/users/search', searchUsers);
 
 // Creator Management
 router.get('/creators', getCreators);
+router.post('/creators/:creatorId/verify', verifyCreator);
+router.post('/creators/:creatorId/monetization', toggleMonetization);
+router.post('/creators/:creatorId/subscription-approve', approveSubscription);
 
 // Community Management
 router.get('/communities', getCommunities);

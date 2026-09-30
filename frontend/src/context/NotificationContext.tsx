@@ -18,7 +18,7 @@ export type VantaNotification = {
   entityType?: string | null;
   entityId?: string | null;
   data?: Record<string, unknown> | string | null;
-  actor?: { id: string; username: string; fullName?: string | null; avatar?: string | null; verified?: boolean } | null;
+  actor?: { id: string; username: string; fullName?: string | null; avatar?: string | null; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null } | null;
 };
 
 type NotificationContextValue = {

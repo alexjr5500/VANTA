@@ -3,20 +3,24 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
-  Users, Search, Shield, XCircle, DollarSign,
+  Users, Search, Shield, XCircle, DollarSign, Check,
   TrendingUp, Star, Crown, Clock, Eye, MessageCircle, Activity,
   MoreHorizontal, Music, Gamepad2, Palette, Monitor, Camera
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
 import Button from '@/components/ui/Button';
-import { getCreators } from '@/lib/adminApi';
+import { getCreators, verifyCreator, toggleMonetization, approveSubscription } from '@/lib/adminApi';
 import type { CreatorRecord } from '@/types/admin';
 import VerificationBadge from '@/components/ui/VerificationBadge';
+import { useToast } from '@/components/ui/Toast';
 
 export default function CreatorsPage() {
+  const toast = useToast();
   const [search, setSearch] = useState('');
   const [creators, setCreators] = useState<CreatorRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -39,6 +43,58 @@ export default function CreatorsPage() {
   );
 
   const fmt = (n: number) => n >= 1000000 ? (n / 1000000).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n);
+
+  const applyPatch = (id: string, patch: Record<string, any>) =>
+    setCreators(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c));
+
+  const runVerify = async (creator: CreatorRecord, badgeType?: 'BLUE' | 'GOLD') => {
+    const token = localStorage.getItem('token');
+    if (!token || busyId) return;
+    setBusyId(creator.id);
+    setMenuFor(null);
+    try {
+      const updated = await verifyCreator(token, creator.id, badgeType);
+      applyPatch(creator.id, updated);
+      toast.success(updated.isVerified ? 'Creator verified' : 'Verification removed',
+        `${creator.displayName || creator.username}${updated.isVerified ? ` is now ${updated.verificationType || 'GOLD'} verified` : ' is no longer verified'}.`);
+    } catch (error: any) {
+      toast.error('Verification update failed', error.message || 'Please try again.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleMonetize = async (creator: CreatorRecord) => {
+    const token = localStorage.getItem('token');
+    if (!token || busyId) return;
+    setBusyId(creator.id);
+    setMenuFor(null);
+    try {
+      const updated = await toggleMonetization(token, creator.id);
+      applyPatch(creator.id, updated);
+      toast.success('Monetization updated', `${creator.displayName || creator.username} is now ${updated.isMonetized ? 'monetized' : 'not monetized'}.`);
+    } catch (error: any) {
+      toast.error('Monetization update failed', error.message || 'Please try again.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const approveSub = async (creator: CreatorRecord) => {
+    const token = localStorage.getItem('token');
+    if (!token || busyId) return;
+    setBusyId(creator.id);
+    setMenuFor(null);
+    try {
+      const updated = await approveSubscription(token, creator.id);
+      applyPatch(creator.id, updated);
+      toast.success('Subscription approved', `${creator.displayName || creator.username}: ${updated.plan || 'membership active'}.`);
+    } catch (error: any) {
+      toast.error('Subscription approval failed', error.message || 'Please try again.');
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -75,7 +131,6 @@ export default function CreatorsPage() {
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-bold text-white">{creator.displayName || creator.username}</span>
                   {creator.isVerified && <VerificationBadge verified type={(creator.verificationType as 'BLUE' | 'GOLD' | undefined) || 'GOLD'} size="xs" className="inline-block" />}
-                  {creator.isMonetized && <DollarSign size={12} className="text-green-400" />}
                 </div>
                 <p className="text-xs text-gray-500">@{creator.username} • {creator.category}</p>
               </div>
@@ -84,9 +139,48 @@ export default function CreatorsPage() {
                 <div><p className="font-bold text-white">{fmt(creator.totalViews)}</p><p className="text-gray-500">Views</p></div>
                 <div><p className="font-bold text-green-400">${fmt(creator.totalEarnings)}</p><p className="text-gray-500">Earnings</p></div>
               </div>
-              <div className="flex items-center gap-1">
-                <button className="p-2 rounded-xl hover:bg-[#c8c8cc]/10 text-[#c8c8cc] transition-colors" title="Verify Creator"><Shield size={14} /></button>
-                <button className="p-2 rounded-xl hover:bg-white/10 text-gray-400 transition-colors"><MoreHorizontal size={14} /></button>
+              <div className="relative flex items-center gap-1">
+                <button
+                  onClick={() => void runVerify(creator)}
+                  disabled={busyId === creator.id}
+                  className={`p-2 rounded-xl hover:bg-[#c8c8cc]/10 transition-colors ${creator.isVerified ? (creator.verificationType === 'BLUE' ? 'text-[#3b82f6]' : 'text-[#f2c75c]') : 'text-[#c8c8cc]'}`}
+                  title={creator.isVerified ? 'Unverify Creator' : 'Verify Creator (Gold)'}
+                  aria-label={creator.isVerified ? 'Unverify Creator' : 'Verify Creator'}
+                ><Shield size={14} /></button>
+                <button
+                  onClick={() => void toggleMonetize(creator)}
+                  disabled={busyId === creator.id}
+                  className={`p-2 rounded-xl hover:bg-white/10 transition-colors ${creator.isMonetized ? 'text-green-400' : 'text-gray-400'}`}
+                  title={creator.isMonetized ? 'Disable monetization' : 'Enable monetization'}
+                  aria-label={creator.isMonetized ? 'Disable monetization' : 'Enable monetization'}
+                ><DollarSign size={14} /></button>
+                <button
+                  onClick={() => setMenuFor(menuFor === creator.id ? null : creator.id)}
+                  disabled={busyId === creator.id}
+                  className="p-2 rounded-xl hover:bg-white/10 text-gray-400 transition-colors"
+                  title="More actions"
+                  aria-label="More actions"
+                ><MoreHorizontal size={14} /></button>
+                {menuFor === creator.id && !busyId && (
+                  <div className="absolute right-0 top-full mt-1 z-20 w-56 rounded-xl border border-white/10 bg-[#101010] p-1.5 shadow-xl">
+                    {!creator.isVerified && (
+                      <button
+                        type="button"
+                        onClick={() => void runVerify(creator, 'BLUE')}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-white hover:bg-white/5"
+                      >
+                        <Shield size={13} className="text-[#3b82f6]" /> Verify with BLUE badge
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void approveSub(creator)}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-white hover:bg-white/5"
+                    >
+                      <Check size={13} className="text-green-400" /> Approve subscription
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </motion.div>

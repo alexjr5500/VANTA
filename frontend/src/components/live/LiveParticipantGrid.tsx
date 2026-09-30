@@ -27,6 +27,7 @@ export interface StageParticipant {
   username: string;
   avatar?: string | null;
   verified?: boolean;
+  verificationType?: 'BLUE' | 'GOLD' | string | null;
   isHost?: boolean;
   stream: MediaStream | null;
   cameraOn: boolean;

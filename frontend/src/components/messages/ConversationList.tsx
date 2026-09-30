@@ -23,6 +23,7 @@ interface Conversation {
   unread?: number;
   isOnline?: boolean;
   verified?: boolean;
+  verificationType?: 'BLUE' | 'GOLD' | string | null;
   isPinned?: boolean;
   isMuted?: boolean;
   isTyping?: boolean;

@@ -10,7 +10,7 @@ import VerificationBadge from '@/components/ui/VerificationBadge';
 import { useToast } from '@/components/ui/Toast';
 import { renderTextWithLinks } from '@/lib/linkify';
 
-type User = { id: string; username: string; fullName?: string | null; avatar?: string | null; verified?: boolean; role?: string };
+type User = { id: string; username: string; fullName?: string | null; avatar?: string | null; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null; role?: string };
 export type CommentItem = { id: string; userId: string; content: string; createdAt: string; updatedAt?: string; edited?: boolean; liked?: boolean; parentId?: string | null; user: User; _count?: { likes: number; replies: number }; replies?: CommentItem[] };
 type Props = { postId: string; postAuthor?: User; initialCount: number; token: string; currentUser?: User | null; onClose: () => void; onCountChange: (count: number) => void; kind?: 'post' | 'reel' };
 

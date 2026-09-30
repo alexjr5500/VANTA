@@ -16,6 +16,7 @@ interface UserResult {
   fullName?: string;
   avatar?: string;
   verified?: boolean;
+  verificationType?: 'BLUE' | 'GOLD' | string | null;
 }
 
 interface SendCoinsModalProps {

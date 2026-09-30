@@ -15,7 +15,7 @@ import { renderTextWithLinks } from '@/lib/linkify';
 import { cn } from '@/lib/utils';
 import StoryTextCanvas from '@/components/story/StoryTextCanvas';
 
-type ViewerUser = { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean };
+type ViewerUser = { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null };
 type Story = { id: string; userId: string; mediaUrl: string; mediaType?: string; caption?: string; textStyle?: string | null; views?: number; viewed?: boolean; duration?: number; likeCount?: number; reshareCount?: number; commentCount?: number; likedByMe?: boolean; resharedFromUsername?: string; user?: ViewerUser; author?: ViewerUser };
 type StoryGroup = { user: ViewerUser; stories: Story[]; hasUnviewed: boolean };
 type Viewer = { id: string; viewedAt: string; user: ViewerUser };

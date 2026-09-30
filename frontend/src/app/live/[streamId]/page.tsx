@@ -67,6 +67,7 @@ interface Host {
   fullName?: string | null;
   avatar?: string | null;
   verified?: boolean;
+  verificationType?: 'BLUE' | 'GOLD' | string | null;
 }
 
 interface StreamDetail {
@@ -92,7 +93,7 @@ interface ChatMessage {
   createdAt?: string;
   kind?: 'comment' | 'system';
   meta?: { icon?: string; type?: string };
-  user?: { id: string; username: string; avatar?: string | null; verified?: boolean } | null;
+  user?: { id: string; username: string; avatar?: string | null; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null } | null;
 }
 
 function viewerEventLine(d: any): string | null {

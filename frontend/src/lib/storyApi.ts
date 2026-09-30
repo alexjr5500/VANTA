@@ -13,6 +13,7 @@ export interface StoryAuthor {
   fullName?: string | null;
   avatar?: string | null;
   verified?: boolean;
+  verificationType?: 'BLUE' | 'GOLD' | string | null;
 }
 
 export interface StoryItem {

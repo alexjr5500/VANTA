@@ -18,7 +18,7 @@ type Post = {
   id: string; content: string; mediaUrl?: string | null; createdAt: string;
   likesCount?: number; commentsCount?: number; shareCount?: number; views?: number;
   isLiked?: boolean; liked?: boolean; saved?: boolean; shares?: number; likes?: number; comments?: number;
-  author: { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean };
+  author: { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null };
 };
 
 const mediaSrc = (value?: string | null) => resolveMediaUrl(value);

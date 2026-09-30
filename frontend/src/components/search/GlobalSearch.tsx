@@ -21,6 +21,7 @@ interface SearchUser {
   avatar?: string;
   bio?: string;
   verified?: boolean;
+  verificationType?: 'BLUE' | 'GOLD' | string | null;
   premium?: boolean;
   _count?: { followers: number };
 }
@@ -29,7 +30,7 @@ interface SearchPost {
   id: string;
   content: string;
   createdAt: string;
-  author: { id: string; username: string; avatar?: string; verified?: boolean };
+  author: { id: string; username: string; avatar?: string; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null };
   _count?: { likes: number; comments: number };
 }
 

@@ -48,6 +48,7 @@ interface Conversation {
   online: boolean;
   username?: string;
   verified?: boolean;
+  verificationType?: 'BLUE' | 'GOLD' | string | null;
   lastSeen?: string;
   partnerId?: string;
   nextCursor?: string | null;

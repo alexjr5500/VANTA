@@ -55,6 +55,7 @@ type Author = {
   fullName?: string;
   avatar?: string;
   verified?: boolean;
+  verificationType?: 'BLUE' | 'GOLD' | string | null;
   following?: boolean;
   isFollowing?: boolean;
 };

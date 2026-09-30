@@ -21,6 +21,7 @@ interface LiveStream {
     username: string;
     avatar?: string;
     verified?: boolean;
+    verificationType?: 'BLUE' | 'GOLD' | string | null;
   };
 }
 

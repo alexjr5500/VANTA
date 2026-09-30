@@ -30,6 +30,7 @@ interface LiveStreamCardProps {
       fullName?: string | null;
       avatar?: string | null;
       verified?: boolean;
+      verificationType?: 'BLUE' | 'GOLD' | string | null;
     };
     _count?: {
       viewers?: number;

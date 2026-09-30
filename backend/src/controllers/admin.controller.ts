@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../prisma';
-import { moderationService, walletService, userService, adminService, adService, coinPaymentService } from '../services';
+import { moderationService, walletService, userService, adminService, adService, coinPaymentService, verificationService } from '../services';
 import { AuthenticatedRequest } from '../security';
 import { BADGE_USER_SELECT, isBadgeRowActive } from '../services/public-verification';
 
@@ -318,6 +318,145 @@ export const getCreators = async (req: AuthenticatedRequest, res: Response): Pro
     });
 
     res.status(200).json({ creators: records, total });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const verifyCreator = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { creatorId } = req.params;
+    const body: any = req.body || {};
+    const requestedType = typeof body.badgeType === 'string' ? body.badgeType.trim().toUpperCase() : '';
+    const badgeType: 'BLUE' | 'GOLD' = requestedType === 'BLUE' ? 'BLUE' : 'GOLD';
+    const actorId = req.user?.userId;
+
+    const user = await prisma.user.findUnique({
+      where: { id: creatorId },
+      select: {
+        id: true,
+        verified: true,
+        verificationBadge: BADGE_USER_SELECT.verificationBadge,
+      },
+    });
+    if (!user) {
+      res.status(404).json({ error: 'Creator not found' });
+      return;
+    }
+
+    const currentlyVerified = Boolean(user.verified) || isBadgeRowActive(user.verificationBadge);
+
+    if (currentlyVerified) {
+      if (user.verificationBadge) {
+        await verificationService.revokeBadge(creatorId, actorId, 'Admin unverified creator');
+      }
+      await prisma.user.update({ where: { id: creatorId }, data: { verified: false } });
+      res.status(200).json({ isVerified: false, verificationType: null, message: 'Creator verification removed' });
+      return;
+    }
+
+    // Admin grant: lifetime badge (no expiry) at the requested tier.
+    await verificationService.grantBadge(creatorId, badgeType, actorId);
+    await prisma.user.update({ where: { id: creatorId }, data: { verified: true } });
+    res.status(200).json({ isVerified: true, verificationType: badgeType, message: `Creator verified with ${badgeType} badge` });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const toggleMonetization = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { creatorId } = req.params;
+    const user = await prisma.user.findUnique({ where: { id: creatorId }, select: { id: true, premium: true } });
+    if (!user) {
+      res.status(404).json({ error: 'Creator not found' });
+      return;
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: creatorId },
+      data: { premium: !user.premium },
+      select: { premium: true },
+    });
+
+    res.status(200).json({
+      isMonetized: Boolean(updated.premium),
+      message: updated.premium ? 'Monetization enabled' : 'Monetization disabled',
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const approveSubscription = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { creatorId } = req.params;
+    const user = await prisma.user.findUnique({ where: { id: creatorId }, select: { id: true } });
+    if (!user) {
+      res.status(404).json({ error: 'Creator not found' });
+      return;
+    }
+
+    // Approve against a real active plan so the membership FK is always valid.
+    const plan = await prisma.subscriptionPlan.findFirst({
+      where: { isActive: true },
+      orderBy: { price: 'asc' },
+    });
+    if (!plan) {
+      res.status(400).json({ error: 'No active subscription plan exists to approve against' });
+      return;
+    }
+
+    const now = new Date();
+    const existing = await prisma.creatorMembership.findUnique({ where: { userId: creatorId } });
+    const existingActive =
+      existing?.status === 'ACTIVE' && Boolean(existing.endDate) && existing.endDate.getTime() > now.getTime();
+    const startDate = existingActive && existing?.endDate ? existing.endDate : now;
+    const endDate = new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
+    const renewalDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    let membership: any;
+    if (existing) {
+      membership = await prisma.creatorMembership.update({
+        where: { userId: creatorId },
+        data: {
+          planId: plan.id,
+          status: 'ACTIVE',
+          startDate,
+          endDate,
+          renewalDate,
+          autoRenew: false,
+          cancelledAt: null,
+          paymentMethod: null,
+          paymentTxHash: null,
+          updatedAt: now,
+        },
+      });
+    } else {
+      membership = await prisma.creatorMembership.create({
+        data: {
+          userId: creatorId,
+          planId: plan.id,
+          status: 'ACTIVE',
+          startDate,
+          endDate,
+          renewalDate,
+          autoRenew: false,
+        },
+      });
+    }
+
+    res.status(200).json({
+      subscriptionApproved: true,
+      liveAccess: true,
+      plan: plan.name,
+      tier: plan.badgeType,
+      endDate: endDate.toISOString(),
+      message: `Subscription approved (${plan.name}, active until ${endDate.toISOString().slice(0, 10)})`,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });

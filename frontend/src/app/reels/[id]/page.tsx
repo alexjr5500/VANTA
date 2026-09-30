@@ -16,7 +16,7 @@ type Reel = {
   videoUrl: string;
   thumbnailUrl?: string;
   views?: number;
-  creator: { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean };
+  creator: { id: string; username: string; fullName?: string; avatar?: string; verified?: boolean; verificationType?: 'BLUE' | 'GOLD' | string | null };
 };
 
 export default function ReelDetailPage({ params }: { params: { id: string } }) {
