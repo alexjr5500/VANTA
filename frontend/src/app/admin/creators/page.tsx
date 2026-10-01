@@ -26,10 +26,10 @@ export default function CreatorsPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const token = localStorage.getItem('token');
+        const token = localStorage.getItem('vanta_token') || localStorage.getItem('token');
         if (!token) return;
         const data = await getCreators(token);
-        setCreators(data);
+        setCreators(data.creators || (Array.isArray(data) ? data : []));
       } catch (err) {
         console.error('Failed to fetch creators:', err);
       } finally {
@@ -49,7 +49,7 @@ export default function CreatorsPage() {
     setCreators(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c));
 
   const runVerify = async (creator: CreatorRecord, badgeType?: VerificationType) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('vanta_token') || localStorage.getItem('token');
     if (!token || busyId) return;
     setBusyId(creator.id);
     setMenuFor(null);
@@ -66,7 +66,7 @@ export default function CreatorsPage() {
   };
 
   const toggleMonetize = async (creator: CreatorRecord) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('vanta_token') || localStorage.getItem('token');
     if (!token || busyId) return;
     setBusyId(creator.id);
     setMenuFor(null);
@@ -82,7 +82,7 @@ export default function CreatorsPage() {
   };
 
   const approveSub = async (creator: CreatorRecord) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('vanta_token') || localStorage.getItem('token');
     if (!token || busyId) return;
     setBusyId(creator.id);
     setMenuFor(null);

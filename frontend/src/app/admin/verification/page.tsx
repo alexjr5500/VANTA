@@ -10,6 +10,7 @@ import {
   Filter, RefreshCw, UserCheck, UserX, DollarSign, Calendar, History
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import Button from '@/components/ui/Button';
 
 interface AdminBadge {
   id: string;
@@ -74,6 +75,7 @@ export default function AdminVerificationPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [purchases, setPurchases] = useState<AdminPurchase[]>([]);
+  const [plans, setPlans] = useState<any[]>([]);
 
   useEffect(() => {
     if (token) loadData();
@@ -99,6 +101,9 @@ export default function AdminVerificationPage() {
           token
         );
         setPurchases(data.purchases || []);
+      } else if (activeTab === 'plans') {
+        const data = await apiGet<any[]>('/api/verification/plans', token);
+        setPlans(Array.isArray(data) ? data : []);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load data');
@@ -468,12 +473,146 @@ export default function AdminVerificationPage() {
             )}
           </div>
         ) : activeTab === 'plans' ? (
-          <div className="text-center py-16 text-gray-500">
-            <DollarSign size={40} className="mx-auto mb-3 opacity-30" />
-            <p className="text-sm">Plan management available via API</p>
-          </div>
+          <PlanManager plans={plans} setPlans={setPlans} token={token} onNotice={(m, t) => {
+            setError(null); setSuccess(null);
+            if (t === 'error') setError(m); else setSuccess(m);
+          }} />
         ) : null}
       </div>
+    </div>
+  );
+}
+// ============================================================================
+// Plan Manager (real SubscriptionPlan CRUD via /api/verification)
+// ============================================================================
+
+function PlanManager({
+  plans, setPlans, token, onNotice,
+}: {
+  plans: any[];
+  setPlans: (p: any[]) => void;
+  token: string | null;
+  onNotice: (message: string, type: 'success' | 'error') => void;
+}) {
+  const [name, setName] = useState('');
+  const [durationMonths, setDurationMonths] = useState(1);
+  const [price, setPrice] = useState(0);
+  const [badgeType, setBadgeType] = useState('GOLD');
+  const [description, setDescription] = useState('');
+  const [active, setActive] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const upsert = async () => {
+    if (!token || busy) return;
+    if (!name.trim() || price <= 0 || durationMonths < 1) {
+      onNotice('Name, a positive price and duration months are required.', 'error');
+      return;
+    }
+    setBusy(true);
+    try {
+      await apiPost('/api/verification/admin/plan', {
+        name: name.trim(),
+        durationMonths,
+        price,
+        badgeType,
+        description: description.trim() || null,
+        isActive: active,
+      }, token);
+      const updated = await apiGet<any[]>('/api/verification/plans', token);
+      setPlans(Array.isArray(updated) ? updated : []);
+      onNotice('Plan saved.', 'success');
+      setName(''); setDescription('');
+    } catch (err: any) {
+      onNotice(err.message || 'Failed to save plan.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Existing plans */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {plans.map((p) => (
+          <div key={p.id} className="glass rounded-2xl border border-white/[0.06] p-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-bold text-white">{p.name}</p>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full ${p.isActive ? 'bg-emerald-500/15 text-emerald-400' : 'bg-gray-500/15 text-gray-400'}`}>
+                {p.isActive ? 'Active' : 'Inactive'}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-gray-400">
+              <span>${Number(p.price || 0).toFixed(2)} {p.currency || 'USD'}</span>
+              <span>{p.durationMonths} mo</span>
+              <span className="text-[#d9a83f]">{p.badgeType || 'GOLD'}</span>
+            </div>
+            {p.description && <p className="text-[11px] text-gray-500 mt-2">{p.description}</p>}
+          </div>
+        ))}
+        {plans.length === 0 && (
+          <div className="col-span-2 py-10 text-center text-gray-500 text-sm">No subscription plans configured yet.</div>
+        )}
+      </div>
+
+      {/* Create / update */}
+      <div className="glass rounded-2xl border border-white/[0.06] p-4">
+        <h3 className="text-sm font-bold text-white mb-3">Create / Update Plan</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Input label="Plan name" value={name} onChange={setName} placeholder="e.g. Gold Badge — 12 months" />
+          <div className="grid grid-cols-3 gap-2">
+            <LabeledInput label="Months" type="number" value={durationMonths} onChange={(v) => setDurationMonths(Number(v) || 1)} />
+            <LabeledInput label="Price (USD)" type="number" value={price} onChange={(v) => setPrice(Number(v) || 0)} />
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-gray-500">Badge</label>
+              <select value={badgeType} onChange={(e) => setBadgeType(e.target.value)} className="w-full glass rounded-xl px-2 py-2 text-sm text-white border border-white/[0.06] outline-none">
+                <option value="GOLD">GOLD</option>
+                <option value="BLUE">BLUE</option>
+              </select>
+            </div>
+          </div>
+          <div className="sm:col-span-2">
+            <Input label="Description" value={description} onChange={setDescription} placeholder="Benefits, notes..." />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-300 sm:col-span-2">
+            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="accent-[#d9a83f]" />
+            Active (available for purchase)
+          </label>
+        </div>
+        <div className="mt-3">
+          <Button variant="primary" size="sm" loading={busy} onClick={() => void upsert()}>Save Plan</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Input({ label, value, onChange, placeholder, type = 'text' }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string;
+}) {
+  return (
+    <div>
+      <label className="text-[10px] uppercase tracking-wider text-gray-500">{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-[#d9a83f]/50"
+      />
+    </div>
+  );
+}
+
+function LabeledInput({ label, type, value, onChange }: { label: string; type: string; value: any; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <label className="text-[10px] uppercase tracking-wider text-gray-500">{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-[#d9a83f]/50"
+      />
     </div>
   );
 }

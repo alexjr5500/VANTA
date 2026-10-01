@@ -23,12 +23,6 @@ import {
   getPlatformSettings,
   updatePlatformSettings,
   getSystemLogs,
-  getFeatureFlags,
-  updateFeatureFlag,
-  getAnnouncements,
-  createAnnouncement,
-  updateAnnouncement,
-  deleteAnnouncement,
   getUserManagement,
   updateUserRole,
   deleteUser,
@@ -57,6 +51,16 @@ import {
   resumeCampaign,
   getCampaignAnalytics,
   getAllAdsAnalytics,
+  // Admin audit / infrastructure / finance / content / notifications / live / reports
+  getAuditLogs,
+  getInfrastructure,
+  getFinanceTransactions,
+  getContentItems,
+  reviewContentItem,
+  getNotificationCenter,
+  endLiveStream,
+  suspendLiveStream,
+  resolveReport,
 } from '../controllers/admin.controller';
 import { authenticate, requireRole, Role } from '../security';
 import { giftService, GiftCatalogInput } from '../services/gift.service';
@@ -172,6 +176,7 @@ router.delete('/gifts/:giftId', async (req, res) => {
 
 // Reports & Moderation
 router.get('/reports', getReports);
+router.post('/reports/:reportId/resolve', resolveReport);
 router.post('/users/ban', banUser);
 router.post('/users/unban', unbanUser);
 router.post('/users/verify', verifyUser);
@@ -204,14 +209,24 @@ router.put('/settings', updatePlatformSettings);
 // System Logs
 router.get('/system-logs', getSystemLogs);
 
-// Feature Flags
-router.get('/feature-flags', getFeatureFlags);
-router.put('/feature-flags/:flagId', updateFeatureFlag);
+// Audit Logs
+router.get('/audit', getAuditLogs);
 
-// Announcement Management
-router.get('/announcements', getAnnouncements);
-router.post('/announcements', createAnnouncement);
-router.put('/announcements/:announcementId', updateAnnouncement);
-router.delete('/announcements/:announcementId', deleteAnnouncement);
+// Infrastructure
+router.get('/infrastructure', getInfrastructure);
+
+// Finance
+router.get('/finance/transactions', getFinanceTransactions);
+
+// Content moderation
+router.get('/content', getContentItems);
+router.post('/content/:queueId/review', reviewContentItem);
+
+// Notification center
+router.get('/notifications', getNotificationCenter);
+
+// Live stream moderation
+router.post('/live/:streamId/end', endLiveStream);
+router.post('/live/:streamId/suspend', suspendLiveStream);
 
 export default router;

@@ -39,7 +39,7 @@ export default function GiftsPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const token = localStorage.getItem('token');
+        const token = localStorage.getItem('vanta_token') || localStorage.getItem('token');
         if (!token) return;
         const data = await getGifts(token);
         setGifts(data);
@@ -57,7 +57,7 @@ export default function GiftsPage() {
   const categories = ['all', 'everyday', 'premium', 'legendary', 'seasonal', 'limited', 'featured'];
 
   const toggleActive = async (id: string) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('vanta_token') || localStorage.getItem('token');
     if (!token || savingId) return;
     setSavingId(id);
     try {
@@ -72,7 +72,7 @@ export default function GiftsPage() {
   };
 
   const savePrice = async (id: string) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('vanta_token') || localStorage.getItem('token');
     if (!token || savingId || !Number.isSafeInteger(priceValue) || priceValue < 1) {
       if (priceValue < 1) toast.error('Invalid price', 'Gift prices must be at least 1 VANTA.');
       return;

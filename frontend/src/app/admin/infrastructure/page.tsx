@@ -3,9 +3,9 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
-  Server, Database, HardDrive, Wifi, Clock, Activity,
+  Server, Database, Clock, Activity,
   Globe, RefreshCw, CheckCircle, AlertTriangle, XCircle,
-  Monitor, Cpu, Zap, Network
+  Cpu, Network
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
 import { getInfrastructure } from '@/lib/adminApi';
@@ -30,7 +30,7 @@ export default function InfrastructurePage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const token = localStorage.getItem('token');
+        const token = localStorage.getItem('vanta_token') || localStorage.getItem('token');
         if (!token) return;
         const data = await getInfrastructure(token);
         setInfra(data);
@@ -73,15 +73,14 @@ export default function InfrastructurePage() {
       </div>
 
       {/* Resource Usage Cards */}
-      <div className="grid grid-cols-1   gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {[
-          { label: 'CPU', value: `${infra.cpu.usage}%`, icon: Cpu, color: 'from-[#d6a83f] to-[#b78929]', detail: `${infra.cpu.cores} cores` },
-          { label: 'Memory', value: `${infra.memory.percentage}%`, icon: Database, color: 'from-[#151517]0 to-[#68686c]', detail: `${infra.memory.used}GB / ${infra.memory.total}GB` },
-          { label: 'Disk', value: `${infra.disk.percentage}%`, icon: HardDrive, color: 'from-green-500 to-emerald-600', detail: `${infra.disk.used}GB / ${infra.disk.total}GB` },
-          { label: 'Network', value: `${infra.network.incoming + infra.network.outgoing} Gbps`, icon: Network, color: 'from-[#151517]0 to-[#68686c]', detail: `↓${infra.network.incoming} ↑${infra.network.outgoing}` },
+          { label: 'CPU Load', value: `${infra.cpu.usage}%`, icon: Cpu, color: 'from-[#d9a83f] to-[#b78929]', detail: `${infra.cpu.cores} cores` },
+          { label: 'Memory', value: `${infra.memory.percentage}%`, icon: Database, color: 'from-[#c8c8cc] to-[#68686c]', detail: `${infra.memory.used}GB / ${infra.memory.total}GB` },
+          { label: 'Network Interfaces', value: String(infra.network.incoming), icon: Network, color: 'from-emerald-500 to-emerald-600', detail: 'active NICs' },
         ].map((res, i) => (
           <motion.div key={res.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-            className="glass rounded-[20px] p-5 border border-white/[0.06]">
+            className="glass rounded-2xl p-5 border border-white/[0.06]">
             <div className="flex items-center justify-between mb-3">
               <div className={`w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br ${res.color}`}>
                 <res.icon size={18} className="text-white" />
@@ -91,10 +90,25 @@ export default function InfrastructurePage() {
             <p className="text-2xl font-bold text-white">{res.value}</p>
             <p className="text-xs text-gray-400 mt-1">{res.label}</p>
             <div className="mt-2 w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
-              <div className="h-full rounded-full bg-gradient-to-r from-[#d6a83f] to-[#151517]0 transition-all duration-500"
-                style={{ width: `${res.label === 'CPU' ? infra.cpu.usage : res.label === 'Memory' ? infra.memory.percentage : res.label === 'Disk' ? infra.disk.percentage : 50}%` }} />
+              <div className="h-full rounded-full bg-gradient-to-r from-[#d9a83f] to-[#b78929] transition-all duration-500"
+                style={{ width: `${res.label === 'CPU Load' ? infra.cpu.usage : res.label === 'Memory' ? infra.memory.percentage : 100}%` }} />
             </div>
           </motion.div>
+        ))}
+      </div>
+
+      {/* Runtime */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { label: 'Uptime', value: infra.uptime },
+          { label: 'Overall Health', value: infra.overallHealth || 'healthy' },
+          { label: 'Node', value: infra.nodeVersion || '—' },
+          { label: 'Platform', value: infra.platform || '—' },
+        ].map((info) => (
+          <div key={info.label} className="glass rounded-2xl border border-white/[0.06] p-4">
+            <p className="text-lg font-bold text-white capitalize">{info.value}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{info.label}</p>
+          </div>
         ))}
       </div>
 

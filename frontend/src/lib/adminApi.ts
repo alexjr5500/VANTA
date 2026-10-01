@@ -1,95 +1,109 @@
 // Admin Dashboard API Service
-// Connects to backend admin endpoints for real data operations
+// Every call maps to a real, role-protected backend endpoint. There are no
+// mocks or fabricated values — all numbers come from the database.
 
 import { apiGet, apiPost, apiPut, apiDelete } from './apiClient';
 import type {
-  DashboardStats, UserRecord, CreatorRecord, ContentItem,
-  LiveStreamMonitor, FinancialTransaction, GiftDefinition,
-  CommunityRecord, NotificationCampaign, AuditLog, AnalyticsReport,
-  ServerInfrastructure, AdminUser, CoinPaymentsDashboard, CoinPurchaseRecord
+  DashboardStats,
+  CreatorRecord,
+  CommunityRecord,
+  FinancialTransaction,
+  GiftDefinition,
+  CoinPaymentsDashboard,
+  CoinPurchaseRecord,
 } from '@/types/admin';
 
-// ==========================================
-// AUTH & ADMIN USERS
-// ==========================================
+// ============================================================================
+// DASHBOARD
+// ============================================================================
 
-export const getAdminProfile = (token: string): Promise<AdminUser> => {
-  return apiGet<AdminUser>('/api/admin/profile', token);
+/** Full real-data dashboard snapshot (includes userGrowth/recentUsers/recentReports). */
+export const getDashboardStats = (token: string): Promise<DashboardStats & {
+  userGrowth: {
+    '7d': { date: string; count: number }[];
+    '30d': { date: string; count: number }[];
+    '90d': { date: string; count: number }[];
+    '12m': { month: string; count: number }[];
+  };
+  recentUsers: any[];
+  recentReports: any[];
+  newUsersToday: number;
+  newUsersThisWeek: number;
+  newUsersThisMonth: number;
+  newUsersThisYear: number;
+  activeUsersToday: number;
+  activeUsersThisWeek: number;
+  activeUsersThisMonth: number;
+  activeUsersLast30d: number;
+  onlineUsers: number;
+  inactiveUsers: number;
+  suspendedUsers: number;
+  bannedUsers: number;
+  verifiedUsers: number;
+}> => {
+  return apiGet<DashboardStats & any>('/api/admin/stats', token);
 };
 
-export const getAdminUsers = (token: string): Promise<AdminUser[]> => {
-  return apiGet<AdminUser[]>('/api/admin/users', token);
-};
-
-// ==========================================
-// DASHBOARD STATS
-// ==========================================
-
-export const getDashboardStats = (token: string): Promise<DashboardStats> => {
-  return apiGet<DashboardStats>('/api/admin/stats', token);
-};
-
-export const getAnalyticsReport = (token: string, timeframe?: string): Promise<AnalyticsReport> => {
-  return apiGet<AnalyticsReport>(`/api/admin/analytics?timeframe=${timeframe || 'monthly'}`, token);
-};
-
-// ==========================================
+// ============================================================================
 // USER MANAGEMENT
-// ==========================================
+// ============================================================================
 
-export const getUsers = (token: string, params?: { search?: string; role?: string; status?: string; page?: number }): Promise<UserRecord[]> => {
-  const query = new URLSearchParams(params as any).toString();
-  return apiGet<UserRecord[]>(`/api/admin/users?${query}`, token);
-};
+export interface UserPage {
+  users: UserRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pages: number;
+}
 
-export const getUserById = (token: string, userId: string): Promise<UserRecord> => {
-  return apiGet<UserRecord>(`/api/admin/users/${userId}`, token);
+export const getUsers = (token: string, params?: {
+  search?: string;
+  status?: string;
+  role?: string;
+  verified?: string;
+  page?: number;
+  limit?: number;
+}): Promise<UserPage> => {
+  const query = new URLSearchParams((params || {}) as any).toString();
+  return apiGet<UserPage>(`/api/admin/users/manage?${query}`, token);
 };
 
 export const suspendUser = (token: string, userId: string, reason?: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/users/${userId}/suspend`, { reason }, token);
+  return apiPost<any>('/api/admin/users/suspend', { userId, reason: reason || 'Suspended by admin' }, token);
 };
 
 export const banUser = (token: string, userId: string, reason?: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/users/${userId}/ban`, { reason }, token);
-};
-
-export const shadowBanUser = (token: string, userId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/users/${userId}/shadow-ban`, {}, token);
+  return apiPost<any>('/api/admin/users/ban', { userId, reason: reason || 'Banned by admin' }, token);
 };
 
 export const restoreUser = (token: string, userId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/users/${userId}/restore`, {}, token);
+  return apiPost<any>('/api/admin/users/restore', { userId }, token);
+};
+
+export const verifyUser = (token: string, userId: string): Promise<any> => {
+  return apiPost<any>('/api/admin/users/verify', { userId }, token);
 };
 
 export const deleteUser = (token: string, userId: string): Promise<any> => {
   return apiDelete<any>(`/api/admin/users/${userId}`, token);
 };
 
-export const verifyUser = (token: string, userId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/users/${userId}/verify`, {}, token);
-};
-
-export const resetUserPassword = (token: string, userId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/users/${userId}/reset-password`, {}, token);
-};
-
-export const forceLogout = (token: string, userId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/users/${userId}/force-logout`, {}, token);
-};
-
-// ==========================================
+// ============================================================================
 // CREATOR MANAGEMENT
-// ==========================================
+// ============================================================================
 
-export const getCreators = async (token: string, params?: { search?: string; category?: string; page?: number }): Promise<CreatorRecord[]> => {
-  const query = new URLSearchParams(params as any).toString();
-  const data = await apiGet<{ creators: CreatorRecord[]; total: number }>(`/api/admin/creators?${query}`, token);
-  return data.creators ?? [];
+export const getCreators = async (token: string, params?: {
+  search?: string;
+  category?: string;
+  page?: number;
+  limit?: number;
+}): Promise<{ creators: CreatorRecord[]; total: number }> => {
+  const query = new URLSearchParams((params || {}) as any).toString();
+  return apiGet<{ creators: CreatorRecord[]; total: number }>(`/api/admin/creators?${query}`, token);
 };
 
 export const verifyCreator = (token: string, creatorId: string, badgeType?: 'BLUE' | 'GOLD'): Promise<any> => {
-  return apiPost<any>(`/api/admin/creators/${creatorId}/verify`, badgeType ? { badgeType } : {}, token);
+  return apiPost<any>(`/api/admin/creators/${creatorId}/verify`, { badgeType: badgeType || 'GOLD' }, token);
 };
 
 export const toggleMonetization = (token: string, creatorId: string): Promise<any> => {
@@ -100,174 +114,209 @@ export const approveSubscription = (token: string, creatorId: string): Promise<a
   return apiPost<any>(`/api/admin/creators/${creatorId}/subscription-approve`, {}, token);
 };
 
-// ==========================================
+export interface LiveStreamMonitor {
+  id: string;
+  title: string;
+  creatorName: string;
+  currentViewers: number;
+  peakViewers: number;
+  status: string;
+  health: string;
+  streamQuality: string;
+  bitrate: number;
+  fps: number;
+  duration: string;
+  startedAt: string;
+  chatActivity: number;
+  gifts: number;
+  giftRevenue: number;
+  reports: number;
+  moderators: string[];
+  tags: string[];
+}
+export interface UserRecord {
+  id: string;
+  username: string;
+  email: string;
+  fullName?: string;
+  avatar?: string;
+  role: string;
+  status: string;
+  verified: boolean;
+  premium: boolean;
+  coins: number;
+  earnings: number;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+export interface AuditLog {
+  id: string;
+  adminId: string;
+  adminName: string;
+  action: string;
+  resource: string;
+  resourceId: string;
+  timestamp: string;
+  ip: string;
+  device: string;
+  previousValue?: any;
+  newValue?: any;
+  metadata?: Record<string, any>;
+}
+export interface ServerInfrastructure {
+  cpu: { usage: number; cores: number };
+  memory: { used: number; total: number; percentage: number };
+  disk: { used: number; total: number; percentage: number };
+  network: { incoming: number; outgoing: number };
+  uptime: string;
+  services: { name: string; status: 'healthy' | 'degraded' | 'down'; uptime: string }[];
+  regions: { name: string; latency: number; status: string }[];
+  overallHealth?: string;
+  nodeVersion?: string;
+  platform?: string;
+}
+// ============================================================================
 // CONTENT MODERATION
-// ==========================================
+// ============================================================================
 
-export const getContentItems = (token: string, params?: { type?: string; status?: string; page?: number }): Promise<ContentItem[]> => {
-  const query = new URLSearchParams(params as any).toString();
-  return apiGet<ContentItem[]>(`/api/admin/content?${query}`, token);
+export const getContentItems = (token: string): Promise<any> => {
+  return apiGet<any>('/api/admin/content', token);
 };
 
-export const approveContent = (token: string, contentId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/content/${contentId}/approve`, {}, token);
+export const reviewContentItem = (token: string, queueId: string, action: 'APPROVED' | 'REMOVED', reason?: string): Promise<any> => {
+  return apiPost<any>(`/api/admin/content/${queueId}/review`, { action, reason }, token);
 };
 
-export const removeContent = (token: string, contentId: string, reason?: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/content/${contentId}/remove`, { reason }, token);
+export const resolveReport = (token: string, reportId: string, action: 'resolve' | 'dismiss'): Promise<any> => {
+  return apiPost<any>(`/api/admin/reports/${reportId}/resolve`, { action }, token);
 };
 
-export const restoreContent = (token: string, contentId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/content/${contentId}/restore`, {}, token);
-};
-
-export const flagContent = (token: string, contentId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/content/${contentId}/flag`, {}, token);
-};
-
-export const runAIReview = (token: string, contentId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/content/${contentId}/ai-review`, {}, token);
-};
-
-// ==========================================
+// ============================================================================
 // LIVE STREAMS
-// ==========================================
+// ============================================================================
 
-export const getLiveStreams = (token: string): Promise<LiveStreamMonitor[]> => {
-  return apiGet<LiveStreamMonitor[]>('/api/admin/live', token);
+export const getLiveStreams = (token: string, params?: {
+  search?: string;
+  status?: string;
+  limit?: number;
+}): Promise<LiveStreamMonitor[]> => {
+  const query = new URLSearchParams((params || {}) as any).toString();
+  return apiGet<LiveStreamMonitor[]>(`/api/admin/live?${query}`, token);
 };
 
-export const endStream = (token: string, streamId: string): Promise<any> => {
+export const endLiveStream = (token: string, streamId: string): Promise<any> => {
   return apiPost<any>(`/api/admin/live/${streamId}/end`, {}, token);
 };
 
-export const suspendStream = (token: string, streamId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/live/${streamId}/suspend`, {}, token);
+export const suspendLiveStream = (token: string, streamId: string, reason?: string): Promise<any> => {
+  return apiPost<any>(`/api/admin/live/${streamId}/suspend`, { reason }, token);
 };
 
-export const warnStreamCreator = (token: string, streamId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/live/${streamId}/warn`, {}, token);
+// ============================================================================
+// COMMUNITIES
+// ============================================================================
+
+export const getCommunities = (token: string): Promise<CommunityRecord[]> => {
+  return apiGet<CommunityRecord[]>('/api/admin/communities', token);
 };
 
-// ==========================================
-// FINANCE
-// ==========================================
+// ============================================================================
+// WALLET / FINANCE
+// ============================================================================
 
-export const getTransactions = (token: string, params?: { type?: string; status?: string; page?: number }): Promise<FinancialTransaction[]> => {
-  const query = new URLSearchParams(params as any).toString();
-  return apiGet<FinancialTransaction[]>(`/api/admin/finance/transactions?${query}`, token);
+export const getWalletTransactions = (token: string, params?: {
+  limit?: number;
+  offset?: number;
+  type?: string;
+  status?: string;
+}): Promise<{ transactions: any[]; total: number }> => {
+  const query = new URLSearchParams((params || {}) as any).toString();
+  return apiGet<any>(`/api/admin/wallet/transactions?${query}`, token);
 };
 
-export const approvePayout = (token: string, transactionId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/finance/transactions/${transactionId}/approve`, {}, token);
+/** Real finance ledger (wallet transactions), newest first. */
+export const getTransactions = (token: string, params?: {
+  page?: number;
+  limit?: number;
+  type?: string;
+  status?: string;
+  search?: string;
+}): Promise<{ transactions: FinancialTransaction[]; total: number; summary: any }> => {
+  const query = new URLSearchParams((params || {}) as any).toString();
+  return apiGet<any>(`/api/admin/finance/transactions?${query}`, token);
 };
 
-export const generateFinancialReport = (token: string, type: 'pdf' | 'csv' | 'excel', dateFrom?: string, dateTo?: string): Promise<Blob> => {
-  return apiGet<any>(`/api/admin/finance/report?type=${type}&from=${dateFrom || ''}&to=${dateTo || ''}`, token);
+export const getWithdrawals = (token: string, limit = 50): Promise<any[]> => {
+  return apiGet<any[]>(`/api/admin/withdrawals?limit=${limit}`, token);
 };
 
-// ==========================================
-// GIFTS
-// ==========================================
+// ============================================================================
+// GIFT CATALOG
+// ============================================================================
 
 export const getGifts = (token: string): Promise<GiftDefinition[]> => {
   return apiGet<GiftDefinition[]>('/api/admin/gifts', token);
-};
-
-export const updateGift = (token: string, giftId: string, data: Partial<GiftDefinition>): Promise<any> => {
-  return apiPut<any>(`/api/admin/gifts/${giftId}`, data, token);
-};
-
-export const createGift = (token: string, data: Omit<GiftDefinition, 'id' | 'createdAt'>): Promise<GiftDefinition> => {
-  return apiPost<GiftDefinition>('/api/admin/gifts', data, token);
 };
 
 export const toggleGiftActive = (token: string, giftId: string): Promise<any> => {
   return apiPost<any>(`/api/admin/gifts/${giftId}/toggle`, {}, token);
 };
 
-// ==========================================
-// COMMUNITIES
-// ==========================================
-
-export const getCommunities = (token: string): Promise<CommunityRecord[]> => {
-  return apiGet<CommunityRecord[]>('/api/admin/communities', token);
+export const updateGift = (token: string, giftId: string, patch: Partial<GiftDefinition>): Promise<any> => {
+  return apiPut<any>(`/api/admin/gifts/${giftId}`, patch, token);
 };
 
-export const archiveCommunity = (token: string, communityId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/communities/${communityId}/archive`, {}, token);
-};
-
-export const restoreCommunity = (token: string, communityId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/communities/${communityId}/restore`, {}, token);
-};
-
-export const featureCommunity = (token: string, communityId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/communities/${communityId}/feature`, {}, token);
-};
-
-// ==========================================
-// NOTIFICATIONS
-// ==========================================
-
-export const getNotificationCampaigns = (token: string): Promise<NotificationCampaign[]> => {
-  return apiGet<NotificationCampaign[]>('/api/admin/notifications', token);
-};
-
-export const createNotificationCampaign = (token: string, data: Omit<NotificationCampaign, 'id' | 'createdAt'>): Promise<NotificationCampaign> => {
-  return apiPost<NotificationCampaign>('/api/admin/notifications', data, token);
-};
-
-export const sendNotification = (token: string, campaignId: string): Promise<any> => {
-  return apiPost<any>(`/api/admin/notifications/${campaignId}/send`, {}, token);
-};
-
-// ==========================================
-// AUDIT LOGS
-// ==========================================
-
-export const getAuditLogs = (token: string, params?: { action?: string; admin?: string; page?: number }): Promise<AuditLog[]> => {
-  const query = new URLSearchParams(params as any).toString();
-  return apiGet<AuditLog[]>(`/api/admin/audit?${query}`, token);
-};
-
-export const exportAuditLogs = (token: string, format: 'csv' | 'json'): Promise<Blob> => {
-  return apiGet<any>(`/api/admin/audit/export?format=${format}`, token);
-};
-
-// ==========================================
-// INFRASTRUCTURE
-// ==========================================
-
-export const getInfrastructure = (token: string): Promise<ServerInfrastructure> => {
-  return apiGet<ServerInfrastructure>('/api/admin/infrastructure', token);
-};
-
-export const getInfrastructureRealtime = (token: string): Promise<ServerInfrastructure> => {
-  return apiGet<ServerInfrastructure>('/api/admin/infrastructure/realtime', token);
-};
-
-// ==========================================
-// ANALYTICS EXPORT
-// ==========================================
-
-export const exportAnalytics = (token: string, format: 'pdf' | 'csv' | 'excel', type: string, timeframe?: string): Promise<Blob> => {
-  return apiGet<any>(`/api/admin/analytics/export?format=${format}&type=${type}&timeframe=${timeframe || 'monthly'}`, token);
-};
-
-// ==========================================
+// ============================================================================
 // COIN PAYMENTS (VANTA Coin purchase dashboard)
-// ==========================================
+// ============================================================================
 
 export const getCoinPaymentsDashboard = (token: string): Promise<CoinPaymentsDashboard> => {
   return apiGet<CoinPaymentsDashboard>('/api/admin/coin-payments', token);
 };
 
-export const listCoinPurchases = (token: string, params?: { status?: string; limit?: number; offset?: number }): Promise<{ purchases: CoinPurchaseRecord[]; total: number }> => {
+export const listCoinPurchases = (token: string, params?: {
+  status?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ purchases: CoinPurchaseRecord[]; total: number }> => {
   const query = new URLSearchParams((params || {}) as any).toString();
   return apiGet<any>(`/api/admin/coin-payments/list?${query}`, token);
 };
 
 export const refundCoinPurchase = (token: string, orderId: string, reason: string): Promise<any> => {
   return apiPost<any>(`/api/admin/coin-payments/${orderId}/refund`, { reason }, token);
+};
+
+// ============================================================================
+// AUDIT LOGS
+// ============================================================================
+
+export const getAuditLogs = (token: string, params?: {
+  action?: string;
+  admin?: string;
+  page?: number;
+  limit?: number;
+}): Promise<{ logs: AuditLog[]; total: number }> => {
+  const query = new URLSearchParams((params || {}) as any).toString();
+  return apiGet<any>(`/api/admin/audit?${query}`, token);
+};
+
+// ============================================================================
+// INFRASTRUCTURE
+// ============================================================================
+
+export const getInfrastructure = (token: string): Promise<ServerInfrastructure> => {
+  return apiGet<ServerInfrastructure>('/api/admin/infrastructure', token);
+};
+
+// ============================================================================
+// NOTIFICATIONS (Notification Center)
+// ============================================================================
+
+export const getNotificationCenter = (token: string, params?: {
+  page?: number;
+  limit?: number;
+}): Promise<any> => {
+  const query = new URLSearchParams((params || {}) as any).toString();
+  return apiGet<any>(`/api/admin/notifications?${query}`, token);
 };

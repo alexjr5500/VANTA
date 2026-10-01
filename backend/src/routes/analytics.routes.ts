@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import { analyticsController } from '../controllers/analytics.controller';
 import { authenticateJWT } from '../middleware/auth.middleware';
 
@@ -103,6 +103,39 @@ router.post('/reports/scheduled', authenticateJWT, analyticsController.createSch
 // Predictions
 // ============================================================
 router.get('/predictions', authenticateJWT, analyticsController.getPredictions.bind(analyticsController));
+
+// ============================================================
+// Funnel (real event counts from AnalyticsEvent)
+// ============================================================
+router.get('/funnel', authenticateJWT, async (req: Request, res: Response) => {
+  try {
+    const { prisma } = await import('../prisma');
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const countEvents = async (patterns: string[]) => prisma.analyticsEvent.count({
+      where: {
+        createdAt: { gte: since },
+        OR: patterns.map((eventType) => ({ eventType: { contains: eventType } })),
+      } as any,
+    });
+
+    const visitors = await countEvents(['page_view', 'screen_view', 'page.visit', 'app_open']);
+    const registrations = await countEvents(['signup', 'register', 'user.register']);
+    const contentCreated = await countEvents(['post_create', 'story_create', 'video_upload', 'stream_start', 'content.created']);
+    const engaged = await countEvents(['like', 'comment', 'follow', 'gift_send', 'reaction.like']);
+
+    const steps = [
+      { step: 'Visitors', count: visitors, conversion: 100 },
+      { step: 'Registrations', count: registrations, conversion: visitors > 0 ? Math.round((registrations / visitors) * 1000) / 10 : 0 },
+      { step: 'Content Created', count: contentCreated, conversion: registrations > 0 ? Math.round((contentCreated / registrations) * 1000) / 10 : 0 },
+      { step: 'Engaged', count: engaged, conversion: contentCreated > 0 ? Math.round((engaged / contentCreated) * 1000) / 10 : 0 },
+    ];
+
+    res.json({ success: true, data: steps });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
 
 // ============================================================
 // LTV & Screen Analytics

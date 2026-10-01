@@ -39,7 +39,7 @@ export default function CoinPaymentsPage() {
 
   const fetchData = async () => {
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('vanta_token') || localStorage.getItem('token');
       if (!token) return;
       const data = await getCoinPaymentsDashboard(token);
       setDashboard(data);
@@ -68,7 +68,7 @@ export default function CoinPaymentsPage() {
     if (!reason.trim()) { setError('A refund reason is required for the audit record.'); return; }
     setRefunding(true);
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('vanta_token') || localStorage.getItem('token');
       if (!token) return;
       await refundCoinPurchase(token, order.id, reason.trim());
       setRefundReason('');

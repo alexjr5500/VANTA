@@ -47,6 +47,7 @@ import adRoutes from './routes/ad.routes';
 import rtcRoutes from './routes/rtc.routes';
 import { aiRouter, registerAISocketHandlers } from './ai';
 import { analyticsRouter, registerAnalyticsSocketHandlers, analyticsEngine } from './analytics';
+import analyticsRoutes from './routes/analytics.routes';
 import { handleChatSocket } from './sockets/chat.socket';
 import { handleLiveSocket } from './sockets/live.socket';
 import { handleGiftSocket } from './sockets/gift.socket';
@@ -464,6 +465,27 @@ app.use('/api/ai', aiRouter);
 // ============================================================================
 // ANALYTICS ROUTES
 // ============================================================================
+// Two complementary analytics routers are mounted:
+//  1. analyticsRoutes  (src/routes/analytics.routes.ts)  — platform overview,
+//     user/creator/content/revenue/stream/search/notification/AI metrics,
+//     dashboard snapshot, event tracking, alerts, marketing & reports.
+//     Its controllers already respond with { success, data }.
+//  2. analyticsRouter  (src/analytics/analytics.routes.ts) — metric definitions,
+//     realtime metrics and the executive/revenue/growth/operations/creator/
+//     product dashboards. Its handlers respond with a bare payload, so the
+//     wrapAnalyticsResponse middleware normalizes them to { success, data }
+//     so the frontend can unwrap every /api/analytics response identically.
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/analytics', (req, res, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = ((body: any) => {
+    if (body && typeof body === 'object' && ('success' in body || 'error' in body)) {
+      return originalJson(body);
+    }
+    return originalJson({ success: true, data: body });
+  }) as any;
+  next();
+});
 app.use('/api/analytics', analyticsRouter);
 
 // ============================================================================

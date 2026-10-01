@@ -1,129 +1,138 @@
-"use client";
+'use client';
 
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useCallback, useEffect } from 'react';
 import {
-  Bell, Search, Plus, Send, Clock, CheckCircle, XCircle,
-  Globe, UserCog, Wrench, Megaphone, Smartphone, Mail,
-  MessageSquare, BarChart3, Filter, MoreHorizontal
+  Bell, RefreshCw, Clock, AlertTriangle, ChevronLeft, ChevronRight,
+  MailOpen, Mail, Send,
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
 import Button from '@/components/ui/Button';
-import { getNotificationCampaigns } from '@/lib/adminApi';
-import type { NotificationCampaign } from '@/types/admin';
-
-const typeConfig: Record<string, { label: string; icon: any; color: string }> = {
-  maintenance: { label: 'Maintenance', icon: Wrench, color: 'bg-yellow-500/15 text-yellow-300' },
-  promotional: { label: 'Promotional', icon: Megaphone, color: 'bg-[#151517]0/15 text-[#f2c75c]' },
-  creator: { label: 'Creator Update', icon: UserCog, color: 'bg-[#c8c8cc]/15 text-[#c8c8cc]' },
-  system: { label: 'System', icon: Globe, color: 'bg-[#c8c8cc]/15 text-[#c8c8cc]' },
-  all: { label: 'All', icon: Globe, color: 'bg-gray-500/15 text-gray-300' },
-};
-
-const statusConfig: Record<string, { label: string; color: string }> = {
-  draft: { label: 'Draft', color: 'bg-gray-500/15 text-gray-400' },
-  scheduled: { label: 'Scheduled', color: 'bg-[#c8c8cc]/15 text-[#c8c8cc]' },
-  sending: { label: 'Sending', color: 'bg-yellow-500/15 text-yellow-400' },
-  sent: { label: 'Sent', color: 'bg-green-500/15 text-green-400' },
-  failed: { label: 'Failed', color: 'bg-red-500/15 text-red-400' },
-};
+import { getNotificationCenter } from '@/lib/adminApi';
+import { cn } from '@/lib/utils';
 
 export default function NotificationsPage() {
-  const [typeFilter, setTypeFilter] = useState<string>('all');
-  const [campaigns, setCampaigns] = useState<NotificationCampaign[]>([]);
+  const [stats, setStats] = useState<any>(null);
+  const [byType, setByType] = useState<{ type: string; count: number }[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        if (!token) return;
-        const data = await getNotificationCampaigns(token);
-        setCampaigns(data);
-      } catch (err) {
-        console.error('Failed to fetch notification campaigns:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
-  }, []);
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem('vanta_token') || localStorage.getItem('token');
+      if (!token) return;
+      const data = await getNotificationCenter(token, { page, limit: 40 });
+      setStats(data.stats || {});
+      setByType(data.byType || []);
+      setNotifications(data.notifications || []);
+      setTotalCount(data.totalCount || 0);
+      setPages(Math.max(1, Math.ceil((data.totalCount || 0) / 40)));
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load notification center.');
+    } finally {
+      setLoading(false);
+    }
+  }, [page]);
 
-  const filtered = typeFilter === 'all' ? campaigns : campaigns.filter(n => n.type === typeFilter);
+  useEffect(() => { void fetchData(); }, [fetchData]);
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col   justify-between gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <Bell size={14} className="text-[#d6a83f]" />
-            <span className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-semibold">Notifications</span>
+            <Bell size={14} className="text-[#d9a83f]" />
+            <span className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-semibold">Community</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">Notification Campaigns</h1>
-          <p className="text-sm text-gray-400 mt-1">Create and manage push, email, and in-app notification campaigns.</p>
+          <h1 className="text-2xl font-bold text-white">Notification Center</h1>
+          <p className="text-sm text-gray-400 mt-1">In-app notification volume and recent messages.</p>
         </div>
-        <Button variant="primary" size="sm" icon={<Plus size={14} />}>New Campaign</Button>
+        <Button variant="ghost" size="sm" icon={<RefreshCw size={14} />} onClick={() => void fetchData()}>Refresh</Button>
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-        {['all', 'maintenance', 'promotional', 'creator', 'system'].map(type => (
-          <button key={type} onClick={() => setTypeFilter(type)}
-            className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-medium transition-all whitespace-nowrap ${
-              typeFilter === type
-                ? 'bg-gradient-to-r from-[#d6a83f] to-[#c8c8cc] text-white'
-                : 'glass text-gray-400 hover:text-white border border-white/[0.06]'
-            }`}>
-            {type === 'all' ? <Globe size={12} /> : type === 'maintenance' ? <Wrench size={12} /> : type === 'promotional' ? <Megaphone size={12} /> : type === 'creator' ? <UserCog size={12} /> : <Globe size={12} />}
-            {typeConfig[type]?.label || type.charAt(0).toUpperCase() + type.slice(1)}
-          </button>
-        ))}
+      {/* Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard label="Total Notifications" value={(stats?.total ?? 0).toLocaleString()} icon={<Bell size={16} />} cls="bg-[#d9a83f]/15 text-[#d9a83f]" />
+        <StatCard label="Unread" value={(stats?.unread ?? 0).toLocaleString()} icon={<Mail size={16} />} cls="bg-sky-500/15 text-sky-400" />
+        <StatCard label="Sent Today" value={(stats?.sentToday ?? 0).toLocaleString()} icon={<Send size={16} />} cls="bg-emerald-500/15 text-emerald-400" />
+        <StatCard label="Delivered (tracked)" value={(stats?.delivered ?? 0).toLocaleString()} icon={<MailOpen size={16} />} cls="bg-violet-500/15 text-violet-400" />
       </div>
-
-      {/* Campaigns */}
-      <div className="space-y-3">
-        {filtered.map((campaign, i) => (
-          <motion.div key={campaign.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-            className="glass rounded-[20px] p-5 border border-white/[0.06] hover:border-white/[0.12] transition-all">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${typeConfig[campaign.type]?.color || ''}`}>
-                    {typeConfig[campaign.type]?.label || campaign.type}
-                  </span>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${statusConfig[campaign.status]?.color || ''}`}>
-                    {statusConfig[campaign.status]?.label || campaign.status}
-                  </span>
-                </div>
-                <h3 className="text-sm font-bold text-white">{campaign.title}</h3>
-                <p className="text-xs text-gray-400 mt-1">{campaign.body}</p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {campaign.stats && (
-                  <div className="text-right">
-                    <p className="text-xs text-gray-500">{campaign.stats.delivered?.toLocaleString() || 0} delivered</p>
-                    <p className="text-[10px] text-gray-600">{campaign.stats.opened?.toLocaleString() || 0} opened</p>
-                  </div>
-                )}
-                <button className="p-2 rounded-xl hover:bg-white/10 transition-colors">
-                  <MoreHorizontal size={14} className="text-gray-500" />
-                </button>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 mt-3 text-[10px] text-gray-500">
-              <span className="flex items-center gap-1">
-                {campaign.pushEnabled && <Smartphone size={10} />}
-                {campaign.emailEnabled && <Mail size={10} />}
-                {campaign.inAppEnabled && <MessageSquare size={10} />}
+{/* By type */}
+      {byType.length > 0 && (
+        <GlassCard>
+          <h3 className="text-sm font-bold text-white mb-3">By Type</h3>
+          <div className="flex flex-wrap gap-2">
+            {byType.map((t) => (
+              <span key={t.type} className={cn('text-[11px] px-2.5 py-1 rounded-full bg-white/5 text-gray-300')}>
+                {t.type.replace(/_/g, ' ')} · {t.count.toLocaleString()}
               </span>
-              <span>Target: {campaign.targetAudience?.join(', ') || 'All'}</span>
-              {campaign.scheduledFor && (
-                <span className="flex items-center gap-1"><Clock size={10} />{new Date(campaign.scheduledFor).toLocaleString()}</span>
-              )}
-            </div>
-          </motion.div>
-        ))}
-      </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
+
+      {/* Recent notifications */}
+      <GlassCard>
+        {loading ? (
+          <div className="space-y-2 p-2">
+            {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-14 rounded-xl bg-white/5 animate-pulse" />)}
+          </div>
+        ) : error ? (
+          <div className="py-10 text-center">
+            <AlertTriangle size={32} className="mx-auto mb-3 text-red-400" />
+            <p className="text-sm text-gray-400">{error}</p>
+            <Button variant="primary" size="sm" className="mt-3" onClick={() => void fetchData()}>Retry</Button>
+          </div>
+        ) : notifications.length === 0 ? (
+          <div className="py-12 text-center">
+            <Bell size={34} className="mx-auto mb-3 text-white/15" />
+            <p className="text-sm text-white/50">No notifications yet.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {notifications.map((n) => (
+              <div key={n.id} className="flex items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+                <div className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-lg', n.read ? 'bg-white/5 text-gray-500' : 'bg-[#d9a83f]/15 text-[#d9a83f]')}>
+                  <Bell size={14} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-medium text-white truncate">{n.title}</p>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-gray-300">{n.type.replace(/_/g, ' ')}</span>
+                    {!n.read && <span className="text-[9px] px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-400">unread</span>}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{n.message}</p>
+                  <p className="text-[10px] text-gray-600 mt-1 flex items-center gap-1"><Clock size={10} />@{n.username} · {new Date(n.createdAt).toLocaleString()}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </GlassCard>
+
+      {/* Pagination */}
+      {pages > 1 && !loading && !error && (
+        <div className="flex items-center justify-center gap-2">
+          <Button variant="ghost" size="sm" disabled={page <= 1} icon={<ChevronLeft size={14} />} onClick={() => setPage(page - 1)}>Prev</Button>
+          <span className="text-xs text-gray-400 px-2">{page} / {pages}</span>
+          <Button variant="ghost" size="sm" disabled={page >= pages} onClick={() => setPage(page + 1)}>Next<ChevronRight size={14} /></Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatCard({ label, value, icon, cls }: { label: string; value: string; icon: any; cls: string }) {
+  return (
+    <div className="glass rounded-2xl border border-white/[0.06] p-4">
+      <div className={cn('w-9 h-9 rounded-xl flex items-center justify-center mb-2', cls)}>{icon}</div>
+      <p className="text-xl font-bold text-white tabular-nums">{value}</p>
+      <p className="text-xs text-gray-400 mt-0.5">{label}</p>
     </div>
   );
 }

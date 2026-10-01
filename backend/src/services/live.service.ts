@@ -270,6 +270,53 @@ export class LiveService {
   }
 
   /**
+   * Admin moderation: end a live stream regardless of host. The caller must be
+   * an authenticated administrator (enforced at the route layer). Audited by
+   * the admin controller.
+   */
+  async adminEndStream(streamId: string) {
+    const stream = await prisma.liveStream.findUnique({
+      where: { id: streamId },
+    });
+    if (!stream) throw new Error('Stream not found');
+    if (!stream.active || stream.status !== 'LIVE') {
+      return { ...stream, alreadyEnded: true };
+    }
+    return this.finishStream(stream);
+  }
+
+  /**
+   * Admin moderation: end a live stream and mark it SUSPENDED (visible to the
+   * host as a moderation action rather than a normal end). Audited by the
+   * admin controller.
+   */
+  async adminSuspendStream(streamId: string, reason: string) {
+    const stream = await prisma.liveStream.findUnique({
+      where: { id: streamId },
+    });
+    if (!stream) throw new Error('Stream not found');
+
+    if (stream.liveKitRoom) {
+      await liveKitService.closeRoom(stream.liveKitRoom).catch(() => undefined);
+    }
+
+    const updated = await prisma.liveStream.update({
+      where: { id: streamId },
+      data: {
+        active: false,
+        status: 'SUSPENDED',
+        endedAt: new Date(),
+        lastHostHeartbeat: new Date(),
+        duration: stream.startedAt ? Math.floor((Date.now() - stream.startedAt.getTime()) / 1000) : stream.duration,
+      },
+    });
+
+    await cacheService.del(CACHE_KEYS.LIVE_STREAMS);
+    await cacheService.del(CACHE_KEYS.LIVE_STREAM(stream.id));
+    return { ...updated, reason };
+  }
+
+  /**
    * Record a host heartbeat for the given stream. Returns true when the
    * session is still genuinely active, false when it has already been ended.
    */

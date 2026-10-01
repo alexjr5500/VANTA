@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '../prisma';
-import { moderationService, walletService, userService, adminService, adService, coinPaymentService, verificationService } from '../services';
-import { AuthenticatedRequest } from '../security';
+import { moderationService, walletService, userService, adminService, adService, coinPaymentService, verificationService, liveService } from '../services';
+import { AuthenticatedRequest, auditLog } from '../security';
 import { BADGE_USER_SELECT, isBadgeRowActive } from '../services/public-verification';
 
 // ============================================================================
@@ -10,8 +10,13 @@ import { BADGE_USER_SELECT, isBadgeRowActive } from '../services/public-verifica
 
 export const getDashboardStats = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const stats = await adminService.getDashboardStats();
-    res.status(200).json(stats);
+    const [stats, userGrowth, recentUsers, recentReports] = await Promise.all([
+      adminService.getDashboardStats(),
+      adminService.getUserGrowth(),
+      adminService.getRecentUsers(6),
+      adminService.getRecentReports(6),
+    ]);
+    res.status(200).json({ ...stats, userGrowth, recentUsers, recentReports });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });
@@ -53,9 +58,13 @@ export const getUsers = async (req: AuthenticatedRequest, res: Response): Promis
 
 export const getUserManagement = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const limit = parseInt(req.query.limit as string) || 50;
-    const offset = parseInt(req.query.offset as string) || 0;
+    const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 25, 1), 100);
+    const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
+    const page = Math.max(parseInt(req.query.page as string) || 1, 1);
     const search = req.query.search as string;
+    const status = req.query.status as string;
+    const role = req.query.role as string;
+    const verified = req.query.verified as string;
 
     const where: any = {};
     if (search) {
@@ -65,6 +74,12 @@ export const getUserManagement = async (req: AuthenticatedRequest, res: Response
         { fullName: { contains: search } },
       ];
     }
+    if (status && status !== 'ALL') where.status = status;
+    if (role && role !== 'ALL') where.role = role;
+    if (verified === 'true') where.verified = true;
+    if (verified === 'false') where.verified = false;
+
+    const skip = offset > 0 ? offset : (page - 1) * limit;
 
     const [users, total] = await Promise.all([
       prisma.user.findMany({
@@ -74,23 +89,34 @@ export const getUserManagement = async (req: AuthenticatedRequest, res: Response
           username: true,
           email: true,
           fullName: true,
+          avatar: true,
           role: true,
           status: true,
           verified: true,
           premium: true,
           coins: true,
           earnings: true,
-          createdAt: true,
           lastLoginAt: true,
+          createdAt: true,
         },
         take: limit,
-        skip: offset,
+        skip,
         orderBy: { createdAt: 'desc' },
       }),
       prisma.user.count({ where }),
     ]);
 
-    res.status(200).json({ users, total });
+    res.status(200).json({
+      users: users.map((u) => ({
+        ...u,
+        lastLoginAt: u.lastLoginAt ? u.lastLoginAt.toISOString() : null,
+        createdAt: u.createdAt.toISOString(),
+      })),
+      total,
+      page,
+      pageSize: limit,
+      pages: Math.max(1, Math.ceil(total / limit)),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });
@@ -106,9 +132,23 @@ export const updateUserRole = async (req: AuthenticatedRequest, res: Response): 
       return;
     }
 
-    const validRoles = ['USER', 'CREATOR', 'MODERATOR', 'ADMIN', 'SUPER_ADMIN'];
+    const validRoles = ['USER', 'CREATOR', 'MODERATOR', 'ADMIN', 'CEO', 'SUPER_ADMIN'];
     if (!validRoles.includes(role)) {
       res.status(400).json({ error: `Invalid role. Must be one of: ${validRoles.join(', ')}` });
+      return;
+    }
+
+    // Privilege escalation guard: only a SUPER_ADMIN may grant the highest
+    // roles. Mid-level admins can manage USER/CREATOR/MODERATOR roles only —
+    // they can never mint another admin or executive.
+    const actorRole = String(req.user?.role || 'USER');
+    const actorIsSuper = actorRole === 'SUPER_ADMIN';
+    if ((role === 'SUPER_ADMIN' || role === 'CEO') && !actorIsSuper) {
+      res.status(403).json({ error: 'Only a SUPER_ADMIN can assign executive/SUPER_ADMIN roles' });
+      return;
+    }
+    if (role === 'ADMIN' && !(actorIsSuper || actorRole === 'CEO')) {
+      res.status(403).json({ error: 'Only a SUPER_ADMIN or CEO can assign the ADMIN role' });
       return;
     }
 
@@ -127,6 +167,15 @@ export const updateUserRole = async (req: AuthenticatedRequest, res: Response): 
         email: true,
         role: true,
       },
+    });
+
+    await auditLog.log({
+      userId: req.user?.userId,
+      action: 'ROLE_CHANGED',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: { resource: 'User', resourceId: userId, targetId: userId, newValue: { role } },
+      severity: 'CRITICAL',
     });
 
     res.status(200).json({ message: 'User role updated', user });
@@ -642,6 +691,14 @@ export const banUser = async (req: AuthenticatedRequest, res: Response): Promise
     }
 
     const user = await moderationService.banUser(userId, reason);
+    await auditLog.log({
+      userId: req.user?.userId,
+      action: 'USER_BANNED',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: { resource: 'User', resourceId: userId, targetId: userId, reason, previousValue: user.status },
+      severity: 'CRITICAL',
+    });
     res.status(200).json({
       message: 'User banned',
       user,
@@ -662,6 +719,14 @@ export const unbanUser = async (req: AuthenticatedRequest, res: Response): Promi
     }
 
     const user = await moderationService.unbanUser(userId);
+    await auditLog.log({
+      userId: req.user?.userId,
+      action: 'USER_UNBANNED',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: { resource: 'User', resourceId: userId, targetId: userId },
+      severity: 'WARNING',
+    });
     res.status(200).json({
       message: 'User unbanned',
       user,
@@ -682,6 +747,14 @@ export const verifyUser = async (req: AuthenticatedRequest, res: Response): Prom
     }
 
     const user = await moderationService.verifyUser(userId);
+    await auditLog.log({
+      userId: req.user?.userId,
+      action: 'USER_VERIFIED',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: { resource: 'User', resourceId: userId, targetId: userId },
+      severity: 'WARNING',
+    });
     res.status(200).json({
       message: 'User verified',
       user,
@@ -700,6 +773,14 @@ export const suspendUser = async (req: AuthenticatedRequest, res: Response): Pro
       return;
     }
     const user = await moderationService.suspendUser(userId, reason || undefined);
+    await auditLog.log({
+      userId: req.user?.userId,
+      action: 'USER_SUSPENDED',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: { resource: 'User', resourceId: userId, targetId: userId, reason },
+      severity: 'WARNING',
+    });
     res.status(200).json({ message: 'User suspended', user });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
@@ -715,6 +796,14 @@ export const restoreUser = async (req: AuthenticatedRequest, res: Response): Pro
       return;
     }
     const user = await moderationService.restoreUser(userId);
+    await auditLog.log({
+      userId: req.user?.userId,
+      action: 'USER_RESTORED',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: { resource: 'User', resourceId: userId, targetId: userId },
+      severity: 'INFO',
+    });
     res.status(200).json({ message: 'User restored', user });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
@@ -840,17 +929,31 @@ export const getPlatformAnalytics = async (req: AuthenticatedRequest, res: Respo
 
 export const getPlatformSettings = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    // Return default/configured platform settings
-    // In production, these would be stored in a settings table
+    const rows = await prisma.platformSetting.findMany();
+    const map: Record<string, string> = {};
+    for (const row of rows) map[row.key] = row.value;
+
+    const num = (key: string, fallback: number) => {
+      const raw = map[key];
+      if (raw === undefined || raw === '') return fallback;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const bool = (key: string, fallback: boolean) => {
+      const raw = map[key];
+      if (raw === undefined || raw === '') return fallback;
+      return raw === 'true' || raw === '1';
+    };
+
     res.status(200).json({
-      platformName: 'VANTA',
-      maintenanceMode: false,
-      registrationOpen: true,
-      maxUploadSize: 100, // MB
-      minWithdrawalAmount: 10,
-      maxWithdrawalAmount: 10000,
-      giftCommissionRate: 0.2,
-      streamHealthCheckInterval: 30, // seconds
+      platformName: map['platformName'] || 'VANTA',
+      maintenanceMode: bool('maintenanceMode', false),
+      registrationOpen: bool('registrationOpen', true),
+      maxUploadSize: num('maxUploadSize', 100),
+      minWithdrawalAmount: num('minWithdrawalAmount', 10),
+      maxWithdrawalAmount: num('maxWithdrawalAmount', 10000),
+      giftCommissionRate: num('giftCommissionRate', 0.2),
+      streamHealthCheckInterval: num('streamHealthCheckInterval', 30),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
@@ -861,11 +964,38 @@ export const getPlatformSettings = async (req: AuthenticatedRequest, res: Respon
 export const updatePlatformSettings = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const updates = req.body;
-    // In production, validate and persist to settings table
-    res.status(200).json({
-      message: 'Platform settings updated',
-      settings: updates,
+    const adminId = req.user?.userId || '';
+    const allowed = [
+      'platformName', 'maintenanceMode', 'registrationOpen', 'maxUploadSize',
+      'minWithdrawalAmount', 'maxWithdrawalAmount', 'giftCommissionRate',
+      'streamHealthCheckInterval',
+    ];
+
+    const writes = allowed.filter((k) => updates[k] !== undefined);
+    if (writes.length === 0) {
+      res.status(400).json({ error: 'No supported settings provided' });
+      return;
+    }
+
+    for (const key of writes) {
+      const value = typeof updates[key] === 'boolean' ? (updates[key] ? 'true' : 'false') : String(updates[key]);
+      await prisma.platformSetting.upsert({
+        where: { key },
+        create: { key, value, type: typeof updates[key] === 'number' ? 'NUMBER' : typeof updates[key] === 'boolean' ? 'BOOLEAN' : 'STRING', updatedBy: adminId },
+        update: { value, updatedBy: adminId },
+      });
+    }
+
+    await auditLog.log({
+      userId: adminId,
+      action: 'PLATFORM_SETTINGS_UPDATED',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: { resource: 'PlatformSetting', keys: writes },
+      severity: 'WARNING',
     });
+
+    res.status(200).json({ message: 'Platform settings updated', settings: writes });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });
@@ -904,129 +1034,6 @@ export const getSystemLogs = async (req: AuthenticatedRequest, res: Response): P
     ]);
 
     res.status(200).json({ logs, total });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(400).json({ error: message });
-  }
-};
-
-// ============================================================================
-// FEATURE FLAGS
-// ============================================================================
-
-export const getFeatureFlags = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    // Default feature flags - in production, fetch from DB or config
-    const featureFlags = [
-      { id: 'ff_ai_recommendations', name: 'AI Recommendations', enabled: true, description: 'Enable AI-powered content recommendations' },
-      { id: 'ff_live_pk', name: 'Live PK Battles', enabled: true, description: 'Enable 1v1 live stream battles' },
-      { id: 'ff_gift_combos', name: 'Gift Combos', enabled: true, description: 'Enable gift combo streaks' },
-      { id: 'ff_stories', name: 'Stories', enabled: true, description: 'Enable 24-hour stories' },
-      { id: 'ff_creator_subscriptions', name: 'Creator Subscriptions', enabled: true, description: 'Enable creator subscription tiers' },
-      { id: 'ff_communities', name: 'Communities', enabled: true, description: 'Enable community groups' },
-    ];
-
-    res.status(200).json({ featureFlags });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(400).json({ error: message });
-  }
-};
-
-export const updateFeatureFlag = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const { flagId } = req.params;
-    const { enabled } = req.body;
-
-    if (enabled === undefined) {
-      res.status(400).json({ error: 'enabled field is required' });
-      return;
-    }
-
-    // In production, persist to DB
-    res.status(200).json({
-      message: `Feature flag ${flagId} updated`,
-      flag: { id: flagId, enabled },
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(400).json({ error: message });
-  }
-};
-
-// ============================================================================
-// ANNOUNCEMENT MANAGEMENT
-// ============================================================================
-
-export const getAnnouncements = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const limit = parseInt(req.query.limit as string) || 20;
-    const offset = parseInt(req.query.offset as string) || 0;
-
-    // In production, use an Announcement model - for now return sample data
-    res.status(200).json({
-      announcements: [],
-      total: 0,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(400).json({ error: message });
-  }
-};
-
-export const createAnnouncement = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const { title, content, audience } = req.body;
-
-    if (!title || !content) {
-      res.status(400).json({ error: 'title and content are required' });
-      return;
-    }
-
-    // In production, create Announcement record
-    res.status(201).json({
-      message: 'Announcement created',
-      announcement: {
-        id: `ann_${Date.now()}`,
-        title,
-        content,
-        audience: audience || 'ALL',
-        createdBy: req.user?.userId,
-        createdAt: new Date(),
-      },
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(400).json({ error: message });
-  }
-};
-
-export const updateAnnouncement = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const { announcementId } = req.params;
-    const updates = req.body;
-
-    // In production, update Announcement record
-    res.status(200).json({
-      message: 'Announcement updated',
-      announcementId,
-      updates,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(400).json({ error: message });
-  }
-};
-
-export const deleteAnnouncement = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const { announcementId } = req.params;
-
-    // In production, delete Announcement record
-    res.status(200).json({
-      message: 'Announcement deleted',
-      announcementId,
-    });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });
@@ -1419,6 +1426,199 @@ export const getAllAdsAnalytics = async (req: AuthenticatedRequest, res: Respons
   try {
     const analytics = await adService.getAllAdsAnalytics();
     res.status(200).json(analytics);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+// ============================================================================
+// AUDIT LOGS
+// ============================================================================
+
+export const getAuditLogs = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const action = req.query.action as string;
+    const adminId = req.query.admin as string;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const result = await adminService.getAuditLogs({ action, adminId, page, limit });
+    res.status(200).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+// ============================================================================
+// INFRASTRUCTURE
+// ============================================================================
+
+export const getInfrastructure = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const infra = await adminService.getInfrastructure();
+    res.status(200).json(infra);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+// ============================================================================
+// FINANCE
+// ============================================================================
+
+export const getFinanceTransactions = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const type = req.query.type as string;
+    const status = req.query.status as string;
+    const search = req.query.search as string;
+    const result = await adminService.getFinanceTransactions({ page, limit, type, status, search });
+    res.status(200).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+// ============================================================================
+// CONTENT MODERATION
+// ============================================================================
+
+export const getContentItems = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const result = await adminService.getContentOverview();
+    res.status(200).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const reviewContentItem = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { queueId } = req.params;
+    const { action, reason } = req.body;
+    if (!action || !['APPROVED', 'REMOVED'].includes(action)) {
+      res.status(400).json({ error: 'action must be APPROVED or REMOVED' });
+      return;
+    }
+    const adminId = req.user?.userId || '';
+    const result = await adminService.reviewContent(queueId, action, adminId, reason);
+    await auditLog.log({
+      userId: adminId,
+      action: `CONTENT_${action}`,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: { resource: 'ModerationQueue', resourceId: queueId, action, reason },
+      severity: 'WARNING',
+    });
+    res.status(200).json({ message: `Content ${action.toLowerCase()}`, item: result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+// ============================================================================
+// NOTIFICATIONS (Notification Center)
+// ============================================================================
+
+export const getNotificationCenter = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const result = await adminService.getNotificationCenter({ page, limit });
+    res.status(200).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+// ============================================================================
+// LIVE STREAM MODERATION
+// ============================================================================
+
+export const endLiveStream = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { streamId } = req.params;
+    const adminId = req.user?.userId || '';
+    const stream = await prisma.liveStream.findUnique({ where: { id: streamId } });
+    if (!stream) {
+      res.status(404).json({ error: 'Stream not found' });
+      return;
+    }
+    const result = await liveService.adminEndStream(streamId);
+    await auditLog.log({
+      userId: adminId,
+      action: 'STREAM_ENDED',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: { resource: 'LiveStream', resourceId: streamId, hostId: stream.hostId },
+      severity: 'WARNING',
+    });
+    res.status(200).json({ message: 'Stream ended', stream: result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const suspendLiveStream = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { streamId } = req.params;
+    const reason = req.body?.reason || 'Suspended by admin';
+    const adminId = req.user?.userId || '';
+    const stream = await prisma.liveStream.findUnique({ where: { id: streamId } });
+    if (!stream) {
+      res.status(404).json({ error: 'Stream not found' });
+      return;
+    }
+    const result = await liveService.adminSuspendStream(streamId, reason);
+    await auditLog.log({
+      userId: adminId,
+      action: 'STREAM_SUSPENDED',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: { resource: 'LiveStream', resourceId: streamId, hostId: stream.hostId, reason },
+      severity: 'CRITICAL',
+    });
+    res.status(200).json({ message: 'Stream suspended', stream: result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+// ============================================================================
+// REPORT RESOLUTION
+// ============================================================================
+
+export const resolveReport = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { reportId } = req.params;
+    const { status, action } = req.body;
+    const adminId = req.user?.userId || '';
+    const report = await prisma.report.findUnique({ where: { id: reportId } });
+    if (!report) {
+      res.status(404).json({ error: 'Report not found' });
+      return;
+    }
+    const nextStatus = status || (action === 'dismiss' ? 'DISMISSED' : 'RESOLVED');
+    const updated = await prisma.report.update({
+      where: { id: reportId },
+      data: { status: nextStatus, resolvedBy: adminId, resolvedAt: new Date() },
+    });
+    await auditLog.log({
+      userId: adminId,
+      action: `REPORT_${nextStatus}`,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: { resource: 'Report', resourceId: reportId, targetId: report.targetId },
+      severity: 'WARNING',
+    });
+    res.status(200).json({ message: 'Report updated', report: updated });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });

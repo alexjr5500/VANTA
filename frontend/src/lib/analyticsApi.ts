@@ -1,5 +1,9 @@
 import { apiGet, apiPost, apiPut, apiDelete } from './apiClient';
 
+// ============================================================================
+// Types (mirror the backend analytics payloads)
+// ============================================================================
+
 export interface AnalyticsOverview {
   totalUsers: number;
   dailyActiveUsers: number;
@@ -112,6 +116,15 @@ export interface Prediction {
   metadata?: any;
 }
 
+/**
+ * Every /api/analytics endpoint responds `{ success: boolean, data: <payload> }`.
+ * `unwrap` returns the payload so pages consume exactly one access level.
+ */
+export async function unwrap<T>(path: string): Promise<T> {
+  const body = await apiGet<{ success: boolean; data: T }>(path);
+  return (body as any).data;
+}
+
 class AnalyticsAPI {
   private baseUrl = '/api/analytics';
 
@@ -125,42 +138,35 @@ class AnalyticsAPI {
     messagesPerMinute: number;
     giftsPerMinute: number;
   }> {
-    const data = await apiGet<{ data: { data: any } }>(`${this.baseUrl}/realtime`);
-    return data.data.data;
+    return unwrap<any>(`${this.baseUrl}/realtime`);
   }
 
   // ============================================================
-  // Dashboard
+  // Dashboards
   // ============================================================
 
   async getDashboardExecutive(): Promise<any> {
-    const data = await apiGet<{ data: { data: any } }>(`${this.baseUrl}/dashboard/executive`);
-    return data.data.data;
+    return unwrap<any>(`${this.baseUrl}/dashboard/executive`);
   }
 
   async getDashboardRevenue(): Promise<any> {
-    const data = await apiGet<{ data: { data: any } }>(`${this.baseUrl}/dashboard/revenue`);
-    return data.data.data;
+    return unwrap<any>(`${this.baseUrl}/dashboard/revenue`);
   }
 
   async getDashboardGrowth(): Promise<any> {
-    const data = await apiGet<{ data: { data: any } }>(`${this.baseUrl}/dashboard/growth`);
-    return data.data.data;
+    return unwrap<any>(`${this.baseUrl}/dashboard/growth`);
   }
 
   async getDashboardOperations(): Promise<any> {
-    const data = await apiGet<{ data: { data: any } }>(`${this.baseUrl}/dashboard/operations`);
-    return data.data.data;
+    return unwrap<any>(`${this.baseUrl}/dashboard/operations`);
   }
 
   async getDashboardCreator(): Promise<any> {
-    const data = await apiGet<{ data: { data: any } }>(`${this.baseUrl}/dashboard/creator`);
-    return data.data.data;
+    return unwrap<any>(`${this.baseUrl}/dashboard/creator`);
   }
 
   async getDashboardProduct(): Promise<any> {
-    const data = await apiGet<{ data: { data: any } }>(`${this.baseUrl}/dashboard/product`);
-    return data.data.data;
+    return unwrap<any>(`${this.baseUrl}/dashboard/product`);
   }
 
   // ============================================================
@@ -168,26 +174,25 @@ class AnalyticsAPI {
   // ============================================================
 
   async getFunnelSteps(): Promise<FunnelStep[]> {
-    const data = await apiGet<{ data: { data: FunnelStep[] } }>(`${this.baseUrl}/funnel`);
-    return data.data.data;
+    return unwrap<FunnelStep[]>(`${this.baseUrl}/funnel`);
   }
 
   // ============================================================
-  // Cohort
+  // Cohort Analysis
   // ============================================================
 
   async getCohortAnalysis(): Promise<CohortAnalysis[]> {
-    const data = await apiGet<{ data: { data: CohortAnalysis[] } }>(`${this.baseUrl}/cohort`);
-    return data.data.data;
+    const body = await apiGet<{ data: { cohorts: CohortAnalysis[] } }>(`${this.baseUrl}/cohorts`);
+    const payload = body?.data;
+    return payload && Array.isArray(payload.cohorts) ? payload.cohorts : [];
   }
 
   // ============================================================
   // Predictive
   // ============================================================
 
-  async getPredictiveForecast(): Promise<PredictiveForecast> {
-    const data = await apiGet<{ data: { data: PredictiveForecast } }>(`${this.baseUrl}/predictive`);
-    return data.data.data;
+  async getPredictiveForecast(metric = 'dau'): Promise<PredictiveForecast> {
+    return unwrap<PredictiveForecast>(`${this.baseUrl}/predictions/${metric}`);
   }
 
   // ============================================================
@@ -195,22 +200,15 @@ class AnalyticsAPI {
   // ============================================================
 
   async getTrafficSources(): Promise<TrafficSources> {
-    const data = await apiGet<{ data: { data: TrafficSources } }>(`${this.baseUrl}/traffic`);
-    return data.data.data;
+    return unwrap<TrafficSources>(`${this.baseUrl}/traffic-sources`);
   }
-
-  // ============================================================
-  // Platform Overview
+// ============================================================
+  // Platform Overview & User Analytics
   // ============================================================
 
   async getOverview(): Promise<AnalyticsOverview> {
-    const data = await apiGet<{ data: { data: AnalyticsOverview } }>(`${this.baseUrl}/overview`);
-    return data.data.data;
+    return unwrap<AnalyticsOverview>(`${this.baseUrl}/overview`);
   }
-
-  // ============================================================
-  // User Analytics
-  // ============================================================
 
   async getUserMetrics(params?: {
     metric?: 'DAU' | 'WAU' | 'MAU';
@@ -218,24 +216,22 @@ class AnalyticsAPI {
     endDate?: string;
   }): Promise<UserMetrics[]> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: UserMetrics[] } }>(`${this.baseUrl}/users/metrics${query}`);
-    return data.data.data;
+    return unwrap<UserMetrics[]>(`${this.baseUrl}/users/metrics${query}`);
   }
 
   async getCurrentDAU(): Promise<number> {
-    const data = await apiGet<{ data: { data: { dau: number } } }>(`${this.baseUrl}/users/dau`);
-    return data.data.data.dau;
+    const body = await apiGet<{ data: { dau: number } }>(`${this.baseUrl}/users/dau`);
+    return body?.data?.dau ?? 0;
   }
 
   async getOnlineUsers(): Promise<number> {
-    const data = await apiGet<{ data: { data: { online: number } } }>(`${this.baseUrl}/users/online`);
-    return data.data.data.online;
+    const body = await apiGet<{ data: { online: number } }>(`${this.baseUrl}/users/online`);
+    return body?.data?.online ?? 0;
   }
 
   async getRetentionRates(cohortDate?: string): Promise<RetentionRate[]> {
     const query = cohortDate ? `?cohortDate=${cohortDate}` : '';
-    const data = await apiGet<{ data: { data: RetentionRate[] } }>(`${this.baseUrl}/users/retention${query}`);
-    return data.data.data;
+    return unwrap<RetentionRate[]>(`${this.baseUrl}/users/retention${query}`);
   }
 
   async getUserGrowth(params?: {
@@ -244,8 +240,7 @@ class AnalyticsAPI {
     endDate?: string;
   }): Promise<UserMetrics[]> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: UserMetrics[] } }>(`${this.baseUrl}/users/growth${query}`);
-    return data.data.data;
+    return unwrap<UserMetrics[]>(`${this.baseUrl}/users/growth${query}`);
   }
 
   // ============================================================
@@ -258,8 +253,7 @@ class AnalyticsAPI {
     endDate?: string;
   }): Promise<CreatorAnalytics> {
     const query = `?${new URLSearchParams(params as any).toString()}`;
-    const data = await apiGet<{ data: { data: CreatorAnalytics } }>(`${this.baseUrl}/creators/analytics${query}`);
-    return data.data.data;
+    return unwrap<CreatorAnalytics>(`${this.baseUrl}/creators/analytics${query}`);
   }
 
   async getCreatorLeaderboard(params?: {
@@ -268,8 +262,7 @@ class AnalyticsAPI {
     limit?: number;
   }): Promise<any[]> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: any[] } }>(`${this.baseUrl}/creators/leaderboard${query}`);
-    return data.data.data;
+    return unwrap<any[]>(`${this.baseUrl}/creators/leaderboard${query}`);
   }
 
   // ============================================================
@@ -280,10 +273,9 @@ class AnalyticsAPI {
     contentType?: string;
     startDate?: string;
     endDate?: string;
-  }): Promise<{ views: number; likes: number; comments: number; shares: number }> {
+  }): Promise<any> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: any } }>(`${this.baseUrl}/content/metrics${query}`);
-    return data.data.data;
+    return unwrap<any>(`${this.baseUrl}/content/metrics${query}`);
   }
 
   async getTopContent(params?: {
@@ -292,10 +284,12 @@ class AnalyticsAPI {
     limit?: number;
     startDate?: string;
     endDate?: string;
-  }): Promise<any[]> {
+  }): Promise<TopContentItem[]> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: any[] } }>(`${this.baseUrl}/content/top${query}`);
-    return data.data.data;
+    const body = await apiGet<{ data: any }>(`${this.baseUrl}/content/top${query}`);
+    const payload = body?.data;
+    if (Array.isArray(payload)) return payload as TopContentItem[];
+    return payload && Array.isArray(payload.topContent) ? payload.topContent : [];
   }
 
   // ============================================================
@@ -308,14 +302,12 @@ class AnalyticsAPI {
     endDate?: string;
   }): Promise<RevenueAnalytics> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: RevenueAnalytics } }>(`${this.baseUrl}/revenue/analytics${query}`);
-    return data.data.data;
+    return unwrap<RevenueAnalytics>(`${this.baseUrl}/revenue/analytics${query}`);
   }
 
   async getARPU(period?: string): Promise<any[]> {
     const query = period ? `?period=${period}` : '';
-    const data = await apiGet<{ data: { data: any[] } }>(`${this.baseUrl}/revenue/arpu${query}`);
-    return data.data.data;
+    return unwrap<any[]>(`${this.baseUrl}/revenue/arpu${query}`);
   }
 
   // ============================================================
@@ -323,13 +315,11 @@ class AnalyticsAPI {
   // ============================================================
 
   async getActiveStreams(): Promise<any[]> {
-    const data = await apiGet<{ data: { data: any[] } }>(`${this.baseUrl}/streams/active`);
-    return data.data.data;
+    return unwrap<any[]>(`${this.baseUrl}/streams/active`);
   }
 
   async getStreamAnalytics(streamId: string): Promise<any> {
-    const data = await apiGet<{ data: { data: any } }>(`${this.baseUrl}/streams/${streamId}`);
-    return data.data.data;
+    return unwrap<any>(`${this.baseUrl}/streams/${streamId}`);
   }
 
   async getStreamPerformance(params: {
@@ -338,11 +328,9 @@ class AnalyticsAPI {
     endDate?: string;
   }): Promise<any[]> {
     const query = `?${new URLSearchParams(params as any).toString()}`;
-    const data = await apiGet<{ data: { data: any[] } }>(`${this.baseUrl}/streams/performance/host${query}`);
-    return data.data.data;
+    return unwrap<any[]>(`${this.baseUrl}/streams/performance/host${query}`);
   }
-
-  // ============================================================
+// ============================================================
   // Search & Trending
   // ============================================================
 
@@ -352,8 +340,7 @@ class AnalyticsAPI {
     limit?: number;
   }): Promise<SearchAnalytics> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: SearchAnalytics } }>(`${this.baseUrl}/search${query}`);
-    return data.data.data;
+    return unwrap<SearchAnalytics>(`${this.baseUrl}/search${query}`);
   }
 
   async getTrendingTopics(type?: string, limit?: number): Promise<any[]> {
@@ -361,8 +348,7 @@ class AnalyticsAPI {
     if (type) params.type = type;
     if (limit) params.limit = limit;
     const query = Object.keys(params).length ? `?${new URLSearchParams(params).toString()}` : '';
-    const data = await apiGet<{ data: { data: any[] } }>(`${this.baseUrl}/trending${query}`);
-    return data.data.data;
+    return unwrap<any[]>(`${this.baseUrl}/trending${query}`);
   }
 
   // ============================================================
@@ -374,8 +360,7 @@ class AnalyticsAPI {
     endDate?: string;
   }): Promise<NotificationAnalytics> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: NotificationAnalytics } }>(`${this.baseUrl}/notifications${query}`);
-    return data.data.data;
+    return unwrap<NotificationAnalytics>(`${this.baseUrl}/notifications${query}`);
   }
 
   // ============================================================
@@ -383,12 +368,11 @@ class AnalyticsAPI {
   // ============================================================
 
   async getAIAnalytics(): Promise<any> {
-    const data = await apiGet<{ data: { data: any } }>(`${this.baseUrl}/ai`);
-    return data.data.data;
+    return unwrap<any>(`${this.baseUrl}/ai`);
   }
 
   // ============================================================
-  // Dashboard Snapshots
+  // Dashboard Snapshot
   // ============================================================
 
   async getDashboardSnapshot(params?: {
@@ -397,8 +381,7 @@ class AnalyticsAPI {
     date?: string;
   }): Promise<any> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: any } }>(`${this.baseUrl}/dashboard/snapshot${query}`);
-    return data.data.data;
+    return unwrap<any>(`${this.baseUrl}/dashboard/snapshot${query}`);
   }
 
   // ============================================================
@@ -423,24 +406,22 @@ class AnalyticsAPI {
   async trackBatch(events: any[]): Promise<void> {
     await apiPost(`${this.baseUrl}/track/batch`, { events });
   }
-
-  // ============================================================
+// ============================================================
   // Alert Rules
   // ============================================================
 
   async getAlertRules(): Promise<AlertRule[]> {
-    const data = await apiGet<{ data: { data: AlertRule[] } }>(`${this.baseUrl}/alerts/rules`);
-    return data.data.data;
+    return unwrap<AlertRule[]>(`${this.baseUrl}/alerts/rules`);
   }
 
   async createAlertRule(rule: Partial<AlertRule>): Promise<AlertRule> {
-    const data = await apiPost<{ data: { data: AlertRule } }>(`${this.baseUrl}/alerts/rules`, rule);
-    return data.data.data;
+    const body = await apiPost<{ data: AlertRule }>(`${this.baseUrl}/alerts/rules`, rule);
+    return (body as any).data;
   }
 
   async updateAlertRule(id: string, rule: Partial<AlertRule>): Promise<AlertRule> {
-    const data = await apiPut<{ data: { data: AlertRule } }>(`${this.baseUrl}/alerts/rules/${id}`, rule);
-    return data.data.data;
+    const body = await apiPut<{ data: AlertRule }>(`${this.baseUrl}/alerts/rules/${id}`, rule);
+    return (body as any).data;
   }
 
   async deleteAlertRule(id: string): Promise<void> {
@@ -453,8 +434,7 @@ class AnalyticsAPI {
     limit?: number;
   }): Promise<any[]> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: any[] } }>(`${this.baseUrl}/alerts/history${query}`);
-    return data.data.data;
+    return unwrap<any[]>(`${this.baseUrl}/alerts/history${query}`);
   }
 
   async acknowledgeAlert(id: string): Promise<void> {
@@ -470,13 +450,12 @@ class AnalyticsAPI {
   // ============================================================
 
   async getMarketingCampaigns(): Promise<MarketingCampaign[]> {
-    const data = await apiGet<{ data: { data: MarketingCampaign[] } }>(`${this.baseUrl}/marketing/campaigns`);
-    return data.data.data;
+    return unwrap<MarketingCampaign[]>(`${this.baseUrl}/marketing/campaigns`);
   }
 
   async createMarketingCampaign(campaign: Partial<MarketingCampaign>): Promise<MarketingCampaign> {
-    const data = await apiPost<{ data: { data: MarketingCampaign } }>(`${this.baseUrl}/marketing/campaigns`, campaign);
-    return data.data.data;
+    const body = await apiPost<{ data: MarketingCampaign }>(`${this.baseUrl}/marketing/campaigns`, campaign);
+    return (body as any).data;
   }
 
   // ============================================================
@@ -488,8 +467,7 @@ class AnalyticsAPI {
     period?: string;
   }): Promise<Prediction[]> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: Prediction[] } }>(`${this.baseUrl}/predictions${query}`);
-    return data.data.data;
+    return unwrap<Prediction[]>(`${this.baseUrl}/predictions${query}`);
   }
 
   // ============================================================
@@ -498,8 +476,7 @@ class AnalyticsAPI {
 
   async getLTVAnalytics(params?: { tier?: string; limit?: number }): Promise<any[]> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: any[] } }>(`${this.baseUrl}/ltv${query}`);
-    return data.data.data;
+    return unwrap<any[]>(`${this.baseUrl}/ltv${query}`);
   }
 
   async getScreenAnalytics(params?: {
@@ -507,8 +484,7 @@ class AnalyticsAPI {
     endDate?: string;
   }): Promise<any[]> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: any[] } }>(`${this.baseUrl}/screens${query}`);
-    return data.data.data;
+    return unwrap<any[]>(`${this.baseUrl}/screens${query}`);
   }
 
   async getAPIPerformance(params?: {
@@ -516,8 +492,7 @@ class AnalyticsAPI {
     endDate?: string;
   }): Promise<any[]> {
     const query = params ? `?${new URLSearchParams(params as any).toString()}` : '';
-    const data = await apiGet<{ data: { data: any[] } }>(`${this.baseUrl}/performance/api${query}`);
-    return data.data.data;
+    return unwrap<any[]>(`${this.baseUrl}/performance/api${query}`);
   }
 }
 
@@ -527,8 +502,8 @@ export default AnalyticsAPI;
 // Type exports for useAnalytics hook
 export type FunnelStep = { step: string; count: number; conversion: number; name?: string; percentage?: number; dropOff?: number };
 export type CohortAnalysis = { cohort: string; periods: Record<string, number>; retention?: number[]; size?: number };
-export type PredictiveForecast = { 
-  metric: string; 
+export type PredictiveForecast = {
+  metric: string;
   forecast: { date: string; value: number }[];
   predictions?: { date: string; value: number }[];
   confidence?: number;

@@ -6,7 +6,7 @@
 
 import { Router, Request, Response } from 'express';
 import { analyticsEngine } from './analytics.service';
-import { authenticate, requireRole } from '../security';
+import { authenticate, requireRole, Role } from '../security';
 import { rateLimiter } from '../security';
 import { METRIC_DEFINITIONS, AnalyticsCategory } from './analytics.types';
 
@@ -180,7 +180,7 @@ router.get('/realtime/stream/:streamId', requireAuth, (req: Request, res: Respon
  * Executive dashboard - high-level KPIs
  * Access: Admin
  */
-router.get('/dashboard/executive', requireAuth, requireRole(['ADMIN']), async (req: Request, res: Response) => {
+router.get('/dashboard/executive', requireAuth, requireRole(Role.ADMIN), async (req: Request, res: Response) => {
   try {
     const now = new Date();
     const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -228,7 +228,7 @@ router.get('/dashboard/executive', requireAuth, requireRole(['ADMIN']), async (r
  * Revenue dashboard with detailed breakdowns
  * Access: Admin
  */
-router.get('/dashboard/revenue', requireAuth, requireRole(['ADMIN']), async (req: Request, res: Response) => {
+router.get('/dashboard/revenue', requireAuth, requireRole(Role.ADMIN), async (req: Request, res: Response) => {
   try {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -266,7 +266,7 @@ router.get('/dashboard/revenue', requireAuth, requireRole(['ADMIN']), async (req
  * User growth dashboard
  * Access: Admin
  */
-router.get('/dashboard/growth', requireAuth, requireRole(['ADMIN']), async (req: Request, res: Response) => {
+router.get('/dashboard/growth', requireAuth, requireRole(Role.ADMIN), async (req: Request, res: Response) => {
   try {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -308,7 +308,7 @@ router.get('/dashboard/growth', requireAuth, requireRole(['ADMIN']), async (req:
  * Operations/performance dashboard
  * Access: Admin
  */
-router.get('/dashboard/operations', requireAuth, requireRole(['ADMIN']), async (req: Request, res: Response) => {
+router.get('/dashboard/operations', requireAuth, requireRole(Role.ADMIN), async (req: Request, res: Response) => {
   try {
     const now = new Date();
     const hourStart = new Date(now.getTime() - 3600000);
@@ -376,7 +376,7 @@ router.get('/dashboard/creator', requireAuth, async (req: Request, res: Response
  * Product analytics dashboard
  * Access: Admin
  */
-router.get('/dashboard/product', requireAuth, requireRole(['ADMIN']), async (req: Request, res: Response) => {
+router.get('/dashboard/product', requireAuth, requireRole(Role.ADMIN), async (req: Request, res: Response) => {
   try {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -442,7 +442,7 @@ router.post('/funnel', requireAuth, async (req: Request, res: Response) => {
  * Get user journey analysis
  * Access: Admin
  */
-router.get('/journey/:userId', requireAuth, requireRole(['ADMIN']), async (req: Request, res: Response) => {
+router.get('/journey/:userId', requireAuth, requireRole(Role.ADMIN), async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
     const { startDate, endDate } = req.query;
@@ -466,7 +466,7 @@ router.get('/journey/:userId', requireAuth, requireRole(['ADMIN']), async (req: 
  * Get cohort retention analysis
  * Access: Admin
  */
-router.get('/cohorts', requireAuth, requireRole(['ADMIN']), async (req: Request, res: Response) => {
+router.get('/cohorts', requireAuth, requireRole(Role.ADMIN), async (req: Request, res: Response) => {
   try {
     const { period = 'month', periods = 12 } = req.query;
     const cohorts = await analyticsEngine.getCohortAnalysis(
@@ -508,7 +508,7 @@ router.get('/content/top', requireAuth, async (req: Request, res: Response) => {
  * Get traffic source breakdown
  * Access: Admin
  */
-router.get('/traffic-sources', requireAuth, requireRole(['ADMIN']), async (req: Request, res: Response) => {
+router.get('/traffic-sources', requireAuth, requireRole(Role.ADMIN), async (req: Request, res: Response) => {
   try {
     const { period = 'weekly' } = req.query;
     const { start, end } = getPeriodRange(period as string);
@@ -552,7 +552,7 @@ router.get('/demographics', requireAuth, async (req: Request, res: Response) => 
  * Get predictions for a specific metric
  * Access: Admin
  */
-router.get('/predictions/:metric', requireAuth, requireRole(['ADMIN']), async (req: Request, res: Response) => {
+router.get('/predictions/:metric', requireAuth, requireRole(Role.ADMIN), async (req: Request, res: Response) => {
   try {
     const { metric } = req.params;
     const { period = 'monthly' } = req.query;

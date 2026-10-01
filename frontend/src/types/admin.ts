@@ -340,5 +340,8 @@ export interface ServerInfrastructure {
   network: { incoming: number; outgoing: number };
   uptime: string;
   services: { name: string; status: 'healthy' | 'degraded' | 'down'; uptime: string }[];
-  regions: { name: string; latency: number; status: 'healthy' | 'degraded' | 'down' }[];
+  regions: { name: string; latency: number; status: string }[];
+  overallHealth?: string;
+  nodeVersion?: string;
+  platform?: string;
 }
