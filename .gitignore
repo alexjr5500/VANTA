@@ -195,3 +195,7 @@ backend/scripts/brace-check.js
 backend/scripts/db-conn-test.js
 backend/scripts/verify-env-loading.js
 backend/scripts/verify-env-loading.ts
+
+# Scratch SQLite purchase-FK integration harness (generated client + scratch DB)
+backend/.sqlite-test-client/
+backend/prisma/vanta-integration-test.db

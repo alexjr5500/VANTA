@@ -712,6 +712,24 @@ async function startServer() {
       console.warn('[SEED] CEO/Admin allocation seeding skipped:', seedError);
     }
 
+    // Purchase catalog provisioning: ensures the canonical VANTA Coin packages
+    // (`SparkCoinPackage`) and Verified Badge plans (`SubscriptionPlan`) exist
+    // as REAL database rows on every boot. Production (Railway) never runs
+    // `npm run seed` on deploy, so without this step the `SparkCoinPackage`
+    // table stays empty/mismatched and EVERY coin purchase fails the
+    // `PurchaseOrder_packageId_fkey` foreign key. Idempotent upsert — safe to
+    // run every startup, never duplicates rows.
+    try {
+      const { ensureCanonicalPurchaseCatalog } = await import('./services/purchase-catalog.service');
+      const catalog = await ensureCanonicalPurchaseCatalog(prisma);
+      console.log(
+        `[SEED] Purchase catalog ready: ${catalog.coinPackages} coin package(s), ` +
+        `${catalog.badgePlans} badge plan(s), ${catalog.legacyDeactivated} legacy package(s) retired.`
+      );
+    } catch (catalogError) {
+      console.warn('[SEED] Purchase catalog provisioning skipped:', catalogError);
+    }
+
     // Start HTTP server
     httpServer.listen(PORT, () => {
       console.info(`Server running on port ${PORT}`);

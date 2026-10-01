@@ -20,7 +20,7 @@ import {
   blockchainTxVerifier,
   BlockchainTxVerificationError,
 } from './blockchain-verifier.service';
-import { VANTA_COIN_PACKAGES } from '../config/wallet.config';
+import { PurchasePackageNotFoundError } from '../errors/purchase.errors';
 
 // ============================================================================
 // VANTA COIN PAYMENT SERVICE
@@ -53,9 +53,20 @@ export class PaymentWebhookError extends Error {
   }
 }
 
-function findPackage(packageId: unknown) {
+/**
+ * Resolve the purchase package from the DATABASE (authoritative catalog).
+ *
+ * The client-supplied `packageId` is used ONLY as a lookup key. Every sellable
+ * attribute (coins, price, name) comes from the `SparkCoinPackage` row, so:
+ *   - the client can never influence the credited coin amount or the charged
+ *     price, and
+ *   - the id passed to `purchaseOrder.create()` is always a real database
+ *     primary key, which is what guarantees `PurchaseOrder_packageId_fkey`
+ *     can never fire.
+ */
+async function findDbPackage(packageId: unknown) {
   if (typeof packageId !== 'string' || !packageId.trim()) return null;
-  return VANTA_COIN_PACKAGES.find((pkg) => pkg.id === packageId || String(pkg.coins) === packageId) || null;
+  return prisma.sparkCoinPackage.findUnique({ where: { id: packageId } });
 }
 
 function networkToAsset(network: string): string | null {
@@ -107,8 +118,13 @@ export class CoinPaymentService {
       throw new Error('Unsupported payment network. Choose USDT (BEP-20) or USDC (Base).');
     }
 
-    const pkg = findPackage(packageId);
-    if (!pkg) throw new Error('Invalid coin package');
+    const pkg = await findDbPackage(packageId);
+    if (!pkg || !pkg.isActive) {
+      // Clean application-level 404 (mapped by the controller). NEVER let a
+      // non-existent package reach `purchaseOrder.create()` — that would raise
+      // the `PurchaseOrder_packageId_fkey` foreign-key error.
+      throw new PurchasePackageNotFoundError();
+    }
 
     const mode = getCoinPaymentMode();
     const config = validateCoinPaymentConfig();

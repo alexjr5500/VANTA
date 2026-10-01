@@ -83,6 +83,17 @@ railway run -- npm run seed:gifts           # gift catalog (73 gifts — the flo
 railway run -- npm run seed:dev-wallet     # optional dev wallet
 ```
 (`railway run` executes with the service's vars; if `ts-node` isn't in prod, use `railway run -- npx ts-node --transpile-only prisma/seed.ts` etc.)
+
+> **Purchase catalog is auto-provisioned — no manual seed needed for packages.**
+> The VANTA Coin packages (`SparkCoinPackage`) and the Verified Badge plans
+> (`SubscriptionPlan`) are provisioned automatically on every backend start by
+> the in-app startup routine (`src/services/purchase-catalog.service.ts`) and by
+> `prisma/startup-sync.sql`, both of which upsert the same canonical catalog the
+> frontend sends ids for. The startup-sync seed block runs after `prisma db push`
+> creates the tables (first boot on a brand-new DB is covered by the in-app
+> startup provisioning). Coin packages therefore always exist as real rows with
+> ids (`pkg_starter`, `pkg_popular`, …) that satisfy the
+> `PurchaseOrder_packageId_fkey` foreign key.
 ---
 
 ## 3. Vercel — frontend service

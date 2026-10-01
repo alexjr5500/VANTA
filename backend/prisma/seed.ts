@@ -8,6 +8,7 @@ import {
   resolveAdminPassword,
 } from './admin-credentials';
 import { seedAdminDevWallet } from '../src/services/admin-dev-wallet.service';
+import { ensureCanonicalPurchaseCatalog } from '../src/services/purchase-catalog.service';
 
 const prisma = new PrismaClient();
 
@@ -159,72 +160,24 @@ async function main() {
   console.log('✅ Verified creator accounts ensured (@alex, @ceo)');
 
 // ============================================================================
-  // 0c. VERIFIED BADGE PLANS (Blue + Gold purchase catalog)
-  // Server-authoritative purchased plans for the paid Verified Badge system.
-  // Prices/durations MUST match src/config/verification-badge.config.ts.
+  // 0c + 1. PURCHASE CATALOG (Verified Badge plans + VANTA Coin packages)
+  // The DATABASE is the authoritative purchase catalog. The same provisioning
+  // routine used at application startup (src/services/purchase-catalog.service.ts)
+  // upserts:
+  //   * the four canonical Verified Badge plans (Blue 1/3/6 mo, Gold 1 yr) into
+  //     `SubscriptionPlan`, and
+  //   * the canonical VANTA Coin packages (src/config/wallet.config.ts) into
+  //     `SparkCoinPackage` — using the EXACT ids the frontend config uses
+  //     (`pkg_starter`, `pkg_popular`, ...), and deactivates (never deletes)
+  //     legacy rows with old ids (e.g. `pkg_popular_pack`) whose ids never
+  //     existed in the config catalog.
+  // This is idempotent: running it repeatedly never duplicates packages.
   // ============================================================================
-
-  const verifiedBadgePlans = [
-    {
-      id: 'plan_blue_1month', name: 'Blue Verified — 1 Month', durationMonths: 1, price: 1.99,
-      description: 'Blue Verified badge for 1 month.',
-      benefits: JSON.stringify(['Blue Verified badge', 'Verified account status']),
-      badgeType: 'BLUE', sortOrder: 10,
-    },
-    {
-      id: 'plan_blue_3months', name: 'Blue Verified — 3 Months', durationMonths: 3, price: 4.99,
-      description: 'Blue Verified badge for 3 months.',
-      benefits: JSON.stringify(['Blue Verified badge', 'Verified account status', 'Save vs monthly']),
-      badgeType: 'BLUE', sortOrder: 11,
-    },
-    {
-      id: 'plan_blue_6months', name: 'Blue Verified — 6 Months', durationMonths: 6, price: 8.99,
-      description: 'Blue Verified badge for 6 months.',
-      benefits: JSON.stringify(['Blue Verified badge', 'Verified account status', 'Best Blue value']),
-      badgeType: 'BLUE', sortOrder: 12,
-    },
-    {
-      id: 'plan_gold_1year', name: 'Gold Verified — 1 Year', durationMonths: 12, price: 14.99,
-      description: 'Gold Verified badge for 1 year.',
-      benefits: JSON.stringify(['Gold Verified badge', 'Creator Studio access', 'Top verified status']),
-      badgeType: 'GOLD', sortOrder: 20,
-    },
-  ];
-
-  for (const plan of verifiedBadgePlans) {
-    const { id, ...data } = plan;
-    await prisma.subscriptionPlan.upsert({
-      where: { id },
-      update: { ...data, isActive: true, currency: 'USD' },
-      create: { id, ...data, isActive: true, currency: 'USD' },
-    });
-  }
-  console.log(`✅ ${verifiedBadgePlans.length} Verified Badge plans seeded (Blue 1/3/6 mo, Gold 1 yr)`);
-  // ============================================================================
-  // 1. Create VANTA Packages (up to $100,000)
-  // ============================================================================
-
-  const packages = [
-    { name: 'Starter Pack', coins: 100, price: 0.99, isPopular: false, sortOrder: 1 },
-    { name: 'Popular Pack', coins: 550, price: 4.99, isPopular: true, sortOrder: 2 },
-    { name: 'Premium Pack', coins: 1200, price: 9.99, isPopular: true, sortOrder: 3 },
-    { name: 'Elite Pack', coins: 2500, price: 19.99, isPopular: false, sortOrder: 4 },
-    { name: 'Ultra Pack', coins: 6500, price: 49.99, isPopular: false, sortOrder: 5 },
-    { name: 'Legendary Pack', coins: 14000, price: 99.99, isPopular: false, sortOrder: 6 },
-    // High-value packages (up to $100,000)
-    { name: 'Platinum Pack', coins: 107500, price: 999.99, isPopular: false, sortOrder: 7 },
-    { name: 'Diamond Pack', coins: 540000, price: 4999.99, isPopular: false, sortOrder: 8 },
-    { name: 'Royal Pack', coins: 1090000, price: 9999.99, isPopular: false, sortOrder: 9 },
-    { name: 'Imperial Pack', coins: 2750000, price: 24999.99, isPopular: false, sortOrder: 10 },
-    { name: 'Sovereign Pack', coins: 5550000, price: 49999.99, isPopular: false, sortOrder: 11 },
-    { name: 'VANTA Black Pack', coins: 11200000, price: 99999.99, isPopular: false, sortOrder: 12 },
-  ];
-
-  for (const pkg of packages) {
-    const id = `pkg_${pkg.name.toLowerCase().replace(/\s+/g, '_')}`;
-    await prisma.sparkCoinPackage.upsert({ where: { id }, update: pkg, create: { id, ...pkg } });
-  }
-  console.log('✅ SparkCoin packages created');
+  const catalog = await ensureCanonicalPurchaseCatalog(prisma);
+  console.log(
+    `✅ Purchase catalog provisioned: ${catalog.coinPackages} coin package(s) active, ` +
+    `${catalog.badgePlans} badge plan(s), ${catalog.legacyDeactivated} legacy package(s) retired`
+  );
 
   // ============================================================================
   // 2. Create Gifts

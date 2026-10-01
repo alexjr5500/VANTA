@@ -6,10 +6,12 @@ import { CryptoUtils } from '../security/crypto';
 jest.mock('../prisma', () => ({
   prisma: {
     wallet: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
+    sparkCoinPackage: { findUnique: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
     purchaseOrder: {
       findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn(),
       updateMany: jest.fn(), count: jest.fn(), aggregate: jest.fn(), findMany: jest.fn(),
     },
+    subscriptionPlan: { findUnique: jest.fn(), findFirst: jest.fn() },
     walletTransaction: { create: jest.fn() },
     walletAuditLog: { create: jest.fn() },
     webhookEvent: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
@@ -103,6 +105,22 @@ const PENDING_ORDER: any = {
   expiresAt: new Date(Date.now() + 60000),
 };
 
+// The DATABASE is the authoritative package source — since the fix, the service
+// resolves the price/coins/name from `SparkCoinPackage` rows, never from the
+// in-code config constant.
+const DB_PACKAGE: any = {
+  id: 'pkg_popular',
+  name: 'Popular',
+  coins: 500,
+  price: 5,
+  bonusCoins: 0,
+  isPopular: true,
+  isActive: true,
+  sortOrder: 1,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
+
 const TX_HASH = '0x' + 'a'.repeat(64);
 
 function sign(payload: object): string {
@@ -129,6 +147,10 @@ describe('CoinPaymentService.initializeCoinPurchase', () => {
     process.env.NODE_ENV = 'development';
     process.env.VANTA_COIN_PAYMENT_MODE = 'test';
     delete process.env.VANTA_COIN_PAYMENT_ADDRESS;
+    // The package must already exist as a REAL database row. The service looks
+    // it up from `SparkCoinPackage` (instead of the old in-code config catalog),
+    // so the id persisted on `PurchaseOrder` is always a valid FK target.
+    (prisma.sparkCoinPackage.findUnique as jest.Mock).mockResolvedValue(DB_PACKAGE);
     (prisma.purchaseOrder.create as jest.Mock).mockResolvedValue({
       id: 'order_1', userId: 'user1', coins: 500, amount: 5, status: 'PENDING', createdAt: new Date(),
     });
@@ -152,6 +174,32 @@ describe('CoinPaymentService.initializeCoinPurchase', () => {
     expect(created.expiresAt).toBeTruthy();
   });
 
+  test('persists the real database package id (the FK target), never a fake/slug id', async () => {
+    await coinPaymentService.initializeCoinPurchase('user1', 'pkg_popular', 'usdt-bep20');
+    const created = (prisma.purchaseOrder.create as jest.Mock).mock.calls[0][0].data;
+    expect(created.packageId).toBe('pkg_popular');
+    expect(created.packageName).toBe('Popular');
+    // Prices and coin amounts are copied from the DATABASE row, so a client can
+    // never influence what gets charged or credited.
+    expect(created.coins).toBe(DB_PACKAGE.coins);
+    expect(created.amount).toBe(DB_PACKAGE.price);
+    expect(created.currency).toBe('USD');
+  });
+
+  test('a DB package with coins/price different from the config constant wins', async () => {
+    // Simulate reality: the DB row is authoritative (the in-code catalog is
+    // consulted for nothing sellable). A row carrying different values is what
+    // actually gets charged/credited.
+    (prisma.sparkCoinPackage.findUnique as jest.Mock).mockResolvedValue({
+      ...DB_PACKAGE,
+      coins: 5000,
+      price: 50,
+    });
+    const payload = await coinPaymentService.initializeCoinPurchase('user1', 'pkg_premium', 'usdt-bep20');
+    expect(payload.coins).toBe(5000);
+    expect(payload.amount).toBe(50);
+  });
+
   test('a client cannot submit an arbitrary coin amount', async () => {
     // initializeCoinPurchase only accepts a packageId + network. There is no
     // "coins"/"amount"/"bonus" parameter a client could tamper with.
@@ -160,9 +208,20 @@ describe('CoinPaymentService.initializeCoinPurchase', () => {
     expect(payload.amount).toBe(5);
   });
 
-  test('rejects an invalid package ID', async () => {
+  test('a package that does NOT exist in the database is rejected BEFORE order creation', async () => {
+    (prisma.sparkCoinPackage.findUnique as jest.Mock).mockResolvedValue(null);
     await expect(coinPaymentService.initializeCoinPurchase('user1', 'pkg_nonexistent', 'usdt-bep20'))
-      .rejects.toThrow('Invalid coin package');
+      .rejects.toThrow('This purchase package is currently unavailable. Please try again.');
+    // The whole point: Prisma never reaches `purchaseOrder.create()` with a
+    // packageId that would violate `PurchaseOrder_packageId_fkey`.
+    expect(prisma.purchaseOrder.create).not.toHaveBeenCalled();
+  });
+
+  test('an inactive package is rejected before order creation', async () => {
+    (prisma.sparkCoinPackage.findUnique as jest.Mock).mockResolvedValue({ ...DB_PACKAGE, isActive: false });
+    await expect(coinPaymentService.initializeCoinPurchase('user1', 'pkg_popular', 'usdt-bep20'))
+      .rejects.toThrow('This purchase package is currently unavailable. Please try again.');
+    expect(prisma.purchaseOrder.create).not.toHaveBeenCalled();
   });
 
   test('rejects an unsupported network', async () => {

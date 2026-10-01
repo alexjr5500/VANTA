@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { monetizationService } from '../services/monetization.service';
 import { giftService } from '../services/gift.service';
 import { authenticateJWT, AuthRequest } from '../middleware/auth.middleware';
+import { PurchasePackageNotFoundError, isSystemOrDatabaseError } from '../errors/purchase.errors';
 
 const router = Router();
 
@@ -15,7 +16,12 @@ router.get('/packages', async (req: Request, res: Response) => {
     const packages = await monetizationService.getPackages();
     res.json(packages);
   } catch (error: any) {
-    res.status(400).json({ error: error.message });
+    if (isSystemOrDatabaseError(error)) {
+      console.error('[MONETIZATION] packages failed:', error);
+      res.status(500).json({ error: 'Unable to load the coin package catalog. Please try again.' });
+      return;
+    }
+    res.status(400).json({ error: error?.message || 'Unable to load the coin package catalog.' });
   }
 });
 
@@ -28,19 +34,42 @@ router.post('/purchase', authenticateJWT, async (req: AuthRequest, res: Response
     const order = await monetizationService.createPurchaseOrder(userId, packageId);
     res.status(201).json(order);
   } catch (error: any) {
-    res.status(400).json({ error: error.message });
+    if (error instanceof PurchasePackageNotFoundError) {
+      // The referenced package is not a real, active database record — clean 404.
+      res.status(404).json({ error: error.message });
+      return;
+    }
+    if (isSystemOrDatabaseError(error)) {
+      console.error('[MONETIZATION] purchase failed:', error);
+      res.status(400).json({ error: 'Unable to start this purchase. Please try again.' });
+      return;
+    }
+    res.status(400).json({ error: error?.message || 'Unable to start this purchase.' });
   }
 });
 
 // POST /api/monetization/purchase/complete - Complete purchase
+// Completion is server-guarded (simulate token in test mode; provider
+// verification in live mode) — a client can never self-credit coins.
 router.post('/purchase/complete', authenticateJWT, async (req: AuthRequest, res: Response) => {
   try {
-    const { orderId, providerOrderId, paymentMethod } = req.body;
-    if (!orderId || !providerOrderId) return res.status(400).json({ error: 'orderId and providerOrderId required' });
-    const order = await monetizationService.completePurchase(orderId, providerOrderId, paymentMethod);
-    res.json(order);
+    const userId = req.user!.userId;
+    const { orderId, providerOrderId, paymentMethod, simulateToken } = req.body;
+    if (!orderId) return res.status(400).json({ error: 'orderId is required' });
+    const result = await monetizationService.completePurchase(userId, orderId, {
+      providerOrderId,
+      paymentMethod,
+      simulateToken,
+      ipAddress: req.ip,
+    });
+    res.json(result);
   } catch (error: any) {
-    res.status(400).json({ error: error.message });
+    if (isSystemOrDatabaseError(error)) {
+      console.error('[MONETIZATION] purchase/complete failed:', error);
+      res.status(400).json({ error: 'Unable to confirm this payment. Please try again.' });
+      return;
+    }
+    res.status(400).json({ error: error?.message || 'Unable to confirm this payment.' });
   }
 });
 

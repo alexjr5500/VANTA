@@ -1,5 +1,12 @@
 import { prisma } from '../prisma';
 import { notificationService } from './notification.service';
+import { walletService } from './wallet.service';
+import { PurchasePackageNotFoundError } from '../errors/purchase.errors';
+import {
+  COIN_PAYMENT_MODE,
+  COIN_PAYMENT_STATUS,
+  getCoinPaymentMode,
+} from '../config/coin-payments.config';
 
 // Revenue split configuration (configurable via admin)
 const REVENUE_SPLIT = {
@@ -39,16 +46,24 @@ export class MonetizationService {
   }
 
   async createPurchaseOrder(userId: string, packageId: string) {
+    // The DATABASE package row is authoritative. A client-supplied id is only
+    // ever a lookup key; price/coins are taken from this row, so the order can
+    // never carry a manipulated amount and `packageId` always satisfies the
+    // `PurchaseOrder_packageId_fkey` foreign key.
     const pkg = await prisma.sparkCoinPackage.findUnique({ where: { id: packageId } });
-    if (!pkg || !pkg.isActive) throw new Error('Package not found or inactive');
+    if (!pkg || !pkg.isActive) {
+      throw new PurchasePackageNotFoundError();
+    }
 
     const order = await prisma.purchaseOrder.create({
       data: {
         userId,
         packageId: pkg.id,
+        packageName: pkg.name,
         // Coins credited are EXACTLY the package amount — ZERO bonus coins.
         coins: pkg.coins,
         amount: pkg.price,
+        currency: 'USD',
         status: 'PENDING',
       },
     });
@@ -56,38 +71,50 @@ export class MonetizationService {
     return order;
   }
 
-  async completePurchase(orderId: string, providerOrderId: string, paymentMethod?: string) {
-    const order = await prisma.purchaseOrder.findUnique({ where: { id: orderId } });
-    if (!order) throw new Error('Order not found');
-    if (order.status !== 'PENDING') throw new Error('Order already processed');
+  /**
+   * Complete a purchase order created through POST /api/monetization/purchase.
+   *
+   * Completion is guarded the same way as the verified Buy Coins flow:
+   *   - ownership: the authenticated user must own the order;
+   *   - test mode: only the backend-issued HMAC simulate token can complete the
+   *     simulated payment (verified again inside walletService.completeCoinPurchase);
+   *   - live mode: a client request can NEVER credit coins — only the trusted
+   *     payment-provider webhook path is allowed to complete a live purchase.
+   * The underlying credit is atomic and idempotent (conditional status claim),
+   * so a retry can never credit the same order twice.
+   */
+  async completePurchase(
+    userId: string,
+    orderId: string,
+    options: {
+      providerOrderId?: string;
+      paymentMethod?: string;
+      simulateToken?: string;
+      ipAddress?: string;
+    } = {}
+  ) {
+    const order = await prisma.purchaseOrder.findFirst({ where: { id: orderId, userId } });
+    if (!order) throw new Error('Purchase order not found');
+    if (order.status === COIN_PAYMENT_STATUS.COMPLETED) {
+      return { order, alreadyCompleted: true };
+    }
 
-    const [updatedOrder] = await prisma.$transaction([
-      prisma.purchaseOrder.update({
-        where: { id: orderId },
-        data: {
-          status: 'COMPLETED',
-          providerOrderId,
-          paymentMethod,
-        },
-      }),
-      prisma.wallet.upsert({
-        where: { userId: order.userId },
-        create: { userId: order.userId, coinBalance: order.coins },
-        update: { coinBalance: { increment: order.coins } },
-      }),
-      prisma.walletTransaction.create({
-        data: {
-          userId: order.userId,
-          type: 'PURCHASE',
-          amount: order.coins,
-          fee: 0,
-          description: `Purchase ${order.coins} VANTA Coins`,
-          reference: orderId,
-        },
-      }),
-    ]);
+    const mode = getCoinPaymentMode();
+    if (mode === COIN_PAYMENT_MODE.TEST) {
+      // Simulated gateway — same rule as POST /api/wallets/verify-payment.
+      return walletService.completeCoinPurchase(userId, orderId, {
+        mode: COIN_PAYMENT_MODE.TEST,
+        simulateToken: options.simulateToken,
+        ipAddress: options.ipAddress,
+      });
+    }
 
-    return updatedOrder;
+    // LIVE mode: coins are credited exclusively by the trusted provider
+    // webhook after server-side verification. A client-submitted reference is
+    // never proof of payment (prevents fabricated/unverified self-credits).
+    throw new Error(
+      'This payment must be verified by the payment provider before coins are credited.'
+    );
   }
 
   async createCustomPurchaseOrder(userId: string, coins: number, amount: number) {

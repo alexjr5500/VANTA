@@ -281,3 +281,67 @@ BEGIN
         END IF;
     END IF;
 END $$;
+
+-- ----------------------------------------------------------------------------
+-- SparkCoinPackage: canonical VANTA Coin purchase catalog (idempotent).
+-- ----------------------------------------------------------------------------
+-- Production deployment (Railway) runs this script BEFORE `prisma db push` and
+-- does NOT run `npm run seed`, so the `SparkCoinPackage` table would otherwise
+-- be empty — which is exactly why every coin purchase failed the
+-- `PurchaseOrder_packageId_fkey` foreign key (the config-catalog ids like
+-- `pkg_popular` never existed as database rows).
+--
+-- This block upserts the SAME canonical catalog as the app's startup
+-- provisioning (src/services/purchase-catalog.service.ts / VANTA_COIN_PACKAGES
+-- in src/config/wallet.config.ts) so the ids the frontend sends are always real
+-- `SparkCoinPackage` primary keys. It is guarded by table existence because on
+-- a brand-new database the table is created by the `prisma db push` that runs
+-- right after this script (the in-app startup provisioning covers that first
+-- boot). Idempotent (ON CONFLICT ... DO UPDATE) — safe to run on every boot.
+-- Legacy rows from older seeds (e.g. `pkg_popular_pack`) are deactivated, never
+-- deleted, so historical PurchaseOrder FK references stay intact.
+-- ----------------------------------------------------------------------------
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'SparkCoinPackage'
+    ) THEN
+        INSERT INTO "SparkCoinPackage"
+            ("id", "name", "coins", "price", "bonusCoins", "isPopular", "isActive", "sortOrder", "createdAt", "updatedAt")
+        VALUES
+            ('pkg_starter', 'Starter', 100, 1, 0, false, true, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_popular', 'Popular', 500, 5, 0, true, true, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_standard', 'Standard', 1000, 10, 0, false, true, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_premium', 'Premium', 5000, 50, 0, false, true, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_elite', 'Elite', 10000, 100, 0, false, true, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_ultimate', 'Ultimate', 25000, 250, 0, false, true, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_legendary', 'Legendary', 50000, 500, 0, false, true, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_1000', 'Signature', 100000, 1000, 0, false, true, 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_2500', 'Reserve', 250000, 2500, 0, false, true, 8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_5000', 'Prestige', 500000, 5000, 0, false, true, 9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_10000', 'Obsidian', 1000000, 10000, 0, false, true, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_25000', 'Private', 2500000, 25000, 0, false, true, 11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_50000', 'Sovereign', 5000000, 50000, 0, false, true, 12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_75000', 'Imperial', 7500000, 75000, 0, false, true, 13, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+            ('pkg_100000', 'Founder', 10000000, 100000, 0, false, true, 14, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT ("id") DO UPDATE SET
+            "name" = EXCLUDED."name",
+            "coins" = EXCLUDED."coins",
+            "price" = EXCLUDED."price",
+            "bonusCoins" = 0,
+            "isPopular" = EXCLUDED."isPopular",
+            "isActive" = true,
+            "sortOrder" = EXCLUDED."sortOrder",
+            "updatedAt" = CURRENT_TIMESTAMP;
+
+        UPDATE "SparkCoinPackage"
+        SET "isActive" = false, "updatedAt" = CURRENT_TIMESTAMP
+        WHERE "isActive" = true
+          AND "id" NOT IN (
+            'pkg_starter','pkg_popular','pkg_standard','pkg_premium','pkg_elite',
+            'pkg_ultimate','pkg_legendary','pkg_1000','pkg_2500','pkg_5000',
+            'pkg_10000','pkg_25000','pkg_50000','pkg_75000','pkg_100000'
+          );
+    END IF;
+END $$;

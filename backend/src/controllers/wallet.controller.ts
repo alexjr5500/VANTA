@@ -11,6 +11,7 @@ import {
   SUPPORTED_COIN_PAYMENT_NETWORKS,
 } from '../config/coin-payments.config';
 import { coinPaymentService, CoinPaymentUnavailableError } from '../services/coin-payment.service';
+import { PurchasePackageNotFoundError, isSystemOrDatabaseError } from '../errors/purchase.errors';
 
 // ============================================================================
 // WALLET & BALANCE
@@ -372,11 +373,35 @@ export const getWalletAnalytics = async (req: AuthRequest, res: Response): Promi
 
 export const getCoinPackages = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Pricing is configuration, not mutable client data. Return the canonical catalog.
-    res.status(200).json({ packages: VANTA_COIN_PACKAGES, exchangeRate: { coinsPerUsd: VANTA_COINS_PER_USD, currency: 'USD' } });
+    // The DATABASE is the authoritative catalog. Serving the hard-coded config
+    // constant here is what made the frontend and the DB disagree on package
+    // ids, which broke `PurchaseOrder.packageId` foreign keys for every
+    // purchase. Coin quantities and prices below are exactly the values that
+    // get persisted on the order.
+    const dbPackages = await prisma.sparkCoinPackage.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+
+    // Display-only badge hints keyed by canonical id (MOST_POPULAR / BEST_VALUE).
+    // These are cosmetic; prices/coins above always come from the database.
+    const badgeById = new Map<string, string | null>(VANTA_COIN_PACKAGES.map((p) => [p.id, p.badge ?? null]));
+
+    const packages = dbPackages.map((p) => ({
+      id: p.id,
+      name: p.name,
+      coins: p.coins,
+      price: p.price,
+      isPopular: p.isPopular,
+      badge: badgeById.get(p.id) ?? null,
+    }));
+
+    res.status(200).json({ packages, exchangeRate: { coinsPerUsd: VANTA_COINS_PER_USD, currency: 'USD' } });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(400).json({ error: message });
+    // Never leak raw database errors to the client; the frontend falls back to
+    // its local package list when this endpoint fails.
+    console.error('[COIN-PACKAGES] failed to load catalog from the database:', error);
+    res.status(500).json({ error: 'Unable to load the coin package catalog. Please try again.' });
   }
 };
 
@@ -398,6 +423,17 @@ export const getPaymentAddress = async (req: AuthRequest, res: Response): Promis
       // User-facing message stays generic; the exact configuration problem was
       // logged server-side by the service.
       res.status(503).json({ error: error.message });
+      return;
+    }
+    if (error instanceof PurchasePackageNotFoundError) {
+      // The package id is not a real, active database package — a clean 404.
+      res.status(404).json({ error: error.message });
+      return;
+    }
+    if (isSystemOrDatabaseError(error)) {
+      // Never expose Prisma internals (e.g. foreign-key errors) to the user.
+      console.error('[COIN-PURCHASE] payment-address failed:', error);
+      res.status(400).json({ error: 'Unable to start this purchase. Please try again.' });
       return;
     }
     const message = error instanceof Error ? error.message : 'Internal server error';
@@ -474,6 +510,12 @@ export const verifyPayment = async (req: AuthRequest, res: Response): Promise<vo
   } catch (error) {
     if (error instanceof CoinPaymentUnavailableError) {
       res.status(503).json({ error: error.message });
+      return;
+    }
+    if (isSystemOrDatabaseError(error)) {
+      // Never expose Prisma internals (e.g. foreign-key errors) to the user.
+      console.error('[COIN-PURCHASE] verify-payment failed:', error);
+      res.status(400).json({ error: 'Unable to confirm this payment. Please try again.' });
       return;
     }
     const message = error instanceof Error ? error.message : 'Internal server error';

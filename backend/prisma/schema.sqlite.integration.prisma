@@ -1,0 +1,157 @@
+// Scratch INTEGRATION-TEST schema used ONLY to exercise the real foreign-key /
+// purchase flow against a real database engine locally (the repo's local env
+// has no PostgreSQL server). It mirrors the purchase-relevant subset of the
+// production schema.prisma 1:1. This file is NOT used by the application.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../.sqlite-test-client"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./vanta-integration-test.db"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String?  @unique
+  phone     String?  @unique
+  username  String   @unique
+  fullName  String?
+  verified  Boolean  @default(false)
+  coins     Int      @default(0)
+  earnings  Float    @default(0.0)
+  premium   Boolean  @default(false)
+  role      String   @default("USER")
+  status    String   @default("ACTIVE")
+
+  purchaseOrders PurchaseOrder[]
+  wallet         Wallet?
+  walletTransactions WalletTransaction[]
+  verificationPurchases VerificationPurchase[]
+}
+
+model SparkCoinPackage {
+  id             String          @id
+  name           String
+  coins          Int
+  price          Float
+  bonusCoins     Int             @default(0)
+  isPopular      Boolean         @default(false)
+  isActive       Boolean         @default(true)
+  sortOrder      Int             @default(0)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  purchaseOrders PurchaseOrder[]
+}
+
+model PurchaseOrder {
+  id               String            @id @default(cuid())
+  userId           String
+  packageId        String?
+  coins            Int
+  amount           Float
+  currency         String            @default("USD")
+  provider         String            @default("stripe")
+  status           String            @default("PENDING")
+  providerOrderId  String?           @unique
+  paymentMethod    String?
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package          SparkCoinPackage? @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  packageName      String?
+  paymentMode      String?
+  providerReference String?
+  expiresAt        DateTime?
+  confirmedAt      DateTime?
+  refundedAt       DateTime?
+  refundedBy       String?
+  refundReason     String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([providerOrderId])
+}
+
+model Wallet {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coinBalance         Int      @default(0)
+  totalCoinsPurchased Int      @default(0)
+  isFrozen            Boolean  @default(false)
+  transactions        WalletTransaction[]
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model WalletTransaction {
+  id            String   @id @default(cuid())
+  walletId      String?
+  userId        String
+  wallet        Wallet?  @relation(fields: [walletId], references: [id], onDelete: SetNull)
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type          String
+  amount        Int
+  fee           Int      @default(0)
+  balanceBefore Int?
+  balance       Int?
+  status        String   @default("COMPLETED")
+  description   String?
+  reference     String?
+  metadata      String?
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([walletId])
+}
+
+model WalletAuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  details   String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+}
+
+model SubscriptionPlan {
+  id             String   @id
+  name           String   @unique
+  durationMonths Int
+  price          Float
+  currency       String   @default("USD")
+  description    String?
+  benefits       String?
+  isActive       Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  badgeType      String   @default("GOLD")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  verificationPurchases VerificationPurchase[]
+}
+
+model VerificationPurchase {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId           String
+  plan             SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  amount           Float
+  currency         String   @default("USD")
+  network          String?
+  status           String   @default("PENDING")
+  providerOrderId  String?  @unique
+  paymentMode      String?
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([planId])
+}
