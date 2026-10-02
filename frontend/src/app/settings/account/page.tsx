@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import {
+  BadgeCheck,
   Check,
   CreditCard,
   KeyRound,
@@ -15,6 +16,7 @@ import {
   LogOut,
   Mail,
   Pencil,
+  ShieldCheck,
   Trash2,
   User,
 } from 'lucide-react';
@@ -233,6 +235,16 @@ export default function AccountSettingsPage() {
               icon={CreditCard}
               title="Payments"
               description="Coins, subscriptions and balance"
+            />
+          </SettingsGroup>
+
+          {/* ── Verification ── */}
+          <SettingsGroup icon={ShieldCheck} title="Verification">
+            <SettingsLink
+              href="/verification/badge"
+              icon={BadgeCheck}
+              title="Verified Badge"
+              description="Get Blue or Gold verified"
             />
           </SettingsGroup>
 
