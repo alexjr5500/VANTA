@@ -1242,8 +1242,8 @@ export default function GoLivePage() {
           <BottomNavTab active label="LIVE" onClick={() => router.replace('/live')}>
             <Video size={16} />
           </BottomNavTab>
-          <BottomNavTab label="CAMERA" onClick={() => undefined}>
-            <Camera size={16} />
+          <BottomNavTab active={cam.isVideoOn} label="CAMERA" onClick={() => cam.toggleVideo()}>
+            {cam.isVideoOn ? <Camera size={16} /> : <CameraOff size={16} />}
           </BottomNavTab>
           <BottomNavTab label="CREATE" onClick={() => router.replace('/')}>
             <Plus size={16} />

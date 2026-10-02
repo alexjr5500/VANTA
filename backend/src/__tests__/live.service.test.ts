@@ -2,45 +2,53 @@ import { LiveService } from '../services/live.service';
 import { liveKitService } from '../services/livekit.service';
 import { prisma } from '../prisma';
 
-jest.mock('../prisma', () => ({
-  prisma: {
-    liveStream: {
-      create: jest.fn(),
-      findFirst: jest.fn(),
-      findUnique: jest.fn(),
-      findMany: jest.fn(),
-      update: jest.fn(),
-      updateMany: jest.fn(),
-      count: jest.fn(),
-      aggregate: jest.fn(),
+jest.mock('../prisma', () => {
+  // `$transaction` invokes its callback with a transaction-scoped tx. The tx's
+  // `liveStream.create` IS the same jest.fn the suite asserts against, so the
+  // Go Live session-creation path (POST /api/live/start -> startStream) is
+  // exercised truthfully instead of crashing on a missing $transaction.
+  const txLiveStream = { create: jest.fn() };
+  return {
+    prisma: {
+      $transaction: jest.fn(async (txFn: any) => txFn({ liveStream: txLiveStream })),
+      liveStream: {
+        create: txLiveStream.create,
+        findFirst: jest.fn(),
+        findUnique: jest.fn(),
+        findMany: jest.fn(),
+        update: jest.fn(),
+        updateMany: jest.fn(),
+        count: jest.fn(),
+        aggregate: jest.fn(),
+      },
+      user: { findUnique: jest.fn() },
+      streamCategory: {
+        upsert: jest.fn(),
+        findMany: jest.fn(),
+      },
+      streamViewer: {
+        findUnique: jest.fn(),
+        create: jest.fn(),
+        deleteMany: jest.fn(),
+        count: jest.fn(),
+      },
+      streamFollower: {
+        findMany: jest.fn(),
+        findUnique: jest.fn(),
+        create: jest.fn(),
+        delete: jest.fn(),
+      },
+      liveChatMessage: {
+        create: jest.fn(),
+        findMany: jest.fn(),
+        findFirst: jest.fn(),
+      },
+      giftTransaction: {
+        findMany: jest.fn(),
+      },
     },
-    user: { findUnique: jest.fn() },
-    streamCategory: {
-      upsert: jest.fn(),
-      findMany: jest.fn(),
-    },
-    streamViewer: {
-      findUnique: jest.fn(),
-      create: jest.fn(),
-      deleteMany: jest.fn(),
-      count: jest.fn(),
-    },
-    streamFollower: {
-      findMany: jest.fn(),
-      findUnique: jest.fn(),
-      create: jest.fn(),
-      delete: jest.fn(),
-    },
-    liveChatMessage: {
-      create: jest.fn(),
-      findMany: jest.fn(),
-      findFirst: jest.fn(),
-    },
-    giftTransaction: {
-      findMany: jest.fn(),
-    },
-  },
-}));
+  };
+});
 
 jest.mock('../services/livekit.service', () => ({
   liveKitService: {

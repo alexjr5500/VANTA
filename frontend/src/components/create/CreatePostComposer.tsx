@@ -7,6 +7,7 @@ import { Image, Video, Smile, FileText, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { useContentCreation } from './ContentCreationContext';
+import { GO_LIVE_ROUTE } from '@/lib/goLiveEntry';
 
 const quickActions = [
   { id: 'photo', icon: Image, label: 'Photo', color: 'from-emerald-400 to-green-500' },
@@ -28,9 +29,10 @@ export default function CreatePostComposer() {
   const handleQuickAction = (actionId: string) => {
     switch (actionId) {
       case 'live':
-        // Open the same LIVE Studio flow the "Go Live" button on the /live
-        // page uses, so every Live entry behaves identically.
-        router.push('/live/go-live');
+        // Go Live must open the dedicated pre-live stream screen — never the
+        // video-recording/upload flow. Shared + regression-tested in
+        // lib/goLiveEntry.
+        router.push(GO_LIVE_ROUTE);
         break;
       default:
         openPostModal();

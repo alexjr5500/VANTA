@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { useContentCreation } from './ContentCreationContext';
+import { GO_LIVE_ROUTE } from '@/lib/goLiveEntry';
 import {
   Plus,
   ImagePlus,
@@ -90,9 +91,10 @@ export default function CreateHub({ open, onClose }: CreateHubProps) {
         openReelUploader();
         break;
       case 'livestream':
-        // Open the same LIVE Studio flow the "Go Live" button on the /live
-        // page uses (reached from the menu). All Go Live entries stay in sync.
-        router.push('/live/go-live');
+        // Go Live must open the dedicated pre-live stream screen — never the
+        // video-recording/upload flow. Shared + regression-tested in
+        // lib/goLiveEntry.
+        router.push(GO_LIVE_ROUTE);
         break;
     }
   };
