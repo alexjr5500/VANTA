@@ -122,8 +122,8 @@ function StageVideo({ stream, muted = false, fit = 'cover' }: { stream: MediaStr
             // surrounding frame) instead of a tight `cover` face crop when the
             // stage is taller/narrower than the 16:9 camera source — the camera
             // itself was never zoomed.
-            ? 'relative z-[1] h-full w-full object-contain'
-            : 'relative z-[1] h-full w-full object-cover object-center'
+            ? 'relative h-full w-full object-contain'
+            : 'relative h-full w-full object-cover object-center'
         }
         aria-label="Live stage participant"
       />

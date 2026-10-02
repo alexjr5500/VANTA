@@ -281,7 +281,7 @@ function CameraFeed({ stream, mirror, filterCss, muted, ariaLabel }: { stream: M
         autoPlay
         muted={muted ?? true}
         aria-label={ariaLabel || 'Live camera'}
-        className="relative z-[1] h-full w-full object-contain bg-[#050505]"
+        className="relative h-full w-full object-contain bg-[#050505]"
         style={{ transform: mirrorTransform, filter: filterCss || undefined }}
       />
     </>
@@ -1012,6 +1012,15 @@ export default function GoLivePage() {
     <main className="fixed inset-0 z-40 overflow-hidden bg-black text-white">
       {/* The stage: a solo host keeps the full-bleed camera; with guests the
           existing split grid shows HOST + GUEST with real media tracks. */}
+
+      {/* Layering contract: the camera/participant videos are the BASE layer
+          (z-index auto → below every UI surface here regardless of DOM order),
+          the ambient glow sits at z-10, the Go-Live / Live-room surfaces at
+          z-20 and their floating interactive panels (config, bottom nav,
+          action rail, chat) at z-30. Full-screen states use z-[60], reactions
+          z-[70], sheets z-[80], the guest-request modal z-[90] and gift
+          animations z-[100]. Never raise the <video> above z-10 or the next
+          edit will re-hide the entire Go-Live UI behind the camera feed. */}
       {isLiveRoom && hostStageTiles.length >= 2 ? (
         <LiveParticipantGrid participants={hostStageTiles} />
       ) : (
@@ -1019,7 +1028,7 @@ export default function GoLivePage() {
       )}
 
       {/* Screen-edge glow so overlay controls stay legible over bright video. */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/60" />
+      <div className="pointer-events-none absolute inset-0 z-10 bg-gradient-to-b from-black/45 via-transparent to-black/60" />
 
       {/* Floating reactions */}
       <div className="pointer-events-none absolute inset-0 z-[70]">
@@ -1048,7 +1057,7 @@ export default function GoLivePage() {
           ********************************************************************* */}
       {isPreLive && (
         <>
-        <div className="absolute inset-0 flex flex-col" aria-label="Go Live">
+        <div className="absolute inset-0 z-20 flex flex-col" aria-label="Go Live">
           {/* Top controls — back, VANTA branding, settings */}
           <div className="flex shrink-0 items-center justify-between px-3 pt-[calc(env(safe-area-inset-top)+8px)]">
             <button
@@ -1099,7 +1108,7 @@ export default function GoLivePage() {
         </div>
 
         {/* Config panel — floating translucent panel over the camera */}
-        <div className="absolute inset-x-3 bottom-[58px] rounded-3xl border border-white/10 bg-black/55 px-4 pt-3 pb-2 shadow-2xl backdrop-blur-2xl">
+        <div className="absolute inset-x-3 bottom-[58px] z-30 rounded-3xl border border-white/10 bg-black/55 px-4 pt-3 pb-2 shadow-2xl backdrop-blur-2xl">
           <div className="flex items-center gap-2.5">
             <div className="relative">
               <Avatar src={avatar} alt={displayName} size="lg" wrapperClassName="rounded-full ring-2 ring-[#D6A83F]/60" />
@@ -1238,7 +1247,7 @@ export default function GoLivePage() {
         </div>
 
         {/* Bottom creation navigation */}
-        <div className="absolute inset-x-0 bottom-0 mx-auto flex items-center justify-center gap-1 pb-[calc(env(safe-area-inset-bottom)+8px)]">
+        <div className="absolute inset-x-0 bottom-0 z-30 mx-auto flex items-center justify-center gap-1 pb-[calc(env(safe-area-inset-bottom)+8px)]">
           <BottomNavTab active label="LIVE" onClick={() => router.replace('/live')}>
             <Video size={16} />
           </BottomNavTab>
@@ -1255,7 +1264,7 @@ export default function GoLivePage() {
           LIVE ROOM SURFACE — the video is the primary interface.
           ********************************************************************* */}
       {isLiveRoom && (
-        <div className="absolute inset-0 flex flex-col" aria-label="Live room">
+        <div className="absolute inset-0 z-20 flex flex-col" aria-label="Live room">
           {/* Top-left: streamer identity + engagement + Fan Club */}
           <div className="flex shrink-0 items-center gap-2.5 px-3 pt-[calc(env(safe-area-inset-top)+8px)]">
             <button type="button" onClick={() => router.replace(`/profile/${user?.username || ''}`)} aria-label="Your profile" className="shrink-0">
