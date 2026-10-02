@@ -41,33 +41,37 @@ describe('stageLayoutFor', () => {
     expect(layout.guestColumns).toBe(1);
   });
 
-  test('split layout gives both tiles equal height, side by side', () => {
+  test('split layout gives both tiles equal share, stacked in portrait / split in landscape', () => {
     const layout = stageLayoutFor(2);
-    expect(layout.hostTileClass).toBe('min-h-[38dvh] flex-1');
-    expect(layout.guestTileClass).toBe('min-h-[38dvh] flex-1');
+    expect(layout.hostTileClass).toBe('min-h-0 flex-1');
+    expect(layout.guestTileClass).toBe('min-h-0 flex-1');
     expect(layout.hostWrapperClass).toBeUndefined();
     expect(layout.guestAreaClass).toBeUndefined();
   });
 
-  test('host-col sizes the host wider than the guest stack', () => {
+  test('host-col sizes the host larger than the guest grid and never uses fixed heights', () => {
     const layout = stageLayoutFor(3);
     expect(layout.arrangement).toBe('host-col');
+    expect(layout.hostWrapperClass).toContain('grow-[5]');
     expect(layout.hostWrapperClass).toContain('md:w-[60%]');
     expect(layout.hostWrapperClass).toContain('lg:w-[64%]');
+    expect(layout.hostWrapperClass).not.toMatch(/dvh/);
     expect(layout.hostTileClass).toBe('h-full w-full');
-    expect(layout.guestTileClass).toBe('min-h-[22dvh] flex-1 md:min-h-0');
-    expect(layout.guestAreaClass).toBe('flex flex-1 flex-col gap-1.5 md:gap-2');
-    expect(layout.guestColumns).toBe(1);
+    expect(layout.guestTileClass).toBe('min-h-0 min-w-0');
+    expect(layout.guestAreaClass).toContain('grid-cols-2');
+    expect(layout.guestAreaClass).not.toMatch(/dvh/);
+    expect(layout.guestColumns).toBe(2);
   });
 
   test('host-col-grid uses a slimmer host column and a 2x2 guest grid', () => {
     const layout = stageLayoutFor(5);
     expect(layout.arrangement).toBe('host-col-grid');
+    expect(layout.hostWrapperClass).toContain('grow-[7]');
     expect(layout.hostWrapperClass).toContain('md:w-[56%]');
     expect(layout.hostWrapperClass).toContain('lg:w-[60%]');
     expect(layout.hostTileClass).toBe('h-full w-full');
-    expect(layout.guestTileClass).toBe('min-h-[22dvh] md:min-h-0');
-    expect(layout.guestAreaClass).toBe('grid flex-1 grid-cols-2 gap-1.5 md:gap-2');
+    expect(layout.guestTileClass).toBe('min-h-0 min-w-0');
+    expect(layout.guestAreaClass).toContain('grid-cols-2');
     expect(layout.guestColumns).toBe(2);
   });
 

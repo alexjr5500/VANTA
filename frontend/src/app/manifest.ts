@@ -13,7 +13,12 @@ export default function manifest(): MetadataRoute.Manifest {
     scope: "/",
     display: "standalone",
     display_override: ["standalone"],
-    orientation: "any",
+    // The VANTA Live experience is portrait-first. Declaring portrait at the
+    // manifest level keeps an installed Android/PWA shell from rotating the app
+    // when the physical device is turned sideways (where the platform honors
+    // it); the live screens additionally use the runtime Screen Orientation
+    // API (see lib/orientationLock.ts).
+    orientation: "portrait",
     background_color: "#050505",
     theme_color: "#050505",
     icons: [

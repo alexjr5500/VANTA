@@ -69,6 +69,7 @@ import { API_BASE_URL, authHeaders } from '@/lib/api';
 import { createSocket, type Socket } from '@/lib/socketClient';
 import { useLiveKit, getLiveKitToken } from '@/lib/hooks/useLiveKit';
 import { useLiveCamera, type LiveCameraError } from '@/lib/hooks/useLiveCamera';
+import { lockVantaPortrait, unlockVantaPortrait } from '@/lib/orientationLock';
 import { useContentCreation } from '@/components/create/ContentCreationContext';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
@@ -222,16 +223,31 @@ const HOST_CHAT_RECONCILE = {
 /** Camera <video> that attaches the real device MediaStream. */
 function CameraFeed({ stream, mirror, filterCss, muted, ariaLabel }: { stream: MediaStream | null; mirror?: boolean; filterCss?: string; muted?: boolean; ariaLabel?: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const backdropRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     if (!stream) {
       video.pause();
-      video.srcObject = null;
+      if (video.srcObject) video.srcObject = null;
       return;
     }
-    video.srcObject = stream;
+    if (video.srcObject !== stream) video.srcObject = stream;
     video.play().catch(() => undefined);
+  }, [stream]);
+  useEffect(() => {
+    // Full-bleed ambient backdrop showing the same source (kept muted — only
+    // the contained primary copy is audible).
+    const back = backdropRef.current;
+    if (!back) return;
+    if (!stream) {
+      back.pause();
+      if (back.srcObject) back.srcObject = null;
+      return;
+    }
+    if (back.srcObject !== stream) back.srcObject = stream;
+    back.muted = true;
+    back.play().catch(() => undefined);
   }, [stream]);
   if (!stream) {
     return (
@@ -243,19 +259,32 @@ function CameraFeed({ stream, mirror, filterCss, muted, ariaLabel }: { stream: M
       </div>
     );
   }
+  const mirrorTransform = mirror ? 'scaleX(-1)' : undefined;
   return (
-    <video
-      ref={videoRef}
-      playsInline
-      autoPlay
-      muted={muted ?? true}
-      aria-label={ariaLabel || 'Live camera'}
-      className="absolute inset-0 h-full w-full object-cover"
-      style={{
-        transform: mirror ? 'scaleX(-1)' : undefined,
-        filter: filterCss || undefined,
-      }}
-    />
+    <>
+      {/* Blurred, full-bleed copy of the own camera behind the contained feed —
+          the primary layer is `object-contain` so the ENTIRE camera field of
+          view (head/shoulders + surroundings) stays visible instead of a tight
+          `object-cover` crop that looks like a digital zoom. */}
+      <video
+        ref={backdropRef}
+        playsInline
+        autoPlay
+        muted
+        aria-hidden
+        className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-[16px] bg-[#050505]"
+        style={{ transform: mirrorTransform, filter: filterCss || undefined }}
+      />
+      <video
+        ref={videoRef}
+        playsInline
+        autoPlay
+        muted={muted ?? true}
+        aria-label={ariaLabel || 'Live camera'}
+        className="relative z-[1] h-full w-full object-contain bg-[#050505]"
+        style={{ transform: mirrorTransform, filter: filterCss || undefined }}
+      />
+    </>
   );
 }
 
@@ -344,6 +373,9 @@ export default function GoLivePage() {
       try {
         await cam.startPreview(false);
         if (mounted) setPhase('CAMERA_PREVIEW');
+        // Best-effort platform portrait lock (PWA screen.orientation API on
+        // devices that support it); a no-op everywhere else.
+        void lockVantaPortrait();
       } catch (err) {
         if (!mounted) return;
         setConnectError(err as LiveCameraError);
@@ -399,6 +431,7 @@ export default function GoLivePage() {
     window.addEventListener('pagehide', onPageHide);
     return () => {
       window.removeEventListener('pagehide', onPageHide);
+      void unlockVantaPortrait();
       lk.disconnect();
       cam.stopAll();
     };
@@ -513,12 +546,18 @@ export default function GoLivePage() {
       // camera/mic channels were verified as published � a failed connection or
       // a missing track throws inside the hook.
       const previewDeviceId = videoTrack?.getSettings?.().deviceId;
+      const previewMicDeviceId = audioTrack?.getSettings?.().deviceId;
+      // Portrait lock is a no-op where the platform does not support it.
+      void lockVantaPortrait();
       await lk.connect(hostToken, created.liveKitRoom, {
         camera: cam.isVideoOn,
         microphone: micLive,
-        // Pass the ACTUAL preview device so LiveKit re-acquires the same camera
-        // (front/rear) the user selected instead of the default front camera.
+        // Pass the ACTUAL preview devices so LiveKit re-acquires the same
+        // camera (front/rear) AND the same microphone the user granted,
+        // instead of the platform defaults (which may be a different mic,
+        // e.g. earbuds vs phone).
         cameraDeviceId: previewDeviceId || undefined,
+        microphoneDeviceId: previewMicDeviceId || undefined,
         mediaStream: state || undefined,
       });
 
@@ -561,6 +600,8 @@ export default function GoLivePage() {
     lk.disconnect();
     cam.stopAll();
     setPhase('LIVE_ENDED');
+    // Release the portrait screen lock — the live experience is over.
+    void unlockVantaPortrait();
     void loadSummary(sid);
     toast.success('Live ended');
   }, [token, lk, cam, toast]);

@@ -3,17 +3,24 @@
  * ---------------
  * Pure stage-layout rules for the VANTA live room (host + up to 4 guests).
  *
- * The host is always visually prioritized:
+ * The layout is PORTRAIT-FIRST: the phone is meant to stay upright, so every
+ * participant count is solved for a tall/narrow viewport first:
  *  - 1 person  → host fills the screen
- *  - 2 people  → host left / guest right (50/50)
- *  - 3 people  → host left / 2 guests stacked on the right
- *  - 4 people  → host left / 3 guests on the right
- *  - 5 people  → host left / 4 guests in a 2×2 grid on the right
- * On narrow screens the host moves to the top and guests flow below.
+ *  - 2 people  → host and guest split the available height 50/50 (stacked)
+ *  - 3 people  → host on top (larger), 2 guests side by side below
+ *  - 4 people  → host on top, 3 guests below (2 + 1 full-width)
+ *  - 5 people  → host on top, 4 guests in a 2×2 grid below
+ * On landscape screens (md+) the host moves to the left column and guests flow
+ * to the right, matching the original desktop design.
+ *
+ * All sizes are expressed with flex-grow / grid fractions of the AVAILABLE
+ * viewport — never fixed `dvh`/pixel heights — so the stage can never overflow
+ * a portrait screen, and 4x3 tiles keep their correct aspect ratio. The video
+ * fit itself lives in the renderer (`object-contain` full-bleed vs
+ * `object-cover` tiles).
  *
  * The layout is deliberately expressed as data (Tailwind class strings) so the
- * renderer stays a dumb consumer and every rule is unit-testable. All video
- * uses object-fit: cover at the tile level, so tiles never stretch faces.
+ * renderer stays a dumb consumer and every rule is unit-testable.
  */
 
 export const MAX_STAGE_PARTICIPANTS = 5;
@@ -33,11 +40,13 @@ export interface StageLayout {
   guestTileClass: string;
   /** Container of guest tiles for 3+ participant layouts (undefined for ≤ 2). */
   guestAreaClass: string | undefined;
+  /** Extra class for the LAST guest tile when it must span a full row (odd guest counts in a 2-col portrait grid). */
+  guestSpanClass: string | undefined;
   /** 1 = guests stack in a column, 2 = guests fill a 2×2 grid. */
   guestColumns: 1 | 2;
 }
 
-/** Outer shell shared by every participant count. */
+/** Outer shell shared by every participant count. Portrait stacks, landscape splits. */
 export const STAGE_CONTAINER_CLASS = 'absolute inset-0 flex flex-col gap-1.5 p-1.5 md:flex-row md:gap-2 md:p-2';
 
 const SOLO: StageLayout = {
@@ -47,16 +56,21 @@ const SOLO: StageLayout = {
   hostWrapperClass: undefined,
   guestTileClass: 'flex-1',
   guestAreaClass: undefined,
+  guestSpanClass: undefined,
   guestColumns: 1,
 };
 
 const SPLIT: StageLayout = {
   arrangement: 'split',
   containerClass: STAGE_CONTAINER_CLASS,
-  hostTileClass: 'min-h-[38dvh] flex-1',
+  // `flex-1` distributes the AVAILABLE main axis: stacked in portrait (50/50
+  // height), side-by-side in landscape (50/50 width). No fixed heights, so it
+  // can never overflow a portrait viewport.
+  hostTileClass: 'min-h-0 flex-1',
   hostWrapperClass: undefined,
-  guestTileClass: 'min-h-[38dvh] flex-1',
+  guestTileClass: 'min-h-0 flex-1',
   guestAreaClass: undefined,
+  guestSpanClass: undefined,
   guestColumns: 1,
 };
 
@@ -64,19 +78,26 @@ const HOST_COL: StageLayout = {
   arrangement: 'host-col',
   containerClass: STAGE_CONTAINER_CLASS,
   hostTileClass: 'h-full w-full',
-  hostWrapperClass: 'flex h-[46dvh] flex-1 md:h-auto md:w-[60%] lg:w-[64%]',
-  guestTileClass: 'min-h-[22dvh] flex-1 md:min-h-0',
-  guestAreaClass: 'flex flex-1 flex-col gap-1.5 md:gap-2',
-  guestColumns: 1,
+  // Portrait: full width on top, 5/9 of the stage height (guests take 4/9).
+  // Landscape: full height, 60% (later 64%) of the width on the left.
+  hostWrapperClass: 'flex min-h-0 w-full grow-[5] md:h-full md:grow-0 md:w-[60%] lg:w-[64%]',
+  guestTileClass: 'min-h-0 min-w-0',
+  guestAreaClass:
+    'grid min-h-0 w-full grow-[4] grid-cols-2 content-start gap-1.5 md:h-full md:grow md:w-[40%] md:flex md:flex-col md:gap-2 lg:w-[36%]',
+  guestSpanClass: 'col-span-2',
+  guestColumns: 2,
 };
 
 const HOST_COL_GRID: StageLayout = {
   arrangement: 'host-col-grid',
   containerClass: STAGE_CONTAINER_CLASS,
   hostTileClass: 'h-full w-full',
-  hostWrapperClass: 'flex h-[46dvh] flex-1 md:h-auto md:w-[56%] lg:w-[60%]',
-  guestTileClass: 'min-h-[22dvh] md:min-h-0',
-  guestAreaClass: 'grid flex-1 grid-cols-2 gap-1.5 md:gap-2',
+  // Portrait: host ~44% of the height, guests ~56% in a 2×2 grid below.
+  // Landscape: full height, 56–60% of the width, guests 2×2 on the right.
+  hostWrapperClass: 'flex min-h-0 w-full grow-[7] md:h-full md:grow-0 md:w-[56%] lg:w-[60%]',
+  guestTileClass: 'min-h-0 min-w-0',
+  guestAreaClass: 'grid min-h-0 w-full grow-[9] grid-cols-2 content-start gap-1.5 md:h-full md:grow md:grid-cols-2 md:w-[44%] md:gap-2 lg:w-[40%]',
+  guestSpanClass: undefined,
   guestColumns: 2,
 };
 

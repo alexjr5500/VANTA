@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Room, RoomEvent, RemoteParticipant, LocalParticipant, ConnectionState, VideoPresets, Track, type VideoCaptureOptions, type TrackPublishOptions } from 'livekit-client';
+import { Room, RoomEvent, RemoteParticipant, LocalParticipant, ConnectionState, VideoPresets, Track, type AudioCaptureOptions, type VideoCaptureOptions, type TrackPublishOptions } from 'livekit-client';
 import { apiGet } from '@/lib/apiClient';
 import { applyContinuousAutofocus } from '@/lib/cameraCapture';
 
@@ -239,6 +239,25 @@ export function useLiveKit(options: UseLiveKitOptions = {}): UseLiveKitReturn {
           };
         }
 
+        // Same treatment for the microphone: carry the PREVIEW audio track's
+        // actual device (and the same echo/suppression processing the preview
+        // used) into the LiveKit published track. Without the deviceId, LiveKit
+        // re-acquires the OS default mic, which on phones with earbuds/headsets
+        // is a DIFFERENT microphone than the one the user granted — the user
+        // speaks but the published track is silent. Carrying the granted device
+        // keeps the published mic identical to the verified preview mic.
+        let microphoneCaptureOptions: AudioCaptureOptions | undefined;
+        if (publish.microphone && previewAudio) {
+          const settings = typeof previewAudio.getSettings === 'function' ? previewAudio.getSettings() : null;
+          const micDeviceId = publish.microphoneDeviceId ?? settings?.deviceId;
+          microphoneCaptureOptions = {
+            deviceId: micDeviceId ? { ideal: micDeviceId } : undefined,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          };
+        }
+
         const publishOptions: TrackPublishOptions = {
           videoEncoding: VideoPresets.h1080.encoding,
           degradationPreference: 'maintain-resolution',
@@ -248,14 +267,13 @@ export function useLiveKit(options: UseLiveKitOptions = {}): UseLiveKitReturn {
         // LiveKit acquires the same selected hardware after the verified preview
         // tracks are released. This avoids two simultaneous captures of one camera.
         publish.mediaStream?.getTracks().forEach(track => track.stop());
-        const [cameraPub] = await Promise.all([
+        const [cameraPub, micPub] = await Promise.all([
           publish.camera
             ? roomRef.current.localParticipant.setCameraEnabled(true, cameraCaptureOptions, publishOptions)
             : Promise.resolve(undefined),
-          roomRef.current.localParticipant.setMicrophoneEnabled(
-            publish.microphone,
-            publish.microphoneDeviceId ? { deviceId: publish.microphoneDeviceId } : undefined
-          ),
+          publish.microphone
+            ? roomRef.current.localParticipant.setMicrophoneEnabled(true, microphoneCaptureOptions)
+            : Promise.resolve(undefined),
         ]);
 
         if (publish.camera) {
@@ -269,13 +287,19 @@ export function useLiveKit(options: UseLiveKitOptions = {}): UseLiveKitReturn {
           }
           const mt = pub?.track?.mediaStreamTrack;
           if (!mt || mt.readyState !== 'live') throw new Error('Camera was not published');
-          if (typeof mt.getSettings === 'function') {
-            const settings = mt.getSettings();
-            console.info('[LiveKit] published camera at', settings.width, 'x', settings.height, 'fps', settings.frameRate);
-          }
           await applyContinuousAutofocus(mt);
         }
-        if (publish.microphone && !roomRef.current.localParticipant.isMicrophoneEnabled) throw new Error('Microphone was not published');
+        if (publish.microphone) {
+          let mpub = micPub;
+          if (!mpub) {
+            // find the microphone publication the same way as the camera above.
+            for (const publication of roomRef.current.localParticipant.audioTrackPublications.values()) {
+              if (publication.source === Track.Source.Microphone) { mpub = publication; break; }
+            }
+          }
+          const mt = mpub?.track?.mediaStreamTrack;
+          if (!mt || mt.readyState !== 'live') throw new Error('Microphone was not published');
+        }
       }
       
       setLocalParticipant(roomRef.current.localParticipant);
@@ -299,6 +323,14 @@ export function useLiveKit(options: UseLiveKitOptions = {}): UseLiveKitReturn {
     if (roomRef.current) {
       roomRef.current.disconnect();
     }
+    // Fully release the Room instance. `connect` re-creates a fresh Room (and
+    // fresh LocalParticipant) on the next call, which is the exact path the
+    // host takes on Go-Live. Reusing a disconnected Room for a second
+    // connect+publish (the viewer → guest stage-join flow) can leave stale
+    // participant/engine state that drops the newly published microphone
+    // track even though the camera publishes fine.
+    roomRef.current = null;
+    setRoom(null);
     setParticipants([]);
     setLocalParticipant(null);
     setParticipantCount(0);

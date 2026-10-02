@@ -44,6 +44,7 @@ import { useAuth } from '@/context/AuthContext';
 import { apiGet, apiPost } from '@/lib/apiClient';
 import { useLiveKit, getLiveKitToken } from '@/lib/hooks/useLiveKit';
 import { useLiveCamera, type LiveCameraError } from '@/lib/hooks/useLiveCamera';
+import { lockVantaPortrait, unlockVantaPortrait } from '@/lib/orientationLock';
 import { createSocket, type Socket } from '@/lib/socketClient';
 import { cn, formatNumber } from '@/lib/utils';
 import { useToast } from '@/components/ui/Toast';
@@ -137,21 +138,35 @@ const CHAT_RECONCILE: { idOf: (l: ChatLineLike) => unknown; fingerprintOf: (l: C
   },
 };
 
-/** Attaches a MediaStream (remote host video) to a <video>. */
+/** Attaches a MediaStream (remote host video + audio) to a <video>. */
 function ViewerVideo({ stream, muted = false }: { stream: MediaStream | null; muted?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const backdropRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     if (!stream) {
       video.pause();
-      video.srcObject = null;
+      if (video.srcObject) video.srcObject = null;
       return;
     }
-    video.srcObject = stream;
+    if (video.srcObject !== stream) video.srcObject = stream;
     video.muted = muted;
     video.play().catch(() => undefined);
   }, [stream, muted]);
+  useEffect(() => {
+    // Blurred full-bleed backdrop behind the contained copy (kept muted).
+    const back = backdropRef.current;
+    if (!back) return;
+    if (!stream) {
+      back.pause();
+      if (back.srcObject) back.srcObject = null;
+      return;
+    }
+    if (back.srcObject !== stream) back.srcObject = stream;
+    back.muted = true;
+    back.play().catch(() => undefined);
+  }, [stream]);
   useEffect(() => {
     // Browsers defer audible autoplay until the first interaction. On any
     // pointer/touch/key, retry the deferred remote audio (mirrors Reels).
@@ -168,7 +183,28 @@ function ViewerVideo({ stream, muted = false }: { stream: MediaStream | null; mu
       window.removeEventListener('keydown', retry);
     };
   }, [stream, muted]);
-  return <video ref={videoRef} playsInline autoPlay muted={muted} className="h-full w-full object-cover" aria-label="Live stream" />;
+  return (
+    <>
+      {stream && (
+        <video
+          ref={backdropRef}
+          playsInline
+          autoPlay
+          muted
+          aria-hidden
+          className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-[16px] bg-[#050505]"
+        />
+      )}
+      <video
+        ref={videoRef}
+        playsInline
+        autoPlay
+        muted={muted}
+        className="relative z-[1] h-full w-full object-contain bg-[#050505]"
+        aria-label="Live stream"
+      />
+    </>
+  );
 }
 
 export default function LiveViewerPage() {
@@ -178,7 +214,7 @@ export default function LiveViewerPage() {
   const toast = useToast();
   const { token, user } = useAuth();
 
-  const { room, connect, disconnect, connectionState } = useLiveKit();
+  const { room, connect, disconnect, connectionState, isMicrophoneOn, toggleMicrophone } = useLiveKit();
   // Same media lifecycle as Go-Live: when the host accepts the join request the
   // viewer acquires camera/mic through useLiveCamera and hands the verified
   // preview stream to LiveKit's publish pipeline (see joinStage below).
@@ -328,11 +364,22 @@ export default function LiveViewerPage() {
   // failing the publish pre-check with a false "Camera track is not live".
   // Uses the same useLiveCamera lifecycle as Go-Live (no duplicate stream is
   // created when the viewer already holds a live one).
-  const ensureGuestMedia = useCallback(async (): Promise<MediaStream> => {
+  //
+  // The microphone is requested once per stage-join. If the user denies the
+  // mic permission (or no mic exists), the guest still joins CAMERA-ONLY: the
+  // "Allow microphone" control in the More sheet can request and publish the
+  // mic inside a later user gesture.
+  const ensureGuestMedia = useCallback(async (): Promise<{ media: MediaStream; micLive: boolean; micDeviceId?: string }> => {
     const hasLiveVideo = cam.getStream()?.getVideoTracks().some((t) => t.readyState === 'live');
     if (!hasLiveVideo) await cam.startPreview(false);
     const hasLiveAudio = cam.getStream()?.getAudioTracks().some((t) => t.readyState === 'live');
-    if (!hasLiveAudio) await cam.addMicrophone();
+    if (!hasLiveAudio) {
+      try {
+        await cam.addMicrophone();
+      } catch {
+        /* mic permission denied / no device — camera-only stage join below */
+      }
+    }
 
     const media = cam.getStream();
     const videoTrack = media?.getVideoTracks()[0];
@@ -341,11 +388,9 @@ export default function LiveViewerPage() {
       const e: LiveCameraError = { code: 'CAMERA_INITIALIZATION_FAILED', message: 'VANTA could not start a live camera track. Check that no other app is using the camera and try again.' };
       throw e;
     }
-    if (!audioTrack || audioTrack.readyState !== 'live') {
-      const e: LiveCameraError = { code: 'MIC_INITIALIZATION_FAILED', message: 'VANTA could not start a live microphone track. Allow microphone access and try again.' };
-      throw e;
-    }
-    return media;
+    const micLive = !!audioTrack && audioTrack.readyState === 'live';
+    const micDeviceId = typeof audioTrack?.getSettings === 'function' ? audioTrack.getSettings()?.deviceId : undefined;
+    return { media, micLive, micDeviceId };
   }, [cam]);
 
   const joinStage = useCallback(async (token: string, roomName: string) => {
@@ -356,18 +401,23 @@ export default function LiveViewerPage() {
     setGuestStatus('pending');
     try {
       await disconnect();
-      // 1. Media lifecycle: camera/mic must exist and be LIVE first.
-      const media = await ensureGuestMedia();
+      // 1. Media lifecycle: camera must exist and be LIVE. The mic joins when
+      //    its permission was granted; a denied/absent mic degrades gracefully
+      //    to a camera-only stage join instead of blocking the guest.
+      const { media, micLive, micDeviceId } = await ensureGuestMedia();
       const previewDeviceId = media.getVideoTracks()[0]?.getSettings?.().deviceId;
 
       // 2. Connect/join the stage AND publish: the verified preview stream is
       //    handed to the existing LiveKit pipeline, which stops the preview and
       //    re-acquires the SAME camera/mic, then confirms the published tracks
-      //    are live — exactly like the Go-Live flow.
+      //    are live — exactly like the Go-Live flow. The granted mic's deviceId
+      //    is carried through so the published mic is the SAME device the user
+      //    approved (not the OS default).
       await connect(token, roomName, {
         camera: true,
-        microphone: true,
+        microphone: micLive,
         cameraDeviceId: previewDeviceId || undefined,
+        microphoneDeviceId: micDeviceId || undefined,
         mediaStream: media,
       });
 
@@ -377,6 +427,7 @@ export default function LiveViewerPage() {
       cam.stopAll();
       setGuestStatus('live');
       toast.success('You are on stage!');
+      if (!micLive) toast.info('Camera only', 'Enable your microphone in More if you want to talk.');
     } catch (err: any) {
       console.error('Failed to join the stage:', err);
       setGuestStatus('idle');
@@ -620,9 +671,16 @@ socket.on('guest_state', (d: any) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room, phase]);
 
+  // Keep the live screen portrait while the stream is open (no-op where the
+  // platform does not support the Screen Orientation lock).
+  useEffect(() => {
+    if (phase === 'LIVE') void lockVantaPortrait();
+  }, [phase]);
+
   // Cleanup on unmount.
   useEffect(() => {
     return () => {
+      void unlockVantaPortrait();
       cleanupRef.current?.();
       if (socketRef.current) {
         try { socketRef.current.emit('leave_stream', streamIdRef.current); } catch { /* noop */ }
@@ -1236,6 +1294,14 @@ const sendComment = useCallback(() => {
                   <button type="button" onClick={cancelJoin} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90">
                     <span className="grid h-9 w-9 place-items-center rounded-full bg-amber-500/15 text-amber-300"><Loader2 size={16} className="animate-spin" /></span>
                     <span className="flex-1 text-left text-sm font-semibold">Request sent — waiting for {stream.host.username}…</span>
+                  </button>
+                )}
+                {!isOwn && guestStatus === 'live' && (
+                  <button type="button" onClick={() => void toggleMicrophone()} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm text-white/90 transition active:scale-[0.99]">
+                    <span className={cn('grid h-9 w-9 place-items-center rounded-full', isMicrophoneOn ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300')}>
+                      {isMicrophoneOn ? <MicOff size={16} /> : <Mic size={16} />}
+                    </span>
+                    <span className="flex-1 text-left text-sm font-semibold">{isMicrophoneOn ? 'Mute microphone' : 'Unmute microphone'}</span>
                   </button>
                 )}
                 {!isOwn && guestStatus === 'live' && (
