@@ -59,6 +59,7 @@ export const joinChannel = (id: string) => apiPost<any>(`/api/channels/${id}/joi
 export const leaveChannel = (id: string) => apiPost<any>(`/api/channels/${id}/leave`, {});
 export const sendChannelMessage = (id: string, content: string) => apiPost<any>(`/api/channels/${id}/messages`, { content });
 export const getChannelMessages = (id: string) => apiGet<any>(`/api/channels/${id}/messages`);
+export const transferChannelOwnership = (id: string, targetUserId: string) => apiPost<any>(`/api/channels/${id}/transfer-ownership`, { targetUserId });
 
 // ==========================================
 // GROUPS
@@ -70,6 +71,7 @@ export const addGroupMember = (id: string, targetUserId: string) => apiPost<any>
 export const removeGroupMember = (id: string, targetUserId: string) => apiDelete<any>(`/api/groups/${id}/members/${targetUserId}`);
 export const sendGroupMessage = (id: string, content: string) => apiPost<any>(`/api/groups/${id}/messages`, { content });
 export const getGroupMessages = (id: string) => apiGet<any>(`/api/groups/${id}/messages`);
+export const transferGroupOwnership = (id: string, targetUserId: string) => apiPost<any>(`/api/groups/${id}/transfer-ownership`, { targetUserId });
 
 // ==========================================
 // PROFILE

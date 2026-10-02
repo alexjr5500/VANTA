@@ -11,6 +11,7 @@ import {
   sendGroupMessage,
   getGroupMessages,
   deleteGroup,
+  transferGroupOwnership,
 } from "../controllers/group.controller";
 
 const router = Router();
@@ -26,6 +27,7 @@ router.delete("/:id/members/:targetUserId", removeGroupMember);
 router.post("/:id/join", joinGroup);
 router.post("/:id/messages", sendGroupMessage);
 router.get("/:id/messages", getGroupMessages);
+router.post("/:id/transfer-ownership", transferGroupOwnership);
 router.delete("/:id", deleteGroup);
 
 export default router;

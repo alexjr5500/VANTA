@@ -252,6 +252,33 @@ export const handleChatSocket = (io: Server) => {
       io.to(`user_${to}`).emit('call_ended', { callId, conversationId, by: userId });
     });
 
+    // Mid-call media-type change (voice <-> video). The WebRTC connection stays
+    // alive — this only tells the peer to flip its call UI so both sides agree
+    // on whether the call is currently a voice or a video call.
+    socket.on('call:media-update', async (data: any) => {
+      const { conversationId, callId, to, type } = data || {};
+      if (!to || !conversationId || !callId) return;
+      const peer = await getDirectCallPeer(conversationId, userId);
+      if (!peer || peer !== to) return;
+      io.to(`user_${to}`).emit('call_media_updated', {
+        callId,
+        conversationId,
+        from: userId,
+        type: type === 'video' ? 'video' : 'voice',
+      });
+    });
+
+    // SDP renegotiation between the two call participants. Used to add the
+    // video track to a live voice call (or drop it) without ending the call.
+    // Only verified direct-chat participants can relay renegotiation payloads.
+    socket.on('call:renegotiate', async (data: any) => {
+      const { conversationId, callId, to, data: signal } = data || {};
+      if (!to || !conversationId || !callId || !signal) return;
+      const peer = await getDirectCallPeer(conversationId, userId);
+      if (!peer || peer !== to) return;
+      io.to(`user_${to}`).emit('call_renegotiate', { callId, conversationId, data: signal, from: userId });
+    });
+
     socket.on('disconnect', async () => {
       if (removeConnection(userId, socket.id) > 0) return;
       const lastActive = new Date();

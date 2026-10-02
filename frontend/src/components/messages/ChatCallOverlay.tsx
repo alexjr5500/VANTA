@@ -374,26 +374,29 @@ return (
                   icon={isMicOn ? <Mic size={20} /> : <MicOff size={20} />}
                 />
                 {isVideo && (
-                  <ControlIconButton
-                    onClick={onToggleCam}
-                    active={isCamOn}
-                    label={isCamOn ? 'Turn camera off' : 'Turn camera on'}
-                    icon={isCamOn ? <Video size={20} /> : <VideoOff size={20} />}
-                  />
-                )}
-                {isVideo && isCamOn && (
-                  <ControlIconButton
-                    onClick={() => void onFlipCamera()}
-                    active
-                    label={isFrontCamera ? 'Switch to rear camera' : 'Switch to front camera'}
-                    icon={<FlipVertical2 size={20} />}
-                  />
-                )}
-                {!isVideo && (
-                  <div className="pointer-events-none grid h-12 w-12 place-items-center rounded-full bg-white/5 text-white/40 ring-1 ring-white/10">
-                    <Volume2 size={20} />
-                  </div>
-                )}
+                    <ControlIconButton
+                      onClick={onToggleCam}
+                      active={isCamOn}
+                      label={isCamOn ? 'Turn camera off' : 'Turn camera on'}
+                      icon={isCamOn ? <Video size={20} /> : <VideoOff size={20} />}
+                    />
+                  )}
+                  {isVideo && isCamOn && (
+                    <ControlIconButton
+                      onClick={() => void onFlipCamera()}
+                      active
+                      label={isFrontCamera ? 'Switch to rear camera' : 'Switch to front camera'}
+                      icon={<FlipVertical2 size={20} />}
+                    />
+                  )}
+                  {!isVideo && (
+                    <ControlIconButton
+                      onClick={onToggleCam}
+                      active={false}
+                      label="Turn on video"
+                      icon={<VideoOff size={20} />}
+                    />
+                  )}
                 <ControlIconButton
                   onClick={onEnd}
                   label="End call"

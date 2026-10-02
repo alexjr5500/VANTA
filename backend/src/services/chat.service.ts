@@ -295,8 +295,14 @@ export class ChatService {
         await assertDirectMessageAllowed(senderId, peerId);
       }
     }
-    if (conversation.type === "CHANNEL" && !["OWNER", "ADMIN", "MODERATOR"].includes(participant.role)) {
-      throw new Error("Only channel administrators can publish posts");
+    if (conversation.type === "CHANNEL") {
+      const permissions = conversationPermissions(conversation.permissions);
+      // Default: only channel administrators can publish. When the owner enables
+      // the "Post messages" permission, any member may post.
+      const memberCanPost = permissions.postMessages === true;
+      if (!memberCanPost && !["OWNER", "ADMIN", "MODERATOR"].includes(participant.role)) {
+        throw new Error("Only channel administrators can publish posts");
+      }
     }
 
     const safeContent = cleanContent(content);
@@ -367,7 +373,15 @@ export class ChatService {
 
   async editMessage(messageId: string, userId: string, content: string) {
     const message: any = await prisma.message.findUnique({ where: { id: messageId }, include: { conversation: { include: { participants: true } } } });
-    if (!message || message.senderId !== userId || message.deletedAt) throw new Error("Message not found or unauthorized");
+    if (!message || message.deletedAt) throw new Error("Message not found or unauthorized");
+    const participant = message.conversation.participants.find((p: any) => p.userId === userId);
+    const permissions = conversationPermissions(message.conversation.permissions);
+    // Channel "Edit messages" permission lets administrators edit any message;
+    // otherwise users may only edit their own messages.
+    const canModerateEdit = message.conversation.type === "CHANNEL"
+      && participant && ["OWNER", "ADMIN", "MODERATOR"].includes(participant.role)
+      && permissions.editMessages === true;
+    if (message.senderId !== userId && !canModerateEdit) throw new Error("Message not found or unauthorized");
     const safeContent = cleanContent(content);
     if (!safeContent) throw new Error("Message content is required");
     return prisma.message.update({ where: { id: messageId }, data: { content: safeContent, editedAt: new Date() }, include: { sender: { select: userSelect }, reads: true, attachments: true, reactions: { include: { user: { select: { id: true, username: true } } } }, replyTo: { include: { sender: { select: { id: true, username: true } }, attachments: true } } } });
@@ -377,7 +391,16 @@ export class ChatService {
     const message = await prisma.message.findUnique({ where: { id: messageId }, include: { conversation: { include: { participants: true } } } });
     const participant = message?.conversation.participants.find((p: any) => p.userId === userId);
     const canModerate = ["OWNER", "ADMIN", "MODERATOR"].includes(participant?.role);
-    if (!message || (!canModerate && message.senderId !== userId) || (everyone && !canModerate && message.senderId !== userId)) throw new Error("Message not found or unauthorized");
+    const permissions = conversationPermissions(message?.conversation.permissions);
+    const isChannel = message?.conversation.type === "CHANNEL";
+    const isChannelOwner = isChannel && participant?.role === "OWNER";
+    // Channel "Delete messages" permission: when explicitly disabled, even
+    // administrators cannot force-delete other people's posts (owner excluded).
+    const forceDeleteAllowed = !isChannel || isChannelOwner || permissions.deleteMessages !== false;
+    if (!message || (!canModerate && message.senderId !== userId) || (everyone && !canModerate && message.senderId !== userId)) {
+      throw new Error("Message not found or unauthorized");
+    }
+    if (isChannel && message.senderId !== userId && !forceDeleteAllowed) throw new Error("Message not found or unauthorized");
     return prisma.message.update({ where: { id: messageId }, data: { content: "", deletedAt: new Date() }, include: { sender: { select: userSelect }, reads: true, attachments: true, reactions: { include: { user: { select: { id: true, username: true } } } }, replyTo: { include: { sender: { select: { id: true, username: true } }, attachments: true } } } });
   }
 

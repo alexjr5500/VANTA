@@ -1,7 +1,8 @@
-import { Request, Response } from "express";
+import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { channelService } from "../services";
 import { sendError, AppError, badRequest } from "../utils/api-error";
+import { broadcastMessageEvent } from "../sockets/chat.socket";
 
 const parseLimit = (value: unknown, defaultLimit = 20) => {
   const parsed = typeof value === "string" ? parseInt(value, 10) : NaN;
@@ -108,14 +109,32 @@ export const sendChannelMessage = async (req: AuthRequest, res: Response): Promi
   }
 };
 
-export const getChannelMessages = async (req: Request, res: Response): Promise<void> => {
+export const getChannelMessages = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const userId = req.user?.userId;
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
     const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
     const limit = parseLimit(req.query.limit, 50);
-    const messages = await channelService.getMessages(req.params.id, cursor, limit);
+    const messages = await channelService.getMessages(req.params.id, userId, cursor, limit);
     res.status(200).json(messages);
   } catch (error) {
     sendError(res, error, { diagnostic: { action: "getChannelMessages", id: req.params.id } });
+  }
+};
+
+export const transferChannelOwnership = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
+    const { targetUserId } = req.body;
+    const channel = await channelService.transferOwnership(req.params.id, userId, typeof targetUserId === "string" ? targetUserId : "");
+    // Realtime: every subscriber's client must learn the new owner immediately.
+    if (channel.conversationId) {
+      broadcastMessageEvent(channel.conversationId, "conversations:refresh", { conversationId: channel.conversationId });
+    }
+    res.status(200).json(channel);
+  } catch (error) {
+    sendError(res, error, { diagnostic: { action: "transferChannelOwnership", id: req.params.id } });
   }
 };
 

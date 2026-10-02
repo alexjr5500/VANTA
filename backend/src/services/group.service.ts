@@ -1,5 +1,17 @@
 import { prisma } from "../prisma";
 import { chatService } from "./chat.service";
+import { auditLog } from "../security/auditLog";
+
+/** Parses the JSON permission blob stored on the linked Conversation. */
+function parsePermissions(value: string | null | undefined): Record<string, boolean> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 export class GroupService {
   private async withConversationSettings(group: any) {
@@ -100,8 +112,34 @@ export class GroupService {
 
     const requester = group.members.find((m: any) => m.userId === requesterId);
     if (!requester) throw new Error("Not a member of this group");
-    if (requester.role !== "ADMIN" && group.ownerId !== requesterId) {
-      throw new Error("Only group administrators can edit this group");
+    const isPrivileged = requester.role === "ADMIN" || group.ownerId === requesterId;
+    if (!isPrivileged) {
+      // A regular member can only touch the group when the matching server-side
+      // permission is explicitly enabled. This is the backend enforcement of the
+      // "Members" permission toggles shown in Group settings: hiding the button
+      // in the UI is never enough on its own.
+      const permissions = group.conversationId
+        ? parsePermissions((await prisma.conversation.findUnique({
+            where: { id: group.conversationId },
+            select: { permissions: true },
+          }))?.permissions)
+        : {};
+      const canEditInfo = permissions.changeGroupInfo === true;
+      const canAddMembers = permissions.addMembers === true;
+
+      if (data.memberRoles || data.permissions) {
+        throw new Error("Only group administrators can manage roles or permissions");
+      }
+      if (data.memberIds) {
+        if (!canAddMembers) throw new Error("You do not have permission to add members to this group");
+        // Members may add, but never remove, other members.
+        const currentIds = group.members.map((m: any) => m.userId);
+        const anyRemoval = currentIds.some((id: string) => !data.memberIds.includes(id));
+        if (anyRemoval) throw new Error("Members can add people but cannot remove them");
+      }
+      if ((data.name !== undefined || data.description !== undefined || data.avatar !== undefined) && !canEditInfo) {
+        throw new Error("You do not have permission to edit this group's information");
+      }
     }
 
     if (data.name !== undefined && (!data.name.trim() || data.name.trim().length > 60)) {
@@ -227,11 +265,19 @@ export class GroupService {
     const group: any = await prisma.group.findUnique({ where: { id: groupId } });
     if (!group) throw new Error("Group not found");
 
-    // Only admins can add members
+    // Admins can always add members; regular members may only add people when
+    // the owner enabled the "Add members" permission (backend-enforced).
     const requester = await prisma.groupMember.findUnique({
       where: { groupId_userId: { groupId, userId: requesterId } },
     });
-    if (!requester || (requester.role !== "ADMIN" && group.ownerId !== requesterId)) throw new Error("Unauthorized");
+    if (!requester) throw new Error("Unauthorized");
+    const entitled = requester.role === "ADMIN" || group.ownerId === requesterId;
+    if (!entitled) {
+      const conversation = group.conversationId
+        ? await prisma.conversation.findUnique({ where: { id: group.conversationId }, select: { permissions: true } })
+        : null;
+      if (parsePermissions(conversation?.permissions).addMembers !== true) throw new Error("Unauthorized");
+    }
 
     const existing = await prisma.groupMember.findUnique({
       where: { groupId_userId: { groupId, userId } },
@@ -309,7 +355,17 @@ export class GroupService {
     });
   }
 
-  async getMessages(groupId: string, cursor?: string, limit: number = 50) {
+  async getMessages(groupId: string, requesterId?: string, cursor?: string, limit: number = 50) {
+    // Authorization: only group members may read messages. A non-member must
+    // never retrieve history even for a public group — the group member list is
+    // the access-control list.
+    if (requesterId) {
+      const member = await prisma.groupMember.findUnique({
+        where: { groupId_userId: { groupId, userId: requesterId } },
+        select: { id: true },
+      });
+      if (!member) throw new Error("Not a member of this group");
+    }
     const messages = await prisma.groupMessage.findMany({
       where: { groupId },
       orderBy: { createdAt: "desc" },
@@ -320,6 +376,69 @@ export class GroupService {
 
     const nextCursor = messages.length > limit ? messages.pop()?.id : undefined;
     return { items: messages.reverse(), nextCursor };
+  }
+
+  /**
+   * Transfer group ownership to another member.
+   *
+   * Runs inside ONE database transaction so the group can never end up with two
+   * owners (or zero) when an update fails halfway:
+   *   - `Group.ownerId` moves to the target member
+   *   - the new owner's member role becomes ADMIN and their conversation
+   *     participant role becomes OWNER (mirroring how the original owner was
+   *     created); the previous owner keeps ADMIN on both
+   *   - every participant's conversation participant row stays consistent
+   *
+   * Only the current owner may transfer, and only to an existing member. The
+   * change is persisted, audited, and the caller broadcasts a realtime refresh.
+   */
+  async transferOwnership(groupId: string, requesterId: string, targetUserId: string) {
+    const normalizedTarget = typeof targetUserId === "string" ? targetUserId.trim() : "";
+    if (!normalizedTarget) throw new Error("Please choose a member to transfer ownership to.");
+    if (normalizedTarget === requesterId) throw new Error("You are already the owner of this group");
+
+    const group: any = await prisma.group.findUnique({
+      where: { id: groupId },
+      include: { members: true },
+    });
+    if (!group) throw new Error("Group not found");
+    if (group.ownerId !== requesterId) throw new Error("Only the group owner can transfer ownership");
+
+    const target = group.members.find((m: any) => m.userId === normalizedTarget);
+    if (!target) throw new Error("The selected member is no longer part of this group");
+
+    const updated = await prisma.$transaction(async tx => {
+      await tx.group.update({ where: { id: groupId }, data: { ownerId: normalizedTarget } });
+      // New owner receives owner privileges; previous owner keeps an ADMIN seat
+      // so they stay involved without retaining owner powers.
+      await tx.groupMember.updateMany({ where: { groupId, userId: normalizedTarget }, data: { role: "ADMIN" } });
+      await tx.groupMember.updateMany({ where: { groupId, userId: requesterId }, data: { role: "ADMIN" } });
+      if (group.conversationId) {
+        // The new owner takes the OWNER participant role (the role the original
+        // owner held from creation) so `currentRole` reflects ownership in every
+        // client; the previous owner drops to an ADMIN seat.
+        await tx.participant.updateMany({ where: { conversationId: group.conversationId, userId: normalizedTarget }, data: { role: "OWNER" } });
+        await tx.participant.updateMany({ where: { conversationId: group.conversationId, userId: requesterId }, data: { role: "ADMIN" } });
+      }
+      return tx.group.findUnique({
+        where: { id: groupId },
+        include: {
+          owner: { select: { id: true, username: true, avatar: true } },
+          members: { include: { user: { select: { id: true, username: true, avatar: true } } } },
+          _count: { select: { members: true, messages: true } },
+        },
+      });
+    });
+    if (!updated) throw new Error("Group not found");
+
+    auditLog.log({
+      userId: requesterId,
+      action: "GROUP_OWNERSHIP_TRANSFERRED",
+      metadata: { groupId, groupName: group.name, from: requesterId, to: normalizedTarget, conversationId: group.conversationId },
+      severity: "WARNING",
+    }).catch(() => undefined);
+
+    return this.withConversationSettings({ ...updated, conversationId: group.conversationId });
   }
 
   async deleteGroup(id: string, userId: string) {

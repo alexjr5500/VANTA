@@ -1,7 +1,8 @@
-import { Request, Response } from "express";
+import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { groupService } from "../services";
 import { sendError, AppError, badRequest } from "../utils/api-error";
+import { broadcastMessageEvent } from "../sockets/chat.socket";
 
 const parseLimit = (value: unknown, defaultLimit = 50) => {
   const parsed = typeof value === "string" ? parseInt(value, 10) : NaN;
@@ -123,14 +124,32 @@ export const sendGroupMessage = async (req: AuthRequest, res: Response): Promise
   }
 };
 
-export const getGroupMessages = async (req: Request, res: Response): Promise<void> => {
+export const getGroupMessages = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const userId = req.user?.userId;
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
     const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
     const limit = parseLimit(req.query.limit, 50);
-    const messages = await groupService.getMessages(req.params.id, cursor, limit);
+    const messages = await groupService.getMessages(req.params.id, userId, cursor, limit);
     res.status(200).json(messages);
   } catch (error) {
     sendError(res, error, { diagnostic: { action: "getGroupMessages", id: req.params.id } });
+  }
+};
+
+export const transferGroupOwnership = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) throw new AppError(401, "UNAUTHORIZED", "Please sign in to continue.");
+    const { targetUserId } = req.body;
+    const group = await groupService.transferOwnership(req.params.id, userId, typeof targetUserId === "string" ? targetUserId : "");
+    // Realtime: every group member's client must learn the new owner immediately.
+    if (group.conversationId) {
+      broadcastMessageEvent(group.conversationId, "conversations:refresh", { conversationId: group.conversationId });
+    }
+    res.status(200).json(group);
+  } catch (error) {
+    sendError(res, error, { diagnostic: { action: "transferGroupOwnership", id: req.params.id } });
   }
 };
 

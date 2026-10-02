@@ -77,6 +77,17 @@ export interface UseChatCallsReturn {
   cancelCall: () => void;
   toggleMicrophone: () => void;
   toggleCamera: () => void;
+  /**
+   * Upgrade a live VOICE call to VIDEO by adding the camera track to the
+   * existing session (SDP renegotiation — the call is never restarted).
+   * Returns true when the camera is now sending.
+   */
+  enableVideo: () => Promise<boolean>;
+  /**
+   * Downgrade a live VIDEO call to VOICE: video transmission stops, audio keeps
+   * flowing, the session stays intact and both participants' UI flips to voice.
+   */
+  disableVideo: () => Promise<boolean>;
   /** Swap the video camera mid-call (front <-> rear) without renegotiation. */
   flipCamera: () => Promise<boolean>;
 }
@@ -676,16 +687,189 @@ const declineCall = useCallback(() => {
     setIsMicOn(next);
   }, []);
 
-  const toggleCamera = useCallback(() => {
-    const stream = localStreamRef.current;
-    if (!stream) return;
-    const tracks = stream.getVideoTracks();
-    if (!tracks.length) return;
-    const next = !tracks[0].enabled;
-    tracks.forEach(track => { track.enabled = next; });
-    setIsCamOn(next);
-    diag('camera toggled', next ? 'on' : 'off');
+  const notifyCallMediaUpdate = useCallback((type: CallType) => {
+    const socketNow = socketRef.current;
+    const session = sessionRef.current;
+    if (!socketNow || !session) return;
+    socketNow.emit('call:media-update', {
+      conversationId: session.conversationId,
+      callId: session.callId,
+      to: session.peerId,
+      type,
+    });
+    diag('media-update sent', type);
   }, []);
+
+  /** Re-negotiate the SDP so the peer learns about the added/dropped video. */
+  const sendRenegotiation = useCallback(async (): Promise<boolean> => {
+    const pc = pcRef.current;
+    const session = sessionRef.current;
+    const socketNow = socketRef.current;
+    if (!pc || !session || !socketNow) return false;
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+    } catch (offerError) {
+      // The local description may already contain the new m-line; sending it
+      // anyway lets the peer apply the renegotiated SDP.
+      if (!pc.localDescription) return false;
+    }
+    if (!pc.localDescription) return false;
+    socketNow.emit('call:renegotiate', {
+      conversationId: session.conversationId,
+      callId: session.callId,
+      to: session.peerId,
+      data: pc.localDescription,
+      type: 'offer',
+    });
+    diag('renegotiation offer sent');
+    return true;
+  }, []);
+
+  /**
+   * Request camera access and return a live video track, or throw with a
+   * user-friendly error. The audio track is intentionally NOT requested here so
+   * an upgrade can never disturb the running voice stream.
+   */
+  const requestCameraTrack = useCallback(async (): Promise<MediaStreamTrack | null> => {
+    const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+    const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
+    const input = pickPrimaryCamera(videoInputs);
+    const constraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
+    const media = await navigator.mediaDevices.getUserMedia({
+      video: constraints,
+      audio: false,
+    });
+    const videoTrack = media.getVideoTracks()[0];
+    if (!videoTrack || videoTrack.readyState !== 'live') {
+      media.getTracks().forEach(track => track.stop());
+      return null;
+    }
+    await applyContinuousAutofocus(videoTrack);
+    return videoTrack;
+  }, []);
+
+  /**
+   * VOICE -> VIDEO mid-call upgrade. The existing PeerConnection and audio keep
+   * running; only the camera track is added and the SDP is re-negotiated.
+   */
+  const enableVideo = useCallback(async (): Promise<boolean> => {
+    const session = sessionRef.current;
+    const stream = localStreamRef.current;
+    const pc = pcRef.current;
+    if (!session || !stream || !pc) return false;
+    if (statusRef.current !== 'active' && statusRef.current !== 'connecting') return false;
+
+    // Camera already live for this call (e.g. re-enabling) — just agree on state.
+    const liveTrack = stream.getVideoTracks().find(track => track.enabled);
+    if (liveTrack) {
+      if (session.type !== 'video') {
+        sessionRef.current = { ...session, type: 'video' };
+        setCallType('video');
+      }
+      setIsCamOn(true);
+      notifyCallMediaUpdate('video');
+      return true;
+    }
+
+    let videoTrack: MediaStreamTrack | null = null;
+    try {
+      videoTrack = await requestCameraTrack();
+      if (!videoTrack) {
+        setPermissionError('No camera was found on this device.');
+        return false;
+      }
+    } catch (mediaError) {
+      // Permission denied / device busy — keep the voice call alive untouched.
+      setPermissionError(readPermissionError(mediaError));
+      return false;
+    }
+
+    try {
+      videoTrack.enabled = false;
+      stream.addTrack(videoTrack);
+      pc.addTrack(videoTrack, stream);
+    } catch (trackError) {
+      try { stream.removeTrack(videoTrack); } catch { /* noop */ }
+      videoTrack.stop();
+      setError('Could not turn on the camera during this call.');
+      return false;
+    }
+
+    if (!(await sendRenegotiation())) {
+      try {
+        const sender = pc.getSenders().find(s => s.track === videoTrack);
+        if (sender) await sender.replaceTrack(null).catch(() => undefined);
+        stream.removeTrack(videoTrack);
+      } catch { /* noop */ }
+      videoTrack.stop();
+      setError('Could not turn on the camera during this call.');
+      return false;
+    }
+
+    videoTrack.enabled = true;
+    sessionRef.current = { ...session, type: 'video' };
+    setCallType('video');
+    setIsCamOn(true);
+    const facing = videoTrack.getSettings?.().facingMode;
+    setIsFrontCamera(facing === 'user' || facing === 'front');
+    setLocalStream(new MediaStream(stream.getTracks()));
+    setError(null);
+    setPermissionError(null);
+    notifyCallMediaUpdate('video');
+    diag('video enabled mid-call (voice -> video)');
+    return true;
+  }, [notifyCallMediaUpdate, requestCameraTrack, sendRenegotiation]);
+
+  /**
+   * VIDEO -> VOICE mid-call downgrade. Video transmission stops, audio keeps
+   * flowing and the session stays intact on both ends.
+   */
+  const disableVideo = useCallback(async (): Promise<boolean> => {
+    const session = sessionRef.current;
+    const stream = localStreamRef.current;
+    const pc = pcRef.current;
+    if (!session || !stream || !pc) return false;
+    if (statusRef.current !== 'active' && statusRef.current !== 'connecting') return false;
+
+    const videoTracks = stream.getVideoTracks();
+    if (!videoTracks.length) {
+      if (session.type !== 'voice') {
+        sessionRef.current = { ...session, type: 'voice' };
+        setCallType('voice');
+      }
+      setIsCamOn(false);
+      notifyCallMediaUpdate('voice');
+      return true;
+    }
+
+    // Stop the sender track first so the peer stops receiving video frames,
+    // then hard-disable the local tracks. Audio keeps flowing untouched.
+    const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+    try {
+      if (sender) await sender.replaceTrack(null).catch(() => undefined);
+    } catch { /* best-effort — the track disable below still stops frames */ }
+    videoTracks.forEach(track => { try { track.enabled = false; } catch { /* noop */ } });
+
+    sessionRef.current = { ...session, type: 'voice' };
+    setCallType('voice');
+    setIsCamOn(false);
+    setLocalStream(new MediaStream(stream.getTracks()));
+    setError(null);
+    setPermissionError(null);
+    notifyCallMediaUpdate('voice');
+    diag('video disabled mid-call (video -> voice)');
+    return true;
+  }, [notifyCallMediaUpdate]);
+
+  const toggleCamera = useCallback(() => {
+    const session = sessionRef.current;
+    const stream = localStreamRef.current;
+    if (!session || !stream) return;
+    const videoActive = session.type === 'video' && stream.getVideoTracks().some(track => track.enabled);
+    if (videoActive) void disableVideo();
+    else void enableVideo();
+  }, [disableVideo, enableVideo]);
 
   const flipCamera = useCallback(async (): Promise<boolean> => {
     const session = sessionRef.current;
@@ -899,6 +1083,51 @@ const declineCall = useCallback(() => {
       setTimeout(() => cleanupCall(), 1500);
     };
 
+    // The peer switched the call between voice and video WITHOUT ending it.
+    // Keep the local session type in sync so both overlays agree on the mode.
+    const onCallMediaUpdated = (payload: { callId: string; conversationId: string; from: string; type: CallType }) => {
+      const session = sessionRef.current;
+      if (!session || session.callId !== payload.callId) return;
+      const nextType = payload.type === 'video' ? 'video' : 'voice';
+      sessionRef.current = { ...session, type: nextType };
+      setCallType(nextType);
+      if (nextType === 'voice') setIsCamOn(false);
+      diag('media-update received', nextType);
+    };
+
+    // SDP renegotiation relayed by the server. Used to add/remove video on a
+    // live call without restarting it. The callee answers offers; the caller
+    // applies answers.
+    const onCallRenegotiate = (payload: { callId: string; conversationId: string; data: RTCSessionDescriptionInit; from: string }) => {
+      const session = sessionRef.current;
+      const pc = pcRef.current;
+      if (!session || !pc || session.callId !== payload.callId) return;
+      void (async () => {
+        try {
+          await pc.setRemoteDescription(payload.data);
+          const amCaller = session.callerId === userRef.current?.id;
+          if (!amCaller) {
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            if (pc.localDescription) {
+              socketRef.current?.emit('call:renegotiate', {
+                conversationId: session.conversationId,
+                callId: session.callId,
+                to: session.peerId,
+                data: pc.localDescription,
+                type: 'answer',
+              });
+              diag('renegotiation answer sent');
+            }
+          }
+        } catch (error) {
+          // Renegotiation is best-effort: a failing video upgrade never kills the
+          // running audio call.
+          diag('renegotiation failed', error);
+        }
+      })();
+    };
+
     socket.on('incoming_call', onIncomingCall);
     socket.on('call_signal', onCallSignal);
     socket.on('call_accepted', onCallAccepted);
@@ -906,6 +1135,8 @@ const declineCall = useCallback(() => {
     socket.on('call_declined', onCallDeclinedByPeer);
     socket.on('call_cancelled', onCallCancelledByPeer);
     socket.on('call_unreachable', onCallUnreachable);
+    socket.on('call_media_updated', onCallMediaUpdated);
+    socket.on('call_renegotiate', onCallRenegotiate);
 
     return () => {
       socket.off('incoming_call', onIncomingCall);
@@ -915,6 +1146,8 @@ const declineCall = useCallback(() => {
       socket.off('call_declined', onCallDeclinedByPeer);
       socket.off('call_cancelled', onCallCancelledByPeer);
       socket.off('call_unreachable', onCallUnreachable);
+      socket.off('call_media_updated', onCallMediaUpdated);
+      socket.off('call_renegotiate', onCallRenegotiate);
     };
   }, [socket, cleanupCall, flushPendingCandidates, logCall, updateStatus]);
 
@@ -970,6 +1203,8 @@ const declineCall = useCallback(() => {
     cancelCall,
     toggleMicrophone,
     toggleCamera,
+    enableVideo,
+    disableVideo,
     flipCamera,
   };
 }

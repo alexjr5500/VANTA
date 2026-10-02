@@ -302,6 +302,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [managementSearch, setManagementSearch] = useState('');
   const [managementResults, setManagementResults] = useState<any[]>([]);
   const [managementBusy, setManagementBusy] = useState<string | null>(null);
+  const [ownershipConfirm, setOwnershipConfirm] = useState<any | null>(null);
   const [isSavingEntity, setIsSavingEntity] = useState(false);
   const editAvatarInputRef = useRef<HTMLInputElement>(null);
   const [typingUserId, setTypingUserId] = useState<string | null>(null);
@@ -324,6 +325,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [filter, setFilter] = useState<'all' | 'direct' | 'group' | 'channel' | 'unread'>('all');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Unified Call button: opens the Voice/Video call-type menu. The menu closes
+  // on selection, when the user taps outside, on back navigation, and the
+  // moment a call starts (the in-call overlay takes over).
+  const [callMenuOpen, setCallMenuOpen] = useState(false);
   const [messageSearchResults, setMessageSearchResults] = useState<Message[]>([]);
   const [searchingMessages, setSearchingMessages] = useState(false);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
@@ -475,6 +480,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     if (view !== 'info' && view !== 'settings') setDetailsOpen(false);
     if (view !== 'settings') setEditEntityOpen(false);
     if (view !== 'media') setMediaViewer(null);
+    // Back navigation from any chat subview also closes the call menu.
+    setCallMenuOpen(false);
   }, [searchParams]);
 
   const pushChatView = useCallback((view: 'info' | 'settings' | 'media') => {
@@ -1570,19 +1577,47 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       peerAvatar: activeConv?.avatar,
     });
   }, [activeConversation, activeConv, setCallTarget]);
+
+  // The moment a call leaves the idle state the in-call overlay appears, so the
+  // call-type menu must disappear with it (prevents a stale floating menu).
+  useEffect(() => {
+    if (chatCalls.status !== 'idle') setCallMenuOpen(false);
+  }, [chatCalls.status]);
   const canEditEntity = activeConv?.type === 'group'
     ? activeConv.currentRole === 'ADMIN' || activeConv.currentRole === 'OWNER'
     : activeConv?.type === 'channel' && ['OWNER', 'ADMIN', 'MODERATOR'].includes(activeConv.currentRole || '');
   const isManagedOwner = Boolean(managedEntity?.ownerId && managedEntity.ownerId === user?.id);
   const managedPermissions = activeConv?.type === 'channel'
     ? [
-        ['postMessages', 'Post messages'], ['editMessages', 'Edit messages'], ['deleteMessages', 'Delete messages'],
-        ['manageChannelInfo', 'Manage channel info'], ['manageSubscribers', 'Manage subscribers'], ['manageInviteLinks', 'Manage invite links'],
+        ['postMessages', 'Post messages'],
+        ['editMessages', 'Edit messages'],
+        ['deleteMessages', 'Delete messages'],
+        ['manageChannelInfo', 'Manage channel info'],
+        ['manageSubscribers', 'Manage subscribers'],
       ]
     : [
         ['sendMessages', 'Send messages'], ['sendMedia', 'Send media'], ['sendLinks', 'Send links'],
         ['addMembers', 'Add members'], ['pinMessages', 'Pin messages'], ['changeGroupInfo', 'Change group info'],
       ];
+  // Plain-language, enforced description for every permission toggle. Defaults
+  // are always the safe, current VANTA behaviour — toggling only ever expands a
+  // capability to members (or restricts admins) and is checked on the server.
+  const permissionHints: Record<string, string> = activeConv?.type === 'channel'
+    ? {
+        postMessages: 'Members can publish posts to the channel.',
+        editMessages: 'Administrators can edit any member’s post.',
+        deleteMessages: 'Administrators can remove any member’s post.',
+        manageChannelInfo: 'Administrators can change the name, description and photo.',
+        manageSubscribers: 'Administrators can add or remove subscribers.',
+      }
+    : {
+        sendMessages: 'Members can send messages.',
+        sendMedia: 'Members can send photos and videos.',
+        sendLinks: 'Members can send links.',
+        addMembers: 'Members can add new people to the group.',
+        pinMessages: 'Members can pin messages.',
+        changeGroupInfo: 'Members can edit the name and description.',
+      };
   const sharedAttachments = messages.flatMap(message => (message.attachments || []).map(attachment => ({ ...attachment, messageId: message.id })));
 
   const toggleMemberSelection = (member: any) => {
@@ -1684,6 +1719,34 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
 
   const toggleManagedPermission = (key: string) => setManagedEntity((previous: any) => ({ ...previous, permissions: { ...(previous?.permissions || {}), [key]: !(previous?.permissions?.[key] ?? true) } }));
+
+  const confirmOwnershipTransfer = async () => {
+    if (!token || !activeConv || !editEntityId || !ownershipConfirm || activeConv.type === 'direct') return;
+    setManagementBusy('ownership');
+    try {
+      const endpoint = activeConv.type === 'group' ? 'groups' : 'channels';
+      const updated = await apiPost<any>(`/api/${endpoint}/${editEntityId}/transfer-ownership`, { targetUserId: ownershipConfirm.userId }, token);
+      setManagedEntity(updated);
+      setOwnershipConfirm(null);
+      // The backend also broadcasts `conversations:refresh` on the socket, but a
+      // local refetch makes the new owner/role state appear instantly here too.
+      await fetchConversations();
+      const targetName = ownershipConfirm.user?.username || 'The new owner';
+      showToast?.({
+        type: 'success',
+        title: 'Ownership transferred',
+        message: `${targetName} is now the owner of this ${activeConv.type}.`,
+      });
+    } catch (err: any) {
+      showToast?.({
+        type: 'error',
+        title: 'Ownership transfer failed',
+        message: err?.message || 'Please try again.',
+      });
+    } finally {
+      setManagementBusy(null);
+    }
+  };
 
   if (loading) {
     return (
@@ -1857,24 +1920,59 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               <div className="flex items-center gap-1">
                 {activeConv.type === 'direct' && (
                   <>
-                    <button
-                      onClick={() => void chatCalls.startCall('voice')}
-                      disabled={chatCalls.status !== 'idle'}
-                      className="btn-icon h-9 w-9"
-                      aria-label="Start a voice call"
-                      title="Start a voice call"
-                    >
-                      <Phone size={15} />
-                    </button>
-                    <button
-                      onClick={() => void chatCalls.startCall('video')}
-                      disabled={chatCalls.status !== 'idle'}
-                      className="btn-icon h-9 w-9"
-                      aria-label="Start a video call"
-                      title="Start a video call"
-                    >
-                      <Video size={15} />
-                    </button>
+                    <div className="relative">
+                      <button
+                        onClick={() => setCallMenuOpen(value => !value)}
+                        disabled={chatCalls.status !== 'idle'}
+                        className="btn-icon h-9 w-9"
+                        aria-label="Start a call"
+                        aria-haspopup="menu"
+                        aria-expanded={callMenuOpen}
+                        title="Call"
+                      >
+                        <Phone size={15} />
+                      </button>
+                      {callMenuOpen && (
+                        <>
+                          {/* Transparent capture layer: tap outside closes the menu. */}
+                          <div
+                            aria-hidden="true"
+                            className="fixed inset-0 z-[69]"
+                            onClick={() => setCallMenuOpen(false)}
+                          />
+                          <div
+                            role="menu"
+                            aria-label="Choose call type"
+                            className="absolute right-0 top-[calc(100%+6px)] z-[70] w-44 overflow-hidden rounded-xl border border-white/[0.1] bg-[#151517] p-1 shadow-[0_14px_40px_rgba(0,0,0,.55)] backdrop-blur-xl"
+                          >
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setCallMenuOpen(false);
+                                void chatCalls.startCall('voice');
+                              }}
+                              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs font-medium text-white transition hover:bg-white/[0.06]"
+                            >
+                              <Phone size={15} className="text-[#8b93a6]" />
+                              Voice Call
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setCallMenuOpen(false);
+                                void chatCalls.startCall('video');
+                              }}
+                              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-xs font-medium text-white transition hover:bg-white/[0.06]"
+                            >
+                              <Video size={15} className="text-[#d6a83f]" />
+                              Video Call
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </>
                 )}
                 <button onClick={() => setMessageSearchOpen(value => !value)} className="btn-icon h-9 w-9" aria-label="Search chat"><Search size={15} /></button>
@@ -2223,7 +2321,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
       {activeConv && detailsOpen && <motion.aside initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 320 }} className="fixed inset-0 z-50 h-[var(--chat-viewport-height,100dvh)] w-full overflow-y-auto overscroll-contain border-l border-white/[0.08] bg-[#0d0d0f] md:left-auto md:right-0 md:w-[min(440px,42vw)]">
         <div className="sticky top-0 z-10 grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-white/[0.08] bg-[#0d0d0f]/95 px-3 pt-[max(0px,env(safe-area-inset-top))] backdrop-blur-xl"><button onClick={() => closeChatSubview(() => setDetailsOpen(false))} className="btn-icon h-10 w-10 shrink-0" aria-label={`Close ${activeConv.type === 'group' ? 'group' : activeConv.type === 'channel' ? 'channel' : 'conversation'} information`}><ArrowLeft size={18}/></button><div className="min-w-0 text-center"><h2 className="truncate text-sm font-semibold text-white">{activeConv.type === 'group' ? 'Group info' : activeConv.type === 'channel' ? 'Channel info' : 'Conversation info'}</h2></div>{activeConv.type !== 'direct' && canEditEntity ? <button onClick={() => void openEntityEditor()} className="btn-icon h-10 w-10 shrink-0 text-[#f2c75c]" aria-label={`Manage ${activeConv.type === 'group' ? 'group' : 'channel'}`} title={`Edit ${activeConv.type === 'group' ? 'group' : 'channel'}`}><Pencil size={16}/></button> : <span className="h-10 w-10 shrink-0" aria-hidden="true"/>}</div>
-        <div className="border-b border-white/[0.08] px-5 py-6 text-center"><div className="mx-auto w-fit"><Avatar src={activeConv.avatar} alt={activeConv.name} size="xl" /></div><h3 className="mt-3 text-base font-semibold text-white">{activeConv.name}</h3><p className="mt-1 text-xs text-white/40">{activeConv.type === 'direct' ? `@${activeConv.username || 'user'}` : activeConv.type === 'channel' ? `#${activeConv.handle || activeConv.name.toLowerCase().replace(/\s+/g, '-')}` : `${activeConv.memberCount || activeConv.participants?.length || 1} members`}</p>{activeConv.description && <p className="mt-3 text-xs leading-relaxed text-white/50">{activeConv.description}</p>}</div>
+        <div className="border-b border-white/[0.08] px-5 py-6 text-center"><div className="mx-auto w-fit"><Avatar src={activeConv.avatar} alt={activeConv.name} size="xl" /></div><h3 className="mt-3 text-base font-semibold text-white">{activeConv.name}</h3><p className="mt-1 text-xs text-white/40">{activeConv.type === 'direct' ? `@${activeConv.username || 'user'}` : activeConv.type === 'channel' ? `#${activeConv.handle || activeConv.name.toLowerCase().replace(/\s+/g, '-')}` : `${activeConv.memberCount || activeConv.participants?.length || 1} members`}</p>{activeConv.type !== 'direct' && <div className="mt-4 w-full min-w-0 text-left"><div className="overflow-hidden rounded-xl border border-white/[0.07] bg-[#101012]"><div className="flex items-center justify-between border-b border-white/[0.05] px-3 py-2"><span className="text-[9px] font-semibold uppercase tracking-[.14em] text-white/35">About</span>{canEditEntity ? <button type="button" onClick={() => void openEntityEditor()} className="inline-flex items-center gap-1 pb-[2px] text-[9px] font-semibold uppercase tracking-[.1em] text-[#d6a83f] hover:text-[#f2c75c]"><Pencil size={10}/>Edit</button> : <span className="h-3" aria-hidden="true" />}</div><p className="whitespace-pre-wrap break-words px-3 py-3 text-xs font-normal leading-[1.6] text-white/55">{activeConv.description?.trim() ? activeConv.description.trim() : <span className="text-white/25">No description yet — add an about text to help people know what this {activeConv.type === 'group' ? 'group' : 'channel'} is about.</span>}</p></div></div>}</div>
         <div className="border-b border-white/[0.08] p-3">
           <button onClick={searchWithinChat} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-white/60 hover:bg-white/[0.04] hover:text-white"><Search size={14}/>Search chat<ChevronRight size={13} className="ml-auto"/></button>
           <button onClick={toggleMute} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-white/60 hover:bg-white/[0.04] hover:text-white"><BellOff size={14}/>{activeConv.muted ? 'Unmute chat' : 'Mute chat'}<ChevronRight size={13} className="ml-auto"/></button>
@@ -2334,9 +2432,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#151517]"><div className="border-b border-white/[0.06] px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-white/30 flex items-center gap-2">{activeConv.type === 'channel' ? <Hash size={13} className="text-[#d6a83f]"/> : <Users size={13} className="text-[#d6a83f]"/>}{activeConv.type === 'channel' ? 'Channel information' : 'Group information'}</div>
               <div className="divide-y divide-white/[0.06]">
                 <label className="flex flex-col px-4 py-3.5"><span className="text-[10px] uppercase tracking-[.12em] text-white/35">Name</span><input value={editName} maxLength={60} onChange={event => setEditName(event.target.value)} className="mt-1.5 w-full rounded-lg bg-transparent text-sm text-[#f5f5f5] outline-none" placeholder="Give it a name"/></label>
-                <label className="flex flex-col px-4 py-3.5"><span className="text-[10px] uppercase tracking-[.12em] text-white/35">Description</span><textarea value={editDescription} maxLength={500} onChange={event => setEditDescription(event.target.value)} rows={3} className="mt-1.5 w-full resize-none rounded-lg bg-transparent text-sm leading-relaxed text-[#f5f5f5] outline-none" placeholder="What is this {activeConv.type} about?"/></label>
+                <label className="flex flex-col px-4 py-3.5"><span className="text-[10px] uppercase tracking-[.12em] text-white/35">Description</span><textarea value={editDescription} maxLength={500} onChange={event => setEditDescription(event.target.value)} rows={4} placeholder={`What is this ${activeConv.type === 'group' ? 'group' : 'channel'} about?`} className="mt-2 w-full resize-none rounded-xl border border-white/[0.08] bg-[#101012] px-3 py-2.5 text-sm leading-relaxed text-[#f5f5f5] outline-none placeholder:text-white/25 focus:border-[#d6a83f]/40" /><span className="mt-1.5 text-right text-[10px] tabular-nums text-white/25">{editDescription.length}/500</span></label>
                 {activeConv.type === 'channel' && <label className="flex flex-col px-4 py-3.5"><span className="text-[10px] uppercase tracking-[.12em] text-white/35">Handle</span><div className="mt-1.5 flex items-center text-sm text-[#f5f5f5]"><span className="text-white/30 pr-1">@</span><input value={editHandle} onChange={event => setEditHandle(event.target.value.replace(/[^a-zA-Z0-9_]/g, ''))} className="min-w-0 flex-1 bg-transparent outline-none" placeholder="channel_handle"/></div></label>}
-                {activeConv.type === 'channel' && <div className="flex items-center justify-between px-4 py-3.5"><div className="flex items-center gap-3">{editVisibility === 'PUBLIC' ? <Globe2 size={17} className="text-[#d6a83f]"/> : <Lock size={17} className="text-[#d6a83f]"/>}<div className="min-w-0"><p className="text-sm text-[#f5f5f5]">Channel access</p><p className="text-[10px] text-white/35">{editVisibility === 'PUBLIC' ? 'Discoverable and open to join' : 'Available only to invited people'}</p></div></div><button onClick={() => setEditVisibility(value => value === 'PUBLIC' ? 'PRIVATE' : 'PUBLIC')} className={cn('relative h-6 w-11 rounded-full border transition', editVisibility === 'PUBLIC' ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')} aria-label="Toggle channel access"><span className={cn('absolute top-0.5 h-4.5 w-4.5 rounded-full bg-[#f5f5f5] transition-all', editVisibility === 'PUBLIC' ? 'left-[22px]' : 'left-0.5')}/></button></div>}
+                {activeConv.type === 'channel' && <div className="px-4 py-4"><div className="flex items-start gap-3"><div className="mt-0.5 shrink-0">{editVisibility === 'PUBLIC' ? <Globe2 size={17} className="text-[#d6a83f]"/> : <Lock size={17} className="text-[#d6a83f]"/>}</div><div className="min-w-0 flex-1"><p className="text-sm text-[#f5f5f5]">Who can access this channel?</p><p className="mt-1 text-[10px] leading-relaxed text-white/35">{editVisibility === 'PUBLIC' ? 'Anyone on VANTA can see it in discovery, join it, and read posts. Only you and your team can post.' : 'Only people you add can find or join it. It is hidden from discovery and joins require an invite.'}</p></div><button onClick={() => setEditVisibility(value => value === 'PUBLIC' ? 'PRIVATE' : 'PUBLIC')} className={cn('relative h-6 w-11 shrink-0 rounded-full border transition', editVisibility === 'PUBLIC' ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')} aria-label="Toggle channel access" aria-checked={editVisibility === 'PUBLIC'} role="switch"><span className={cn('absolute top-0.5 h-4.5 w-4.5 rounded-full transition-all', editVisibility === 'PUBLIC' ? 'left-[22px] bg-[#f2c75c]' : 'left-0.5 bg-[#c8c8cc]')}/></button></div><div className="mt-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5"><p className="text-[10px] leading-relaxed text-white/35">{editVisibility === 'PUBLIC' ? 'Making it private later hides it from new people but existing members keep access.' : 'Making it public later lets anyone join and read posts.'}</p></div></div>}
               </div>
             </section>
 
@@ -2348,7 +2446,44 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               <div className="mt-3 divide-y divide-white/[0.06] border-y border-white/[0.08]">{(managedEntity?.members || []).map((member: any) => { const owner = member.userId === managedEntity.ownerId; const elevated = owner || ['ADMIN', 'MODERATOR'].includes(member.role); return <div key={member.userId} className="flex items-center gap-3 px-3 py-3"><Avatar src={member.user?.avatar} alt={member.user?.username || 'Member'} size="sm"/><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-[#f5f5f5]">{member.user?.fullName || member.user?.username}</p><div className="mt-0.5 flex items-center gap-1.5"><span className="truncate text-[10px] text-white/35">@{member.user?.username}</span>{elevated && <span className="inline-flex items-center gap-1 rounded-full bg-[#d6a83f]/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-[#d6a83f]">{owner ? <Crown size={9}/> : <Shield size={9}/>} {owner ? 'Owner' : member.role === 'MODERATOR' ? 'Moderator' : 'Admin'}</span>}</div></div>{!owner && member.userId !== user?.id && <div className="flex items-center gap-1.5">{isManagedOwner && <button disabled={managementBusy === member.userId} onClick={() => void changeManagedRole(member, elevated ? 'MEMBER' : 'ADMIN')} className="btn-ghost h-8 px-2.5 text-[11px] text-[#d6a83f] hover:text-[#f2c75c]" aria-label={elevated ? 'Remove administrator rights' : 'Promote to administrator'}>{managementBusy === member.userId ? <Loader2 size={13} className="animate-spin"/> : elevated ? 'Demote' : 'Promote'}</button>}{(!elevated || isManagedOwner) && <button onClick={() => removeManagedMember(member)} className="btn-ghost h-8 px-2.5 text-[11px] text-red-300 hover:text-red-200" aria-label="Remove member"><UserMinus size={13}/>Remove</button>}</div>}</div>})}</div>
             </section>
 
-            <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#151517]"><div className="flex items-center gap-2 border-b border-white/[0.06] px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-white/30"><Shield size={13} className="text-[#d6a83f]"/>Permissions</div><div className="divide-y divide-white/[0.06]">{managedPermissions.map(([key, label]) => { const enabled = managedEntity?.permissions?.[key] ?? true; return <div key={key} className="flex items-center justify-between px-4 py-3.5"><span className="text-xs text-[#c8c8cc]">{label}</span><button onClick={() => toggleManagedPermission(key)} className={cn('relative h-6 w-11 rounded-full border transition', enabled ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')} aria-label={`Toggle ${label}`}><span className={cn('absolute top-0.5 h-4.5 w-4.5 rounded-full transition-all', enabled ? 'left-[22px] bg-[#f2c75c]' : 'left-0.5 bg-[#c8c8cc]')}/></button></div>})}</div><p className="mt-3 px-4 pb-3 text-[10px] leading-relaxed text-white/25">Changes take effect when you save and are enforced by VANTA on the server.</p></section>
+            {isManagedOwner && (
+              <section className="mt-4 rounded-2xl border border-[#d6a83f]/25 bg-[#d6a83f]/[0.04]">
+                <div className="flex items-center gap-2 border-b border-[#d6a83f]/15 px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-[#d6a83f]"><Crown size={13}/>Transfer ownership</div>
+                <div className="px-4 py-3.5">
+                  <p className="text-[10px] leading-relaxed text-white/40">Pass this {activeConv.type === 'group' ? 'group' : 'channel'} to another member. You will keep administrator access but will no longer be the owner.</p>
+                  {ownershipConfirm ? (
+                    <div className="mt-3">
+                      <div className="rounded-xl border border-[#d6a83f]/25 bg-[#d6a83f]/[0.07] px-3.5 py-3">
+                        <p className="text-xs font-semibold text-[#f5f5f5]">Transfer to @{ownershipConfirm.user?.username || 'this member'}?</p>
+                        <p className="mt-1.5 text-[10px] leading-relaxed text-white/40">After confirming, they become the owner and can manage members, permissions and settings. This only takes effect after you confirm.</p>
+                      </div>
+                      <div className="mt-3 flex items-center gap-2">
+                        <button type="button" onClick={() => setOwnershipConfirm(null)} disabled={managementBusy === 'ownership'} className="btn-ghost h-9 flex-1 text-xs disabled:opacity-50">Cancel</button>
+                        <button type="button" onClick={() => void confirmOwnershipTransfer()} disabled={managementBusy === 'ownership'} className="btn-gold h-9 flex-1 text-xs disabled:opacity-60">{managementBusy === 'ownership' ? <Loader2 size={14} className="animate-spin"/> : 'Confirm transfer'}</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-3 space-y-0.5">
+                      {(managedEntity?.members || []).filter((member: any) => member.userId !== user?.id).map((member: any) => (
+                        <button key={member.userId} type="button" onClick={() => setOwnershipConfirm(member)} className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition hover:bg-white/[0.05]" aria-label={`Transfer ownership to ${member.user?.fullName || member.user?.username}`}>
+                          <Avatar src={member.user?.avatar} alt={member.user?.username || 'Member'} size="sm" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-medium text-[#f5f5f5]">{member.user?.fullName || member.user?.username}</p>
+                            <p className="truncate text-[10px] text-white/35">@{member.user?.username}</p>
+                          </div>
+                          <ChevronRight size={14} className="shrink-0 text-white/30" />
+                        </button>
+                      ))}
+                      {(!managedEntity?.members || managedEntity.members.filter((member: any) => member.userId !== user?.id).length === 0) && (
+                        <p className="py-4 text-center text-[10px] text-white/30">There are no other members you can transfer ownership to.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#151517]"><div className="flex items-center gap-2 border-b border-white/[0.06] px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-white/30"><Shield size={13} className="text-[#d6a83f]"/>Permissions</div><div className="border-b border-white/[0.06] px-4 py-3"><p className="text-xs font-medium text-white/70">Who can do the following?</p><p className="mt-1 text-[10px] leading-relaxed text-white/35">Turning a toggle on extends the action to every member of this {activeConv.type}. Leaving it off keeps the action limited to administrators. Rules are enforced by VANTA on the server, so they still apply on any device.</p></div><div className="divide-y divide-white/[0.06]">{managedPermissions.map(([key, label]) => { const enabled = managedEntity?.permissions?.[key] ?? true; return <div key={key} className="flex items-start justify-between gap-3 px-4 py-3.5"><div className="min-w-0 flex-1"><p className="text-xs font-medium text-[#c8c8cc]">{label}</p><p className="mt-0.5 text-[10px] leading-relaxed text-white/30">{permissionHints[key]}</p></div><button onClick={() => toggleManagedPermission(key)} className={cn('relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition', enabled ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')} aria-label={`Toggle ${label}`} aria-checked={enabled} role="switch"><span className={cn('absolute top-0.5 h-4.5 w-4.5 rounded-full transition-all', enabled ? 'left-[22px] bg-[#f2c75c]' : 'left-0.5 bg-[#c8c8cc]')}/></button></div>})}</div><p className="mt-3 px-4 pb-3 text-[10px] leading-relaxed text-white/25">Changes take effect when you save and are enforced by VANTA on the server.</p></section>
 
             {/* Danger zone — irreversible actions kept apart (not shown to the owner: they cannot leave and must delete the group instead) */}
             {activeConv.currentRole !== 'OWNER' && <section className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/[0.04]"><div className="flex items-center gap-2 border-b border-red-500/15 px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-red-400"><Ban size={13}/>Danger zone</div><div className="flex items-start gap-3 px-4 py-3.5"><div className="min-w-0 flex-1"><p className="text-sm text-white/80">Leave this {activeConv.type === 'group' ? 'group' : 'channel'}</p><p className="text-[10px] text-white/40">You will lose access to this conversation and its messages.</p></div><button onClick={() => setLeaveDialog(true)} className="btn-destructive h-9 px-3 text-xs">Leave {activeConv.type === 'group' ? 'Group' : 'Channel'}</button></div></section>}

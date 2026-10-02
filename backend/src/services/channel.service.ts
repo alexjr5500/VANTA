@@ -1,6 +1,18 @@
 import { prisma } from "../prisma";
 import { chatService } from "./chat.service";
 import { conflict } from "../utils/api-error";
+import { auditLog } from "../security/auditLog";
+
+/** Parses the JSON permission blob stored on the linked Conversation. */
+function parsePermissions(value: string | null | undefined): Record<string, boolean> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 export class ChannelService {
   private async withConversationSettings(channel: any) {
@@ -64,19 +76,28 @@ export class ChannelService {
     };
   }
 
-  async getChannels(cursor?: string, limit: number = 20) {
+  async getChannels(cursor?: string, limit: number = 20, requesterId?: string) {
+    // Public discovery must NEVER surface private channels. The access rule is
+    // enforced here by joining the linked Conversation and keeping only the
+    // discoverable (non-PRIVATE) ones — mirroring the Discover feed.
     const channels = await prisma.channel.findMany({
       orderBy: { createdAt: "desc" },
-      take: limit + 1,
+      take: limit * 3 + 2,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       include: {
+        conversation: { select: { visibility: true, id: true } },
         owner: { select: { id: true, username: true, avatar: true } },
         _count: { select: { members: true, messages: true } },
       },
     });
-
-    const nextCursor = channels.length > limit ? channels.pop()?.id : undefined;
-    return { items: channels, nextCursor };
+    const publicChannels = channels.filter(channel => channel.conversation?.visibility !== "PRIVATE");
+    const page = publicChannels.slice(0, limit + 1);
+    const nextCursor = page.length > limit ? page.pop()?.id : undefined;
+    const items = page.map(channel => {
+      const { conversation: conversationRef, ...rest } = channel;
+      return { ...rest, conversationId: conversationRef?.id ?? undefined, visibility: conversationRef?.visibility || "PUBLIC" };
+    });
+    return { items, nextCursor };
   }
 
   async getChannelById(id: string, requesterId?: string) {
@@ -120,6 +141,29 @@ export class ChannelService {
       throw new Error("Only channel administrators can edit this channel");
     }
 
+    // Backend enforcement of the channel permission toggles. A non-owner may
+    // edit channel info / subscribers only while the owner granted it.
+    const channelPermissions = channel.conversationId
+      ? parsePermissions((await prisma.conversation.findUnique({
+          where: { id: channel.conversationId },
+          select: { permissions: true },
+        }))?.permissions)
+      : {};
+    if (requesterId !== channel.ownerId) {
+      const infoChanges = data.name !== undefined
+        || data.description !== undefined
+        || data.avatar !== undefined
+        || data.category !== undefined
+        || data.visibility !== undefined
+        || data.handle !== undefined;
+      if (infoChanges && channelPermissions.manageChannelInfo === false) {
+        throw new Error("Only the channel owner can manage channel information");
+      }
+      if (data.memberIds && channelPermissions.manageSubscribers === false) {
+        throw new Error("Only the channel owner can manage subscribers");
+      }
+    }
+
     if (data.name !== undefined && (!data.name.trim() || data.name.trim().length > 60)) {
       throw new Error("Channel name must be between 1 and 60 characters");
     }
@@ -155,7 +199,7 @@ export class ChannelService {
 
     await prisma.$transaction(async tx => {
       await tx.channel.update({ where: { id: channelId }, data: { name: safeName, description: safeDescription, avatar: safeAvatar, category: safeCategory } });
-      if (channel.conversationId) await tx.conversation.update({ where: { id: channel.conversationId }, data: { name: safeName, description: safeDescription, avatar: safeAvatar, visibility: safeVisibility, ...(safeHandle !== undefined ? { handle: safeHandle } : {}), ...(data.permissions !== undefined ? { permissions: JSON.stringify(Object.fromEntries(Object.entries(data.permissions).filter(([key, value]) => ["postMessages", "editMessages", "deleteMessages", "manageChannelInfo", "manageSubscribers", "manageInviteLinks"].includes(key) && typeof value === "boolean"))) } : {}) } });
+      if (channel.conversationId) await tx.conversation.update({ where: { id: channel.conversationId }, data: { name: safeName, description: safeDescription, avatar: safeAvatar, visibility: safeVisibility, ...(safeHandle !== undefined ? { handle: safeHandle } : {}), ...(data.permissions !== undefined ? { permissions: JSON.stringify(Object.fromEntries(Object.entries(data.permissions).filter(([key, value]) => ["postMessages", "editMessages", "deleteMessages", "manageChannelInfo", "manageSubscribers"].includes(key) && typeof value === "boolean"))) } : {}) } });
       if (requestedMemberIds) {
         const currentIds = channel.members.map((member: any) => member.userId);
         const toAdd = requestedMemberIds.filter(id => !currentIds.includes(id));
@@ -221,7 +265,17 @@ export class ChannelService {
     });
   }
 
-  async getMessages(channelId: string, cursor?: string, limit: number = 50) {
+  async getMessages(channelId: string, requesterId?: string, cursor?: string, limit: number = 50) {
+    // Authorization: only channel members may read posts. Private and PUBLIC
+    // channels alike restrict history reads to the subscriber list, so this
+    // endpoint can never leak posts to non-members.
+    if (requesterId) {
+      const member = await prisma.channelMember.findUnique({
+        where: { channelId_userId: { channelId, userId: requesterId } },
+        select: { id: true },
+      });
+      if (!member) throw new Error("Not a member of this channel");
+    }
     const messages = await prisma.channelMessage.findMany({
       where: { channelId },
       orderBy: { createdAt: "desc" },
@@ -232,6 +286,54 @@ export class ChannelService {
 
     const nextCursor = messages.length > limit ? messages.pop()?.id : undefined;
     return { items: messages.reverse(), nextCursor };
+  }
+
+  /**
+   * Transfer channel ownership to another member.
+   *
+   * Atomic, single-transaction ownership change:
+   *   - `Channel.ownerId` moves to the target member
+   *   - the new owner's member/participant role becomes OWNER
+   *   - the previous owner drops to ADMIN (still privileged, no longer owner)
+   *
+   * Only the current owner may transfer, and only to an existing member. The
+   * change is persisted, audited, and the caller broadcasts a realtime refresh.
+   */
+  async transferOwnership(channelId: string, requesterId: string, targetUserId: string) {
+    const normalizedTarget = typeof targetUserId === "string" ? targetUserId.trim() : "";
+    if (!normalizedTarget) throw new Error("Please choose a member to transfer ownership to.");
+    if (normalizedTarget === requesterId) throw new Error("You are already the owner of this channel");
+
+    const channel: any = await prisma.channel.findUnique({
+      where: { id: channelId },
+      include: { members: true },
+    });
+    if (!channel) throw new Error("Channel not found");
+    if (channel.ownerId !== requesterId) throw new Error("Only the channel owner can transfer ownership");
+
+    const target = channel.members.find((m: any) => m.userId === normalizedTarget);
+    if (!target) throw new Error("The selected member is no longer part of this channel");
+
+    await prisma.$transaction(async tx => {
+      await tx.channel.update({ where: { id: channelId }, data: { ownerId: normalizedTarget } });
+      // New owner gains owner-level privileges; previous owner becomes ADMIN.
+      await tx.channelMember.updateMany({ where: { channelId, userId: normalizedTarget }, data: { role: "OWNER" } });
+      await tx.channelMember.updateMany({ where: { channelId, userId: requesterId }, data: { role: "ADMIN" } });
+      if (channel.conversationId) {
+        await tx.participant.updateMany({ where: { conversationId: channel.conversationId, userId: normalizedTarget }, data: { role: "OWNER" } });
+        await tx.participant.updateMany({ where: { conversationId: channel.conversationId, userId: requesterId }, data: { role: "ADMIN" } });
+      }
+    });
+
+    auditLog.log({
+      userId: requesterId,
+      action: "CHANNEL_OWNERSHIP_TRANSFERRED",
+      metadata: { channelId, channelName: channel.name, from: requesterId, to: normalizedTarget, conversationId: channel.conversationId },
+      severity: "WARNING",
+    }).catch(() => undefined);
+
+    const updated = await this.getChannelById(channelId);
+    return updated;
   }
 
   async deleteChannel(id: string, userId: string) {

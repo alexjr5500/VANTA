@@ -118,7 +118,7 @@ export default function CommunityPage({ params }: { params: { id: string } }) {
             </span>
             <h1 className="mt-3 flex items-center gap-1.5 text-lg font-semibold">{community.name}{channel ? <Hash size={14} className="shrink-0 text-[#c9a227]" /> : <Users size={14} className="shrink-0 text-[#c9a227]" />}</h1>
             <p className="mt-1 text-xs text-[#8a8a8a]"><span className="font-semibold uppercase tracking-[.14em]">{channel ? 'Channel' : 'Group'}</span>{handle ? ` · ${handle}` : ''}{community._count ? ` · ${countLabel(community._count.members)} members` : ''}</p>
-            <p className="mt-3 max-w-md text-sm leading-6 text-[#b8b8b8]">{community.description || community.category || (channel ? 'A public channel on VANTA — join to follow along.' : 'A public group on VANTA — join to take part.')}</p>
+            <p className="mt-3 max-w-md break-words whitespace-pre-wrap text-sm leading-6 text-[#b8b8b8]">{community.description || community.category || (channel ? 'A public channel on VANTA — join to follow along.' : 'A public group on VANTA — join to take part.')}</p>
             {owner?.username && <p className="mt-3 text-[11px] text-[#666]">Created by @{owner.username}</p>}
           </div>
           <div className="flex items-center gap-2 px-5 py-4">

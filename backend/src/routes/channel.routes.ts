@@ -10,13 +10,15 @@ import {
   sendChannelMessage,
   getChannelMessages,
   deleteChannel,
+  transferChannelOwnership,
 } from "../controllers/channel.controller";
 
 const router = Router();
 
-// Public routes
+// Public routes — discovery only. Channel posts are never public: any user
+// reading messages must authenticate AND be a channel member (enforced in the
+// channel service).
 router.get("/", getChannels);
-router.get("/:id/messages", getChannelMessages);
 
 // Protected routes
 router.post("/", authenticateJWT, createChannel);
@@ -25,6 +27,8 @@ router.put("/:id", authenticateJWT, updateChannel);
 router.post("/:id/join", authenticateJWT, joinChannel);
 router.post("/:id/leave", authenticateJWT, leaveChannel);
 router.post("/:id/messages", authenticateJWT, sendChannelMessage);
+router.get("/:id/messages", authenticateJWT, getChannelMessages);
+router.post("/:id/transfer-ownership", authenticateJWT, transferChannelOwnership);
 router.delete("/:id", authenticateJWT, deleteChannel);
 
 export default router;
