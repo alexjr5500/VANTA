@@ -3,114 +3,140 @@
  * ---------------
  * Pure stage-layout rules for the VANTA live room (host + up to 4 guests).
  *
- * The layout is PORTRAIT-FIRST: the phone is meant to stay upright, so every
- * participant count is solved for a tall/narrow viewport first:
- *  - 1 person  → host fills the screen
- *  - 2 people  → host and guest split the available height 50/50 (stacked)
- *  - 3 people  → host on top (larger), 2 guests side by side below
- *  - 4 people  → host on top, 3 guests below (2 + 1 full-width)
- *  - 5 people  → host on top, 4 guests in a 2×2 grid below
- * On landscape screens (md+) the host moves to the left column and guests flow
- * to the right, matching the original desktop design.
+ * The layout is a REAL grid algorithm expressed as CSS grid geometry
+ * (template-areas / columns / rows). The renderer stays a dumb consumer and
+ * every rule is unit-testable.
  *
- * All sizes are expressed with flex-grow / grid fractions of the AVAILABLE
- * viewport — never fixed `dvh`/pixel heights — so the stage can never overflow
- * a portrait screen, and 4x3 tiles keep their correct aspect ratio. The video
- * fit itself lives in the renderer (`object-contain` full-bleed vs
+ * HOST ANCHORING — the host is ALWAYS placed into the primary grid area via the
+ * explicit `isHost` role, never by array order. A reordered participant list
+ * can therefore never move the host to a secondary position.
+ *
+ * Arrangements (mirroring the product spec):
+ *   - 1 person  → SOLO: host fills the stage (object-contain + blurred backdrop)
+ *   - 2 people  → SPLIT: host LEFT | guest RIGHT (50/50)
+ *   - 3 people  → host + guest on the top row, third guest spans the bottom row
+ *   - 4 people  → 2×2 grid, host top-left
+ *   - 5 people  → host anchors the left column (2 cells tall), 4 guests flow
+ *                 into the right column + bottom row — an adaptive grid that
+ *                 keeps faces readable and the host prioritised.
+ *
+ * All sizes are `minmax(0, 1fr)` fractions of the available viewport — never
+ * fixed `dvh`/pixel heights — so the stage can never overflow any screen.
+ * The video fit itself lives in the renderer (`object-contain` solo vs
  * `object-cover` tiles).
- *
- * The layout is deliberately expressed as data (Tailwind class strings) so the
- * renderer stays a dumb consumer and every rule is unit-testable.
  */
 
 export const MAX_STAGE_PARTICIPANTS = 5;
 
-export type StageArrangement = 'solo' | 'split' | 'host-col' | 'host-col-grid';
+export type StageArrangement = 'solo' | 'split' | 'host-col' | 'host-grid' | 'host-grid5';
 
 export interface StageLayout {
-  /** Which responsive arrangement the stage should use. */
+  /** Which arrangement the stage uses for this participant count. */
   arrangement: StageArrangement;
-  /** Classes of the always-present outer stage container. */
+  /** Classes of the always-present outer grid container. */
   containerClass: string;
-  /** Tile classes for the host (or the single/paired tile in solo/split). */
+  /** CSS `grid-template-columns` value (fractions of the available width). */
+  columns: string;
+  /** CSS `grid-template-rows` value (fractions of the available height). */
+  rows: string;
+  /** CSS `grid-template-areas` strings — one quoted row per array element. */
+  areas: string[];
+  /** Grid-area every HOST tile renders into. */
+  hostArea: string;
+  /** Guest area names in their visual row-major order. */
+  guestAreas: string[];
+  /** Base classes for every tile. */
+  tileClass: string;
+  /** Extra classes applied only to the host tile (subtle gold identity ring). */
   hostTileClass: string;
-  /** Wrapper around the host tile for 3+ participant layouts (undefined for ≤ 2). */
-  hostWrapperClass: string | undefined;
-  /** Tile classes for every guest tile. */
-  guestTileClass: string;
-  /** Container of guest tiles for 3+ participant layouts (undefined for ≤ 2). */
-  guestAreaClass: string | undefined;
-  /** Extra class for the LAST guest tile when it must span a full row (odd guest counts in a 2-col portrait grid). */
-  guestSpanClass: string | undefined;
-  /** 1 = guests stack in a column, 2 = guests fill a 2×2 grid. */
-  guestColumns: 1 | 2;
+  /** Solo renders `object-contain` over a blurred full-bleed backdrop. */
+  soloContain: boolean;
 }
 
-/** Outer shell shared by every participant count. Portrait stacks, landscape splits. */
-export const STAGE_CONTAINER_CLASS = 'absolute inset-0 flex flex-col gap-1.5 p-1.5 md:flex-row md:gap-2 md:p-2';
+/** The host always anchors this named grid area. */
+export const HOST_AREA = 'host';
+
+/** Outer shell shared by every participant count — an inset CSS grid. */
+export const STAGE_CONTAINER_CLASS = 'absolute inset-0 grid gap-1.5 p-1.5 md:gap-2 md:p-2';
+
+const TILE_CLASS = 'live-stage-tile min-h-0 min-w-0 overflow-hidden rounded-2xl';
 
 const SOLO: StageLayout = {
   arrangement: 'solo',
   containerClass: STAGE_CONTAINER_CLASS,
-  hostTileClass: 'flex-1',
-  hostWrapperClass: undefined,
-  guestTileClass: 'flex-1',
-  guestAreaClass: undefined,
-  guestSpanClass: undefined,
-  guestColumns: 1,
+  columns: 'minmax(0, 1fr)',
+  rows: 'minmax(0, 1fr)',
+  areas: ['"host"'],
+  hostArea: HOST_AREA,
+  guestAreas: [],
+  tileClass: TILE_CLASS,
+  hostTileClass: '',
+  soloContain: true,
 };
 
 const SPLIT: StageLayout = {
   arrangement: 'split',
   containerClass: STAGE_CONTAINER_CLASS,
-  // `flex-1` distributes the AVAILABLE main axis: stacked in portrait (50/50
-  // height), side-by-side in landscape (50/50 width). No fixed heights, so it
-  // can never overflow a portrait viewport.
-  hostTileClass: 'min-h-0 flex-1',
-  hostWrapperClass: undefined,
-  guestTileClass: 'min-h-0 flex-1',
-  guestAreaClass: undefined,
-  guestSpanClass: undefined,
-  guestColumns: 1,
+  columns: 'minmax(0, 1fr) minmax(0, 1fr)',
+  rows: 'minmax(0, 1fr)',
+  areas: ['"host g1"'],
+  hostArea: HOST_AREA,
+  guestAreas: ['g1'],
+  tileClass: TILE_CLASS,
+  hostTileClass: '',
+  soloContain: false,
 };
 
 const HOST_COL: StageLayout = {
   arrangement: 'host-col',
   containerClass: STAGE_CONTAINER_CLASS,
-  hostTileClass: 'h-full w-full',
-  // Portrait: full width on top, 5/9 of the stage height (guests take 4/9).
-  // Landscape: full height, 60% (later 64%) of the width on the left.
-  hostWrapperClass: 'flex min-h-0 w-full grow-[5] md:h-full md:grow-0 md:w-[60%] lg:w-[64%]',
-  guestTileClass: 'min-h-0 min-w-0',
-  guestAreaClass:
-    'grid min-h-0 w-full grow-[4] grid-cols-2 content-start gap-1.5 md:h-full md:grow md:w-[40%] md:flex md:flex-col md:gap-2 lg:w-[36%]',
-  guestSpanClass: 'col-span-2',
-  guestColumns: 2,
+  columns: 'minmax(0, 1fr) minmax(0, 1fr)',
+  rows: 'minmax(0, 1fr) minmax(0, 1fr)',
+  areas: ['"host g1"', '"g2 g2"'],
+  hostArea: HOST_AREA,
+  guestAreas: ['g1', 'g2'],
+  tileClass: TILE_CLASS,
+  hostTileClass: '',
+  soloContain: false,
 };
 
-const HOST_COL_GRID: StageLayout = {
-  arrangement: 'host-col-grid',
+const HOST_GRID: StageLayout = {
+  arrangement: 'host-grid',
   containerClass: STAGE_CONTAINER_CLASS,
-  hostTileClass: 'h-full w-full',
-  // Portrait: host ~44% of the height, guests ~56% in a 2×2 grid below.
-  // Landscape: full height, 56–60% of the width, guests 2×2 on the right.
-  hostWrapperClass: 'flex min-h-0 w-full grow-[7] md:h-full md:grow-0 md:w-[56%] lg:w-[60%]',
-  guestTileClass: 'min-h-0 min-w-0',
-  guestAreaClass: 'grid min-h-0 w-full grow-[9] grid-cols-2 content-start gap-1.5 md:h-full md:grow md:grid-cols-2 md:w-[44%] md:gap-2 lg:w-[40%]',
-  guestSpanClass: undefined,
-  guestColumns: 2,
+  columns: 'minmax(0, 1fr) minmax(0, 1fr)',
+  rows: 'minmax(0, 1fr) minmax(0, 1fr)',
+  areas: ['"host g1"', '"g2 g3"'],
+  hostArea: HOST_AREA,
+  guestAreas: ['g1', 'g2', 'g3'],
+  tileClass: TILE_CLASS,
+  hostTileClass: '',
+  soloContain: false,
 };
 
-/** Classify a participant count into its responsive stage arrangement. */
+const HOST_GRID5: StageLayout = {
+  arrangement: 'host-grid5',
+  containerClass: STAGE_CONTAINER_CLASS,
+  columns: 'minmax(0, 1fr) minmax(0, 1fr)',
+  rows: 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)',
+  areas: ['"host g1"', '"host g2"', '"g3 g4"'],
+  hostArea: HOST_AREA,
+  guestAreas: ['g1', 'g2', 'g3', 'g4'],
+  tileClass: TILE_CLASS,
+  hostTileClass: '',
+  soloContain: false,
+};
+
+/** Classify a participant count into its stage arrangement. */
 export function stageArrangementFor(participantCount: number): StageArrangement {
   if (participantCount <= 1) return 'solo';
   if (participantCount === 2) return 'split';
-  if (participantCount === 3 || participantCount === 4) return 'host-col';
-  // 5+ (or defensive negative input) flows excess guests into the 2×2 grid.
-  return 'host-col-grid';
+  if (participantCount === 3) return 'host-col';
+  if (participantCount === 4) return 'host-grid';
+  // 5+ (or defensive negative input) flows extra guests into the 2×2 cluster.
+  return 'host-grid5';
 }
 
-/** Resolve the full class-string layout for a participant count. */
+/** Resolve the full layout for a participant count. */
 export function stageLayoutFor(participantCount: number): StageLayout {
   switch (stageArrangementFor(Math.max(0, participantCount))) {
     case 'solo':
@@ -119,7 +145,9 @@ export function stageLayoutFor(participantCount: number): StageLayout {
       return SPLIT;
     case 'host-col':
       return HOST_COL;
-    case 'host-col-grid':
-      return HOST_COL_GRID;
+    case 'host-grid':
+      return HOST_GRID;
+    case 'host-grid5':
+      return HOST_GRID5;
   }
 }

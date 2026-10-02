@@ -962,13 +962,14 @@ export default function GoLivePage() {
         stream: vids.length || auds.length ? new MediaStream([...vids, ...auds]) : null,
         cameraOn: vids.length > 0,
         micOn: hasAudio,
+        speaking: lk.activeSpeakers.includes(p.identity),
       });
     });
     return tiles.slice(0, 4);
     // `guestTick` (not just `lk.participants`) guarantees the tiles refresh the
     // moment a remote track is subscribed — otherwise the host would keep a
     // placeholder/avatar tile until an unrelated room event re-rendered them.
-  }, [lk.room, phase, guestStage.guests, lk.participants, guestTick]);
+  }, [lk.room, phase, guestStage.guests, lk.participants, lk.activeSpeakers, guestTick]);
 
   // ---------------------------------------------------------------------------
   // Render helpers
@@ -1003,6 +1004,7 @@ export default function GoLivePage() {
       // Self-monitor is intentionally muted so the host never hears their own
       // microphone echo from the stage tile.
       muted: true,
+      speaking: lk.activeSpeakers.includes(String(user?.id)),
     };
     return [hostTile, ...stageGuests].slice(0, 5);
     // eslint-disable-next-line react-hooks/exhaustive-deps

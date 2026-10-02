@@ -3,25 +3,22 @@
 /**
  * LiveParticipantGrid
  * -------------------
- * Responsive live-stage layout for 1–5 participants (host + up to 4 guests).
- * PORTRAIT-FIRST: the phone stays upright, the host is always visually
- * prioritized:
- *  - 1 person  → host fills the screen (full camera field of view, contained)
- *  - 2 people  → host and guest split the available height 50/50 (stacked)
- *  - 3 people  → host on top (larger), 2 guests side by side below
- *  - 4 people  → host on top, 3 guests below (2 + 1 full-width)
- *  - 5 people  → host on top, 4 guests in a 2×2 grid below
- * On landscape screens (md+) the host moves to the left and guests flow right.
+ * Responsive VANTA live-stage for 1–5 participants (host + up to 4 guests).
  *
- * Sizes are flex/grid fractions of the AVAILABLE viewport (no fixed heights)
- * so the stage can never overflow a portrait screen. The solo full-bleed tile
- * renders its video `object-contain` (full camera FOV — head/shoulders and
- * surroundings) over a blurred full-bleed backdrop; grid tiles use
- * `object-cover object-center` so no face is stretched. Video <video>
- * elements are keyed by participant id and their MediaStream is debounced into
- * stable instances, so chat/event ticks never restart a playing tile.
+ * Layout comes from `liveStageLayout` as explicit CSS-grid geometry. The host
+ * is ALWAYS anchored to the primary `host` grid area via its explicit role
+ * (never array order), so a reordered roster can never move the host.
+ *
+ * Every tile mounts/unmounts through framer-motion (scale + fade + layout
+ * reflow) so joins and leaves animate smoothly with GPU-friendly transforms —
+ * real stream playback is untouched (MediaStreams are debounced into stable
+ * instances, so chat/event ticks never restart a playing tile).
+ *
+ * The speaking state is driven by REAL audio state (LiveKit active-speaker
+ * identities passed down from the page) and renders as a soft breathing glow.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
@@ -43,9 +40,11 @@ export interface StageParticipant {
    * True when this tile plays a participant's OWN media (self view). Self
    * monitors stay muted so a host/guest never hears their own mic echo.
    * Remote participants default to audible — their real audio track is
-   * attached to the tile element as part of `stream` (Task 4/5).
+   * attached to the tile element as part of `stream`.
    */
   muted?: boolean;
+  /** True when the participant is actively speaking (real audio levels). */
+  speaking?: boolean;
 }
 
 function StageVideo({ stream, muted = false, fit = 'cover' }: { stream: MediaStream | null; muted?: boolean; fit?: 'cover' | 'contain' }) {
@@ -68,7 +67,7 @@ function StageVideo({ stream, muted = false, fit = 'cover' }: { stream: MediaStr
   }, [stream, muted]);
   useEffect(() => {
     // The full-bleed blurred backdrop duplicates the same source. `object-cover`
-    // + blur fills the whole viewport so the contained primary copy never shows
+    // + blur fills the whole tile so the contained primary copy never shows
     // black bars. It is ALWAYS muted — only the primary layer is audible.
     const back = backdropRef.current;
     if (!back) return;
@@ -118,10 +117,6 @@ function StageVideo({ stream, muted = false, fit = 'cover' }: { stream: MediaStr
         muted={muted}
         className={
           fit === 'contain'
-            // Contain shows the FULL camera field of view (head, shoulders and
-            // surrounding frame) instead of a tight `cover` face crop when the
-            // stage is taller/narrower than the 16:9 camera source — the camera
-            // itself was never zoomed.
             ? 'relative h-full w-full object-contain'
             : 'relative h-full w-full object-cover object-center'
         }
@@ -130,11 +125,10 @@ function StageVideo({ stream, muted = false, fit = 'cover' }: { stream: MediaStr
     </>
   );
 }
-
-function Tile({ p, className, showCameraOff, fit = 'cover' }: { p: StageParticipant; className?: string; showCameraOff?: boolean; fit?: 'cover' | 'contain' }) {
+function Tile({ p, fit = 'cover' }: { p: StageParticipant; fit?: 'cover' | 'contain' }) {
   const noVideo = !p.stream || !p.cameraOn;
   return (
-    <div className={cn('relative overflow-hidden rounded-xl bg-[#0D0D0F]', className)}>
+    <div className="absolute inset-0">
       {/* Remote media (video + audio) attached via srcObject. When a guest only
           publishes audio (camera disabled), the tile still routes their mic
           through this element — an avatar overlays the black video surface. */}
@@ -149,34 +143,68 @@ function Tile({ p, className, showCameraOff, fit = 'cover' }: { p: StageParticip
         </div>
       )}
 
-      {/* Status + identity chrome */}
-      <div className="absolute inset-x-0 bottom-0 flex items-center gap-1.5 bg-gradient-to-t from-black/70 to-transparent px-2 pb-1.5 pt-5">
-        <span className="flex min-w-0 items-center gap-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">
-          <span className="shrink-0 font-semibold">{p.username}</span>
-          {p.verified && p.verificationType && <VerificationBadge type={p.verificationType} size="xs" />}
-          {p.isHost && <span className="ml-0.5 rounded bg-[#D6A83F]/25 px-1 text-[9px] font-bold uppercase tracking-wide text-[#F2C75C]">Host</span>}
+      {/* Camera-off chip */}
+      {noVideo && (
+        <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full border border-white/10 bg-black/55 px-2 py-1 text-[9.5px] font-semibold uppercase tracking-wide text-white/70 backdrop-blur-md">
+          <VideoOff size={11} aria-hidden /> Camera off
         </span>
-        <span className="ml-auto flex items-center gap-1">
-          {!p.micOn && (
-            <span className="grid h-5 w-5 place-items-center rounded-full bg-black/60" title="Muted">
-              <MicOff size={11} />
+      )}
+
+      {/* Identity + status chrome over a soft gradient */}
+      <div className="absolute inset-x-0 bottom-0 z-[3] flex items-end gap-2 bg-gradient-to-t from-black/75 via-black/25 to-transparent px-2 pb-2 pt-8">
+        <span className="flex min-w-0 items-center gap-1.5 rounded-full border border-white/10 bg-black/45 px-2 py-1 backdrop-blur-md">
+          <span className="shrink-0 max-w-[9rem] truncate text-[12px] font-semibold text-white">{p.username}</span>
+          {p.verified && p.verificationType && <VerificationBadge type={p.verificationType} size="xs" />}
+          {p.isHost && (
+            <span className="ml-0.5 inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-[#C9A227] to-[#F2C75C] px-1.5 py-[2px] text-[8.5px] font-extrabold uppercase tracking-[0.12em] text-black">
+              Host
             </span>
           )}
-          {noVideo && (
-            <span className="grid h-5 w-5 place-items-center rounded-full bg-black/60" title="Camera off">
-              <VideoOff size={11} />
+        </span>
+        <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          {p.speaking && (
+            <span
+              className="inline-flex h-5 items-center gap-[2px] rounded-full border border-purple-300/25 bg-black/55 px-1.5 backdrop-blur-md"
+              title="Speaking"
+              role="status"
+              aria-label={`${p.username} is speaking`}
+            >
+              <span className="h-2 w-[2.5px] rounded-full bg-purple-300/90" />
+              <span className="h-3 w-[2.5px] rounded-full bg-purple-200" />
+              <span className="h-2 w-[2.5px] rounded-full bg-purple-300/90" />
+            </span>
+          )}
+          {!p.micOn && (
+            <span
+              className="grid h-5 w-5 place-items-center rounded-full border border-white/10 bg-black/60"
+              role="status"
+              aria-label={`${p.username} microphone is muted`}
+            >
+              <MicOff size={11} aria-hidden />
             </span>
           )}
         </span>
       </div>
-      {showCameraOff && noVideo && <span className="absolute right-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/70">Camera off</span>}
     </div>
   );
 }
-
 export default function LiveParticipantGrid({ participants }: { participants: StageParticipant[] }) {
   const tiles = participants.length > 0 ? participants : [];
   const layout = stageLayoutFor(tiles.length);
+
+  // Order the roster by ROLE: the host always occupies the primary area,
+  // guests flow into the remaining areas in their arrival order. This is
+  // independent of how the parent ordered the array.
+  const ordered = useMemo(() => {
+    const hostIndex = participants.findIndex((p) => p.isHost);
+    let host: StageParticipant | undefined;
+    const guests: StageParticipant[] = [];
+    participants.forEach((p, index) => {
+      if (index === hostIndex) host = p;
+      else guests.push(p);
+    });
+    return host ? [host, ...guests] : participants;
+  }, [participants]);
 
   // Participants are re-built into fresh MediaStreams on every subscription
   // tick, which would tear down and restart each tile's video/audio pipe on
@@ -197,56 +225,36 @@ export default function LiveParticipantGrid({ participants }: { participants: St
     return stream;
   };
 
-  const tileFor = (p: StageParticipant, className: string, options?: { fit?: 'cover' | 'contain'; span?: boolean }) => (
-    <Tile
-      key={p.id}
-      className={cn(className, options?.span ? layout.guestSpanClass : undefined)}
-      p={{ ...p, stream: stabilize(p.id, p.stream) }}
-      fit={options?.fit ?? 'cover'}
-    />
-  );
+  const gridStyle = {
+    gridTemplateAreas: layout.areas.join(' '),
+    gridTemplateColumns: layout.columns,
+    gridTemplateRows: layout.rows,
+  };
 
   return (
-    <div className={layout.containerClass}>
-      {layout.arrangement === 'solo' && tiles.length === 1 && (
-        <Tile fit="contain" className={layout.hostTileClass} p={{ ...tiles[0], stream: stabilize(tiles[0].id, tiles[0].stream) }} />
-      )}
-
-      {layout.arrangement === 'split' && tiles.length === 2 && (
-        <>
-          <Tile className={layout.hostTileClass} p={{ ...tiles[0], stream: stabilize(tiles[0].id, tiles[0].stream) }} />
-          <Tile className={layout.guestTileClass} p={{ ...tiles[1], stream: stabilize(tiles[1].id, tiles[1].stream) }} />
-        </>
-      )}
-
-      {layout.arrangement === 'host-col' && (tiles.length === 3 || tiles.length === 4) && (
-        <>
-          {/* Host: top (full width) on portrait, left column on landscape */}
-          <div className={layout.hostWrapperClass}>
-            <Tile className={layout.hostTileClass} p={{ ...tiles[0], stream: stabilize(tiles[0].id, tiles[0].stream) }} />
-          </div>
-          <div className={layout.guestAreaClass}>
-            {tiles.slice(1).map((p, index) => (
-              tileFor(p, layout.guestTileClass, {
-                // 4 participants = 3 guests in a 2-col portrait grid: the last
-                // guest spans the full row instead of leaving a dead cell.
-                span: layout.guestSpanClass !== undefined && tiles.length === 4 && index === tiles.length - 2,
-              })
-            ))}
-          </div>
-        </>
-      )}
-
-      {layout.arrangement === 'host-col-grid' && tiles.length === 5 && (
-        <>
-          <div className={layout.hostWrapperClass}>
-            <Tile className={layout.hostTileClass} p={{ ...tiles[0], stream: stabilize(tiles[0].id, tiles[0].stream) }} />
-          </div>
-          <div className={layout.guestAreaClass}>
-            {tiles.slice(1).map((p) => tileFor(p, layout.guestTileClass))}
-          </div>
-        </>
-      )}
+    <div className={layout.containerClass} style={gridStyle} role="group" aria-label="Live participants">
+      <AnimatePresence initial={false}>
+        {ordered.map((p, index) => {
+          const area = index === 0 ? layout.hostArea : layout.guestAreas[index - 1];
+          const soloContain = layout.soloContain && index === 0;
+          return (
+            <motion.div
+              key={p.id}
+              layout
+              initial={{ opacity: 0, scale: 0.86, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.86, y: 6 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 28, mass: 0.9 }}
+              style={{ gridArea: area, position: 'relative' }}
+              className={cn(layout.tileClass, index === 0 && layout.hostTileClass, 'will-change-transform')}
+              data-host={p.isHost ? 'true' : undefined}
+              data-speaking={p.speaking ? 'true' : undefined}
+            >
+              <Tile p={{ ...p, stream: stabilize(p.id, p.stream) }} fit={soloContain ? 'contain' : 'cover'} />
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
     </div>
   );
 }

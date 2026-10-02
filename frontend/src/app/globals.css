@@ -2008,3 +2008,160 @@ html[data-density="compact"] .space-y-3 > :not([hidden]) ~ :not([hidden]) { marg
 html[data-density="compact"] .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.45rem; }
 html[data-density="compact"] .space-y-1\.5 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.3rem; }
 html[data-density="compact"] .space-y-1 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.25rem; }
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   VANTA LIVE — premium social livestream surfaces
+   A restrained dark-glass system for the live experience. Always dark:
+   video is the hero, so live chrome never follows the app light theme.
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+:root {
+  /* Surfaces */
+  --live-surface: rgba(10, 10, 12, 0.55);
+  --live-surface-strong: rgba(8, 8, 10, 0.75);
+  --live-surface-solid: #0b0b0d;
+  /* Hairline borders */
+  --live-border: rgba(255, 255, 255, 0.1);
+  --live-border-strong: rgba(255, 255, 255, 0.18);
+  --live-border-gold: rgba(242, 199, 92, 0.35);
+  /* Text */
+  --live-text: #f5f5f7;
+  --live-text-secondary: rgba(245, 245, 247, 0.66);
+  --live-text-faint: rgba(245, 245, 247, 0.42);
+  /* Accents (sophisticated, restrained) */
+  --live-accent-gold: #f2c75c;
+  --live-accent-gold-deep: #c9a227;
+  --live-accent-purple: #a78bfa;
+  --live-accent-blue: #60a5fa;
+  --live-accent-pink: #f472b6;
+  --live-danger: #f87171;
+  --live-success: #34d399;
+  /* Depth */
+  --live-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+  --live-shadow-deep: 0 18px 48px rgba(0, 0, 0, 0.6);
+  /* Ambient glows */
+  --live-glow-gold: 0 0 22px rgba(242, 199, 92, 0.2);
+  --live-glow-purple: 0 0 30px rgba(168, 130, 250, 0.22);
+  --live-glow-blue: 0 0 30px rgba(96, 165, 250, 0.18);
+  --live-glow-pink: 0 0 30px rgba(244, 114, 182, 0.18);
+}
+
+@layer components {
+  /* Translucent dark glass used for every floating live control. */
+  .live-glass {
+    background: var(--live-surface);
+    border: 1px solid var(--live-border);
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+    box-shadow: var(--live-shadow);
+  }
+
+  .live-glass-strong {
+    background: var(--live-surface-strong);
+    border: 1px solid var(--live-border-strong);
+    -webkit-backdrop-filter: blur(22px);
+    backdrop-filter: blur(22px);
+    box-shadow: var(--live-shadow-deep);
+  }
+
+  /* Compact pill chip (brand, viewer count, host, join notice…). */
+  .live-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    border-radius: 999px;
+    background: rgba(8, 8, 10, 0.55);
+    border: 1px solid var(--live-border);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    box-shadow: var(--live-shadow);
+  }
+
+  /* Soft circular control button used by the LIVE action rail. */
+  .live-orb {
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    background: rgba(8, 8, 10, 0.5);
+    border: 1px solid var(--live-border);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+    box-shadow: var(--live-shadow);
+    transition: transform 140ms var(--ease-out), background 180ms ease, border-color 180ms ease;
+  }
+  .live-orb:hover {
+    background: rgba(8, 8, 10, 0.68);
+    border-color: var(--live-border-strong);
+  }
+  .live-orb:active {
+    transform: scale(0.94);
+  }
+  .live-orb[data-active='true'] {
+    background: rgba(201, 162, 39, 0.22);
+    border-color: var(--live-border-gold);
+  }
+
+  /* Primary tile surface for the participant stage. */
+  .live-stage-tile {
+    position: relative;
+    overflow: hidden;
+    border-radius: 1rem;
+    background: var(--live-surface-solid);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    isolation: isolate;
+  }
+  /* Host tiles get a quiet gold identity ring — no size distortion. */
+  .live-stage-tile[data-host='true'] {
+    border-color: rgba(242, 199, 92, 0.34);
+  }
+  /* Speaking state (driven by REAL LiveKit audio levels): a soft breathing
+     glow that never flashes. */
+  .live-stage-tile[data-speaking='true']::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    z-index: 3;
+    border-radius: inherit;
+    pointer-events: none;
+    background: radial-gradient(130% 130% at 30% 20%, rgba(167, 139, 250, 0.16), rgba(96, 165, 250, 0.08) 45%, transparent 72%);
+    animation: live-speaking-ring 1.8s ease-in-out infinite;
+  }
+
+  .live-ambient-orb {
+    position: absolute;
+    border-radius: 999px;
+    pointer-events: none;
+    filter: blur(110px);
+  }
+}
+
+@layer utilities {
+  .animate-live-dot {
+    animation: live-dot-pulse 1.8s ease-in-out infinite;
+  }
+  .animate-live-aurora {
+    animation: live-aurora 16s ease-in-out infinite;
+  }
+  .animate-live-float-up {
+    animation: live-float-up 2.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+}
+
+@keyframes live-dot-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+  50% { opacity: 0.62; box-shadow: 0 0 0 7px rgba(239, 68, 68, 0); }
+}
+
+@keyframes live-speaking-ring {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+@keyframes live-aurora {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(2.5%, 1.5%, 0) scale(1.07); }
+}
+
+@keyframes live-float-up {
+  0% { opacity: 0; transform: translate3d(0, 8px, 0) scale(0.6); }
+  16% { opacity: 1; transform: translate3d(0, 0, 0) scale(1.12); }
+  100% { opacity: 0; transform: translate3d(0, -210px, 0) scale(1); }
+}
