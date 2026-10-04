@@ -27,6 +27,7 @@ out/
 backend/dist/
 frontend/.next/
 
+/tmp-*.ps1
 # Logs
 logs/
 *.log

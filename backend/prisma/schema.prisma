@@ -140,15 +140,20 @@ model User {
   coinTransactions CoinTransaction[]
 
   // Verification & Creator Membership
-  verificationBadge    VerificationBadge?
-  verificationRequest  VerificationRequest?
-  creatorMembership    CreatorMembership?
-  cryptoPayments       CryptoPayment[]
-  verificationHistory  VerificationHistory[]
+  verificationBadge     VerificationBadge?
+  verificationRequest   VerificationRequest?
+  creatorMembership     CreatorMembership?
+  cryptoPayments        CryptoPayment[]
+  verificationHistory   VerificationHistory[]
   verificationPurchases VerificationPurchase[]
 
   // Resumable (chunked) upload sessions
   uploadSessions UploadSession[]
+
+  // Gold Verified Follower Rewards (creator + claimant relations)
+  followerRewardCampaigns FollowerRewardCampaign[] @relation("FollowerRewardCreator")
+  followerRewardClaims    FollowerRewardClaim[]    @relation("FollowerRewardClaimant")
+  createdRewardClaims     FollowerRewardClaim[]    @relation("FollowerRewardCreatorClaim")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -195,21 +200,21 @@ model CoinTransaction {
 }
 
 model UploadedFile {
-  id          String    @id @default(cuid())
-  userId      String
-  filename    String
+  id           String    @id @default(cuid())
+  userId       String
+  filename     String
   originalName String
-  url         String
-  path        String?
-  mimeType    String
-  fileType    String   // IMAGE, VIDEO, AUDIO, DOCUMENT
-  size        Int
-  category    String   // avatar, banner, post-image, post-video, story, reel, thumbnail, message, group-avatar, channel-avatar, community-avatar, community-banner, verification, profile-media, generic
-  recordType  String?  // e.g. User, Post, Story, Video, LiveStream, Message, Group, Channel, Community, VerificationRequest
-  recordId    String?
-  deletedAt   DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  url          String
+  path         String?
+  mimeType     String
+  fileType     String // IMAGE, VIDEO, AUDIO, DOCUMENT
+  size         Int
+  category     String // avatar, banner, post-image, post-video, story, reel, thumbnail, message, group-avatar, channel-avatar, community-avatar, community-banner, verification, profile-media, generic
+  recordType   String? // e.g. User, Post, Story, Video, LiveStream, Message, Group, Channel, Community, VerificationRequest
+  recordId     String?
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@index([userId, category])
   @@index([userId, createdAt])
@@ -266,29 +271,29 @@ model TrustedDevice {
 }
 
 model Profile {
-  id              String         @id @default(cuid())
-  username        String         @unique
-  fullName        String?
-  bio             String?
-  avatarUrl       String?
-  bannerUrl       String?
-  website         String?
-  gender          String?
-  age             Int?
-  country         String?
-  city            String?
-  interests       String?
-  isOnline        Boolean        @default(false)
-  
+  id        String  @id @default(cuid())
+  username  String  @unique
+  fullName  String?
+  bio       String?
+  avatarUrl String?
+  bannerUrl String?
+  website   String?
+  gender    String?
+  age       Int?
+  country   String?
+  city      String?
+  interests String?
+  isOnline  Boolean @default(false)
+
   // Creator Hub fields
-  creatorCategory String?        // music, gaming, creative, education, sports, tech, lifestyle, chatting
+  creatorCategory String? // music, gaming, creative, education, sports, tech, lifestyle, chatting
   occupation      String?
-  languages       String?        // JSON array
+  languages       String? // JSON array
   pronouns        String?
   businessEmail   String?
-  theme           String?        // custom profile theme
-  featuredContent String?        // JSON array of pinned content IDs with types
-  
+  theme           String? // custom profile theme
+  featuredContent String? // JSON array of pinned content IDs with types
+
   socialLinks SocialLink[]
   media       ProfileMedia[]
   userId      String         @unique
@@ -351,28 +356,28 @@ model Follow {
 }
 
 model Story {
-  id        String      @id @default(cuid())
-  userId    String
-  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String         @id @default(cuid())
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   // Nullable while a Story/Status is being uploaded in the background (draft
   // -> UPLOADING -> PUBLISHED). Unpublished drafts are never returned by the
   // read endpoints, so a Story without media is never exposed to other users.
-  mediaUrl  String?
-  mediaType String      @default("IMAGE")
-  caption   String?
+  mediaUrl      String?
+  mediaType     String         @default("IMAGE")
+  caption       String?
   // Publishing lifecycle: "UPLOADING" (media moving to storage in the
   // background), "PROCESSING" (optional), "PUBLISHED" (live), "FAILED" (the
   // upload failed and the draft can be retried). Legacy rows default to
   // "PUBLISHED" so existing production data needs no migration value.
-  publishStatus String   @default("PUBLISHED")
+  publishStatus String         @default("PUBLISHED")
   // JSON styling payload for TEXT (Status) stories — font family, size, color,
   // alignment, weight, style, line-height and the curated background key used to
   // render the Status exactly as the creator designed it in the composer.
-  textStyle String?
-  duration  Int         @default(5000)
-  viewedBy  StoryView[]
-  likes     StoryLike[]
-  comments  StoryComment[]
+  textStyle     String?
+  duration      Int            @default(5000)
+  viewedBy      StoryView[]
+  likes         StoryLike[]
+  comments      StoryComment[]
 
   // Reshare attribution — snapshots of the original story + creator so a
   // reshared story stays attributed even if the original expires or is deleted.
@@ -381,7 +386,7 @@ model Story {
   resharedFromUsername String?
 
   expiresAt DateTime
-  createdAt DateTime    @default(now())
+  createdAt DateTime @default(now())
 
   @@index([userId, expiresAt])
   @@index([publishStatus])
@@ -495,18 +500,18 @@ model CommunityPost {
 }
 
 model Channel {
-  id          String           @id @default(cuid())
-  name        String           @unique
-  description String?
-  avatar      String?
-  category    String?
-  ownerId     String
-  conversationId String?         @unique
-  owner       User             @relation("ChannelOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  members     ChannelMember[]
-  messages    ChannelMessage[]
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  id             String           @id @default(cuid())
+  name           String           @unique
+  description    String?
+  avatar         String?
+  category       String?
+  ownerId        String
+  conversationId String?          @unique
+  owner          User             @relation("ChannelOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members        ChannelMember[]
+  messages       ChannelMessage[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   @@index([category])
   @@index([name])
@@ -540,17 +545,17 @@ model ChannelMessage {
 }
 
 model Group {
-  id          String         @id @default(cuid())
-  name        String
-  description String?
-  avatar      String?
-  ownerId     String
-  conversationId String?       @unique
-  owner       User           @relation("GroupOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  members     GroupMember[]
-  messages    GroupMessage[]
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id             String         @id @default(cuid())
+  name           String
+  description    String?
+  avatar         String?
+  ownerId        String
+  conversationId String?        @unique
+  owner          User           @relation("GroupOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members        GroupMember[]
+  messages       GroupMessage[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 
   @@index([ownerId])
   @@index([name])
@@ -584,27 +589,27 @@ model GroupMessage {
 }
 
 model Video {
-  id           String         @id @default(cuid())
-  title        String
-  description  String?
+  id            String         @id @default(cuid())
+  title         String
+  description   String?
   // Nullable while the Reel media is moving to storage in the background
   // (draft -> UPLOADING -> PUBLISHED). Reels with a null URL and a non-PUBLISHED
   // lifecycle are never returned by feed/detail endpoints.
-  videoUrl     String?
-  thumbnailUrl String?
-  duration     Float?
-  views        Int            @default(0)
+  videoUrl      String?
+  thumbnailUrl  String?
+  duration      Float?
+  views         Int            @default(0)
   // Publishing lifecycle, mirroring Story.publishStatus. Legacy rows default to
   // "PUBLISHED" so existing production data needs no migration value.
   publishStatus String         @default("PUBLISHED")
-  creatorId    String
-  creator      User           @relation("CreatorVideos", fields: [creatorId], references: [id], onDelete: Cascade)
-  likes        VideoLike[]
-  comments     VideoComment[]
-  saves        VideoSave[]
-  watchHistory WatchHistory[]
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  creatorId     String
+  creator       User           @relation("CreatorVideos", fields: [creatorId], references: [id], onDelete: Cascade)
+  likes         VideoLike[]
+  comments      VideoComment[]
+  saves         VideoSave[]
+  watchHistory  WatchHistory[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
   @@index([creatorId, createdAt])
   @@index([views, createdAt])
@@ -671,19 +676,19 @@ model WatchHistory {
 }
 
 model Post {
-  id        String        @id @default(cuid())
-  authorId  String
-  author    User          @relation("UserPosts", fields: [authorId], references: [id], onDelete: Cascade)
-  content   String
-  mediaUrl  String?
-  pinned    Boolean       @default(false)
-  likes       PostLike[]
-  comments    PostComment[]
-  saves       PostSave[]
-  shareCount  Int           @default(0)
-  views       Int           @default(0)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id         String        @id @default(cuid())
+  authorId   String
+  author     User          @relation("UserPosts", fields: [authorId], references: [id], onDelete: Cascade)
+  content    String
+  mediaUrl   String?
+  pinned     Boolean       @default(false)
+  likes      PostLike[]
+  comments   PostComment[]
+  saves      PostSave[]
+  shareCount Int           @default(0)
+  views      Int           @default(0)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
 
   @@index([authorId, createdAt])
   @@index([createdAt])
@@ -719,18 +724,18 @@ model PostLike {
 }
 
 model PostComment {
-  id        String   @id @default(cuid())
+  id        String            @id @default(cuid())
   userId    String
   postId    String
   parentId  String?
   content   String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  parent    PostComment? @relation("PostCommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
-  replies   PostComment[] @relation("PostCommentReplies")
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post              @relation(fields: [postId], references: [id], onDelete: Cascade)
+  parent    PostComment?      @relation("PostCommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   PostComment[]     @relation("PostCommentReplies")
   likes     PostCommentLike[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
 
   @@index([postId, createdAt])
   @@index([userId, createdAt])
@@ -751,21 +756,21 @@ model PostCommentLike {
 }
 
 model Conversation {
-  id           String        @id @default(cuid())
-  isGroup      Boolean       @default(false)
-  type         String        @default("DIRECT")
-  name         String?
-  avatar       String?
-  description  String?
-  handle       String?       @unique
-  visibility   String        @default("PRIVATE")
-  createdById  String?
-  permissions  String?
-  commentsEnabled Boolean    @default(false)
-  participants Participant[]
-  messages     Message[]
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  id              String        @id @default(cuid())
+  isGroup         Boolean       @default(false)
+  type            String        @default("DIRECT")
+  name            String?
+  avatar          String?
+  description     String?
+  handle          String?       @unique
+  visibility      String        @default("PRIVATE")
+  createdById     String?
+  permissions     String?
+  commentsEnabled Boolean       @default(false)
+  participants    Participant[]
+  messages        Message[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
   @@index([updatedAt])
   @@index([type, updatedAt])
@@ -791,16 +796,16 @@ model Participant {
 }
 
 model Message {
-  id             String            @id @default(cuid())
+  id             String       @id @default(cuid())
   conversationId String
-  conversation   Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   senderId       String
-  sender         User              @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  sender         User         @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
   content        String
-  type           String            @default("TEXT")
+  type           String       @default("TEXT")
   replyToId      String?
-  replyTo        Message?          @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
-  replies        Message[]         @relation("MessageReplies")
+  replyTo        Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies        Message[]    @relation("MessageReplies")
   pinnedAt       DateTime?
   pinnedById     String?
   deletedFor     String?
@@ -811,16 +816,16 @@ model Message {
   // messaging system. The story reference is denormalized (no FK on purpose):
   // Stories expire after 24h and can be deleted, so the snapshot fields keep the
   // reply readable in the inbox long after the original Story is gone.
-  storyReplyStoryId   String?
-  storyReplyMediaUrl  String?
-  storyReplyCaption   String?
-  storyReplyAuthor    String?
+  storyReplyStoryId  String?
+  storyReplyMediaUrl String?
+  storyReplyCaption  String?
+  storyReplyAuthor   String?
 
-  reads          MessageRead[]
-  reactions      MessageReaction[]
-  attachments    Attachment[]
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @default(now()) @updatedAt
+  reads       MessageRead[]
+  reactions   MessageReaction[]
+  attachments Attachment[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @default(now()) @updatedAt
 
   @@index([conversationId, createdAt])
   @@index([conversationId, deletedAt, createdAt])
@@ -918,13 +923,13 @@ model LiveStream {
   chatPaused        Boolean           @default(false)
   slowMode          Boolean           @default(false)
   slowModeInterval  Int               @default(3) // seconds between messages
-  mutedUsers        String?           // JSON array of muted user IDs
-  bannedUsers       String?           // JSON array of banned user IDs
-  moderators        String?           // JSON array of moderator user IDs
+  mutedUsers        String? // JSON array of muted user IDs
+  bannedUsers       String? // JSON array of banned user IDs
+  moderators        String? // JSON array of moderator user IDs
   coHostId          String?
   coHost            User?             @relation("CoHostStreams", fields: [coHostId], references: [id], onDelete: SetNull)
-  guests            String?           // JSON array of guest user IDs
-  approvedGuests    String?           // JSON array of approved guest user IDs
+  guests            String? // JSON array of guest user IDs
+  approvedGuests    String? // JSON array of approved guest user IDs
   screenShare       Boolean           @default(false)
   beautyMode        Boolean           @default(false)
   backgroundBlur    Boolean           @default(false)
@@ -1117,7 +1122,7 @@ model Session {
   // frontend after an OAuth provider callback without ever placing tokens in
   // a redirect URL. Redeeming the code marks it used (set to null) and it
   // additionally cannot outlive oauthExchangeExpiresAt.
-  oauthExchangeCode     String?   @unique
+  oauthExchangeCode      String?   @unique
   oauthExchangeExpiresAt DateTime?
 
   @@index([userId])
@@ -1333,19 +1338,19 @@ model PurchaseOrder {
 
   // ---- VANTA Coin purchase extras (additive; see config/coin-payments.config.ts) ----
   // Backend-resolved catalog name snapshot + payment-mode used for the order.
-  packageName     String?
-  paymentMode     String?
+  packageName       String?
+  paymentMode       String?
   // Provider blockchain reference (e.g. raw tx hash) for auditable verification.
   providerReference String?
   // Expiry of the payment window; safe to auto-expire PENDING orders after this.
-  expiresAt       DateTime?
+  expiresAt         DateTime?
   // When the verified payment was applied (COMPLETED).
-  confirmedAt     DateTime?
+  confirmedAt       DateTime?
   // Refund bookkeeping (the original row is never deleted — a REFUND ledger
   // entry is created instead).
-  refundedAt      DateTime?
-  refundedBy      String?
-  refundReason    String?
+  refundedAt        DateTime?
+  refundedBy        String?
+  refundReason      String?
 
   @@index([userId])
   @@index([status])
@@ -1357,45 +1362,47 @@ model PurchaseOrder {
 }
 
 model Gift {
-  id                String            @id @default(cuid())
-  slug              String            @unique
-  name              String
-  price             Int
-  icon              String?
-  image             String?
-  emoji             String?
-  category          String            @default("popular")
-  subcategory       String?
-  description       String?
-  animationUrl      String?
-  animationType     String            @default("float")
-  thumbnailUrl      String?
-  glowColor         String?
-  particleColor     String?
-  soundEffect       String?
-  isActive          Boolean           @default(true)
-  isFeatured        Boolean           @default(false)
-  isTrending        Boolean           @default(false)
-  isPopular         Boolean           @default(false)
-  isLimited         Boolean           @default(false)
-  isLegendary       Boolean           @default(false)
-  expiresAt         DateTime?
-  sortOrder         Int               @default(0)
-  comboEnabled      Boolean           @default(true)
-  comboMultiplier   Float             @default(1.0)
-  animationDuration Int               @default(3)
-  artworkType       String            @default("artifact")
-  rarity            String            @default("common")
-  tier              String            @default("low")
-  impactLevel       Int               @default(1)
-  effectProfile     String            @default("shimmer")
-  previewAssetUrl   String?
-  transactions      GiftTransaction[]
-  liveGiftEvents    LiveGiftEvent[]
-  eventGifts        EventGift[]
-  combos            GiftCombo[]
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  id                      String                   @id @default(cuid())
+  slug                    String                   @unique
+  name                    String
+  price                   Int
+  icon                    String?
+  image                   String?
+  emoji                   String?
+  category                String                   @default("popular")
+  subcategory             String?
+  description             String?
+  animationUrl            String?
+  animationType           String                   @default("float")
+  thumbnailUrl            String?
+  glowColor               String?
+  particleColor           String?
+  soundEffect             String?
+  isActive                Boolean                  @default(true)
+  isFeatured              Boolean                  @default(false)
+  isTrending              Boolean                  @default(false)
+  isPopular               Boolean                  @default(false)
+  isLimited               Boolean                  @default(false)
+  isLegendary             Boolean                  @default(false)
+  expiresAt               DateTime?
+  sortOrder               Int                      @default(0)
+  comboEnabled            Boolean                  @default(true)
+  comboMultiplier         Float                    @default(1.0)
+  animationDuration       Int                      @default(3)
+  artworkType             String                   @default("artifact")
+  rarity                  String                   @default("common")
+  tier                    String                   @default("low")
+  impactLevel             Int                      @default(1)
+  effectProfile           String                   @default("shimmer")
+  previewAssetUrl         String?
+  transactions            GiftTransaction[]
+  liveGiftEvents          LiveGiftEvent[]
+  eventGifts              EventGift[]
+  combos                  GiftCombo[]
+  followerRewardCampaigns FollowerRewardCampaign[]
+  followerRewardClaims    FollowerRewardClaim[]
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
 
   @@index([category, isActive])
   @@index([isActive, sortOrder])
@@ -1468,89 +1475,89 @@ model LiveGiftEvent {
 }
 
 model Wallet {
-  id                 String              @id @default(cuid())
-  coinBalance        Int                 @default(0)
+  id                     String              @id @default(cuid())
+  coinBalance            Int                 @default(0)
   // One-time CEO/Admin initial allocation gate. Set exactly once (never unset)
   // when the canonical CEO account (ceo@vanta.app) receives its initial
   // 1,000,000 VANTA Coin allocation. Claimed with an atomic conditional update
   // so repeated deployments, seeds, startups, logins or refreshes can NEVER
   // grant a duplicate allocation (see src/services/admin-dev-wallet.service.ts).
   ceoAllocationGrantedAt DateTime?
-  earningsBalance    Float               @default(0.0)
-  lifetimeEarnings   Float               @default(0.0)
-  totalCoinsPurchased Int                @default(0)
-  totalCoinsReceived  Int                @default(0)
-  totalCoinsSent      Int                @default(0)
-  totalGiftsSent     Int                 @default(0)
-  totalGiftsReceived Int                 @default(0)
-  totalWithdrawn     Float               @default(0.0)
+  earningsBalance        Float               @default(0.0)
+  lifetimeEarnings       Float               @default(0.0)
+  totalCoinsPurchased    Int                 @default(0)
+  totalCoinsReceived     Int                 @default(0)
+  totalCoinsSent         Int                 @default(0)
+  totalGiftsSent         Int                 @default(0)
+  totalGiftsReceived     Int                 @default(0)
+  totalWithdrawn         Float               @default(0.0)
   // LEGACY/HISTORICAL ONLY — never used when calculating newly purchased coins.
   // VANTA Coin purchases credit EXACTLY the package coin amount.
-  bonusCoins         Int                 @default(0)
-  lockedCoins        Int                 @default(0)
-  isFrozen           Boolean             @default(false)
-  frozenAt           DateTime?
-  frozenBy           String?
-  freezeReason       String?
+  bonusCoins             Int                 @default(0)
+  lockedCoins            Int                 @default(0)
+  isFrozen               Boolean             @default(false)
+  frozenAt               DateTime?
+  frozenBy               String?
+  freezeReason           String?
   // Withdrawal wallet for USDT (BEP-20)
-  usdtWalletAddress  String?
-  userId             String              @unique
-  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions       WalletTransaction[] @relation("WalletTransactions")
-  pin                WalletPIN?
-  transferLimits     TransferLimit[]
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  usdtWalletAddress      String?
+  userId                 String              @unique
+  user                   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions           WalletTransaction[] @relation("WalletTransactions")
+  pin                    WalletPIN?
+  transferLimits         TransferLimit[]
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
 }
 
 model WalletPIN {
-  id        String   @id @default(cuid())
-  walletId  String   @unique
-  wallet    Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  pinHash   String
-  failedAttempts Int @default(0)
+  id             String    @id @default(cuid())
+  walletId       String    @unique
+  wallet         Wallet    @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  pinHash        String
+  failedAttempts Int       @default(0)
   lockedUntil    DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([walletId])
 }
 
 model TransferLimit {
-  id              String   @id @default(cuid())
-  walletId        String
-  wallet          Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  id            String   @id @default(cuid())
+  walletId      String
+  wallet        Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
   // No arbitrary per-transfer cap. Limits are configurable by admin and
   // default to the maximum supported purchase value (10,000,000 VANTA = $100,000).
-  dailyLimit      Int      @default(10000000)
-  dailyUsed       Int      @default(0)
-  lastResetDate   DateTime @default(now())
-  singleTxLimit   Int      @default(10000000)
-  otpThreshold    Int      @default(10000)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  dailyLimit    Int      @default(10000000)
+  dailyUsed     Int      @default(0)
+  lastResetDate DateTime @default(now())
+  singleTxLimit Int      @default(10000000)
+  otpThreshold  Int      @default(10000)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@unique([walletId])
   @@index([walletId])
 }
 
 model WalletTransaction {
-  id          String   @id @default(cuid())
-  walletId    String?
-  wallet      Wallet?  @relation("WalletTransactions", fields: [walletId], references: [id], onDelete: SetNull)
-  userId      String
-  type        String   // DEPOSIT, TRANSFER_SENT, TRANSFER_RECEIVED, GIFT_SENT, GIFT_RECEIVED, WITHDRAWAL, REFUND, FEE, ADMIN_CREDIT, ADMIN_DEBIT
-  amount      Float
-  fee         Float    @default(0.0)
-  balance     Float    @default(0.0)
-  status      String   @default("COMPLETED") // PENDING, COMPLETED, FAILED, REVERSED
-  description String?
-  reference   String?
-  metadata    String?  // JSON - stores extra info like recipientId, giftId, streamId, etc.
+  id            String   @id @default(cuid())
+  walletId      String?
+  wallet        Wallet?  @relation("WalletTransactions", fields: [walletId], references: [id], onDelete: SetNull)
+  userId        String
+  type          String // DEPOSIT, TRANSFER_SENT, TRANSFER_RECEIVED, GIFT_SENT, GIFT_RECEIVED, WITHDRAWAL, REFUND, FEE, ADMIN_CREDIT, ADMIN_DEBIT
+  amount        Float
+  fee           Float    @default(0.0)
+  balance       Float    @default(0.0)
+  status        String   @default("COMPLETED") // PENDING, COMPLETED, FAILED, REVERSED
+  description   String?
+  reference     String?
+  metadata      String? // JSON - stores extra info like recipientId, giftId, streamId, etc.
   // Balance immediately before this movement (auditable ledger: before -> after).
   balanceBefore Float?
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
 
   @@index([userId])
   @@index([type])
@@ -1588,23 +1595,23 @@ model Withdrawal {
 }
 
 model CoinTransfer {
-  id            String   @id @default(cuid())
-  senderId      String
-  receiverId    String
-  amount        Int
-  fee           Int      @default(0)
-  netAmount     Int
-  note          String?
-  status        String   @default("COMPLETED") // PENDING, COMPLETED, FAILED, REVERSED
-  otpVerified   Boolean  @default(false)
-  otpCode       String?
-  otpExpiresAt  DateTime?
-  ipAddress     String?
+  id                String    @id @default(cuid())
+  senderId          String
+  receiverId        String
+  amount            Int
+  fee               Int       @default(0)
+  netAmount         Int
+  note              String?
+  status            String    @default("COMPLETED") // PENDING, COMPLETED, FAILED, REVERSED
+  otpVerified       Boolean   @default(false)
+  otpCode           String?
+  otpExpiresAt      DateTime?
+  ipAddress         String?
   deviceFingerprint String?
-  sender        User     @relation("SentTransfers", fields: [senderId], references: [id], onDelete: Cascade)
-  receiver      User     @relation("ReceivedTransfers", fields: [receiverId], references: [id], onDelete: Cascade)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  sender            User      @relation("SentTransfers", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver          User      @relation("ReceivedTransfers", fields: [receiverId], references: [id], onDelete: Cascade)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@index([senderId, createdAt])
   @@index([receiverId, createdAt])
@@ -1617,8 +1624,8 @@ model WalletAuditLog {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  action    String   // PIN_SETUP, PIN_VERIFY, PIN_FAILED, TRANSFER, DEPOSIT, WITHDRAWAL, FROZEN, UNFROZEN, LIMIT_CHANGE, OTP_SENT, OTP_VERIFIED
-  details   String?  // JSON
+  action    String // PIN_SETUP, PIN_VERIFY, PIN_FAILED, TRANSFER, DEPOSIT, WITHDRAWAL, FROZEN, UNFROZEN, LIMIT_CHANGE, OTP_SENT, OTP_VERIFIED
+  details   String? // JSON
   ipAddress String?
   userAgent String?
   createdAt DateTime @default(now())
@@ -1630,26 +1637,26 @@ model WalletAuditLog {
 }
 
 model AdCampaign {
-  id            String    @id @default(cuid())
-  name          String
-  description   String?
-  mediaUrl      String
-  mediaType     String    @default("IMAGE") // IMAGE, VIDEO
-  ctaText       String    @default("Learn More")
-  ctaUrl        String?
-  ctaInternal   String?   // Internal page path
-  targetCountry String?   // JSON array or single country
-  priority      Int       @default(0)
-  status        String    @default("ACTIVE") // DRAFT, ACTIVE, PAUSED, EXPIRED, ARCHIVED
-  startDate     DateTime
-  endDate       DateTime?
+  id             String         @id @default(cuid())
+  name           String
+  description    String?
+  mediaUrl       String
+  mediaType      String         @default("IMAGE") // IMAGE, VIDEO
+  ctaText        String         @default("Learn More")
+  ctaUrl         String?
+  ctaInternal    String? // Internal page path
+  targetCountry  String? // JSON array or single country
+  priority       Int            @default(0)
+  status         String         @default("ACTIVE") // DRAFT, ACTIVE, PAUSED, EXPIRED, ARCHIVED
+  startDate      DateTime
+  endDate        DateTime?
   maxImpressions Int?
-  maxClicks     Int?
-  createdBy     String
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  impressions   AdImpression[]
-  clicks        AdClick[]
+  maxClicks      Int?
+  createdBy      String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  impressions    AdImpression[]
+  clicks         AdClick[]
 
   @@index([status, startDate, endDate])
   @@index([status, priority])
@@ -1659,13 +1666,13 @@ model AdCampaign {
 }
 
 model AdImpression {
-  id         String   @id @default(cuid())
+  id         String     @id @default(cuid())
   campaignId String
   campaign   AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   userId     String?
   ipAddress  String?
   userAgent  String?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime   @default(now())
 
   @@index([campaignId, createdAt])
   @@index([campaignId])
@@ -1673,13 +1680,13 @@ model AdImpression {
 }
 
 model AdClick {
-  id         String   @id @default(cuid())
+  id         String     @id @default(cuid())
   campaignId String
   campaign   AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   userId     String?
   ipAddress  String?
   userAgent  String?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime   @default(now())
 
   @@index([campaignId, createdAt])
   @@index([campaignId])
@@ -1687,14 +1694,14 @@ model AdClick {
 }
 
 model PlatformSetting {
-  id        String   @id @default(cuid())
-  key       String   @unique
-  value     String
-  type      String   @default("STRING") // STRING, NUMBER, BOOLEAN, JSON
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  type        String   @default("STRING") // STRING, NUMBER, BOOLEAN, JSON
   description String?
-  updatedBy String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([key])
 }
@@ -1826,29 +1833,29 @@ model LoyaltyLevel {
 }
 
 model Notification {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
-  actorId     String?
-  type        String
-  title       String
-  message     String
-  entityType  String?
-  entityId    String?
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  actorId      String?
+  type         String
+  title        String
+  message      String
+  entityType   String?
+  entityId     String?
   referenceKey String?
-  data        String? // JSON
-  read        Boolean  @default(false)
-  readAt      DateTime?
-  aiGenerated Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  data         String? // JSON
+  read         Boolean   @default(false)
+  readAt       DateTime?
+  aiGenerated  Boolean   @default(false)
+  createdAt    DateTime  @default(now())
 
+  @@unique([userId, referenceKey])
   @@index([userId, read, createdAt])
   @@index([userId, createdAt])
   @@index([type, userId, createdAt])
   @@index([read, createdAt])
   @@index([type])
   @@index([createdAt])
-  @@unique([userId, referenceKey])
 }
 
 model Report {
@@ -2745,24 +2752,24 @@ model ARPUAnalytics {
 
 /// VerificationBadge: Tracks blue/gold badges per user
 model VerificationBadge {
-  id          String    @id @default(cuid())
-  userId      String    @unique
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  badgeType   String    // BLUE or GOLD
-  status      String    @default("ACTIVE") // ACTIVE, REVOKED, SUSPENDED, EXPIRED
-  grantedBy   String?
-  grantedAt   DateTime  @default(now())
-  expiresAt   DateTime?
-  revokedAt   DateTime?
-  revokedBy   String?
-  revokeReason String?
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgeType        String // BLUE or GOLD
+  status           String    @default("ACTIVE") // ACTIVE, REVOKED, SUSPENDED, EXPIRED
+  grantedBy        String?
+  grantedAt        DateTime  @default(now())
+  expiresAt        DateTime?
+  revokedAt        DateTime?
+  revokedBy        String?
+  revokeReason     String?
   // The verified-badge purchase (VerificationPurchase) that activated this
   // entitlement, and the SubscriptionPlan that was purchased. Set ONLY for
   // paid badges (admin/server grants leave these null).
   sourcePurchaseId String?
   planId           String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@index([userId, status])
   @@index([badgeType, status])
@@ -2786,29 +2793,29 @@ model VerificationBadge {
 ///
 /// Only a server-side verified payment may move an order to PAID/COMPLETED.
 model VerificationPurchase {
-  id               String   @id @default(cuid())
-  userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  planId           String
-  plan             SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  amount           Float
-  currency         String   @default("USD")
-  network          String?  // usdt-bep20 | usdc-base
-  status           String   @default("PENDING")
+  id                String           @id @default(cuid())
+  userId            String
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId            String
+  plan              SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  amount            Float
+  currency          String           @default("USD")
+  network           String? // usdt-bep20 | usdc-base
+  status            String           @default("PENDING")
   // Strongest duplicate guard: in live mode this is `live:<txHash>` and is
   // UNIQUE at the database level, so the same transaction can never be
   // replayed against a different order.
-  providerOrderId  String?  @unique
+  providerOrderId   String?          @unique
   providerReference String?
-  paymentMode      String?  // test | live
-  expiresAt        DateTime
-  confirmedAt      DateTime?
-  refundedAt       DateTime?
-  refundedBy       String?
-  refundReason     String?
-  metadata         String?  // JSON - event verifier details etc.
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  paymentMode       String? // test | live
+  expiresAt         DateTime
+  confirmedAt       DateTime?
+  refundedAt        DateTime?
+  refundedBy        String?
+  refundReason      String?
+  metadata          String? // JSON - event verifier details etc.
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
   @@index([userId, status])
   @@index([status, createdAt])
@@ -2821,7 +2828,7 @@ model VerificationRequest {
   id              String    @id @default(cuid())
   userId          String    @unique
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  requestType     String    // CREATOR, BUSINESS, INDIVIDUAL
+  requestType     String // CREATOR, BUSINESS, INDIVIDUAL
   status          String    @default("PENDING") // PENDING, APPROVED, REJECTED
   documents       String?
   notes           String?
@@ -2837,42 +2844,42 @@ model VerificationRequest {
 
 /// SubscriptionPlan: Configurable creator membership plans
 model SubscriptionPlan {
-  id              String    @id @default(cuid())
-  name            String    @unique
-  durationMonths  Int
-  price           Float
-  currency        String    @default("USD")
-  description     String?
-  benefits        String?   // JSON array of benefit strings
-  isActive        Boolean   @default(true)
-  sortOrder       Int       @default(0)
-  badgeType       String    @default("GOLD")
-  memberships     CreatorMembership[]
-  cryptoPayments  CryptoPayment[]
+  id                    String                 @id @default(cuid())
+  name                  String                 @unique
+  durationMonths        Int
+  price                 Float
+  currency              String                 @default("USD")
+  description           String?
+  benefits              String? // JSON array of benefit strings
+  isActive              Boolean                @default(true)
+  sortOrder             Int                    @default(0)
+  badgeType             String                 @default("GOLD")
+  memberships           CreatorMembership[]
+  cryptoPayments        CryptoPayment[]
   verificationPurchases VerificationPurchase[]
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
 
   @@index([isActive, sortOrder])
 }
 
 /// CreatorMembership: Tracks active creator subscriptions
 model CreatorMembership {
-  id            String    @id @default(cuid())
-  userId        String    @unique
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String           @id @default(cuid())
+  userId        String           @unique
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   planId        String
   plan          SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  status        String    @default("ACTIVE") // ACTIVE, EXPIRED, CANCELLED, SUSPENDED
-  startDate     DateTime  @default(now())
+  status        String           @default("ACTIVE") // ACTIVE, EXPIRED, CANCELLED, SUSPENDED
+  startDate     DateTime         @default(now())
   endDate       DateTime
   renewalDate   DateTime?
-  autoRenew     Boolean   @default(false)
+  autoRenew     Boolean          @default(false)
   cancelledAt   DateTime?
   paymentMethod String?
   paymentTxHash String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 
   @@index([userId, status])
   @@index([status, endDate])
@@ -2881,23 +2888,23 @@ model CreatorMembership {
 
 /// CryptoPayment: Tracks crypto payment transactions
 model CryptoPayment {
-  id            String    @id @default(cuid())
+  id            String           @id @default(cuid())
   userId        String
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   planId        String
   plan          SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
   amount        Float
-  currency      String    // USDT, USDC
-  network       String    // BNB_SMART_CHAIN, BASE
+  currency      String // USDT, USDC
+  network       String // BNB_SMART_CHAIN, BASE
   walletAddress String
-  txHash        String?   @unique
-  status        String    @default("PENDING") // PENDING, CONFIRMED, FAILED, EXPIRED
-  confirmations Int       @default(0)
+  txHash        String?          @unique
+  status        String           @default("PENDING") // PENDING, CONFIRMED, FAILED, EXPIRED
+  confirmations Int              @default(0)
   expiresAt     DateTime
   confirmedAt   DateTime?
-  metadata      String?   // JSON
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  metadata      String? // JSON
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 
   @@index([userId, status])
   @@index([status, createdAt])
@@ -2907,14 +2914,98 @@ model CryptoPayment {
 
 /// VerificationHistory: Audit log for verification actions
 model VerificationHistory {
-  id          String    @id @default(cuid())
+  id          String   @id @default(cuid())
   userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   action      String
   performedBy String?
-  details     String?   // JSON
-  createdAt   DateTime  @default(now())
+  details     String? // JSON
+  createdAt   DateTime @default(now())
 
   @@index([userId, createdAt])
   @@index([action, createdAt])
+}
+
+// ============================================================================
+// GOLD VERIFIED FOLLOWER REWARDS
+// ============================================================================
+
+/// FollowerRewardCampaign: A Gold Verified creator's follower reward campaign.
+///
+/// The creator reserves coins (or funds a gift catalog reward) up front. Every
+/// financial movement is mirrored in the Wallet ledger through WalletTransaction
+/// rows (types FOLLOWER_REWARD_RESERVE / FOLLOWER_REWARD_CLAIM /
+/// FOLLOWER_REWARD_REFUND / FOLLOWER_REWARD_RELEASE) so balances are always
+/// traceable and never silently changed.
+///
+/// Status lifecycle (enforced by the service layer):
+///   DRAFT -> ACTIVE -> PAUSED <-> ACTIVE -> EXPIRED | COMPLETED | ENDED
+/// Terminal states never accept claims.
+///
+/// The wallet-level reservation is `Wallet.lockedCoins` (available balance is
+/// coinBalance - lockedCoins, matching the existing gift/wallet convention).
+model FollowerRewardCampaign {
+  id                String                @id @default(cuid())
+  creatorId         String
+  creator           User                  @relation("FollowerRewardCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  rewardType        String // COINS | GIFT
+  status            String                @default("ACTIVE") // DRAFT | ACTIVE | PAUSED | COMPLETED | EXPIRED | ENDED | CANCELLED
+  eligibilityType   String // NEW | EXISTING | ALL
+  totalAllocation   Int // Target number of eligible followers
+  rewardPerUser     Int // Coins per follower (COINS) or gift price (GIFT)
+  coinAmount        Int? // Total coins allocated (COINS reward)
+  giftId            String?
+  gift              Gift?                 @relation(fields: [giftId], references: [id], onDelete: SetNull)
+  // Reserved/distributed accounting (all in VANTA Coins).
+  reservedAmount    Int
+  distributedAmount Int                   @default(0)
+  remainingAmount   Int
+  claimedUsers      Int                   @default(0)
+  startsAt          DateTime?
+  expiresAt         DateTime?
+  completedAt       DateTime?
+  endedAt           DateTime?
+  pausedAt          DateTime?
+  metadata          String? // JSON - audit/creator notes
+  claims            FollowerRewardClaim[]
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  // At most ONE non-terminal campaign per creator (enforced by the partial
+  // unique index in migration SQL in addition to this application-level check).
+  @@index([creatorId, status])
+  @@index([status, expiresAt])
+  @@index([status, createdAt])
+  @@index([creatorId, createdAt])
+  @@index([giftId])
+}
+
+/// FollowerRewardClaim: Permanent, immutable claim record.
+///
+/// UNIQUE(campaignId, userId) is the database-level guard that makes double
+/// claims (double-click, multiple tabs, multiple devices, retries, unfollow ->
+/// refollow abuse, concurrent requests) structurally impossible — the second
+/// insert violates the constraint and the whole claim transaction rolls back.
+model FollowerRewardClaim {
+  id                  String                 @id @default(cuid())
+  campaignId          String
+  campaign            FollowerRewardCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId              String
+  user                User                   @relation("FollowerRewardClaimant", fields: [userId], references: [id], onDelete: Cascade)
+  creatorId           String
+  creator             User                   @relation("FollowerRewardCreatorClaim", fields: [creatorId], references: [id], onDelete: Cascade)
+  rewardType          String // COINS | GIFT
+  coinAmount          Int? // Coins credited to the claimant
+  giftId              String?
+  gift                Gift?                  @relation(fields: [giftId], references: [id], onDelete: SetNull)
+  giftSnapshot        String? // JSON snapshot of the delivered gift (name/emoji/slug)
+  walletTransactionId String? // Follower credit WalletTransaction (coins) / GiftTransaction (gifts)
+  status              String                 @default("COMPLETED")
+  createdAt           DateTime               @default(now())
+
+  @@unique([campaignId, userId])
+  @@index([campaignId])
+  @@index([campaignId, status])
+  @@index([userId, createdAt])
+  @@index([creatorId, createdAt])
 }

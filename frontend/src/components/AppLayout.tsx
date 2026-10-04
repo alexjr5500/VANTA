@@ -21,7 +21,6 @@ import {
   Sparkles,
   Gift,
   WalletCards,
-  HelpCircle,
   Plus,
 } from 'lucide-react';
 import VantaLogo from '@/components/ui/VantaLogo';
@@ -68,12 +67,11 @@ const mainNavItems = [
   { href: '/creator', icon: Sparkles, label: 'Creator Studio' },
   { href: '/gifts', icon: Gift, label: 'Gifts' },
   { href: '/settings', icon: Settings, label: 'Settings' },
-  { href: '/help', icon: HelpCircle, label: 'Help Center' },
 ];
 
 // Keep the shell quiet; content and creators provide the visual focus.
 const BackgroundEffects = memo(function BackgroundEffects() {
-  return <div className="pointer-events-none fixed inset-0 z-0 bg-[#050505]" />;
+  return <div className="pointer-events-none fixed inset-0 z-0 bg-[var(--background)]" />;
 });
 
 // Mobile menu drawer — premium redesign
@@ -109,7 +107,7 @@ const MobileMenu = memo(function MobileMenu({
             onClick={onClose}
           />
           <motion.aside
-            className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-50 mx-auto flex max-h-[calc(var(--vanta-vh,100dvh)-0.5rem)] w-full max-w-[480px] flex-col overflow-hidden rounded-t-[24px] border border-b-0 border-white/[0.08] bg-[#0d0d0f]/98 pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-2xl"
+            className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-50 mx-auto flex max-h-[calc(var(--vanta-vh,100dvh)-0.5rem)] w-full max-w-[480px] flex-col overflow-hidden rounded-t-[24px] border border-b-0 border-[var(--border)] bg-[var(--surface)] pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-2xl"
             initial={{ y: '100%' }}
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
@@ -163,12 +161,12 @@ const MobileMenu = memo(function MobileMenu({
                       className={cn(
                         'flex min-h-14 items-center gap-3 rounded-xl border px-3.5 py-3 transition-all',
                         isActive
-                          ? 'bg-white/[0.08] text-white border border-white/[0.1]'
-                          : 'border-white/[0.06] bg-white/[0.02] text-gray-400 hover:bg-white/[0.04] hover:text-white'
+                          ? 'border-[var(--active-border)] bg-[var(--active-soft)] text-[var(--text-primary)] shadow-[var(--active-glow)]'
+                          : 'border-[var(--border)] bg-transparent text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'
                       )}
                     >
                       <span className="relative">
-                        <Icon size={17} className={isActive ? 'text-white' : undefined} />
+                        <Icon size={17} className={isActive ? 'text-[var(--active-bright)]' : undefined} />
                         {navBadgeFor(item.href) > 0 && (
                           <span className="absolute -right-2 -top-2 grid h-4 min-w-[16px] place-items-center rounded-full bg-[#c9a227] px-1 text-[9px] font-bold leading-none text-black ring-2 ring-[#0d0d0f]">
                             {navBadgeFor(item.href) > 99 ? '99+' : navBadgeFor(item.href)}
@@ -313,12 +311,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={cn(
-      // The shell owns the full dynamic viewport for EVERY page (Chat's model).
-      // The phone-frame max-width only applies on desktop; on a phone the shell
-      // is exactly the device width. Chat widens past the frame for its desktop
-      // split layout.
-      'vanta-app-shell relative mx-auto h-[100dvh] w-full max-w-[480px] overflow-hidden bg-[#050505] text-white',
-      isChatPage && 'max-w-none'
+      // TRUE FULL-SCREEN shell: the shell IS the browser/device viewport at every
+      // breakpoint. No phone-frame max-width, no desktop letterboxing. All pages
+      // scroll inside the shell's [data-vanta-scroll] region; immersive surfaces
+      // (chat, home, discover, reels, stories, go-live) own their own scrolling.
+      'vanta-app-shell relative h-[100dvh] w-full max-w-none overflow-hidden bg-[var(--background)] text-[var(--text-primary)]'
     )}>
       {!isChatPage && <BackgroundEffects />}
 
@@ -463,10 +460,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 64, opacity: 0 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-40 mx-auto w-full max-w-[480px] border-x border-t border-white/[0.08] bg-[#080808]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-2xl"
+            className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-40 w-full border-t border-[var(--border)] bg-[var(--nav-surface)]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-2xl"
             aria-label="Mobile navigation"
           >
-            <div className="mx-auto grid min-h-16 grid-cols-5 items-center px-2 pt-1">
+            <div className="mx-auto grid min-h-16 w-full max-w-5xl grid-cols-5 items-center px-2 pt-1">
               {[
                 { href: '/home', icon: Home, label: 'Home' },
                 { href: '/discover', icon: Compass, label: 'Discover' },
@@ -484,7 +481,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   );
                 }
                 return (
-                  <Link key={item.href} href={item.href} className={cn('flex min-h-12 flex-col items-center justify-center gap-1 text-[10px] transition', active ? 'text-white' : 'text-[#666] hover:text-[#b8b8b8]')} aria-current={active ? 'page' : undefined}>
+                  <Link key={item.href} href={item.href} className={cn('flex min-h-12 flex-col items-center justify-center gap-1 text-[10px] transition', active ? 'text-[var(--active-bright)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]')} aria-current={active ? 'page' : undefined}>
                     <Icon size={20} strokeWidth={active ? 2.4 : 1.8} />
                     <span>{item.label}</span>
                   </Link>

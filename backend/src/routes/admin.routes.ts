@@ -61,6 +61,12 @@ import {
   endLiveStream,
   suspendLiveStream,
   resolveReport,
+  // Gold Verified Follower Rewards (admin)
+  getFollowerRewardStats,
+  listFollowerRewardCampaigns,
+  getFollowerRewardCampaign,
+  getFollowerRewardClaims,
+  getFollowerRewardTransactions,
 } from '../controllers/admin.controller';
 import { authenticate, requireRole, Role } from '../security';
 import { giftService, GiftCatalogInput } from '../services/gift.service';
@@ -228,5 +234,12 @@ router.get('/notifications', getNotificationCenter);
 // Live stream moderation
 router.post('/live/:streamId/end', endLiveStream);
 router.post('/live/:streamId/suspend', suspendLiveStream);
+
+// Gold Verified Follower Rewards — admin dashboard + audit ledgers.
+router.get('/follower-rewards/stats', getFollowerRewardStats);
+router.get('/follower-rewards', listFollowerRewardCampaigns);
+router.get('/follower-rewards/:campaignId', getFollowerRewardCampaign);
+router.get('/follower-rewards/:campaignId/claims', getFollowerRewardClaims);
+router.get('/follower-rewards/:campaignId/transactions', getFollowerRewardTransactions);
 
 export default router;

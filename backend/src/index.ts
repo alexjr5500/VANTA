@@ -30,6 +30,7 @@ import messageRoutes from './routes/message.routes';
 import notificationRoutes from './routes/notification.routes';
 import liveRoutes from './routes/live.routes';
 import giftRoutes from './routes/gift.routes';
+import followerRewardsRoutes from './routes/follower-rewards.routes';
 import adminRoutes from './routes/admin.routes';
 import monetizationRoutes from './routes/monetization.routes';
 import storyRoutes from './routes/story.routes';
@@ -433,6 +434,8 @@ app.use('/api/messages', rateLimiter.messaging, messageRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/live', liveRoutes);
 app.use('/api/gifts', giftRoutes);
+// Gold Verified Follower Rewards (creator campaigns + follower claims).
+app.use('/api/follower-rewards', followerRewardsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/monetization', monetizationRoutes);
 app.use('/api/stories', storyRoutes);
@@ -692,6 +695,25 @@ async function startServer() {
     } catch (sweepError) {
       console.warn('[OAuthState] Startup sweep skipped:', sweepError);
     }
+
+    // Gold Verified Follower Rewards: expire due campaigns (refund unused
+    // reservation to the creator's available balance). Runs at startup and on
+    // an interval; claims also lazily enforce expiration so a downtime window
+    // can never allow a claim past `expiresAt`.
+    const expireDueRewards = async (): Promise<void> => {
+      try {
+        const { followerRewardService } = await import('./services/follower-reward.service');
+        const processed = await followerRewardService.expireDueCampaigns();
+        if (processed > 0) {
+          console.log(`[FollowerRewards] Expired ${processed} due reward campaign(s).`);
+        }
+      } catch (sweepError) {
+        console.warn('[FollowerRewards] Expiry sweep skipped:', sweepError);
+      }
+    };
+    void expireDueRewards();
+    const expireRewardsTimer = setInterval(expireDueRewards, 15 * 60 * 1000);
+    if (expireRewardsTimer.unref) expireRewardsTimer.unref();
 
     // CEO/Admin initial allocation: grants the canonical CEO account exactly
     // 1,000,000 VANTA Coins ONCE through the real wallet/ledger system. The

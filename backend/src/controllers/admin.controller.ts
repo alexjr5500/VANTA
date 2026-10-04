@@ -3,6 +3,7 @@ import { prisma } from '../prisma';
 import { moderationService, walletService, userService, adminService, adService, coinPaymentService, verificationService, liveService } from '../services';
 import { AuthenticatedRequest, auditLog } from '../security';
 import { BADGE_USER_SELECT, isBadgeRowActive } from '../services/public-verification';
+import { followerRewardService, FollowerRewardError } from '../services/follower-reward.service';
 
 // ============================================================================
 // DASHBOARD
@@ -1464,6 +1465,84 @@ export const getInfrastructure = async (req: AuthenticatedRequest, res: Response
 };
 
 // ============================================================================
+// ============================================================================
+// GOLD VERIFIED FOLLOWER REWARDS — ADMIN
+// ============================================================================
+// Real-data dashboards and audit ledgers. Read-only by design: historical
+// claim records are immutable, so the admin UI surfaces data for inspection
+// and tracing (Campaign -> Claim -> Wallet/GiftTransaction) without mutation.
+
+const rewardError = (error: unknown): { status: number; body: any } => {
+  if (error instanceof FollowerRewardError) {
+    return { status: error.statusCode, body: { error: error.message, code: error.code } };
+  }
+  const message = error instanceof Error ? error.message : 'Internal server error';
+  console.error('[admin follower-rewards]', error);
+  return { status: 500, body: { error: 'Something went wrong.', code: 'INTERNAL' } };
+};
+
+// GET /api/admin/follower-rewards/stats — dashboard cards
+export const getFollowerRewardStats = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const stats = await followerRewardService.getAdminStats();
+    res.status(200).json(stats);
+  } catch (error) {
+    const { status, body } = rewardError(error);
+    res.status(status).json(body);
+  }
+};
+
+// GET /api/admin/follower-rewards — campaign table (search/filter/paginate)
+export const listFollowerRewardCampaigns = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const result = await followerRewardService.listAdminCampaigns({
+      search: typeof req.query.search === 'string' ? req.query.search : undefined,
+      rewardType: typeof req.query.rewardType === 'string' ? req.query.rewardType : undefined,
+      status: typeof req.query.status === 'string' ? req.query.status : undefined,
+      from: typeof req.query.from === 'string' ? req.query.from : undefined,
+      to: typeof req.query.to === 'string' ? req.query.to : undefined,
+      page: typeof req.query.page === 'string' ? Number(req.query.page) : undefined,
+      limit: typeof req.query.limit === 'string' ? Number(req.query.limit) : undefined,
+    });
+    res.status(200).json(result);
+  } catch (error) {
+    const { status, body } = rewardError(error);
+    res.status(status).json(body);
+  }
+};
+
+// GET /api/admin/follower-rewards/:campaignId — full campaign detail
+export const getFollowerRewardCampaign = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const detail = await followerRewardService.getCampaignDetail(req.params.campaignId, undefined, { admin: true });
+    res.status(200).json(detail);
+  } catch (error) {
+    const { status, body } = rewardError(error);
+    res.status(status).json(body);
+  }
+};
+
+// GET /api/admin/follower-rewards/:campaignId/claims — claim audit ledger
+export const getFollowerRewardClaims = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const result = await followerRewardService.getCampaignClaims(req.params.campaignId, '', { admin: true });
+    res.status(200).json(result);
+  } catch (error) {
+    const { status, body } = rewardError(error);
+    res.status(status).json(body);
+  }
+};
+
+// GET /api/admin/follower-rewards/:campaignId/transactions — wallet ledger rows
+export const getFollowerRewardTransactions = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const transactions = await followerRewardService.getCampaignTransactions(req.params.campaignId);
+    res.status(200).json({ transactions });
+  } catch (error) {
+    const { status, body } = rewardError(error);
+    res.status(status).json(body);
+  }
+};
 // FINANCE
 // ============================================================================
 

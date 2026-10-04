@@ -41,6 +41,38 @@
     --foreground-secondary: rgba(255, 255, 255, 0.65);
     --foreground-tertiary: rgba(255, 255, 255, 0.35);
 
+    /* ─── Semantic surfaces & text — single theme-rewirable system ── */
+    /* These tokens are the ONE source of truth for the app's chrome. The
+       Light theme re-defines the same tokens as a sophisticated gray; dark
+       surfaces used by media (video frames, live rooms, reels, stories) keep
+       their own always-dark values. */
+    --surface: var(--vanta-panel);
+    --surface-secondary: var(--vanta-surface);
+    --surface-hover: var(--vanta-graphite);
+    --surface-active: var(--vanta-elevated);
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.16);
+    --text-primary: #f5f5f7;
+    --text-secondary: rgba(255, 255, 255, 0.66);
+    --text-muted: rgba(255, 255, 255, 0.4);
+    --overlay: rgba(0, 0, 0, 0.6);
+
+    /* Fixed chrome surfaces (app shell, page headers, bottom nav, drawers) */
+    --header-surface: rgba(8, 8, 8, 0.9);
+    --nav-surface: #080808;
+
+    /* ─── Gold — the ACTIVE / SELECTED indicator. ─────────────────
+       Gold never decorates every button. It marks the control that
+       represents the user's CURRENT selection/active state: the selected
+       theme, the active tab, the active nav item, the chosen option. */
+    --active: var(--vanta-gold);
+    --active-bright: var(--vanta-gold-bright);
+    --active-foreground: #0a0a0a;
+    --active-soft: rgba(201, 162, 39, 0.12);
+    --active-softer: rgba(201, 162, 39, 0.07);
+    --active-border: rgba(214, 168, 63, 0.45);
+    --active-glow: 0 8px 24px rgba(201, 162, 39, 0.14);
+
     /* Glass surfaces — VisionOS inspired */
     --glass-bg: #151517;
     --glass-border: rgba(255, 255, 255, 0.08);
@@ -273,28 +305,32 @@
 @layer components {
   /* ═══ Glass Surfaces — VisionOS Inspired ═══ */
   .glass {
-    @apply border border-white/[0.08];
-    background: var(--vanta-surface);
+    border: 1px solid var(--border);
+    background: var(--surface);
   }
 
   .glass-strong {
-    @apply bg-white/[0.06] backdrop-blur-2xl border border-white/[0.08];
+    @apply backdrop-blur-2xl;
+    background: var(--surface);
+    border: 1px solid var(--border);
   }
 
   .glass-active {
-    @apply bg-white/[0.08] backdrop-blur-2xl border border-white/[0.12];
+    @apply backdrop-blur-2xl;
+    background: var(--surface-hover);
+    border: 1px solid var(--border-strong);
   }
 
   .glass-card {
-    @apply border border-white/[0.08];
-    background: var(--vanta-surface);
+    border: 1px solid var(--border);
+    background: var(--surface);
     border-radius: var(--radius-md);
     transition: all 0.3s var(--ease-spring);
   }
 
   .glass-card:hover {
-    @apply border-white/[0.12];
-    background: var(--vanta-elevated);
+    border-color: var(--border-strong);
+    background: var(--surface-active);
     box-shadow: var(--shadow-lg);
   }
 
@@ -325,14 +361,20 @@
   }
 
   .glass-input {
-    @apply bg-[#111113] border border-white/[0.08] rounded-[var(--radius-control)] text-white text-sm;
-    @apply placeholder:text-white/20 outline-none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    @apply rounded-[var(--radius-control)] text-sm;
+    color: var(--text-primary);
+    @apply outline-none;
     @apply transition-all duration-200;
   }
 
+  .glass-input::placeholder { color: var(--text-muted); }
+
   .glass-input:focus {
-    @apply border-white/30 bg-white/[0.06];
-    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.07);
+    border-color: var(--border-strong);
+    background: var(--surface-hover);
+    box-shadow: 0 0 0 3px var(--active-softer);
   }
 
   /* ═══ Buttons — Premium Interactive ═══ */
@@ -402,9 +444,17 @@
 
   .btn-secondary {
     @apply inline-flex items-center justify-center gap-2 font-medium;
-    @apply glass rounded-[var(--radius-button)] px-5 py-3 text-sm text-white/70;
+    @apply rounded-[var(--radius-button)] px-5 py-3 text-sm;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    background: var(--surface);
     @apply transition-all duration-200;
-    @apply hover:text-white hover:bg-white/[0.06] hover:border-white/[0.12];
+  }
+
+  .btn-secondary:hover {
+    color: var(--text-primary);
+    background: var(--surface-hover);
+    border-color: var(--border-strong);
   }
 
   .btn-secondary:active {
@@ -413,9 +463,14 @@
 
   .btn-ghost {
     @apply inline-flex items-center justify-center gap-2 font-medium;
-    @apply rounded-[var(--radius-button)] px-4 py-2.5 text-sm text-white/50;
+    @apply rounded-[var(--radius-button)] px-4 py-2.5 text-sm;
+    color: var(--text-secondary);
     @apply transition-all duration-200;
-    @apply hover:text-white hover:bg-white/[0.05];
+  }
+
+  .btn-ghost:hover {
+    color: var(--text-primary);
+    background: var(--surface-hover);
   }
 
   .btn-ghost:active {
@@ -424,9 +479,14 @@
 
   .btn-icon {
     @apply inline-flex items-center justify-center;
-    @apply w-10 h-10 rounded-xl text-white/50;
+    @apply w-10 h-10 rounded-xl;
+    color: var(--text-secondary);
     @apply transition-all duration-200;
-    @apply hover:text-white hover:bg-white/[0.05];
+  }
+
+  .btn-icon:hover {
+    color: var(--text-primary);
+    background: var(--surface-hover);
   }
 
   .btn-icon:active {
@@ -573,12 +633,21 @@
   /* ═══ Navigation ═══ */
   .nav-item {
     @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium;
-    @apply transition-all duration-200 text-gray-400;
-    @apply hover:bg-white/[0.04] hover:text-white;
+    @apply transition-all duration-200;
+    color: var(--text-muted);
+  }
+
+  .nav-item:hover {
+    background: var(--surface-hover);
+    color: var(--text-primary);
   }
 
   .nav-item-active {
-    @apply nav-item bg-white/[0.08] text-white border border-white/[0.12];
+    @apply nav-item;
+    background: var(--active-soft);
+    color: var(--active-bright);
+    border: 1px solid var(--active-border);
+    box-shadow: var(--active-glow);
   }
 
   .nav-icon {
@@ -586,8 +655,11 @@
   }
 
   .nav-icon-active {
-    @apply nav-icon bg-white text-black;
-    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
+    @apply nav-icon;
+    background: var(--active-soft);
+    color: var(--active-bright);
+    border: 1px solid var(--active-border);
+    box-shadow: var(--active-glow);
   }
 
   /* Gold navigation — active state */
@@ -608,12 +680,14 @@
   }
 
   .stat-card-value {
-    @apply text-stat text-white;
+    @apply text-stat;
+    color: var(--text-primary);
     font-variant-numeric: tabular-nums;
   }
 
   .stat-card-label {
-    @apply text-label text-white/40 mt-1;
+    @apply text-label mt-1;
+    color: var(--text-muted);
   }
 
   /* ═══ Premium Cards ═══ */
@@ -1822,8 +1896,8 @@
   /* Settings card — one quiet surface, no oversized cards */
   .settings-card {
     @apply overflow-hidden rounded-[var(--radius-md)];
-    background: var(--vanta-obsidian);
-    border: 1px solid rgba(255, 255, 255, 0.07);
+    background: var(--surface-secondary);
+    border: 1px solid var(--border);
     border-radius: var(--radius-md);
   }
 
@@ -1859,14 +1933,19 @@
 
   /* Settings input — quiet glass field */
   .settings-input {
-    @apply w-full rounded-[var(--radius-control)] px-4 py-3 text-sm text-white;
-    @apply border border-white/[0.08] bg-[#080808] placeholder:text-white/25 outline-none;
+    @apply w-full rounded-[var(--radius-control)] px-4 py-3 text-sm;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    @apply outline-none;
     @apply transition-all duration-200;
   }
 
+  .settings-input::placeholder { color: var(--text-muted); }
+
   .settings-input:focus {
-    @apply border-white/25;
-    box-shadow: 0 0 0 3px var(--settings-accent-soft);
+    border-color: var(--border-strong);
+    box-shadow: 0 0 0 3px var(--active-softer);
   }
 
   /* Settings select option card — chosen state */
@@ -1928,35 +2007,66 @@ html[data-accent="monochrome"] {
   --gradient-gold-subtle: linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0%, rgba(184, 184, 184, 0.06) 50%, transparent 100%);
 }
 
-/* ── Light theme — flips the variable-driven design system to light.
-      Surfaces that hard-code a dark container (media, post cards, etc.)
-      intentionally stay dark so content contrast is never broken. ── */
+/* ── Light theme — sophisticated gray.
+      Media surfaces (video frames, live rooms, reels, stories) intentionally
+      stay dark so content contrast is never broken; every chrome surface flips
+      to a modern, premium gray system. GOLD remains the active/selected
+      indicator exactly as in dark mode. ── */
 html.light {
   color-scheme: light;
-  --vanta-black: #f5f5f7;
-  --vanta-obsidian: #ffffff;
-  --vanta-panel: #fafafa;
-  --vanta-surface: #f1f1f3;
-  --vanta-elevated: #e9e9eb;
-  --vanta-graphite: #d8d8da;
-  --vanta-gray: #8a8a8a;
-  --vanta-gray-light: #666666;
-  --vanta-silver: #444444;
-  --vanta-white: #17171a;
 
-  --background: #f5f5f7;
-  --background-secondary: #ffffff;
-  --background-tertiary: #fafafa;
-  --foreground: #17171a;
-  --foreground-secondary: rgba(20, 20, 25, 0.7);
-  --foreground-tertiary: rgba(20, 20, 25, 0.45);
+  /* Core palette — sophisticated modern gray (never pure white, never washed
+     out, never dark-mode). Slightly warm-neutral so it feels premium. */
+  --vanta-black: #eaeaed;
+  --vanta-obsidian: #efeff2;
+  --vanta-panel: #f4f4f6;
+  --vanta-surface: #ececef;
+  --vanta-elevated: #f7f7f8;
+  --vanta-graphite: #e2e2e5;
+  --vanta-gray: #7b7c83;
+  --vanta-gray-light: #96979e;
+  --vanta-silver: #5f6067;
+  --vanta-silver-bright: #26272b;
+  --vanta-white: #1b1c20;
+  --vanta-pure-white: #17181b;
 
-  --glass-bg: rgba(255, 255, 255, 0.75);
-  --glass-border: rgba(20, 20, 25, 0.08);
-  --glass-hover: rgba(20, 20, 25, 0.05);
-  --glass-strong: rgba(255, 255, 255, 0.85);
-  --glass-active: rgba(20, 20, 25, 0.08);
-  --glass-glow: rgba(20, 20, 25, 0.03);
+  --background: #eaeaed;
+  --background-secondary: #efeff2;
+  --background-tertiary: #f4f4f6;
+  --foreground: #1b1c20;
+  --foreground-secondary: rgba(27, 28, 32, 0.66);
+  --foreground-tertiary: rgba(27, 28, 32, 0.42);
+
+  /* Semantic surface/text tokens — the same system the dark theme uses */
+  --surface: #f4f4f6;
+  --surface-secondary: #ececef;
+  --surface-hover: #e3e3e6;
+  --surface-active: #f7f7f8;
+  --border: rgba(27, 28, 32, 0.1);
+  --border-strong: rgba(27, 28, 32, 0.18);
+  --text-primary: #1d1e22;
+  --text-secondary: rgba(30, 31, 36, 0.68);
+  --text-muted: rgba(30, 31, 36, 0.46);
+  --overlay: rgba(24, 25, 29, 0.5);
+
+  --header-surface: rgba(239, 240, 243, 0.92);
+  --nav-surface: #f0f0f3;
+
+  /* Gold remains gold in light mode: the active/selected indicator. */
+  --active: #b8871b;
+  --active-bright: #c9a227;
+  --active-foreground: #ffffff;
+  --active-soft: rgba(184, 135, 27, 0.12);
+  --active-softer: rgba(184, 135, 27, 0.06);
+  --active-border: rgba(184, 135, 27, 0.42);
+  --active-glow: 0 8px 24px rgba(184, 135, 27, 0.14);
+
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(27, 28, 32, 0.08);
+  --glass-hover: rgba(27, 28, 32, 0.05);
+  --glass-strong: rgba(255, 255, 255, 0.7);
+  --glass-active: rgba(27, 28, 32, 0.08);
+  --glass-glow: rgba(27, 28, 32, 0.03);
 
   --gold-glow: 0 8px 24px rgba(160, 120, 20, 0.12);
   --gold-glow-strong: 0 12px 30px rgba(160, 120, 20, 0.16);
@@ -1964,30 +2074,239 @@ html.light {
   --gold-border-strong: rgba(160, 120, 20, 0.5);
   --gold-bg: rgba(160, 120, 20, 0.08);
   --gold-bg-strong: rgba(160, 120, 20, 0.14);
+
+  /* Primary actions stay light so their existing black text remains legible */
+  --gradient-primary: linear-gradient(135deg, #ffffff 0%, #e7e7ea 100%);
+  --gradient-warm: linear-gradient(135deg, #3a3b40 0%, #8a8b92 100%);
+  --gradient-cool: linear-gradient(135deg, #5f6067 0%, #b4b5bb 100%);
+  --gradient-aurora: linear-gradient(135deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.1) 100%);
 }
 
-/* Keep settings surfaces readable in light mode */
+/* Keep settings surfaces readable in light mode — driven by the same
+   semantic tokens as every other chrome surface. */
 html.light .settings-card {
-  background: var(--background-secondary);
-  border-color: rgba(20, 20, 25, 0.08);
+  background: var(--surface-secondary);
+  border-color: var(--border);
 }
 html.light .settings-input {
-  @apply border-white/15 bg-white text-[var(--foreground)];
-  border: 1px solid rgba(20, 20, 25, 0.12);
-  color: var(--foreground);
-  background: #ffffff;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
 }
 html.light .settings-input::placeholder {
-  color: rgba(20, 20, 25, 0.35);
-}
-html.light .btn-accent {
-  color: #ffffff;
+  color: var(--text-muted);
 }
 html.light body {
   background: var(--background);
   color: var(--foreground);
 }
 
+/* ════════════════════════════════════════════════════════════════════
+   LIGHT THEME — NEUTRAL UTILITY REBIND LAYER
+   ────────────────────────────────────────────────────────────────────
+   VANTA components historically hard-code the dark neutral palette through
+   arbitrary-value utilities (bg-[#050505], text-white, border-white/[0.08],
+   …). Instead of rewriting 100+ files with conditional classes, this layer
+   rebinds those neutral utilities to the semantic tokens while the app is in
+   Light mode. The Dark theme is untouched (its values already equal those
+   utilities). Brand/functional colors (gold, live red, success, info, error)
+   are intentionally left alone.
+
+   Always-dark media surfaces (video frames, live rooms, reels, stories and
+   their text overlays) are re-locked to black/pure-white afterwards so media
+   contrast is never broken in Light mode.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── Page / chrome backgrounds ─────────────────────────────── */
+html.light .bg-\[\#050505\],
+html.light .bg-\[\#050506\],
+html.light .bg-\[\#050507\],
+html.light .bg-\[\#07070d\],
+html.light .bg-\[\#0a0a0a\],
+html.light .bg-\[\#0a0a0c\],
+html.light .bg-\[\#0a0a0f\],
+html.light .bg-\[\#0b0b0e\],
+html.light .bg-\[\#0e0e0e\],
+html.light .bg-\[\#0e0e16\] { background-color: var(--background); }
+
+html.light .bg-\[\#101010\],
+html.light .bg-\[\#101012\],
+html.light .bg-\[\#101013\],
+html.light .bg-\[\#101014\],
+html.light .bg-\[\#0d0d0d\],
+html.light .bg-\[\#0d0d0f\],
+html.light .bg-\[\#0d0d0f\]\/98,
+html.light .bg-\[\#0d0d0f\]\/95,
+html.light .bg-\[\#111111\],
+html.light .bg-\[\#111113\],
+html.light .bg-\[\#111114\],
+html.light .bg-\[\#121216\] { background-color: var(--surface); }
+
+html.light .bg-\[\#080808\],
+html.light .bg-\[\#151517\],
+html.light .bg-\[\#161616\],
+html.light .bg-\[\#161618\],
+html.light .bg-\[\#1c1c1c\] { background-color: var(--surface-secondary); }
+
+html.light .bg-\[\#080808\]\/90,
+html.light .bg-\[\#080808\]\/92,
+html.light .bg-\[\#080808\]\/95 { background-color: var(--header-surface); }
+
+html.light .bg-\[\#18181b\],
+html.light .bg-\[\#1a1a1d\],
+html.light .bg-\[\#202020\],
+html.light .bg-\[\#202023\] { background-color: var(--surface-hover); }
+
+/* Transparent white washes → dark washes (subtle fills, hovers, chips) */
+html.light .bg-white\/\[0\.01\],
+html.light .bg-white\/\[0\.02\],
+html.light .bg-white\/\[0\.03\],
+html.light .bg-white\/\[0\.04\],
+html.light .bg-white\/\[\.04\],
+html.light .bg-white\/\[0\.045\],
+html.light .bg-white\/\[0\.05\],
+html.light .bg-white\/\[0\.06\],
+html.light .bg-white\/\[0\.07\],
+html.light .bg-white\/\[0\.08\],
+html.light .bg-white\/\[0\.09\],
+html.light .bg-white\/5,
+html.light .bg-white\/10 { background-color: rgba(27, 28, 32, 0.06); }
+
+html.light .bg-white\/15,
+html.light .bg-white\/20,
+html.light .bg-white\/25,
+html.light .bg-white\/\[0\.12\],
+html.light .bg-white\/\[0\.15\],
+html.light .bg-white\/\[0\.2\] { background-color: rgba(27, 28, 32, 0.12); }
+
+html.light .hover\:bg-white\/\[0\.03\]:hover,
+html.light .hover\:bg-white\/\[0\.04\]:hover,
+html.light .hover\:bg-white\/\[\.045\]:hover,
+html.light .hover\:bg-white\/\[0\.05\]:hover,
+html.light .hover\:bg-white\/\[0\.06\]:hover,
+html.light .hover\:bg-white\/\[\.05\]:hover,
+html.light .active\:bg-white\/\[0\.06\]:active { background-color: var(--surface-hover); }
+/* ── Borders ──────────────────────────────────────────────── */
+html.light .border-white\/\[0\.04\],
+html.light .border-white\/\[0\.06\],
+html.light .border-white\/\[0\.07\],
+html.light .border-white\/\[0\.08\],
+html.light .border-white\/\[0\.09\],
+html.light .border-white\/10,
+html.light .border-white\/15 { border-color: var(--border); }
+
+html.light .border-white\/\[0\.1\],
+html.light .border-white\/\[0\.12\],
+html.light .border-white\/\[0\.16\],
+html.light .border-white\/20,
+html.light .border-white\/25 { border-color: var(--border-strong); }
+
+html.light .hover\:border-white\/\[0\.12\]:hover,
+html.light .hover\:border-white\/20:hover { border-color: var(--border-strong); }
+
+html.light .border-\[\#151517\],
+html.light .border-\[\#0a0a0f\],
+html.light .border-\[\#121216\],
+html.light .border-\[\#0d0d0f\],
+html.light .border-\[\#101010\],
+html.light .border-\[\#a8a8ac\] { border-color: var(--border); }
+
+/* ── Text — neutral grays flip to semantic text tokens ─────── */
+html.light .text-white,
+html.light .text-\[\#ffffff\] { color: var(--text-primary); }
+
+html.light .text-white\/80,
+html.light .text-white\/75,
+html.light .text-white\/70,
+html.light .text-white\/65,
+html.light .text-white\/60,
+html.light .text-white\/55,
+html.light .text-white\/50,
+html.light .text-white\/45 { color: var(--text-secondary); }
+
+html.light .text-white\/40,
+html.light .text-white\/35,
+html.light .text-white\/30,
+html.light .text-white\/25,
+html.light .text-white\/20,
+html.light .text-white\/\[0\.4\],
+html.light .text-white\/\[0\.35\],
+html.light .text-white\/\[0\.3\] { color: var(--text-muted); }
+
+html.light .hover\:text-white:hover { color: var(--text-primary); }
+
+html.light .text-\[\#F5F5F5\],
+html.light .text-\[\#f5f5f5\],
+html.light .text-\[\#c8c8cc\],
+html.light .text-\[\#d8d8d8\],
+html.light .text-\[\#e8e8e8\],
+html.light .text-\[\#dedede\],
+html.light .text-\[\#d4d4d8\] { color: var(--text-primary); }
+
+html.light .text-\[\#b8b8b8\],
+html.light .text-\[\#c8c8c8\],
+html.light .text-\[\#a8a8ac\],
+html.light .text-\[\#858585\] { color: var(--text-secondary); }
+
+html.light .text-\[\#8A8A8A\],
+html.light .text-\[\#8a8a8a\],
+html.light .text-\[\#666\],
+html.light .text-\[\#555\],
+html.light .text-\[\#777\],
+html.light .text-\[\#8a8a8f\] { color: var(--text-muted); }
+
+html.light .text-gray-400,
+html.light .text-gray-500 { color: var(--text-muted); }
+html.light .text-gray-300 { color: var(--text-secondary); }
+
+/* Selection semantics — gold icons/accents on selected rows stay gold */
+html.light .text-\[\#c9a227\],
+html.light .text-\[\#dfbd55\],
+html.light .text-\[\#f2c75c\] { color: var(--active-bright); }
+html.light .border-\[\#c9a227\] { border-color: var(--active-border); }
+
+/* ── Rings / focus ─────────────────────────────────────────── */
+html.light .ring-\[\#050505\],
+html.light .ring-\[\#0d0d0f\] { --tw-ring-color: var(--background); }
+/* ── Re-lock ALWAYS-DARK media surfaces in Light mode ────────
+   Video frames, reel cards, story viewers, live rooms and their gradient
+   text overlays keep pure black backgrounds + pure white text so image/video
+   captions and controls never lose contrast. `[data-dark-surface]` is set
+   explicitly by the immersive Reels/Stories/Live pages. */
+html.light :is([data-dark-surface], .bg-black, .bg-black\/40, .bg-black\/45,
+  .bg-black\/50, .bg-black\/55, .bg-black\/60, .bg-black\/65, .bg-black\/70,
+  .bg-black\/75, .bg-black\/80, .bg-black\/85, .bg-black\/90, .bg-black\/95,
+  .from-black\/30, .from-black\/40, .from-black\/50, .from-black\/60,
+  .from-black\/70, .from-black\/75, .from-black\/80, .from-black\/90,
+  .to-black\/40, .to-black\/60, .to-black\/70, .to-black\/90) {
+  background-color: #000;
+}
+
+html.light :is([data-dark-surface], .bg-black, .bg-black\/40, .bg-black\/45,
+  .bg-black\/50, .bg-black\/55, .bg-black\/60, .bg-black\/65, .bg-black\/70,
+  .bg-black\/75, .bg-black\/80, .bg-black\/85, .bg-black\/90, .bg-black\/95,
+  .from-black\/30, .from-black\/40, .from-black\/50, .from-black\/60,
+  .from-black\/70, .from-black\/75, .from-black\/80, .from-black\/90,
+  .to-black\/40, .to-black\/60, .to-black\/70, .to-black\/90)
+  :is(.text-white, .text-white\/80, .text-white\/70, .text-white\/60,
+      .text-white\/50, .text-white\/40, .text-white\/30, .text-gray-100,
+      .text-gray-200, .text-gray-300, .text-gray-400) {
+  color: #ffffff;
+}
+
+html.light :is([data-dark-surface], .bg-black, .bg-black\/40,
+  .bg-black\/55, .bg-black\/60, .bg-black\/70, .bg-black\/80, .bg-black\/90)
+  :is(.bg-white\/\[0\.15\], .bg-white\/\[0\.12\], .bg-white\/10, .bg-white\/15,
+      .bg-white\/20, .bg-white\/25, .bg-white\/5) {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+html.light :is([data-dark-surface], .bg-black, .bg-black\/40,
+  .bg-black\/55, .bg-black\/60, .bg-black\/70, .bg-black\/80, .bg-black\/90)
+  :is(.border-white\/\[0\.08\], .border-white\/10, .border-white\/15,
+      .border-white\/20, .border-white\/\[0\.1\], .border-white\/\[0\.12\]) {
+  border-color: rgba(255, 255, 255, 0.18);
+}
 /* ── Compact density — tightens spacing/rows across the app uniformly. ── */
 html[data-density="compact"] {
   --density-scale: 0.85;

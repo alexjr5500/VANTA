@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Home, FileText, Radio, DollarSign, Crown, Users, BarChart3,
-  MessageCircle, Wallet, Bell, Sparkles, Shield,
+  MessageCircle, Wallet, Gift, Bell, Sparkles, Shield,
   X, LogOut
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -58,6 +58,7 @@ const navSections: NavSection[] = [
     label: 'Monetization',
     items: [
       { href: '/creator/monetization', label: 'Monetization', icon: Wallet },
+      { href: '/creator/rewards', label: 'Follower Rewards', icon: Gift },
       { href: '/creator/notifications', label: 'Notifications', icon: Bell },
     ],
   },

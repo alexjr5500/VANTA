@@ -46,6 +46,7 @@ const navSections: NavSection[] = [
       { href: '/admin/finance', label: 'Finance', icon: Wallet, roles: ADMIN_ROLES },
       { href: '/admin/coin-payments', label: 'Coin Payments', icon: Coins, roles: ADMIN_ROLES },
       { href: '/admin/gifts', label: 'Gifts', icon: Gift, roles: ADMIN_ROLES },
+      { href: '/admin/follower-rewards', label: 'Follower Rewards', icon: Gift, roles: ADMIN_ROLES },
     ],
   },
   {

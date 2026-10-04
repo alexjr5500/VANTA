@@ -29,6 +29,13 @@ export const TX_TYPES = {
   ADMIN_CREDIT: "ADMIN_CREDIT",
   ADMIN_DEBIT: "ADMIN_DEBIT",
   SYSTEM_CREDIT: "SYSTEM_CREDIT",
+  // Gold Verified Follower Rewards ledger (campaign reservation/distribution).
+  // Every financial state change of a Follower Reward campaign is mirrored as
+  // exactly one of these WalletTransaction rows so balances are fully auditable.
+  FOLLOWER_REWARD_RESERVE: "FOLLOWER_REWARD_RESERVE",
+  FOLLOWER_REWARD_CLAIM: "FOLLOWER_REWARD_CLAIM",
+  FOLLOWER_REWARD_REFUND: "FOLLOWER_REWARD_REFUND",
+  FOLLOWER_REWARD_RELEASE: "FOLLOWER_REWARD_RELEASE",
 } as const;
 
 // Types that represent money coming IN (positive)
@@ -40,6 +47,9 @@ const INCOMING_TYPES = new Set([
   TX_TYPES.REFUND,
   TX_TYPES.ADMIN_CREDIT,
   TX_TYPES.SYSTEM_CREDIT,
+  TX_TYPES.FOLLOWER_REWARD_CLAIM,
+  TX_TYPES.FOLLOWER_REWARD_REFUND,
+  TX_TYPES.FOLLOWER_REWARD_RELEASE,
 ]);
 
 // Types that represent money going OUT (negative)
@@ -49,7 +59,18 @@ const OUTGOING_TYPES = new Set([
   TX_TYPES.WITHDRAWAL,
   TX_TYPES.FEE,
   TX_TYPES.ADMIN_DEBIT,
+  TX_TYPES.FOLLOWER_REWARD_RESERVE,
 ]);
+
+// Follower Reward claims move coins from the creator to the claimant. The
+// ledger uses ONE transaction type (FOLLOWER_REWARD_CLAIM) for both sides and
+// records which party the row belongs to in `metadata.side`.
+const FOLLOWER_REWARD_CLAIM_TYPE = TX_TYPES.FOLLOWER_REWARD_CLAIM;
+
+/** Available (spendable) coins = coinBalance - lockedCoins (reserved). */
+export function resolveAvailableCoins(wallet: { coinBalance: number; lockedCoins?: number }): number {
+  return Math.max(0, (wallet.coinBalance || 0) - (wallet.lockedCoins || 0));
+}
 
 // ============================================================================
 // HELPER: Resolve user display info
@@ -99,6 +120,14 @@ export function buildTransactionDescription(type: string, amount: number, counte
       return `Requested withdrawal of ${safeAmount} VANTA Coins`;
     case TX_TYPES.REFUND:
       return `Refunded ${safeAmount} VANTA Coins`;
+    case TX_TYPES.FOLLOWER_REWARD_RESERVE:
+      return `Reserved ${safeAmount} VANTA Coins for a Follower Reward`;
+    case TX_TYPES.FOLLOWER_REWARD_REFUND:
+      return `Follower Reward refund: ${safeAmount} VANTA Coins returned`;
+    case TX_TYPES.FOLLOWER_REWARD_RELEASE:
+      return `Follower Reward release: ${safeAmount} VANTA Coins returned`;
+    case TX_TYPES.FOLLOWER_REWARD_CLAIM:
+      return `Follower Reward: ${safeAmount} VANTA Coins`;
     default:
       return `${type.replace(/_/g, ' ').toLowerCase()} ${safeAmount} VANTA Coins`;
   }
@@ -214,9 +243,13 @@ export class WalletService {
       throw new Error("Amount must be positive");
     }
 
-    if (wallet.coinBalance < amount) {
+    // Reserved coins (Follower Rewards, etc.) are never spendable elsewhere:
+    // available = coinBalance - lockedCoins. This matches the existing
+    // gift/wallet convention (see gift.service validateWallet).
+    const availableBalance = resolveAvailableCoins(wallet);
+    if (availableBalance < amount) {
       throw new Error(
-        `Insufficient coins. You have ${wallet.coinBalance} but need ${amount}.`
+        `Insufficient coins. You have ${availableBalance} available but need ${amount}.`
       );
     }
 
@@ -682,10 +715,11 @@ export class WalletService {
     const totalDeduction = amount + fee;
     const netReceived = amount;
 
-    // Check balance
-    if (senderWallet.coinBalance < totalDeduction) {
+    // Check balance — reserved coins are locked and cannot be spent elsewhere.
+    const senderAvailable = resolveAvailableCoins(senderWallet);
+    if (senderAvailable < totalDeduction) {
       throw new Error(
-        `Insufficient balance. You need ${totalDeduction} coins (${amount} + ${fee} fee) but only have ${senderWallet.coinBalance}`
+        `Insufficient balance. You need ${totalDeduction} coins (${amount} + ${fee} fee) but only have ${senderAvailable} available`
       );
     }
 
@@ -1360,8 +1394,15 @@ export class WalletService {
           counterparty = await getUserDisplayInfo(counterpartyId);
         }
 
-        const isIncoming = INCOMING_TYPES.has(tx.type as any);
-        const isOutgoing = OUTGOING_TYPES.has(tx.type as any);
+        const isIncomingBase = INCOMING_TYPES.has(tx.type as any);
+        // Follower Reward CLAIM rows exist on BOTH sides of a payout: the
+        // follower's credit (incoming) and the creator's spend (outgoing). The
+        // party is recorded in `metadata.side` so the ledger signs are correct.
+        const isIncoming: boolean =
+          tx.type === FOLLOWER_REWARD_CLAIM_TYPE && metadata.side === 'creator'
+            ? false
+            : isIncomingBase;
+        const isOutgoing = OUTGOING_TYPES.has(tx.type as any) || (!isIncoming && tx.type === FOLLOWER_REWARD_CLAIM_TYPE);
         return {
           ...tx,
           amount: Math.abs(tx.amount),

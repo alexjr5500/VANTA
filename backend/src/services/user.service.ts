@@ -1022,6 +1022,13 @@ export class UserService {
       void notificationService.notifyFollow(target.id, actor.username, currentUserId)
         .catch(error => console.error('Failed to create follow notification', error));
     }
+
+    // Gold Verified Follower Rewards: when the followed creator has an ACTIVE
+    // campaign and this NEW follow qualifies, quietly notify once per
+    // user+campaign (idempotent referenceKey). Primary discovery stays the
+    // profile gift box, so this never spams.
+    void this.notifyRewardAvailability(currentUserId, target.id)
+      .catch(error => console.error('Failed to send follow reward availability notification', error));
     return {
       follow,
       isFollowing: true,
@@ -1486,6 +1493,35 @@ export class UserService {
     const user = await prisma.user.findUnique({ where: { username } });
     if (!user) throw new Error('Profile not found');
     return this.getUserLivestreams(user.id, cursor, limit);
+  }
+
+  /**
+   * Best-effort "a reward is waiting" notification for a follower who just
+   * followed a Gold creator with an ACTIVE campaign. Idempotent per
+   * user+campaign (Notification.referenceKey is unique per user).
+   */
+  private async notifyRewardAvailability(followerId: string, creatorId: string): Promise<void> {
+    const { followerRewardService } = await import('./follower-reward.service');
+    const availability = await followerRewardService.getRewardAvailability(creatorId, followerId);
+    if (!availability.available || !availability.campaign) return;
+
+    const { notificationService } = await import('./notification.service');
+    const creator = await prisma.user.findUnique({ where: { id: creatorId }, select: { username: true } });
+    await notificationService.createNotification(
+      followerId,
+      'FOLLOWER_REWARD_AVAILABLE',
+      'A reward is waiting',
+      creator
+        ? `🎁 @${creator.username} has a reward for you!`
+        : '🎁 A reward is waiting on a profile you follow!',
+      {
+        actorId: creatorId,
+        campaignId: availability.campaign.id,
+        entityType: 'follower_reward',
+        entityId: availability.campaign.id,
+        referenceKey: `follower-reward-available:${followerId}:${availability.campaign.id}`,
+      }
+    );
   }
 }
 

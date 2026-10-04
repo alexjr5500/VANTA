@@ -134,7 +134,7 @@ export default async function RootLayout({
           }}
         />
       </head>
-      <body className="bg-[var(--background)] text-[var(--foreground)] min-h-screen flex flex-col antialiased">
+      <body className="bg-[var(--background)] text-[var(--foreground)] min-h-dvh flex flex-col antialiased">
         <I18nProvider>
           <AccessibilityProvider>
             <ThemeProvider>
