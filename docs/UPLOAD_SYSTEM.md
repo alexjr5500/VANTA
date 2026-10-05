@@ -63,6 +63,17 @@ the user to sit on an upload screen:
 - `Publish Story` / `Post Reel` creates an **instant draft** (`POST /api/stories/draft`
   or `POST /api/reels`) with `publishStatus = "UPLOADING"` and **no media URL yet**,
   then hands the file to the frontend background upload manager and closes the editor.
+- The Create Status composer is **multi-file**: a user can select several
+  photos *and* videos in one session and post them as one Status. Every file is
+  backed by its own Story row (the production model is one media item per row),
+  so the flow creates **one draft per file first**, then starts one resumable
+  upload per draft and shows live "Uploading X of Y" progress with per-file
+  retry/cancel. Drafts are only created after every file has been validated, and
+  uploads only start once every draft exists — a mid-way failure can never leave
+  a partial-but-live Status, and created-but-unposted drafts are marked `FAILED`
+  so they never surface. The server stays authoritative for the daily Status
+  quota (7 POSTED rows for standard users, unlimited for verified) and the 24h
+  expiry; the composer only mirrors those limits for a safe UX.
 - The media is streamed in **resumable chunks** through the existing storage provider
   (local disk or the auto-detected Cloudinary pipeline) via:
   - `POST /api/upload/chunk/init` — validate declared size/type, create an `UploadSession`.
