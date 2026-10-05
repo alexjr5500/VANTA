@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Home, FileText, Radio, DollarSign, Crown, Users, BarChart3,
-  MessageCircle, Wallet, Gift, Bell, Sparkles, Shield,
+  MessageCircle, Wallet, Gift, Bell, Shield, BadgeCheck,
   X, LogOut
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -27,45 +27,35 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
-    label: 'Main',
+    label: 'Overview',
     items: [
       { href: '/creator', label: 'Home', icon: Home },
+      { href: '/creator/analytics', label: 'Analytics', icon: BarChart3 },
       { href: '/creator/content', label: 'Content Manager', icon: FileText },
     ],
   },
   {
-    label: 'Studio',
+    label: 'Creator Tools',
     items: [
+      { href: '/creator/verification', label: 'Verification', icon: BadgeCheck },
       { href: '/creator/live', label: 'Live Studio', icon: Radio },
-    ],
-  },
-  {
-    label: 'Earnings',
-    items: [
+      { href: '/creator/monetization', label: 'Monetization', icon: Wallet },
       { href: '/creator/earnings', label: 'Earnings', icon: DollarSign },
+      { href: '/creator/rewards', label: 'Follower Rewards', icon: Gift },
       { href: '/creator/subscriptions', label: 'Subscriptions', icon: Crown },
     ],
   },
   {
-    label: 'Community',
+    label: 'Audience',
     items: [
-      { href: '/creator/community', label: 'Community', icon: Users },
-      { href: '/creator/analytics', label: 'Analytics', icon: BarChart3 },
+      { href: '/creator/community', label: 'Audience', icon: Users },
       { href: '/creator/inbox', label: 'Inbox', icon: MessageCircle },
     ],
   },
   {
-    label: 'Monetization',
+    label: 'Account',
     items: [
-      { href: '/creator/monetization', label: 'Monetization', icon: Wallet },
-      { href: '/creator/rewards', label: 'Follower Rewards', icon: Gift },
       { href: '/creator/notifications', label: 'Notifications', icon: Bell },
-    ],
-  },
-  {
-    label: 'Tools',
-    items: [
-      { href: '/creator/ai', label: 'AI Tools', icon: Sparkles },
       { href: '/creator/security', label: 'Security', icon: Shield },
     ],
   },

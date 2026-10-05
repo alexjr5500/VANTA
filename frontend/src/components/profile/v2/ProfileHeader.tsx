@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BadgeCheck, CalendarDays, Gift, Link2, MapPin, MessageCircle, Pencil, Share2, ShieldCheck, UserCheck, UserPlus } from 'lucide-react';
+import { CalendarDays, Gift, Link2, MapPin, MessageCircle, Pencil, Share2, UserCheck, UserPlus } from 'lucide-react';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import Avatar from '@/components/ui/Avatar';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
@@ -48,17 +48,6 @@ export default function ProfileHeader({ profile, own, onFollow, onMessage, onGif
       <div className="profile-actions">
         {own ? (
           <>
-            {profile.verified && profile.verificationType ? (
-              <Link className="profile-pill manage-verification" href="/verification/badge" aria-label="Manage verification">
-                <BadgeCheck size={14} />
-                <span>Manage Verification</span>
-              </Link>
-            ) : (
-              <Link className="profile-pill primary get-verified" href="/verification/badge" aria-label="Get Verified">
-                <ShieldCheck size={14} />
-                <span>Get Verified</span>
-              </Link>
-            )}
             <Link className="profile-pill edit-action" href="/profile/editprofile" aria-label="Edit profile"><Pencil size={14} /><span>Edit Profile</span></Link>
             <button className="profile-icon share-action" onClick={onCopy} aria-label="Share profile"><Share2 size={16} /></button>
           </>

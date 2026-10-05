@@ -2,7 +2,12 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { useContentCreation } from '@/components/create/ContentCreationContext';
+import Avatar from '@/components/ui/Avatar';
+import VerificationBadge from '@/components/ui/VerificationBadge';
 import { apiGet } from '@/lib/apiClient';
 import { cn } from '@/lib/utils';
 import {
@@ -22,6 +27,10 @@ import {
   Radio,
   Coins,
   ChevronRight,
+  BadgeCheck,
+  Wallet,
+  Plus,
+  CircleDollarSign,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -104,6 +113,8 @@ function MetricCard({
 
 export default function CreatorStudioPage() {
   const { token, user } = useAuth();
+  const router = useRouter();
+  const { openPostModal, openStoryModal } = useContentCreation();
   const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -224,6 +235,105 @@ export default function CreatorStudioPage() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-5"
         >
+{/* ── Profile summary ─────────────────────────────────────────── */}
+          <section className="card-premium relative overflow-hidden p-5">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#d6a83f]/40 to-transparent" aria-hidden />
+            <div className="flex items-center gap-4">
+              <Avatar
+                src={stats?.avatar || user?.avatar || user?.avatarUrl || null}
+                alt={stats?.username || user?.username || 'Creator'}
+                size="xl"
+                fallback={stats?.username?.charAt(0) || user?.username?.charAt(0) || 'C'}
+                wrapperClassName="shrink-0"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="truncate text-lg font-bold text-white">{stats?.fullName || user?.fullName || user?.username}</h1>
+                  {stats?.verified && <VerificationBadge type={user?.verificationType || 'GOLD'} size="sm" />}
+                </div>
+                <p className="truncate text-sm text-white/40">@{stats?.username || user?.username}</p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] font-medium uppercase tracking-wide">
+                  <span className="rounded-full bg-[var(--active-soft)] px-2.5 py-0.5 text-[var(--active-bright)]">Creator Studio</span>
+                  <span className="rounded-full bg-white/[0.05] px-2.5 py-0.5 text-white/40">
+                    {stats?.verified ? 'Verified creator' : 'Creator'}
+                  </span>
+                </div>
+              </div>
+              <Link
+                href={`/profile/${stats?.username || user?.username || ''}`}
+                className="hidden shrink-0 items-center gap-1 rounded-xl border border-white/[0.08] px-3 py-2 text-xs font-semibold text-white/60 transition-colors hover:bg-white/[0.04] hover:text-white md:inline-flex"
+              >
+                View profile <ChevronRight size={13} />
+              </Link>
+            </div>
+          </section>
+
+          {/* ── Quick actions (all real, existing VANTA flows) ───────────── */}
+          <section>
+            <h2 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/30">Quick actions</h2>
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+              <button
+                onClick={() => router.push('/live/go-live')}
+                className="group flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 text-left transition-all hover:border-red-400/30 hover:bg-red-500/[0.04]"
+              >
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-red-500/15 text-red-400"><Radio size={16} /></span>
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-semibold text-white">Go Live</span>
+                  <span className="block text-[10px] text-white/35">Start a livestream</span>
+                </span>
+              </button>
+              <button
+                onClick={openPostModal}
+                className="group flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 text-left transition-all hover:border-sky-400/30 hover:bg-sky-500/[0.04]"
+              >
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-sky-500/15 text-sky-300"><Plus size={16} /></span>
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-semibold text-white">Create Post</span>
+                  <span className="block text-[10px] text-white/35">Share with your audience</span>
+                </span>
+              </button>
+              <button
+                onClick={() => router.push('/creator/verification')}
+                className="group flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 text-left transition-all hover:border-[var(--active-border)] hover:bg-[var(--active-soft)]/30"
+              >
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--active-soft)] text-[var(--active)]"><BadgeCheck size={16} /></span>
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-semibold text-white">Verification</span>
+                  <span className="block text-[10px] text-white/35">Manage your badge</span>
+                </span>
+              </button>
+<button
+                onClick={() => router.push('/creator/analytics')}
+                className="group flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 text-left transition-all hover:border-emerald-400/30 hover:bg-emerald-500/[0.04]"
+              >
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300"><BarChart3 size={16} /></span>
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-semibold text-white">Analytics</span>
+                  <span className="block text-[10px] text-white/35">Track performance</span>
+                </span>
+              </button>
+              <button
+                onClick={() => router.push('/creator/monetization')}
+                className="group flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 text-left transition-all hover:border-amber-400/30 hover:bg-amber-500/[0.04]"
+              >
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-500/15 text-amber-300"><Wallet size={16} /></span>
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-semibold text-white">Monetization</span>
+                  <span className="block text-[10px] text-white/35">Gifts, coins &amp; earnings</span>
+                </span>
+              </button>
+              <button
+                onClick={openStoryModal}
+                className="group flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 text-left transition-all hover:border-purple-400/30 hover:bg-purple-500/[0.04]"
+              >
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-purple-500/15 text-purple-300"><CircleDollarSign size={16} /></span>
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-semibold text-white">Story</span>
+                  <span className="block text-[10px] text-white/35">Share a moment</span>
+                </span>
+              </button>
+            </div>
+          </section>
           <div className="grid grid-cols-2 gap-3">
             <MetricCard icon={Eye} label="Total views" value={formatCompact(stats?.totalViews ?? 0)} accent="text-[#c8c8cc]" />
             <MetricCard icon={Users} label="Followers" value={formatCompact(stats?.totalFollowers ?? 0)} accent="text-[#c8c8cc]" />

@@ -1,82 +1,143 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import {
-  FileText, Video, BookOpen, Clock, Calendar,
-  Edit3, Trash2, Eye, MoreHorizontal, Search, Filter,
-  CheckCircle, XCircle, Play, Image
-} from 'lucide-react';
-import GlassCard from '@/components/ui/GlassCard';
+import Link from 'next/link';
+import { FileText, Video, Eye, Heart, MessageCircle, Bookmark, Share2, AlertCircle, RefreshCw, ArrowUpRight } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
 
-const typeIcons: Record<string, any> = { post: FileText, video: Video, short: Play, story: BookOpen };
-const typeColors: Record<string, string> = { post: 'bg-[#c8c8cc]/15 text-[#c8c8cc]', video: 'bg-[#c8c8cc]/15 text-[#c8c8cc]', short: 'bg-[#151517]0/15 text-[#f2c75c]', story: 'bg-amber-500/15 text-amber-300' };
-const statusStyles: Record<string, string> = { draft: 'bg-gray-500/15 text-gray-400', scheduled: 'bg-[#c8c8cc]/15 text-[#c8c8cc]', published: 'bg-green-500/15 text-green-300' };
+// ============================================================================
+// CREATOR CONTENT — real published posts from /api/creator/content with their
+// actual performance numbers. No mocked drafts or fake management controls.
+// ============================================================================
 
-interface ContentDraft {
-  id: string; type: string; title: string; content?: string;
-  status: string; thumbnail?: string; mediaUrl?: string;
-  scheduledFor?: string; createdAt: string; updatedAt: string;
+interface CreatorContentItem {
+  id: string;
+  type: 'post' | 'reel';
+  title: string;
+  mediaUrl: string | null;
+  views: number;
+  likes: number;
+  comments: number;
+  saves: number;
+  shares: number;
+  createdAt: string;
 }
 
+const fmtCompact = (n: number) =>
+  Math.abs(Number(n || 0)) >= 1000
+    ? Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(n || 0))
+    : String(Number(n || 0));
+
 export default function CreatorContentPage() {
-  const [filter, setFilter] = useState('all');
-  const [drafts, setDrafts] = useState<ContentDraft[]>([]);
+  const { token } = useAuth();
+  const [items, setItems] = useState<CreatorContentItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const data = await apiGet<ContentDraft[]>('/api/creator/content');
-        setDrafts(data || []);
-      } catch { setDrafts([]); }
-      finally { setLoading(false); }
-    };
-    fetchData();
-  }, []);
+  const fetchData = useCallback(async () => {
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiGet<{ content: CreatorContentItem[] }>('/api/creator/content?limit=50', token, { skipCache: true });
+      setItems(Array.isArray(res?.content) ? res.content : []);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load your content.');
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
 
-  const filtered = filter === 'all' ? drafts : drafts.filter(c => c.status === filter);
+  useEffect(() => { void fetchData(); }, [fetchData]);
 
-  return (
-    <div className="w-full space-y-6">
-      <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-        {['all', 'published', 'scheduled', 'draft'].map(s => (
-          <button key={s} onClick={() => setFilter(s)}
-            className={`px-4 py-2 text-xs font-medium rounded-full transition-all whitespace-nowrap ${filter === s ? 'bg-gradient-to-r from-[#d6a83f] to-[#c8c8cc] text-white' : 'glass text-gray-400 hover:text-white'}`}>
-            {s.charAt(0).toUpperCase() + s.slice(1)} ({s === 'all' ? drafts.length : drafts.filter(c => c.status === s).length})
-          </button>
-        ))}
+  if (loading) {
+    return (
+      <div className="w-full space-y-3">
+        <div className="skeleton h-12 w-48 rounded-2xl" />
+        {[1, 2, 3].map((i) => <div key={i} className="skeleton h-36 rounded-2xl" />)}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex w-full flex-col items-center py-14 text-center">
+        <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl border border-red-500/20 bg-red-500/10">
+          <AlertCircle size={22} className="text-red-400" />
+        </div>
+        <h2 className="text-base font-semibold text-white/80">Couldn&apos;t load your content</h2>
+        <p className="mt-1 mb-5 max-w-sm text-sm text-white/40">{error}</p>
+        <button onClick={() => void fetchData()} className="btn-primary text-sm"><RefreshCw size={14} className="mr-1.5 inline" /> Try again</button>
+      </div>
+    );
+  }
+return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full space-y-4 pb-8">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-bold text-white">Content Manager</h2>
+          <p className="mt-0.5 text-[11px] text-white/40">{items.length} published post{items.length === 1 ? '' : 's'} · performance from real engagement</p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1   gap-4">
-        {filtered.map((item, i) => {
-          const TypeIcon = typeIcons[item.type] || FileText;
-          return (
-            <motion.div key={item.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
-              className="glass rounded-[20px] p-5 border border-white/[0.06] hover:border-white/[0.12] transition-all group">
-              <div className="flex items-start justify-between mb-3">
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${typeColors[item.type] || 'bg-white/10'}`}>
-                  <TypeIcon size={16} />
+      {items.length === 0 ? (
+        <section className="rounded-3xl border border-white/[0.06] bg-white/[0.02] p-10 text-center">
+          <FileText size={28} className="mx-auto mb-3 text-white/15" />
+          <p className="text-sm text-white/50">No content yet</p>
+          <p className="mx-auto mt-1 max-w-xs text-xs text-white/30">Posts you publish will appear here with their views, likes and comments.</p>
+        </section>
+      ) : (
+        <div className="space-y-2.5">
+          {items.map((item) => (
+            <div key={item.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/[0.05] text-white/50">
+                    {item.type === 'reel' ? <Video size={16} /> : <FileText size={16} />}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-white">{item.title}</p>
+                    <p className="mt-0.5 text-[10px] text-white/35">{new Date(item.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</p>
+                  </div>
                 </div>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${statusStyles[item.status] || 'bg-gray-500/15 text-gray-300'}`}>
-                  {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
-                </span>
+                <Link
+                  href={`/post/${item.id}`}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/[0.08] px-2.5 py-1.5 text-[11px] font-semibold text-white/60 transition-colors hover:bg-white/[0.04] hover:text-white"
+                >
+                  View <ArrowUpRight size={11} />
+                </Link>
               </div>
-              <h3 className="text-sm font-bold text-white mb-1 line-clamp-1">{item.title || 'Untitled'}</h3>
-              <p className="text-xs text-gray-400 line-clamp-2 mb-3">{item.content || item.mediaUrl || ''}</p>
-              <div className="flex items-center justify-between text-[10px] text-gray-500 mt-auto">
-                <span className="flex items-center gap-1"><Clock size={10} />{new Date(item.updatedAt || item.createdAt).toLocaleDateString()}</span>
+              <div className="mt-3 grid grid-cols-5 gap-2 text-center">
+                <div className="rounded-lg bg-white/[0.03] py-2">
+                  <p className="text-sm font-semibold text-white">{fmtCompact(item.views)}</p>
+                  <p className="mt-0.5 flex items-center justify-center gap-1 text-[9px] text-white/35"><Eye size={9} /> Views</p>
+                </div>
+                <div className="rounded-lg bg-white/[0.03] py-2">
+                  <p className="text-sm font-semibold text-white">{fmtCompact(item.likes)}</p>
+                  <p className="mt-0.5 flex items-center justify-center gap-1 text-[9px] text-white/35"><Heart size={9} /> Likes</p>
+                </div>
+                <div className="rounded-lg bg-white/[0.03] py-2">
+                  <p className="text-sm font-semibold text-white">{fmtCompact(item.comments)}</p>
+                  <p className="mt-0.5 flex items-center justify-center gap-1 text-[9px] text-white/35"><MessageCircle size={9} /> Comments</p>
+                </div>
+                <div className="rounded-lg bg-white/[0.03] py-2">
+                  <p className="text-sm font-semibold text-white">{fmtCompact(item.shares)}</p>
+                  <p className="mt-0.5 flex items-center justify-center gap-1 text-[9px] text-white/35"><Share2 size={9} /> Shares</p>
+                </div>
+                <div className="rounded-lg bg-white/[0.03] py-2">
+                  <p className="text-sm font-semibold text-white">{fmtCompact(item.saves)}</p>
+                  <p className="mt-0.5 flex items-center justify-center gap-1 text-[9px] text-white/35"><Bookmark size={9} /> Saves</p>
+                </div>
               </div>
-              <div className="flex items-center gap-1 mt-3 pt-3 border-t border-white/[0.06] opacity-0 group-hover:opacity-100 transition-opacity">
-                <button className="flex-1 p-2 rounded-xl text-xs bg-white/5 text-gray-300 hover:bg-white/10"><Eye size={12} className="inline mr-1" />Preview</button>
-                <button className="p-2 rounded-xl text-xs bg-white/5 text-[#c8c8cc] hover:bg-[#c8c8cc]/10"><Edit3 size={12} /></button>
-                <button className="p-2 rounded-xl text-xs bg-white/5 text-red-400 hover:bg-red-500/10"><Trash2 size={12} /></button>
-              </div>
-            </motion.div>
-          );
-        })}
-      </div>
-    </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </motion.div>
   );
 }

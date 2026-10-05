@@ -1,128 +1,202 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { DollarSign, TrendingUp, Gift, Crown, Wallet, ArrowUpRight, ArrowDownRight, Clock, CheckCircle } from 'lucide-react';
-import GlassCard from '@/components/ui/GlassCard';
+import Link from 'next/link';
+import { DollarSign, Gift, Coins, Wallet, ArrowUpRight, ArrowDownRight, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
+import { getTransactionHistory, getGiftHistory } from '@/lib/walletApi';
 
-const fmtCurrency = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2 });
+// ============================================================================
+// CREATOR EARNINGS — real creator wallet + aggregated stats. No client-side
+// financial math: earnings/balances come from the backend wallet/creator APIs.
+// ============================================================================
+
+interface CreatorStats {
+  username: string;
+  fullName: string | null;
+  avatar: string | null;
+  verified: boolean;
+  totalFollowers: number;
+  following: number;
+  totalPosts: number;
+  totalReels: number;
+  totalLiveSessions: number;
+  totalViews: number;
+  totalLikes: number;
+  totalComments: number;
+  totalShares: number;
+  totalSaves: number;
+  giftsReceived: number;
+  coins: number;
+  earnings: number;
+  earningsBalance: number;
+}
+
+const fmtCurrency = (n: number) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const statusColors: Record<string, string> = {
+  COMPLETED: 'bg-emerald-500/15 text-emerald-400',
+  PENDING: 'bg-amber-500/15 text-amber-300',
+  FAILED: 'bg-red-500/15 text-red-400',
+  REVERSED: 'bg-orange-500/15 text-orange-300',
+};
 
 export default function EarningsPage() {
-  const [period, setPeriod] = useState<'today' | 'weekly' | 'monthly' | 'lifetime'>('monthly');
-  const [earnings, setEarnings] = useState<any>(null);
+  const { token } = useAuth();
+  const [stats, setStats] = useState<CreatorStats | null>(null);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [giftHistory, setGiftHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const data = await apiGet('/api/creator/earnings');
-        setEarnings(data);
-      } catch {}
-      finally { setLoading(false); }
-    };
-    fetchData();
-  }, []);
+  const fetchData = useCallback(async () => {
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const [statsRes, txRes, giftRes] = await Promise.all([
+        apiGet<{ stats: CreatorStats }>('/api/creator/stats', token).catch(() => ({ stats: null })),
+        getTransactionHistory({ limit: 25 }).catch(() => ({})),
+        getGiftHistory(15).catch(() => ({})),
+      ]);
+      const txData: any = txRes ?? {};
+      const giftData: any = giftRes ?? {};
+      setStats(statsRes?.stats ?? null);
+      setTransactions(Array.isArray(txData.transactions) ? txData.transactions : []);
+      setGiftHistory(Array.isArray(giftData.transactions) ? giftData.transactions : []);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load earnings.');
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
 
-  const defaultEarnings = {
-    today: 0, weekly: 0, monthly: 0, lifetime: 0,
-    giftBreakdown: [], subscriptionRevenue: 0, adRevenue: 0,
-    pendingPayouts: 0, withdrawalBalance: 0, transactions: [],
-  };
-  const e = earnings || defaultEarnings;
+  useEffect(() => { void fetchData(); }, [fetchData]);
 
-  const periods = [
-    { key: 'today' as const, value: e.today, label: 'Today' },
-    { key: 'weekly' as const, value: e.weekly, label: 'This Week' },
-    { key: 'monthly' as const, value: e.monthly, label: 'This Month' },
-    { key: 'lifetime' as const, value: e.lifetime, label: 'Lifetime' },
-  ];
-
-  return (
-    <div className="w-full space-y-6">
-      <div className="grid grid-cols-2  gap-3">
-        {periods.map((p, i) => (
-          <motion.button key={p.key} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-            onClick={() => setPeriod(p.key)}
-            className={`glass rounded-[20px] p-5 border transition-all text-left ${period === p.key ? 'border-[#151517]0/40 bg-[#151517]0/5' : 'border-white/[0.06] hover:border-white/[0.12]'}`}>
-            <p className="text-xs text-gray-400">{p.label}</p>
-            <p className="text-2xl font-bold text-white mt-1">{fmtCurrency(p.value)}</p>
-          </motion.button>
-        ))}
+  if (loading) {
+    return (
+      <div className="w-full space-y-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => <div key={i} className="skeleton h-28 rounded-2xl" />)}
+        </div>
+        <div className="skeleton h-72 rounded-2xl" />
       </div>
+    );
+  }
 
-      <div className="grid grid-cols-1  gap-6">
-        <GlassCard>
-          <div className="flex items-center gap-2 mb-4">
-            <Gift size={16} className="text-[#d6a83f]" />
-            <h3 className="text-sm font-bold text-white">Gift Breakdown</h3>
-          </div>
-          <div className="space-y-3">
-            {e.giftBreakdown?.length > 0 ? e.giftBreakdown.map((gift: any) => (
-              <div key={gift.name} className="flex items-center justify-between">
-                <div><p className="text-sm text-white">{gift.name}</p><p className="text-[10px] text-gray-500">{gift.count} sent</p></div>
-                <p className="text-sm font-bold text-green-400">{fmtCurrency(gift.revenue)}</p>
-              </div>
-            )) : <p className="text-sm text-gray-500">No gifts received yet.</p>}
-          </div>
-        </GlassCard>
+  if (error) {
+    return (
+      <div className="flex w-full flex-col items-center py-14 text-center">
+        <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl border border-red-500/20 bg-red-500/10">
+          <AlertCircle size={22} className="text-red-400" />
+        </div>
+        <h2 className="text-base font-semibold text-white/80">Couldn&apos;t load earnings</h2>
+        <p className="mt-1 mb-5 max-w-sm text-sm text-white/40">{error}</p>
+        <button onClick={() => void fetchData()} className="btn-primary text-sm"><RefreshCw size={14} className="mr-1.5 inline" /> Try again</button>
+      </div>
+    );
+  }
 
-        <GlassCard>
-          <div className="flex items-center gap-2 mb-4">
-            <Crown size={16} className="text-yellow-400" />
-            <h3 className="text-sm font-bold text-white">Revenue Summary</h3>
+  const hasActivity = (transactions?.length ?? 0) > 0 || (giftHistory?.length ?? 0) > 0;
+return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full space-y-5 pb-8">
+      {/* Earnings summary */}
+      <section className="relative overflow-hidden rounded-3xl border border-white/[0.06] bg-white/[0.02] p-5">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#c9a227]/40 to-transparent" aria-hidden />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.14em] text-white/40">Creator earnings</p>
+            <p className="mt-1 text-3xl font-bold tracking-tight text-white">${Number(stats?.earnings || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+            <p className="mt-1 text-xs text-white/40">Available earnings balance: {fmtCurrency(stats?.earningsBalance ?? 0)}</p>
           </div>
-          <div className="space-y-3">
-            {[
-              { label: 'Subscription Revenue', value: e.subscriptionRevenue, color: 'text-[#c8c8cc]' },
-              { label: 'Ad Revenue', value: e.adRevenue, color: 'text-[#c8c8cc]' },
-              { label: 'Pending Payouts', value: e.pendingPayouts, color: 'text-yellow-400' },
-              { label: 'Withdrawal Balance', value: e.withdrawalBalance, color: 'text-green-400' },
-            ].map(item => (
-              <div key={item.label} className="flex items-center justify-between">
-                <p className="text-sm text-gray-400">{item.label}</p>
-                <p className={`text-sm font-bold ${item.color}`}>{fmtCurrency(item.value)}</p>
+          <Link href="/balance" className="inline-flex items-center gap-1.5 rounded-xl border border-white/[0.08] px-3.5 py-2 text-xs font-semibold text-white/70 transition-colors hover:bg-white/[0.04] hover:text-white">
+            <Wallet size={14} /> Balance &amp; withdrawals
+          </Link>
+        </div>
+      </section>
+
+      {/* Wallet metrics */}
+      <section className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+        <div className="card-premium min-w-0 p-4">
+          <div className="mb-3 grid h-9 w-9 place-items-center rounded-xl bg-[#c9a227]/15 text-[#d9a83f]"><Coins size={16} /></div>
+          <p className="truncate text-xl font-bold text-white">{Number(stats?.coins || 0).toLocaleString()}</p>
+          <p className="mt-1 truncate text-[11px] text-white/40">VANTA coins</p>
+        </div>
+        <div className="card-premium min-w-0 p-4">
+          <div className="mb-3 grid h-9 w-9 place-items-center rounded-xl bg-[#c9a227]/15 text-[#d9a83f]"><Gift size={16} /></div>
+          <p className="truncate text-xl font-bold text-white">{Number(stats?.giftsReceived || 0).toLocaleString()}</p>
+          <p className="mt-1 truncate text-[11px] text-white/40">Gifts received</p>
+        </div>
+        <div className="card-premium min-w-0 p-4 col-span-2 sm:col-span-1">
+          <div className="mb-3 grid h-9 w-9 place-items-center rounded-xl bg-emerald-500/15 text-emerald-400"><DollarSign size={16} /></div>
+          <p className="truncate text-xl font-bold text-white">{fmtCurrency(stats?.earningsBalance ?? 0)}</p>
+          <p className="mt-1 truncate text-[11px] text-white/40">Withdrawable</p>
+        </div>
+      </section>
+{/* Recent transactions */}
+      <section className="rounded-3xl border border-white/[0.06] bg-white/[0.02] p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <ArrowUpRight size={15} className="text-[var(--active)]" />
+          <h3 className="text-sm font-bold text-white">Recent wallet transactions</h3>
+        </div>
+        {transactions.length > 0 ? (
+          <div className="-mx-1 overflow-x-auto px-1">
+            <div className="min-w-[560px] space-y-1.5">
+              {transactions.slice(0, 12).map((tx: any) => (
+                <div key={tx.id} className="flex items-center justify-between gap-3 rounded-xl bg-white/[0.02] px-3.5 py-2.5">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className={tx.amount > 0 ? 'text-emerald-400' : 'text-red-400'}>
+                      {tx.amount > 0 ? <ArrowDownRight size={15} /> : <ArrowUpRight size={15} />}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm text-white/80">{tx.description || tx.type || 'Transaction'}</p>
+                      <p className="text-[10px] text-white/35">{new Date(tx.createdAt || tx.timestamp).toLocaleString()}</p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2.5">
+                    <span className={tx.amount > 0 ? 'text-emerald-400' : 'text-white'}>
+                      {tx.amount > 0 ? '+' : ''}{fmtCurrency(tx.amount || 0)}
+                    </span>
+                    {tx.status && <span className={`text-[9px] px-2 py-0.5 rounded-full font-medium ${statusColors[tx.status] || 'bg-white/[0.06] text-white/40'}`}>{tx.status}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="py-6 text-center text-sm text-white/40">No wallet transactions yet.</p>
+        )}
+      </section>
+
+      {giftHistory.length > 0 && (
+        <section className="rounded-3xl border border-white/[0.06] bg-white/[0.02] p-5">
+          <div className="mb-3 flex items-center gap-2">
+            <Gift size={15} className="text-[var(--active)]" />
+            <h3 className="text-sm font-bold text-white">Recent gifts</h3>
+          </div>
+          <div className="space-y-1.5">
+            {giftHistory.slice(0, 8).map((g: any, i: number) => (
+              <div key={g.id || i} className="flex items-center justify-between rounded-xl bg-white/[0.02] px-3.5 py-2.5 text-sm">
+                <span className="truncate text-white/75">{g.gift?.name || g.giftName || 'Gift'}{g.from?.username ? ` · from @${g.from.username}` : ''}</span>
+                <span className="shrink-0 font-semibold text-[#d9a83f]">{Number(g.amount || g.coins || 0).toLocaleString()} coins</span>
               </div>
             ))}
           </div>
-        </GlassCard>
-      </div>
+        </section>
+      )}
 
-      <GlassCard>
-        <div className="flex items-center gap-2 mb-4">
-          <Wallet size={16} className="text-[#d6a83f]" />
-          <h3 className="text-sm font-bold text-white">Recent Transactions</h3>
-        </div>
-        <div className="overflow-x-auto">
-          {e.transactions?.length > 0 ? (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-gray-500 text-[11px] uppercase tracking-wider border-b border-white/[0.06]">
-                  <th className="text-left py-3 px-2 font-medium">Type</th>
-                  <th className="text-left py-3 px-2 font-medium">Description</th>
-                  <th className="text-right py-3 px-2 font-medium">Amount</th>
-                  <th className="text-center py-3 px-2 font-medium">Status</th>
-                  <th className="text-right py-3 px-2 font-medium">Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {e.transactions.map((tx: any, i: number) => (
-                  <motion.tr key={tx.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}
-                    className="border-b border-white/[0.04] hover:bg-white/[0.02]">
-                    <td className="py-3 px-2"><span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-white/10">{tx.type}</span></td>
-                    <td className="py-3 px-2 text-white text-xs">{tx.description}</td>
-                    <td className={`py-3 px-2 text-right font-bold ${tx.amount > 0 ? 'text-green-400' : 'text-red-400'}`}>{tx.amount > 0 ? '+' : ''}{fmtCurrency(tx.amount)}</td>
-                    <td className="py-3 px-2 text-center">
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full ${tx.status === 'completed' ? 'bg-green-500/15 text-green-400' : 'bg-yellow-500/15 text-yellow-400'}`}>{tx.status}</span>
-                    </td>
-                    <td className="py-3 px-2 text-right text-gray-500 text-xs">{new Date(tx.createdAt).toLocaleDateString()}</td>
-                  </motion.tr>
-                ))}
-              </tbody>
-            </table>
-          ) : <p className="text-sm text-gray-500 py-4">No transactions yet.</p>}
-        </div>
-      </GlassCard>
-    </div>
+      {!hasActivity && (
+        <section className="rounded-3xl border border-white/[0.06] bg-white/[0.02] p-8 text-center">
+          <Loader2 size={26} className="mx-auto mb-3 text-white/15" />
+          <p className="text-sm text-white/50">No earnings activity yet</p>
+          <p className="mx-auto mt-1 max-w-xs text-xs leading-relaxed text-white/30">Receive gifts and coins from your followers to see your earnings here.</p>
+        </section>
+      )}
+    </motion.div>
   );
 }

@@ -1,69 +1,148 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { MessageCircle, Briefcase, HandshakeIcon, Tag, Ticket, Heart, Search, Check, X, Clock, AlertCircle, ArrowUpRight } from 'lucide-react';
-import GlassCard from '@/components/ui/GlassCard';
+import Link from 'next/link';
+import { MessageCircle, Hash, Users, AlertCircle, RefreshCw, ArrowUpRight } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
+import Avatar from '@/components/ui/Avatar';
 
-const statusColors: Record<string, string> = {
-  pending: 'bg-yellow-500/15 text-yellow-300', accepted: 'bg-green-500/15 text-green-300',
-  declined: 'bg-red-500/15 text-red-300', negotiating: 'bg-[#c8c8cc]/15 text-[#c8c8cc]',
-  active: 'bg-green-500/15 text-green-300', completed: 'bg-[#c8c8cc]/15 text-[#c8c8cc]',
-  cancelled: 'bg-gray-500/15 text-gray-400',
-  open: 'bg-yellow-500/15 text-yellow-300', in_progress: 'bg-[#c8c8cc]/15 text-[#c8c8cc]',
-  resolved: 'bg-green-500/15 text-green-300', closed: 'bg-gray-500/15 text-gray-400',
-};
+// ============================================================================
+// CREATOR INBOX — real direct-message conversations from the /api/messages
+// backend, linking into the full VANTA Messages experience.
+// ============================================================================
 
-const priorityColors: Record<string, string> = {
-  low: 'bg-gray-500/15 text-gray-400', medium: 'bg-yellow-500/15 text-yellow-300', high: 'bg-red-500/15 text-red-300',
+interface Conversation {
+  id: string;
+  type: string;
+  isGroup: boolean;
+  name?: string | null;
+  avatar?: string | null;
+  unreadCount: number;
+  updatedAt: string;
+  partner?: { id: string; username: string; avatar?: string | null; verified?: boolean } | null;
+  lastMessage?: { content?: string | null; senderId?: string; createdAt?: string } | null;
+  memberCount?: number;
+}
+
+const timeAgo = (iso?: string) => {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  return days < 7 ? `${days}d` : new Date(iso).toLocaleDateString();
 };
 
 export default function InboxPage() {
-  const [activeTab, setActiveTab] = useState('messages');
-  const [inbox, setInbox] = useState<any>(null);
+  const { token } = useAuth();
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try { const d = await apiGet('/api/creator/inbox'); setInbox(d); }
-      catch {}
-      finally { setLoading(false); }
-    };
-    fetchData();
-  }, []);
+  const fetchData = useCallback(async () => {
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiGet<{ conversations: Conversation[] }>('/api/messages?limit=25', token, { skipCache: true });
+      setConversations(Array.isArray(res?.conversations) ? res.conversations : []);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load your inbox.');
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
 
-  const defaultInbox = { messages: [], businessRequests: [], collaborations: [], brandDeals: [], supportTickets: [], fanMail: [] };
-  const inboxData = inbox || defaultInbox;
+  useEffect(() => { void fetchData(); }, [fetchData]);
 
-  const tabs = [
-    { key: 'messages', label: 'Chat', icon: MessageCircle, count: inboxData.messages.filter((m: any) => !m.isRead).length },
-    { key: 'business', label: 'Business', icon: Briefcase, count: inboxData.businessRequests.filter((r: any) => r.status === 'pending').length },
-    { key: 'collabs', label: 'Collabs', icon: HandshakeIcon, count: inboxData.collaborations.filter((c: any) => c.status === 'pending').length },
-    { key: 'deals', label: 'Brand Deals', icon: Tag },
-    { key: 'tickets', label: 'Support', icon: Ticket, count: inboxData.supportTickets.filter((t: any) => t.status !== 'resolved' && t.status !== 'closed').length },
-    { key: 'fanmail', label: 'Fan Mail', icon: Heart, count: inboxData.fanMail.filter((m: any) => !m.isRead).length },
-  ];
+  if (loading) {
+    return (
+      <div className="w-full space-y-3">
+        <div className="skeleton h-12 w-48 rounded-2xl" />
+        {[1, 2, 3, 4].map((i) => <div key={i} className="skeleton h-20 rounded-2xl" />)}
+      </div>
+    );
+  }
 
-  return (
-    <div className="w-full space-y-6"><div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-        {tabs.map(tab => (
-          <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-            className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-medium transition-all whitespace-nowrap ${activeTab === tab.key ? 'bg-gradient-to-r from-[#d6a83f] to-[#c8c8cc] text-white' : 'glass text-gray-400 hover:text-white border border-white/[0.06]'}`}>
-            <tab.icon size={12} />
-            {tab.label}
-            {tab.count > 0 && <span className="bg-white/20 text-white text-[9px] px-1.5 py-0.5 rounded-full">{tab.count}</span>}
-          </button>
-        ))}
+  if (error) {
+    return (
+      <div className="flex w-full flex-col items-center py-14 text-center">
+        <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl border border-red-500/20 bg-red-500/10">
+          <AlertCircle size={22} className="text-red-400" />
+        </div>
+        <h2 className="text-base font-semibold text-white/80">Couldn&apos;t load your inbox</h2>
+        <p className="mt-1 mb-5 max-w-sm text-sm text-white/40">{error}</p>
+        <button onClick={() => void fetchData()} className="btn-primary text-sm"><RefreshCw size={14} className="mr-1.5 inline" /> Try again</button>
+      </div>
+    );
+  }
+
+  const unreadTotal = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+
+return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full space-y-4 pb-8">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-bold text-white">Inbox</h2>
+          <p className="mt-0.5 text-[11px] text-white/40">{unreadTotal > 0 ? `${unreadTotal} unread across ${conversations.length} conversations` : `${conversations.length} conversations`}</p>
+        </div>
+        <Link href="/messages" className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--active)] px-4 py-2 text-xs font-semibold text-black hover:opacity-90">
+          Open Messages <ArrowUpRight size={13} />
+        </Link>
       </div>
 
-      <GlassCard>
-        <div className="text-center py-12">
-          <MessageCircle size={32} className="mx-auto mb-3 text-gray-500" />
-          <p className="text-sm text-gray-400">No {activeTab} yet.</p>
-          <p className="text-xs text-gray-600 mt-1">Items will appear here as you receive them.</p>
+      {conversations.length === 0 ? (
+        <section className="rounded-3xl border border-white/[0.06] bg-white/[0.02] p-10 text-center">
+          <MessageCircle size={28} className="mx-auto mb-3 text-white/15" />
+          <p className="text-sm text-white/50">No conversations yet</p>
+          <p className="mx-auto mt-1 max-w-xs text-xs text-white/30">Messages from followers and collaborators will appear here.</p>
+          <Link href="/messages" className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-[var(--active)] px-4 py-2 text-xs font-semibold text-black hover:opacity-90">
+            Start a conversation <ArrowUpRight size={13} />
+          </Link>
+        </section>
+      ) : (
+        <div className="space-y-1.5">
+          {conversations.map((c) => {
+            const displayName = c.type === 'DIRECT' ? c.partner?.username : c.name;
+            const isGroup = c.type === 'GROUP' || c.isGroup;
+            return (
+              <Link
+                key={c.id}
+                href="/messages"
+                className="flex items-center gap-3 rounded-2xl border border-white/[0.05] bg-white/[0.02] px-4 py-3 transition-colors hover:border-white/[0.12] hover:bg-white/[0.04]"
+              >
+                {c.type === 'DIRECT' && c.partner ? (
+                  <Avatar src={c.partner.avatar} alt={c.partner.username} size="md" fallback={c.partner.username?.charAt(0)} wrapperClassName="shrink-0" />
+                ) : (
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/[0.05] text-white/50">
+                    {isGroup ? <Users size={16} /> : <Hash size={16} />}
+                  </span>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate text-sm font-semibold text-white">@{displayName || 'Chat'}</p>
+                    <span className="shrink-0 text-[10px] text-white/35">{timeAgo(c.updatedAt)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate text-xs text-white/45">{c.lastMessage?.content || (isGroup ? `${c.memberCount || 0} members` : 'No messages yet')}</p>
+                    {c.unreadCount > 0 && (
+                      <span className="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-[#c9a227] px-1.5 text-[10px] font-bold text-black">{c.unreadCount}</span>
+                    )}
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
         </div>
-      </GlassCard>
-    </div>
+      )}
+    </motion.div>
   );
 }

@@ -135,29 +135,6 @@
   justify-content: flex-end;
   gap: 7px;
 }
-/* Own-profile verification CTA: the widened action set ("Get Verified" /
-   "Manage Verification" + Edit Profile + Share) wraps to a second right-aligned
-   row on narrow phones instead of clipping under the cover or colliding with
-   the avatar (the profile already uses :has() for cover-brand below). */
-.profile-actions:has(.get-verified),
-.profile-actions:has(.manage-verification) {
-  flex-wrap: wrap;
-  row-gap: 6px;
-  /* Keeps the cluster's box clear of the avatar (96px) + page padding (20px)
-     so a wrapped row can never paint into the avatar's column. */
-  max-width: calc(100% - 130px);
-}
-/* On compact screens the wrapped second row descends toward the display name;
-   nudge the whole cluster up and tighten the row gap so it always clears it. */
-@media (max-width: 430px) {
-  .profile-actions:has(.get-verified),
-  .profile-actions:has(.manage-verification) {
-    top: -26px;
-    row-gap: 4px;
-  }
-}
-.profile-pill.manage-verification { color: var(--profile-muted); }
-.profile-pill.manage-verification:hover { color: var(--profile-text); }
 .profile-pill,
 .profile-icon {
   height: 34px;
