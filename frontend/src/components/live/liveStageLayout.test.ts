@@ -60,7 +60,8 @@ describe('stageLayoutFor', () => {
   test('split layout puts the host LEFT and the single guest RIGHT', () => {
     const layout = stageLayoutFor(2);
     expect(layout.arrangement).toBe('split');
-    expect(layout.columns).toBe('minmax(0, 1fr) minmax(0, 1fr)');
+    expect(layout.columns).toBe('repeat(2, minmax(0, 1fr))');
+    expect(layout.rows).toBe('minmax(0, 1fr)');
     expect(layout.areas).toEqual(['"host g1"']);
     expect(layout.guestAreas).toEqual(['g1']);
     // "host" appears before "g1" on the same row → host is on the left.

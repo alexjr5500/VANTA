@@ -145,3 +145,60 @@ describe('CAPTURE_TARGETS shape', () => {
     expect(CAPTURE_TARGETS[0]).toEqual({ width: 1920, height: 1080, frameRate: 30 });
   });
 });
+
+describe('portrait-native devices (phone front cameras)', () => {
+  /** Fake phone front camera — sensor taller than wide, e.g. 720x1280. */
+  function fakePortraitCamera(overrides: Record<string, unknown>, label?: string): FakeCamera {
+    return fakeCamera(
+      {
+        width: { min: 160, max: 720, ideal: 720 },
+        height: { min: 240, max: 1280, ideal: 1280 },
+        ...overrides,
+      },
+      label,
+    );
+  }
+
+  test('pickCaptureTarget prefers a portrait 9:16 target over a 16:9 sensor crop', () => {
+    const target = pickCaptureTarget(readCameraProfile(fakePortraitCamera({})));
+    expect(target.width).toBe(720);
+    expect(target.height).toBe(1280);
+  });
+
+  test('auto constraints request the native portrait orientation', () => {
+    const constraints = pickVideoConstraints(fakePortraitCamera({}));
+    const width = constraints.width as ConstrainULongRange;
+    const height = constraints.height as ConstrainULongRange;
+    expect(width.ideal).toBe(720);
+    expect(height.ideal).toBe(1280);
+  });
+
+  test('a fixed preset stays portrait instead of cropping to 16:9', () => {
+    const cam = fakePortraitCamera({
+      width: { min: 160, max: 1080 },
+      height: { min: 240, max: 1920 },
+    });
+    const constraints = pickVideoConstraints(cam, { quality: '720p' });
+    const width = constraints.width as ConstrainULongRange;
+    const height = constraints.height as ConstrainULongRange;
+    // 720p portrait (9:16) equivalent — ideal is 720x1280, never a 1280x720 crop.
+    expect(width.ideal).toBe(720);
+    expect(height.ideal).toBe(1280);
+  });
+
+  test('a 1080p preset never exceeds a smaller portrait ceiling', () => {
+    const constraints = pickVideoConstraints(fakePortraitCamera({}), { quality: '1080p' });
+    const width = constraints.width as ConstrainULongRange;
+    const height = constraints.height as ConstrainULongRange;
+    expect(width.ideal).toBeLessThanOrEqual(720);
+    expect(height.ideal).toBeLessThanOrEqual(1280);
+  });
+
+  test('landscape webcams keep 16:9 behavior (no regression)', () => {
+    const constraints = pickVideoConstraints(fakeCamera({}));
+    const width = constraints.width as ConstrainULongRange;
+    const height = constraints.height as ConstrainULongRange;
+    expect(width.ideal).toBe(1920);
+    expect(height.ideal).toBe(1080);
+  });
+});

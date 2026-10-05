@@ -30,13 +30,31 @@ export interface CaptureTarget {
   frameRate: number;
 }
 
-/** Ordered best-to-worst publish/capture targets (16:9). */
+/** Ordered best-to-worst landscape (16:9) publish/capture targets. */
 export const CAPTURE_TARGETS: CaptureTarget[] = [
   { width: 1920, height: 1080, frameRate: 30 }, // 1080p HD
-  { width: 1280, height: 720, frameRate: 30 }, //  720p HD
+  { width: 1280, height: 720, frameRate: 30 },  //  720p HD
+];
+
+/**
+ * Ordered best-to-worst portrait (9:16) publish/capture targets.
+ *
+ * Phone front cameras are usually TALLER than they are wide. Requesting a
+ * landscape 16:9 mode forces the browser/OS to CROP the sensor's natural
+ * vertical field of view — a digital zoom that blows the face up to fill the
+ * frame and hides the upper body/background. Requesting the native portrait
+ * orientation keeps the full lens view (head + shoulders/upper body +
+ * surroundings).
+ */
+export const PORTRAIT_CAPTURE_TARGETS: CaptureTarget[] = [
+  { width: 1080, height: 1920, frameRate: 30 }, // 1080p portrait (9:16)
+  { width: 720, height: 1280, frameRate: 30 },  //  720p portrait (9:16)
 ];
 
 export const DEFAULT_CAPTURE: CaptureTarget = { width: 1280, height: 720, frameRate: 30 };
+
+/** Portrait fallback used when a portrait-native device reports no capabilities. */
+export const DEFAULT_PORTRAIT_CAPTURE: CaptureTarget = { width: 720, height: 1280, frameRate: 30 };
 
 // ============================================================================
 // Capability reading
@@ -186,11 +204,17 @@ export function pickVideoConstraints(
   const prefersFront = options.preferFront ?? true;
   const quality = options.quality ?? 'auto';
   const autoTarget = pickCaptureTarget(profile);
+  // A fixed preset still respects the device ceiling: never ask for more than
+  // the hardware can capture, just clamp to the requested tier. Portrait-native
+  // devices (phone front cameras) use the portrait equivalent (9:16) so a 16:9
+  // preset never crowds the sensor into a landscape crop that zooms the face.
+  const preset = QUALITY_TARGETS[quality];
+  const orientedPreset = isPortraitProfile(profile)
+    ? { width: preset.height, height: preset.width, frameRate: preset.frameRate }
+    : preset;
   const target = quality === 'auto'
     ? autoTarget
-    // A fixed preset still respects the device ceiling: never ask for more than
-    // the hardware can capture, just clamp to the requested tier.
-    : pickIdealTarget(QUALITY_TARGETS[quality], profile?.maxWidth ?? 0, profile?.maxHeight ?? 0);
+    : pickIdealTarget(orientedPreset, profile?.maxWidth ?? 0, profile?.maxHeight ?? 0);
 
   const constraints: MediaTrackConstraints = {
     width: { ideal: target.width },
@@ -238,16 +262,40 @@ export function pickVideoConstraints(
   return constraints;
 }
 
-/** Choose the largest capture target a device supports (or the fallback). */
+/** True when the device's native capture surface is portrait (phone front cameras). */
+export function isPortraitProfile(profile: CameraProfile | null): boolean {
+  return !!profile && profile.maxHeight > profile.maxWidth;
+}
+
+/** Target list matching the device's native orientation. */
+function captureTargetsFor(profile: CameraProfile | null): CaptureTarget[] {
+  return isPortraitProfile(profile) ? PORTRAIT_CAPTURE_TARGETS : CAPTURE_TARGETS;
+}
+
+/** Orientation-matched fallback target when no capability data exists. */
+function defaultCaptureFor(profile: CameraProfile | null): CaptureTarget {
+  return isPortraitProfile(profile) ? DEFAULT_PORTRAIT_CAPTURE : DEFAULT_CAPTURE;
+}
+
+/**
+ * Choose the largest capture target a device supports (or the orientation
+ * fallback). Portrait-native devices (phone front cameras) are matched against
+ * the PORTRAIT targets so the sensor's full vertical field of view is captured
+ * instead of being cropped to 16:9 (which looks like a digital zoom on the face).
+ */
 export function pickCaptureTarget(profile: CameraProfile | null): CaptureTarget {
+  const targets = captureTargetsFor(profile);
   if (profile && profile.maxWidth > 0 && profile.maxHeight > 0) {
-    for (const candidate of CAPTURE_TARGETS) {
+    for (const candidate of targets) {
       if (profile.maxWidth >= candidate.width && profile.maxHeight >= candidate.height) {
         return candidate;
       }
     }
+    // No fixed fixture fits — clamp the smallest oriented target to the real
+    // device ceiling (aspect ratio preserved) rather than forcing a sensor crop.
+    return pickIdealTarget(targets[targets.length - 1], profile.maxWidth, profile.maxHeight);
   }
-  return DEFAULT_CAPTURE;
+  return defaultCaptureFor(profile);
 }
 // ============================================================================
 // Camera selection (front/rear)

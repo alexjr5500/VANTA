@@ -77,7 +77,11 @@ const SOLO: StageLayout = {
 const SPLIT: StageLayout = {
   arrangement: 'split',
   containerClass: STAGE_CONTAINER_CLASS,
-  columns: 'minmax(0, 1fr) minmax(0, 1fr)',
+  // True side-by-side 2-column grid for exactly 2 participants: both columns
+  // share the available width equally (host LEFT in the `host` area, the single
+  // guest RIGHT in `g1`). Explicit repeat(2, minmax(0, 1fr)) — never a row
+  // stack, never one tile larger than the other, responsive at every width.
+  columns: 'repeat(2, minmax(0, 1fr))',
   rows: 'minmax(0, 1fr)',
   areas: ['"host g1"'],
   hostArea: HOST_AREA,

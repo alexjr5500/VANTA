@@ -57,6 +57,11 @@ export function useLiveKit(options: UseLiveKitOptions = {}): UseLiveKitReturn {
 
   const roomRef = useRef<Room | null>(null);
 
+  /** Last camera options used to publish — reused if the user toggles the camera
+   *  back on, so re-acquired capture keeps the preview's native orientation
+   *  instead of snapping back to a cropped 16:9 default. */
+  const lastCameraOptionsRef = useRef<VideoCaptureOptions | undefined>(undefined);
+
   const updateParticipants = useCallback((currentRoom: Room) => {
     const remoteParticipants: RemoteParticipant[] = [];
     currentRoom.remoteParticipants.forEach((participant) => {
@@ -78,11 +83,27 @@ export function useLiveKit(options: UseLiveKitOptions = {}): UseLiveKitReturn {
         // preview used. `videoCaptureDefaults` must NOT cap at 720p: passing
         // 1080p as an `ideal` keeps the published track at the device's native
         // resolution while still falling back gracefully on weak webcams.
+        // When a verified preview stream is handed in, the default resolution is
+        // derived from the ACTUAL preview capture (which already preserves the
+        // device's native portrait orientation). This keeps ANY LiveKit
+        // self-acquisition (e.g. toggling the camera back on) on the same
+        // natural head/shoulders framing instead of re-cropping a portrait phone
+        // sensor to 16:9.
+        const previewTrack = publish?.mediaStream?.getVideoTracks()[0];
+        const previewSettings =
+          typeof previewTrack?.getSettings === 'function' ? previewTrack.getSettings() : null;
+        const captureResolution = previewSettings?.width && previewSettings?.height
+          ? {
+              width: previewSettings.width,
+              height: previewSettings.height,
+              frameRate: previewSettings.frameRate ?? 30,
+            }
+          : VideoPresets.h1080.resolution;
         const newRoom = new Room({
           adaptiveStream: true,
           dynacast: true,
           videoCaptureDefaults: {
-            resolution: VideoPresets.h1080.resolution,
+            resolution: captureResolution,
             facingMode: 'user',
           },
           audioCaptureDefaults: {
@@ -237,6 +258,9 @@ export function useLiveKit(options: UseLiveKitOptions = {}): UseLiveKitReturn {
               frameRate: settings?.frameRate ?? VideoPresets.h1080.resolution.frameRate,
             },
           };
+          // Remember the granted device/orientation so a camera toggle (off→on)
+          // re-acquires the same natural framing instead of the room's default.
+          lastCameraOptionsRef.current = cameraCaptureOptions;
         }
 
         // Same treatment for the microphone: carry the PREVIEW audio track's
@@ -345,7 +369,10 @@ export function useLiveKit(options: UseLiveKitOptions = {}): UseLiveKitReturn {
   const toggleCamera = useCallback(async () => {
     if (!roomRef.current?.localParticipant) return;
     try {
-      await roomRef.current.localParticipant.setCameraEnabled(!isCameraOn);
+      // Reuse the last published capture options so re-enabling the camera keeps
+      // the preview's native resolution/orientation (natural head/shoulders
+      // framing) instead of re-acquiring a cropped 16:9 default.
+      await roomRef.current.localParticipant.setCameraEnabled(!isCameraOn, lastCameraOptionsRef.current);
       setIsCameraOn(roomRef.current.localParticipant.isCameraEnabled);
     } catch (err) {
       console.error('Error toggling camera:', err);
