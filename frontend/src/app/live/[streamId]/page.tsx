@@ -951,7 +951,7 @@ const sendComment = useCallback(() => {
   const streamClock = `${eHrs > 0 ? `${eHrs}:` : ''}${String(eMins).padStart(2, '0')}:${String(eSecs).padStart(2, '0')}`;
 
   return (
-    <main className="fixed inset-0 z-40 overflow-hidden bg-black text-white">
+    <main data-dark-surface className="fixed inset-0 z-40 overflow-hidden bg-black text-white">
       {/* The live video is the primary interface — full screen. */}
       <div className="absolute inset-0 z-[2]">
         {stageActive ? (

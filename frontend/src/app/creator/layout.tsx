@@ -152,7 +152,7 @@ export default function CreatorLayout({ children }: { children: React.ReactNode 
   }
 
   return (
-    <div className="mx-auto min-h-screen w-full max-w-[480px] bg-[#050505] text-white">
+    <div className="min-h-dvh w-full max-w-none bg-[var(--background)] text-[var(--text-primary)]">
       <AnimatePresence>
         {drawerOpen && (
           <>
@@ -174,7 +174,7 @@ export default function CreatorLayout({ children }: { children: React.ReactNode 
           alignment as the page content. z-30 keeps it above scrolling content
           but below the drawer backdrop (z-40) and drawer (z-50). */}
       <header className="fixed inset-x-0 top-0 z-30 border-b border-white/[0.08] bg-[#080808]/90 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
-        <div className="mx-auto w-full max-w-[480px] px-4">
+        <div className="mx-auto w-full max-w-6xl px-4">
           <PageHeader
             onMenu={() => setDrawerOpen(true)}
             title={STUDIO_TITLES[pathname || ''] || 'Creator Studio'}

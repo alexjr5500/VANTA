@@ -1,11 +1,11 @@
 .profile-page {
-  --profile-bg: #050505;
-  --profile-surface: #0d0d0f;
-  --profile-raised: #151517;
-  --profile-text: #f5f5f5;
-  --profile-muted: #b8b8b8;
-  --profile-gold: #c9a227;
-  width: min(520px, 100%);
+  --profile-bg: var(--background);
+  --profile-surface: var(--surface);
+  --profile-raised: var(--surface-secondary);
+  --profile-text: var(--text-primary);
+  --profile-muted: var(--text-secondary);
+  --profile-gold: var(--vanta-gold);
+  width: min(880px, 100%);
   margin: 0 auto;
   padding-bottom: 72px;
   color: var(--profile-text);
@@ -97,11 +97,11 @@
   letter-spacing: 0;
 }
 .vanta-verified { flex: none; color: var(--profile-gold); }
-.profile-handle { margin-top: 4px; color: #8c8c8c; font-size: 13px; }
+.profile-handle { margin-top: 4px; color: var(--text-secondary); font-size: 13px; }
 .profile-bio {
-  max-width: 440px;
+  max-width: 480px;
   margin-top: 15px;
-  color: #dedede;
+  color: var(--text-primary);
   font-size: 13px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -113,7 +113,7 @@
   gap: 6px;
   justify-content: flex-start;
   margin-top: 11px;
-  color: #8c8c8c;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 .profile-meta span,
@@ -243,8 +243,8 @@
   padding: 6px;
   border: 1px solid rgba(201, 162, 39, 0.22);
   border-radius: 8px;
-  background: rgba(17, 17, 19, 0.98);
-  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.68);
+  background: var(--profile-surface);
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.28);
   transform-origin: top right;
   animation: profile-menu-in 140ms ease-out;
 }
@@ -257,12 +257,12 @@
   gap: 10px;
   padding: 0 9px;
   border-radius: 5px;
-  color: #c9c9c9;
+  color: var(--text-primary);
   font-size: 12px;
   text-align: left;
 }
 .profile-menu a:hover,
-.profile-menu button:hover { color: var(--profile-text); background: rgba(245, 245, 245, 0.06); }
+.profile-menu button:hover { color: var(--profile-text); background: var(--profile-raised); }
 .profile-menu svg { color: var(--profile-gold); }
 @keyframes profile-menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
 
@@ -290,7 +290,7 @@
   text-align: center;
 }
 .profile-stats strong { color: var(--profile-text); font-size: 15px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-.profile-stats span { color: #8c8c8c; font-size: 10px; letter-spacing: 0; white-space: nowrap; }
+.profile-stats span { color: var(--text-muted); font-size: 10px; letter-spacing: 0; white-space: nowrap; }
 .profile-stats button:hover span { color: var(--profile-muted); }
 
 .profile-tabs {
@@ -300,9 +300,9 @@
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
-  border-top: 1px solid rgba(245, 245, 245, 0.07);
-  border-bottom: 1px solid rgba(245, 245, 245, 0.07);
-  background: rgba(5, 5, 5, 0.96);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--profile-bg);
   backdrop-filter: blur(16px);
 }
 .profile-tabs button {
@@ -312,13 +312,13 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  color: #777;
+  color: var(--text-muted);
   font-size: 11px;
   font-weight: 650;
   white-space: nowrap;
   transition: color 160ms ease;
 }
-.profile-tabs button:hover { color: #b8b8b8; }
+.profile-tabs button:hover { color: var(--text-secondary); }
 .profile-tabs button::after {
   content: "";
   position: absolute;
@@ -359,13 +359,13 @@
   justify-content: center;
   gap: 11px;
   padding: 18px;
-  color: #6c6c6c;
+  color: var(--text-muted);
   background: var(--profile-raised);
 }
 .tile-fallback small {
   display: -webkit-box;
   overflow: hidden;
-  color: #949494;
+  color: var(--text-secondary);
   font-size: 10px;
   line-height: 1.45;
   text-align: center;
@@ -469,7 +469,7 @@
   gap: 16px;
   margin-top: 2px;
   padding-top: 10px;
-  color: #9a9a9a;
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 650;
 }
@@ -481,7 +481,7 @@
   transition: color 160ms ease;
 }
 .tile-text-meta button:hover { color: var(--profile-text); }
-.tile-text-meta svg { color: #b8b8b8; }
+.tile-text-meta svg { color: var(--text-secondary); }
 
 .profile-empty,
 .profile-state {
@@ -494,11 +494,11 @@
   color: var(--profile-muted);
   text-align: center;
 }
-.profile-empty > span { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 50%; color: #8d8d8d; background: var(--profile-raised); }
+.profile-empty > span { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 50%; color: var(--text-secondary); background: var(--profile-raised); }
 .profile-empty h2,
 .profile-state h1 { margin-top: 14px; color: var(--profile-text); font-size: 16px; font-weight: 650; }
 .profile-empty p,
-.profile-state p { max-width: 440px; margin-top: 6px; color: #7f7f7f; font-size: 12px; line-height: 1.5; }
+.profile-state p { max-width: 440px; margin-top: 6px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
 .profile-empty .profile-button,
 .profile-state .profile-button,
 .profile-state button { margin-top: 17px; }
@@ -534,7 +534,7 @@
 .about-list section > svg { width: 18px; flex: none; color: var(--profile-muted); }
 .about-list b { font-size: 12px; }
 .about-list p,
-.about-list a { margin-top: 5px; color: #8d8d8d; font-size: 13px; white-space: pre-wrap; }
+.about-list a { margin-top: 5px; color: var(--text-secondary); font-size: 13px; white-space: pre-wrap; }
 .about-list a { display: block; color: var(--profile-text); }
 
 .profile-button:focus-visible,
@@ -791,3 +791,16 @@
   .profile-icon { width: 30px; height: 30px; }
   .name-line h1 { font-size: 21px; }
 }
+/* Light theme â€” profile media overlays & action pills keep white text because
+   they sit on top of the cover photo / media tiles, exactly like the rest of
+   VANTA's always-dark media surfaces. */
+html.light .profile-pill,
+html.light .profile-icon { color: #f5f5f5; }
+html.light .profile-pill.primary,
+html.light .profile-icon.primary { color: #f2c75c; }
+
+html.light .tile-metrics,
+html.light .tile-actions button,
+html.light .tile-type { color: #ffffff; }
+html.light .tile-overlay { background: rgba(5, 5, 5, 0.68); }
+html.light .tile-type { background: rgba(5, 5, 5, 0.78); }

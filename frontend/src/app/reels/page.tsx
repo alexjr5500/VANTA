@@ -540,7 +540,7 @@ export default function ReelsPage() {
   if (!reels.length) return <State title={feed === 'following' ? 'Your Following feed is empty.' : 'Nothing to watch yet.'} copy={feed === 'following' ? 'Follow creators to see their Reels here.' : 'Follow creators or share your first Reel with VANTA.'} action={feed === 'following' ? 'Discover Creators' : 'Create Reel'} secondaryAction={feed === 'following' ? 'Create Reel' : 'Discover Creators'} onAction={feed === 'following' ? () => router.push('/discover') : openReelUploader} onSecondary={feed === 'following' ? openReelUploader : () => router.push('/discover')} />;
 
   return (
-    <div className="relative h-[100dvh] overflow-hidden bg-[#050505] text-[#f5f5f5] ">
+    <div data-dark-surface className="relative h-[100dvh] overflow-hidden bg-[#050505] text-[#f5f5f5] ">
       <header className="pointer-events-none fixed left-0 right-0 top-0 z-30 flex h-16 items-center justify-center bg-gradient-to-b from-black/75 to-transparent px-16 ">
         <div className="pointer-events-auto flex items-center gap-5" role="tablist" aria-label="Reel feeds">
           {(['for-you', 'following', 'trending'] as Feed[]).map(tab => (

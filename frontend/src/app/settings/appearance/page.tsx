@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 /* Appearance Settings — theme, accent color and display density.
    Each control is applied live to the whole app via ThemeContext and
@@ -107,12 +107,12 @@ export default function AppearanceSettingsPage() {
                 onClick={() => chooseTheme(option.id)}
                 className={cn(
                   'flex flex-col items-center gap-2 rounded-[12px] border py-4 text-center transition-colors',
-                  active ? 'border-[var(--settings-accent-border)] bg-[var(--settings-accent-soft)]' : 'border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04]'
+                  active ? 'border-[var(--active-border)] bg-[var(--active-soft)]' : 'border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-hover)]'
                 )}
               >
-                <Icon size={18} className={active ? 'text-[var(--settings-accent-text)]' : 'text-white/50'} />
-                <span className="text-xs font-medium text-white">{option.label}</span>
-                {active && <Check size={14} className="text-[var(--settings-accent-text)]" strokeWidth={2.5} />}
+                <Icon size={18} className={active ? 'text-[var(--active-bright)]' : 'text-[var(--text-muted)]'} />
+                <span className="text-xs font-medium text-[var(--text-primary)]">{option.label}</span>
+                {active && <Check size={14} className="text-[var(--active-bright)]" strokeWidth={2.5} />}
               </button>
             );
           })}
@@ -133,14 +133,14 @@ export default function AppearanceSettingsPage() {
               className="flex w-full min-h-[62px] items-center gap-3.5 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
             >
               <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border transition-colors',
-                active ? 'border-[var(--settings-accent-border)] bg-[var(--settings-accent-soft)]' : 'border-white/[0.06] bg-white/[0.03]')}>
+                active ? 'border-[var(--active-border)] bg-[var(--active-soft)]' : 'border-[var(--border)] bg-[var(--surface)]')}>
                 <span className={cn('h-3.5 w-3.5 rounded-full', option.swatch)} />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-white">{option.label}</span>
-                <span className="mt-0.5 block text-xs text-white/30">{option.description}</span>
+                <span className="block text-sm font-medium text-[var(--text-primary)]">{option.label}</span>
+                <span className="mt-0.5 block text-xs text-[var(--text-muted)]">{option.description}</span>
               </span>
-              {active && <Check size={16} className="shrink-0 text-[var(--settings-accent-text)]" strokeWidth={2.5} />}
+              {active && <Check size={16} className="shrink-0 text-[var(--active-bright)]" strokeWidth={2.5} />}
             </button>
           );
         })}
@@ -157,14 +157,14 @@ export default function AppearanceSettingsPage() {
               className="flex w-full min-h-[62px] items-center gap-3.5 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
             >
               <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border transition-colors',
-                active ? 'border-[var(--settings-accent-border)] bg-[var(--settings-accent-soft)] text-[var(--settings-accent-text)]' : 'border-white/[0.06] bg-white/[0.03] text-white/40')}>
+                active ? 'border-[var(--active-border)] bg-[var(--active-soft)] text-[var(--active-bright)]' : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)]')}>
                 <SlidersHorizontal size={16} strokeWidth={1.9} />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-white">{option.label}</span>
-                <span className="mt-0.5 block text-xs text-white/30">{option.description}</span>
+                <span className="block text-sm font-medium text-[var(--text-primary)]">{option.label}</span>
+                <span className="mt-0.5 block text-xs text-[var(--text-muted)]">{option.description}</span>
               </span>
-              {active && <Check size={16} className="shrink-0 text-[var(--settings-accent-text)]" strokeWidth={2.5} />}
+              {active && <Check size={16} className="shrink-0 text-[var(--active-bright)]" strokeWidth={2.5} />}
             </button>
           );
         })}

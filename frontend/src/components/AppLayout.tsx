@@ -386,12 +386,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             )}>
             <motion.div
               key={isClient ? pathname : 'initial'}
-              // Console pages (Creator Studio / Admin) mount a full-viewport
-              // `position: fixed` header. A translate-Y entrance transform
-              // would make this motion wrapper the containing block for that
-              // fixed header, breaking its edge-to-edge screen alignment, so
-              // console pages fade in without any transform (y) animation.
-              // Non-console pages keep the existing slide-in transition.
+              className={cn(isSettingsRoute && 'vanta-settings-shell')}
               initial={{ opacity: 0, ...(isConsolePage ? {} : { y: 10 }) }}
               animate={{ opacity: 1, ...(isConsolePage ? {} : { y: 0 }) }}
               transition={{ duration: 0.2, ease: 'easeOut' }}

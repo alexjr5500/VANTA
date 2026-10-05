@@ -90,9 +90,9 @@ export default function CommunityPage({ params }: { params: { id: string } }) {
 
   if (error || !community) {
     return (
-      <main className="min-h-[100dvh] w-full bg-[#050505] px-4 py-5 text-white">
-        <div className="mx-auto w-full min-w-0 max-w-[520px]">
-          <Link href="/discover" className="mb-5 inline-flex items-center gap-2 text-sm text-[#8a8a8a] hover:text-white"><ArrowLeft size={17} />Back to Discover</Link>
+      <main className="min-h-[100dvh] w-full bg-[var(--background)] px-4 py-5 text-[var(--text-primary)]">
+        <div className="mx-auto w-full min-w-0 max-w-3xl">
+          <Link href="/discover" className="mb-5 inline-flex items-center gap-2 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)]"><ArrowLeft size={17} />Back to Discover</Link>
           <div className="rounded-lg border border-white/[.08] bg-[#101010] px-5 py-14 text-center">
             <Users className="mx-auto text-[#666]" size={28} />
             <h1 className="mt-4 text-base font-semibold">Community not found</h1>
@@ -108,9 +108,9 @@ export default function CommunityPage({ params }: { params: { id: string } }) {
   const handle = channel && community.name ? `@${community.name.toLowerCase().replace(/\s+/g, '-')}` : '';
   const owner = community.owner;
   return (
-    <main className="min-h-[100dvh] w-full bg-[#050505] px-4 py-5 text-white">
-      <div className="mx-auto w-full min-w-0 max-w-[520px]">
-        <Link href="/discover" className="mb-5 inline-flex items-center gap-2 text-sm text-[#8a8a8a] hover:text-white"><ArrowLeft size={17} />Back to Discover</Link>
+    <main className="min-h-[100dvh] w-full bg-[var(--background)] px-4 py-5 text-[var(--text-primary)]">
+      <div className="mx-auto w-full min-w-0 max-w-3xl">
+        <Link href="/discover" className="mb-5 inline-flex items-center gap-2 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)]"><ArrowLeft size={17} />Back to Discover</Link>
         <section className="overflow-hidden rounded-2xl border border-white/[.1] bg-[#101010]">
           <div className="border-b border-white/[.08] px-5 py-6 text-center">
             <span className="mx-auto flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border border-white/[.08] bg-[#1c1c1c] text-[#8a8a8a]">

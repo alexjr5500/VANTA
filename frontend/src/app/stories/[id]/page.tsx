@@ -583,7 +583,7 @@ const creator = current.group.user || {};
   };
 
   return (
-    <main className="relative h-[100dvh] overflow-hidden bg-[#050505] text-white">
+    <main data-dark-surface className="relative h-[100dvh] overflow-hidden bg-[#050505] text-white">
       {/* Media */}
       <div className="absolute inset-0 grid place-items-center bg-black" onClick={handleMediaTap} onPointerDown={handleMediaPointerDown} onPointerUp={releaseLongPress} onPointerCancel={releaseLongPress} onPointerLeave={releaseLongPress} onContextMenu={event => { if (event.button === 2 && !isOwner) event.preventDefault(); }} role="presentation">
         {isText ? (

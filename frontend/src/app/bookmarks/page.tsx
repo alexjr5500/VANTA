@@ -75,7 +75,7 @@ export default function BookmarksPage() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="mx-auto min-h-0 w-full min-w-0 max-w-[480px] pb-[calc(5rem+env(safe-area-inset-bottom))]"
+      className="mx-auto min-h-0 w-full min-w-0 max-w-3xl pb-[calc(5rem+env(safe-area-inset-bottom))]"
     >
       {/* Header — always visible across loading, error and content states so
           navigation and spacing stay stable while bookmarks are fetched. */}

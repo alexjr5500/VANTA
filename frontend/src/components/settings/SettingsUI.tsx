@@ -489,12 +489,12 @@ export function SelectRow({
                     className={cn(
                       'flex w-full items-center justify-between gap-3 rounded-[10px] border px-3.5 py-3 text-left transition-colors',
                       selected
-                        ? 'border-[var(--settings-accent-border)] bg-[var(--settings-accent-soft)]'
-                        : 'border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.04]'
+                        ? 'border-[var(--active-border)] bg-[var(--active-soft)]'
+                        : 'border-[var(--border)] bg-transparent hover:bg-[var(--surface-hover)]'
                     )}
                   >
                     <span className="min-w-0">
-                      <span className="block truncate text-sm text-white">
+                      <span className="block truncate text-sm text-[var(--text-primary)]">
                         {option.label}
                       </span>
                       {option.description && (
@@ -507,7 +507,7 @@ export function SelectRow({
                       <Check
                         size={16}
                         strokeWidth={2.5}
-                        className="shrink-0 text-[var(--settings-accent-text)]"
+                        className="shrink-0 text-[var(--active-bright)]"
                         aria-hidden="true"
                       />
                     )}
