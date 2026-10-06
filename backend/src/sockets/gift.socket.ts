@@ -1,6 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { prisma } from '../prisma';
 import { giftService } from '../services/gift.service';
+import { liveRateLimiter } from '../security/liveRateLimiter';
 
 // Cache of active combo timers per stream
 const streamCombos = new Map<string, Map<string, { count: number; timer: NodeJS.Timeout }>>();
@@ -54,6 +55,13 @@ export function handleGiftSocket(io: Server) {
       try {
         const { receiverId, giftId, streamId, isAnon, isSuper, requestId } = data;
         if (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{16,80}$/.test(requestId)) throw new Error('A valid requestId is required');
+        // Same per-user gift throttle as the live namespace: wallet transactions
+        // are expensive and must not be scriptable at arbitrary rate.
+        const limited = liveRateLimiter.check(userId, 'gift');
+        if (!limited.ok) {
+          socket.emit('gift:error', { message: 'Sending gifts too fast. Please slow down.', retryAfterMs: limited.retryAfterMs });
+          return;
+        }
         const result = await giftService.sendGift(userId, receiverId, giftId, streamId, {
           isAnon: Boolean(isAnon),
           isSuper: Boolean(isSuper),

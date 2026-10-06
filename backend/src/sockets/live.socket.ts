@@ -4,6 +4,7 @@ import { prisma } from '../prisma';
 import { liveService, giftService } from '../services';
 import { LIVE_SESSION_SWEEP_INTERVAL_MS } from '../services/live.service';
 import { liveKitService } from '../services/livekit.service';
+import { liveRateLimiter, type LiveRateAction } from '../security/liveRateLimiter';
 
 // In-process stream → hostId cache (set when a host opens the control room). Used
 // for guaranteed real-time delivery to the host's `user_` room so comments/gift
@@ -98,6 +99,25 @@ export const handleLiveSocket = (io: Server) => {
     const userId = socket.data.userId;
     socket.data.streamId = null;
 
+    /**
+     * Real-time event rate limiting (per authenticated user, per action).
+     * Rejects floods before they reach the DB write path or the room broadcast.
+     * `errorEvent` is the existing per-feature error channel (chat_error,
+     * stream_error, gift_error, guest_error…) so clients keep surfacing these
+     * as normal recoverable errors instead of an unexpected generic event.
+     */
+    const rateLimit = (action: LiveRateAction, errorEvent: string, message?: string): boolean => {
+      const result = liveRateLimiter.check(userId, action);
+      if (!result.ok) {
+        socket.emit(errorEvent, {
+          error: message || 'Too many requests. Please slow down.',
+          retryAfterMs: result.retryAfterMs,
+        });
+        return false;
+      }
+      return true;
+    };
+
     const leaveCurrentStream = async () => {
       const current = socket.data.streamId as string | null;
       if (!current) return;
@@ -128,6 +148,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('join_stream', async (streamId: string) => {
       try {
         if (typeof streamId !== 'string' || streamId.length > 128) throw new Error('Invalid stream');
+        if (!rateLimit('join', 'stream_error')) return;
         if (socket.data.streamId === streamId) return;
         await leaveCurrentStream();
         await liveService.joinStream(streamId, userId);
@@ -173,6 +194,9 @@ export const handleLiveSocket = (io: Server) => {
       const { streamId, comment } = data;
       try {
         if (socket.data.streamId !== streamId || typeof comment !== 'string') throw new Error('Invalid chat request');
+        // Real-time flood protection: 30 comments / 30s per user max. Rejected
+        // comments never reach the DB write path nor the room broadcast.
+        if (!rateLimit('comment', 'chat_error', 'Commenting too fast. Please slow down.')) return;
         const chatMessage = await liveService.postChatMessage(streamId, userId, comment);
         // Broadcast to the whole room (viewers + host) AND to the host's personal
         // `user_` room so comments always reach the host even if their socket
@@ -190,6 +214,10 @@ export const handleLiveSocket = (io: Server) => {
       const { streamId, emoji } = data;
       try {
         if (socket.data.streamId !== streamId || typeof emoji !== 'string') throw new Error('Invalid reaction request');
+        // Realtime flood protection: 60 taps / 10s per user. A rapid human tapper
+        // stays comfortably under this; a scripted wave is throttled before it
+        // hits the DB increment or fans out 60 broadcast events to every viewer.
+        if (!rateLimit('reaction', 'chat_error', 'Reacting too fast. Please slow down.')) return;
         // A LIKE is an ephemeral live interaction — it is NOT a chat message.
         // addReaction aggregates the like into the stream's `likes` counter (and
         // persists at most one deduped LiveReaction marker per user+emoji), so
@@ -212,6 +240,10 @@ export const handleLiveSocket = (io: Server) => {
       const { streamId, giftId, quantity, requestId } = data;
       try {
         if (socket.data.streamId !== streamId || typeof giftId !== 'string') throw new Error('Invalid gift request');
+        // Wallet churn protection: at most 5 live gifts per 15s per user. Gift
+        // sends are wallet transactions — throttling here protects the atomic
+        // send path and the recipient's coin conversion from scripted floods.
+        if (!rateLimit('gift', 'gift_error', 'Sending gifts too fast. Please slow down.')) return;
         if (quantity !== undefined && quantity !== 1) throw new Error('Gift quantity is not supported');
         if (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{16,80}$/.test(requestId)) throw new Error('A valid requestId is required');
         const stream = await liveService.getStream(streamId);
@@ -232,6 +264,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('end_stream', async (data) => {
       const { streamId } = data;
       try {
+        if (!rateLimit('host_action', 'stream_error')) return;
         await liveService.endStream(streamId, userId);
         invalidateStreamRoles(streamId);
         io.to(`stream_${streamId}`).emit('stream_ended', { streamId });
@@ -253,6 +286,9 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('live_heartbeat', async (data) => {
       const { streamId } = data || {};
       if (typeof streamId !== 'string' || streamId.length > 128) return;
+      // Heartbeat cadence is ~10s; allow 12 per 30s so a reconnecting studio is
+      // never cut off while a compromised client cannot ping the session alive.
+      if (!rateLimit('heartbeat', 'stream_error')) return;
       try {
         const active = await liveService.recordHeartbeat(streamId, userId);
         if (!active) {
@@ -281,6 +317,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('mute_viewer', async (data) => {
       const { streamId, targetUserId } = data;
       try {
+        if (!rateLimit('host_action', 'stream_error')) return;
         await liveService.muteViewer(streamId, userId, targetUserId);
         io.to(`stream_${streamId}`).emit('viewer_muted', { streamId, userId: targetUserId });
       } catch (err) {
@@ -291,6 +328,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('ban_viewer', async (data) => {
       const { streamId, targetUserId } = data;
       try {
+        if (!rateLimit('host_action', 'stream_error')) return;
         await liveService.banViewer(streamId, userId, targetUserId);
         io.to(`stream_${streamId}`).emit('viewer_banned', { streamId, userId: targetUserId });
         // Also disconnect their socket from the room
@@ -309,6 +347,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('toggle_chat_pause', async (data) => {
       const { streamId } = data;
       try {
+        if (!rateLimit('host_action', 'stream_error')) return;
         const stream = await liveService.toggleChatPause(streamId, userId);
         io.to(`stream_${streamId}`).emit('chat_paused', { 
           streamId, 
@@ -322,6 +361,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('toggle_slow_mode', async (data) => {
       const { streamId, interval } = data;
       try {
+        if (!rateLimit('host_action', 'stream_error')) return;
         const stream = await liveService.toggleSlowMode(streamId, userId, interval);
         io.to(`stream_${streamId}`).emit('slow_mode', { 
           streamId, 
@@ -336,6 +376,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('update_stream_settings', async (data) => {
       const { streamId, settings } = data;
       try {
+        if (!rateLimit('host_action', 'stream_error')) return;
         await liveService.updateStreamSettings(streamId, userId, settings);
         io.to(`stream_${streamId}`).emit('stream_settings_updated', { streamId, settings });
       } catch (err) {
@@ -371,6 +412,7 @@ export const handleLiveSocket = (io: Server) => {
       const { streamId } = data || {};
       try {
         if (typeof streamId !== 'string' || socket.data.streamId !== streamId) throw new Error('Invalid share request');
+        if (!rateLimit('host_action', 'stream_error')) return;
         emitActivity(io, streamId, 'shared', { user: await getUserIdentity(userId) });
       } catch (err) {
         console.error('Error sharing stream:', err);
@@ -393,6 +435,9 @@ export const handleLiveSocket = (io: Server) => {
       const { streamId } = data || {};
       try {
         if (typeof streamId !== 'string' || socket.data.streamId !== streamId) throw new Error('Invalid request');
+        // Join-request spam protection: 4 requests / minute per user so a script
+        // cannot fill the host's pending list with noise.
+        if (!rateLimit('guest_request', 'guest_error', 'Requesting to join too often. Please wait.')) return;
         const result = await liveService.requestJoinGuest(streamId, userId);
         const requester = await getUserIdentity(userId);
         emitActivity(io, streamId, 'guest_request', { user: requester });
@@ -408,6 +453,7 @@ export const handleLiveSocket = (io: Server) => {
       const { streamId } = data || {};
       try {
         if (typeof streamId !== 'string') throw new Error('Invalid request');
+        if (!rateLimit('guest_request', 'guest_error')) return;
         const result = await liveService.cancelGuestRequest(streamId, userId);
         emitActivity(io, streamId, 'guest_cancelled', { user: { id: userId, username: (await getUserIdentity(userId)).username } });
         const hostId = streamHosts.get(streamId);
@@ -421,6 +467,7 @@ export const handleLiveSocket = (io: Server) => {
       const { streamId, viewerId, accept } = data || {};
       try {
         if (typeof streamId !== 'string' || typeof viewerId !== 'string') throw new Error('Invalid response');
+        if (!rateLimit('guest_action', 'guest_error')) return;
         if (accept) {
           const { token, roomName } = await liveService.acceptGuestRequest(streamId, userId, viewerId);
           const guest = await getUserIdentity(viewerId);
@@ -446,6 +493,7 @@ export const handleLiveSocket = (io: Server) => {
       const { streamId, guestId } = data || {};
       try {
         if (typeof streamId !== 'string' || typeof guestId !== 'string') throw new Error('Invalid removal');
+        if (!rateLimit('guest_action', 'guest_error')) return;
         await liveService.removeGuest(streamId, userId, guestId, true);
         invalidateStreamRoles(streamId);
         io.to(`user_${guestId}`).emit('guest_removed', { streamId });
@@ -461,6 +509,7 @@ export const handleLiveSocket = (io: Server) => {
       const { streamId, guestId } = data || {};
       try {
         if (typeof streamId !== 'string' || typeof guestId !== 'string') throw new Error('Invalid request');
+        if (!rateLimit('guest_action', 'guest_error')) return;
         await liveService.endGuestSession(streamId, userId, guestId);
         invalidateStreamRoles(streamId);
         io.to(`user_${guestId}`).emit('guest_removed', { streamId });
@@ -476,6 +525,7 @@ export const handleLiveSocket = (io: Server) => {
       const { streamId } = data || {};
       try {
         if (typeof streamId !== 'string') throw new Error('Invalid request');
+        if (!rateLimit('guest_action', 'guest_error')) return;
         await liveService.removeGuest(streamId, userId, userId, false);
         invalidateStreamRoles(streamId);
         emitActivity(io, streamId, 'guest_left', { user: { id: userId, username: (await getUserIdentity(userId)).username } });
@@ -501,6 +551,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('delete_message', async (data) => {
       const { streamId, messageId } = data;
       try {
+        if (!rateLimit('host_action', 'stream_error')) return;
         await liveService.deleteMessage(streamId, userId, messageId);
         io.to(`stream_${streamId}`).emit('message_deleted', { streamId, messageId });
       } catch (err) {
@@ -511,6 +562,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('clear_chat', async (data) => {
       const { streamId } = data;
       try {
+        if (!rateLimit('host_action', 'stream_error')) return;
         await liveService.clearChat(streamId, userId);
         io.to(`stream_${streamId}`).emit('chat_cleared', { streamId });
       } catch (err) {
@@ -521,6 +573,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('pin_message', async (data) => {
       const { streamId, messageId } = data;
       try {
+        if (!rateLimit('host_action', 'stream_error')) return;
         const pinned = await liveService.pinMessage(streamId, userId, messageId);
         io.to(`stream_${streamId}`).emit('message_pinned', { streamId, pinned });
       } catch (err) {
@@ -531,6 +584,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('unpin_message', async (data) => {
       const { streamId } = data;
       try {
+        if (!rateLimit('host_action', 'stream_error')) return;
         await liveService.unpinMessage(streamId, userId);
         io.to(`stream_${streamId}`).emit('message_unpinned', { streamId });
       } catch (err) {
@@ -541,6 +595,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('unmute_viewer', async (data) => {
       const { streamId, targetUserId } = data;
       try {
+        if (!rateLimit('host_action', 'stream_error')) return;
         await liveService.unmuteViewer(streamId, userId, targetUserId);
         io.to(`stream_${streamId}`).emit('viewer_unmuted', { streamId, userId: targetUserId });
       } catch (err) {
@@ -551,6 +606,7 @@ export const handleLiveSocket = (io: Server) => {
     socket.on('unban_viewer', async (data) => {
       const { streamId, targetUserId } = data;
       try {
+        if (!rateLimit('host_action', 'stream_error')) return;
         await liveService.unbanViewer(streamId, userId, targetUserId);
         io.to(`stream_${streamId}`).emit('viewer_unbanned', { streamId, userId: targetUserId });
       } catch (err) {

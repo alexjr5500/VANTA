@@ -219,7 +219,7 @@ export class GiftService {
     };
   }
 
-  async sendGift(senderId: string, receiverId: string, giftId: string, streamId?: string, options: { quantity?: number; message?: string; isAnon?: boolean; requestId?: string } = {}) {
+  async sendGift(senderId: string, receiverId: string, giftId: string, streamId?: string, options: { quantity?: number; message?: string; isAnon?: boolean; isSuper?: boolean; requestId?: string } = {}) {
     const gift = await prisma.gift.findUnique({ where: { id: giftId } });
     if (!gift) throw new Error('Gift not found');
     if (!gift.isActive) throw new Error('This gift is no longer available');
@@ -467,7 +467,7 @@ export class GiftService {
       gift,
       result.transaction,
       senderInfo,
-      { quantity, isAnon: Boolean(options.isAnon), isSuper: (options as { isSuper?: boolean }).isSuper },
+      { quantity, isAnon: Boolean(options.isAnon), isSuper: options.isSuper },
       streamId,
     );
     if (streamId) {

@@ -50,34 +50,70 @@ export default function LivePage() {
   const [streams, setStreams] = useState<LiveStream[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  // Category filter (forYou + popular tabs). Kept local: the discovery endpoint
+  // already filters server-side by `category`, so the client only rounds-trips
+  // the real catalog that exists — never a fabricated list.
+  const [categories, setCategories] = useState<string[]>([]);
+  const [category, setCategory] = useState('all');
 
-  const load = useCallback(async (active: LiveTab) => {
-    if (!token) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setLoadError(false);
-    try {
-      const endpoint =
-        active === 'following'
-          ? '/api/live/following?limit=24'
-          : `/api/live/discover?limit=24&sort=${active === 'popular' ? 'popular' : 'trending'}`;
-      const data = await apiGet<any>(endpoint, token, { skipCache: true });
-      const items: LiveStream[] = Array.isArray(data)
-        ? data
-        : data?.items || data?.streams || data?.data || [];
-      setStreams(items);
-    } catch {
-      setLoadError(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
+  const load = useCallback(
+    async (active: LiveTab, silent = false) => {
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+      if (!silent) {
+        setLoading(true);
+        setLoadError(false);
+      }
+      try {
+        const categoryQuery = active !== 'following' && category !== 'all' ? `&category=${encodeURIComponent(category)}` : '';
+        const endpoint =
+          active === 'following'
+            ? '/api/live/following?limit=24'
+            : `/api/live/discover?limit=24&sort=${active === 'popular' ? 'popular' : 'trending'}${categoryQuery}`;
+        const data = await apiGet<any>(endpoint, token, { skipCache: true });
+        const items: LiveStream[] = Array.isArray(data)
+          ? data
+          : data?.items || data?.streams || data?.data || [];
+        setStreams(items);
+        setLoadError(false);
+      } catch {
+        if (!silent) setLoadError(true);
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [token, category],
+  );
 
   useEffect(() => {
     void load(tab);
   }, [load, tab]);
+
+  // Keep the grid current while the user browses: silently re-poll every 30s so
+  // streams that ended disappear and fresh lives surface — without a loading
+  // flicker that would interrupt scrolling.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      void load(tab, true);
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, [load, tab]);
+
+  // Load the real server-side category catalog once for the filter chips.
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    apiGet<any>('/api/live/categories', token, { skipCache: true })
+      .then((data) => {
+        if (!alive) return;
+        const raw = Array.isArray(data) ? data : data?.items || data?.data || [];
+        setCategories(raw.map((c: any) => (typeof c === 'string' ? c : c?.name)).filter(Boolean));
+      })
+      .catch(() => undefined); // category chips are progressive enhancement
+    return () => { alive = false; };
+  }, [token]);
 
   const featured = tab === 'forYou' ? streams[0] : undefined;
   const grid = tab === 'forYou' ? streams.slice(1) : streams;
@@ -130,6 +166,32 @@ export default function LivePage() {
           );
         })}
       </div>
+
+      {/* Category filter — real server-side categories surfaced as quick chips.
+          Hidden on the Following tab (filters apply to discovery only). */}
+      {tab !== 'following' && categories.length > 0 && (
+        <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide" aria-label="Filter by category">
+          {['all', ...categories].slice(0, 14).map((cat) => {
+            const active = category === cat;
+            return (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setCategory(cat)}
+                aria-pressed={active}
+                className={cn(
+                  'shrink-0 rounded-full border px-3.5 py-1.5 text-[11px] font-semibold transition active:scale-95',
+                  active
+                    ? 'border-[#D6A83F]/60 bg-[#D6A83F]/15 text-[#F2C75C]'
+                    : 'border-white/[0.08] bg-white/[0.03] text-white/50 hover:bg-white/[0.06] hover:text-white/80',
+                )}
+              >
+                {cat === 'all' ? 'All' : cat}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {loading && (
         <div className="space-y-6" aria-label="Loading live streams">

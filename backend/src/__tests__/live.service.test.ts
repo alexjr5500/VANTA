@@ -7,7 +7,13 @@ jest.mock('../prisma', () => {
   // `liveStream.create` IS the same jest.fn the suite asserts against, so the
   // Go Live session-creation path (POST /api/live/start -> startStream) is
   // exercised truthfully instead of crashing on a missing $transaction.
-  const txLiveStream = { create: jest.fn() };
+  // `findFirst`/`update` exist because the duplicate-start guard + stale-session
+  // cleanup now live INSIDE the transaction (atomic check-then-create).
+  const txLiveStream = {
+    create: jest.fn(),
+    findFirst: jest.fn(),
+    update: jest.fn(),
+  };
   return {
     prisma: {
       $transaction: jest.fn(async (txFn: any) => txFn({ liveStream: txLiveStream })),
@@ -42,6 +48,10 @@ jest.mock('../prisma', () => {
         create: jest.fn(),
         findMany: jest.fn(),
         findFirst: jest.fn(),
+      },
+      liveReaction: {
+        findFirst: jest.fn(),
+        create: jest.fn(),
       },
       giftTransaction: {
         findMany: jest.fn(),
@@ -86,6 +96,17 @@ describe('LiveService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // The atomic startStream guard checks inside the transaction now. Default
+    // to "no existing session" there, and mirror the same default on the legacy
+    // standalone `liveStream.findFirst` for any test that still references it.
+    const tx = (prisma as any).$transaction as jest.Mock;
+    tx.mockImplementation(async (txFn: any) => txFn({
+      liveStream: {
+        create: (prisma.liveStream.create as jest.Mock),
+        findFirst: (prisma.liveStream.findFirst as jest.Mock),
+        update: (prisma.liveStream.update as jest.Mock),
+      },
+    }));
     (prisma.liveStream.findFirst as jest.Mock).mockResolvedValue(null);
     (prisma.streamFollower.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.streamCategory.upsert as jest.Mock).mockResolvedValue({
@@ -195,6 +216,12 @@ describe('LiveService', () => {
       const result = await liveService.postChatMessage('stream1', 'viewer1', 'Hello stream!');
       expect(result.message).toBe('Hello stream!');
     });
+
+    test('rejects comments on a session that is no longer live', async () => {
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue({ ...mockStream, active: false, status: 'ENDED' });
+      await expect(liveService.postChatMessage('stream1', 'viewer1', 'Hello')).rejects.toThrow('Stream is not live');
+      expect(prisma.liveChatMessage.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('followStreamer', () => {
@@ -270,6 +297,51 @@ describe('LiveService', () => {
     });
   });
 
+  describe('addReaction moderation', () => {
+    const liveStreamSelectDefaults = { active: true, status: 'LIVE', bannedUsers: null, mutedUsers: null };
+
+    test('records a reaction and returns the total like count', async () => {
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue(liveStreamSelectDefaults);
+      (prisma.liveReaction.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.liveReaction.create as jest.Mock).mockResolvedValue({});
+      (prisma.liveStream.update as jest.Mock).mockResolvedValue({ likes: 12 });
+
+      const result = await liveService.addReaction('stream1', 'viewer1', '❤️');
+      expect(result.totalLikes).toBe(12);
+      expect(prisma.liveReaction.create).toHaveBeenCalledTimes(1);
+    });
+
+    test('rejects reactions from a banned user', async () => {
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue({ ...liveStreamSelectDefaults, bannedUsers: JSON.stringify(['viewer1']) });
+      await expect(liveService.addReaction('stream1', 'viewer1', '❤️')).rejects.toThrow('You are banned from this stream');
+      expect(prisma.liveStream.update).not.toHaveBeenCalled();
+    });
+
+    test('rejects reactions from a muted user', async () => {
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue({ ...liveStreamSelectDefaults, mutedUsers: JSON.stringify(['viewer1']) });
+      await expect(liveService.addReaction('stream1', 'viewer1', '🔥')).rejects.toThrow('You are muted in this stream');
+      expect(prisma.liveStream.update).not.toHaveBeenCalled();
+    });
+
+    test('rejects reactions with an unsupported emoji', async () => {
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue(liveStreamSelectDefaults);
+      await expect(liveService.addReaction('stream1', 'viewer1', '💩')).rejects.toThrow('Unsupported reaction');
+    });
+  });
+
+  describe('endStream teardown', () => {
+    test('cleans up the StreamViewer roster when the live ends', async () => {
+      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValue(mockStream);
+      (prisma.liveStream.update as jest.Mock).mockResolvedValue({ ...mockStream, active: false, status: 'ENDED' });
+      (prisma.streamViewer.deleteMany as jest.Mock).mockResolvedValue({ count: 5 });
+
+      await liveService.endStream('stream1', 'host1');
+      // The final live view count is preserved on the row itself, but the
+      // membership rows are torn down with the session.
+      expect(prisma.streamViewer.deleteMany).toHaveBeenCalledWith({ where: { streamId: 'stream1' } });
+    });
+  });
+
   describe('endStaleStream / sweepStaleLiveStreams', () => {
     test('endStaleStream ends an abandoned session and closes the LiveKit room', async () => {
       const stale = { ...mockStream, startedAt: new Date(Date.now() - 120_000) };
@@ -318,10 +390,14 @@ describe('LiveService', () => {
   // Never permanently block a host because of a stale/abandoned previous Live.
   describe('startStream stale-session guard', () => {
     test('still blocks when the previous session is genuinely active (fresh heartbeat)', async () => {
+      // The guard lives inside the start transaction now, so the mocked
+      // `tx.liveStream.findFirst` (mapped to `prisma.liveStream.findFirst`) is
+      // what decides the outcome.
       (prisma.liveStream.findFirst as jest.Mock).mockResolvedValue({
         id: 'stream1',
         lastHostHeartbeat: new Date(),
         startedAt: new Date(),
+        liveKitRoom: 'vanta_live_now',
       });
       await expect(liveService.startStream('host1', 'Test', 'Just Chatting')).rejects.toThrow('You already have an active livestream');
       expect(prisma.liveStream.create).not.toHaveBeenCalled();
@@ -332,21 +408,40 @@ describe('LiveService', () => {
         id: 'stream1',
         lastHostHeartbeat: new Date(Date.now() - 60_000),
         startedAt: new Date(Date.now() - 180_000),
+        liveKitRoom: 'vanta_ghost',
       };
+      // The atomic guard reads the stale session inside the transaction.
       (prisma.liveStream.findFirst as jest.Mock).mockResolvedValue(staleExisting);
-      // The stale session is looked up + ended first.
-      (prisma.liveStream.findUnique as jest.Mock).mockResolvedValueOnce({
-        id: 'stream1', hostId: 'host1', liveKitRoom: 'vanta_ghost', active: true, status: 'LIVE', startedAt: staleExisting.startedAt,
-      });
+      // It is marked ended within the transaction…
       (prisma.liveStream.update as jest.Mock).mockResolvedValueOnce({ id: 'stream1', active: false, status: 'ENDED' });
-      // Then the brand-new Live is created.
+      // …then the brand-new Live is created.
       (prisma.liveStream.create as jest.Mock).mockResolvedValue(mockStream);
       (prisma.user.findUnique as jest.Mock).mockResolvedValue(mockStream.host);
 
       const result = await liveService.startStream('host1', 'Fresh Live', 'Just Chatting');
       expect(result.active).toBe(true);
-      // The ghost session was closed and the host can immediately go Live again.
+      // The ghost LiveKit room is closed after the transaction commits, and the
+      // host can immediately go Live again.
       expect(liveKitService.closeRoom).toHaveBeenCalledWith('vanta_ghost');
+      expect(prisma.liveStream.create).toHaveBeenCalledTimes(1);
+    });
+
+    test('serialises two concurrent starts (atomic duplicate-start guard)', async () => {
+      // The first call creates a session; the second call's guard reads that
+      // session inside its OWN transaction and must be rejected, exactly like
+      // two real requests racing on the database connection.
+      (prisma.liveStream.create as jest.Mock).mockImplementationOnce(async () => mockStream);
+      const first = await liveService.startStream('host1', 'First Live', 'Just Chatting');
+
+      (prisma.liveStream.findFirst as jest.Mock).mockResolvedValue({
+        id: 'stream1',
+        lastHostHeartbeat: new Date(),
+        startedAt: new Date(),
+        liveKitRoom: 'vanta_live_now',
+      });
+      await expect(liveService.startStream('host1', 'Second Live', 'Just Chatting')).rejects.toThrow('You already have an active livestream');
+
+      expect(first.active).toBe(true);
       expect(prisma.liveStream.create).toHaveBeenCalledTimes(1);
     });
   });

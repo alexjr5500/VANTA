@@ -83,23 +83,6 @@ export class LiveService {
     country?: string,
     recordingEnabled?: boolean
   ) {
-    const existing = await prisma.liveStream.findFirst({
-      where: { hostId, active: true, status: 'LIVE' },
-      select: { id: true, lastHostHeartbeat: true, startedAt: true },
-    });
-    if (existing) {
-      // Never trust a bare `active = true` flag: if the previous session's
-      // heartbeat has expired it is a stale/abandoned session and must be
-      // cleaned up first, otherwise the host would be permanently blocked
-      // from going Live again after a crash / disconnect.
-      const heartbeat = existing.lastHostHeartbeat || existing.startedAt || new Date(0);
-      if (Date.now() - new Date(heartbeat).getTime() > LIVE_HEARTBEAT_TIMEOUT_MS) {
-        await this.endStaleStream(existing.id);
-      } else {
-        throw new Error('You already have an active livestream');
-      }
-    }
-
     // Create LiveKit room
     const roomName = liveKitService.generateRoomName(hostId);
     await liveKitService.createRoom(roomName);
@@ -111,6 +94,10 @@ export class LiveService {
     });
 
     let stream;
+    // LiveKit rooms of stale sessions discovered inside the transaction get
+    // closed AFTER it commits (interactive transactions on the SQLite dev
+    // connection must not issue nested non-tx prisma calls).
+    const staleRoomCleanups: string[] = [];
     try {
       // Ensure the StreamCategory row exists before the create, because
       // `categoryName` is a foreign key to StreamCategory. Without this, going
@@ -125,6 +112,36 @@ export class LiveService {
       }
 
       stream = await prisma.$transaction(async (tx: any) => {
+        // ATOMIC duplicate-start guard. The "does this host already have an
+        // active Live?" check and the session creation now run inside the SAME
+        // transaction, so two simultaneous "Go Live" taps serialize on the
+        // database connection: the second request re-reads the row the first is
+        // mid-writing, sees the fresh session and is rejected. Previously the
+        // check ran BEFORE the create — two concurrent requests could both pass
+        // it and create two active sessions for one host (only one heartbeat
+        // would ever be sent, leaving an orphaned "active" session).
+        const existing = await tx.liveStream.findFirst({
+          where: { hostId, active: true, status: 'LIVE' },
+          select: { id: true, lastHostHeartbeat: true, startedAt: true, liveKitRoom: true },
+        });
+        if (existing) {
+          // Never trust a bare `active = true` flag: if the previous session's
+          // heartbeat has expired it is a stale/abandoned session and must be
+          // cleaned up first, otherwise the host would be permanently blocked
+          // from going Live again after a crash / disconnect.
+          const heartbeat = existing.lastHostHeartbeat || existing.startedAt || new Date(0);
+          if (Date.now() - new Date(heartbeat).getTime() <= LIVE_HEARTBEAT_TIMEOUT_MS) {
+            throw new Error('You already have an active livestream');
+          }
+          // Stale session: mark it ended inside the transaction (the viewer
+          // roster cleanup + cache invalidation happen after commit).
+          await tx.liveStream.update({
+            where: { id: existing.id },
+            data: { active: false, status: 'ENDED', endedAt: new Date(), lastHostHeartbeat: new Date() },
+          });
+          if (existing.liveKitRoom) staleRoomCleanups.push(existing.liveKitRoom);
+        }
+
         try {
           return await tx.liveStream.create({
             data: {
@@ -193,7 +210,14 @@ export class LiveService {
       throw error;
     }
 
-    // Invalidate streams cache
+    // A stale session was discovered inside the transaction: close its LiveKit
+    // room and drop its viewer roster now that the commit has succeeded.
+    if (staleRoomCleanups.length) {
+      await Promise.allSettled(staleRoomCleanups.map((r) => liveKitService.closeRoom(r)));
+    }
+
+    // Invalidate streams cache (new session created, so the old cached copy for
+    // any stale session is also obsolete).
     await cacheService.del(CACHE_KEYS.LIVE_STREAMS);
 
     const followers = await prisma.streamFollower.findMany({
@@ -247,6 +271,13 @@ export class LiveService {
         duration,
       },
     });
+
+    // Tear down the viewer roster for the ended session: the per-viewer
+    // membership rows served their purpose (unique join dedup + live counts)
+    // and must not accumulate forever on ended streams, inflate later queries,
+    // or let a stale socket's `leave` decrement a non-live session. The last
+    // live viewerCount snapshot is preserved on the LiveStream row itself.
+    await prisma.streamViewer.deleteMany({ where: { streamId: stream.id } });
 
     // Invalidate caches
     await cacheService.del(CACHE_KEYS.LIVE_STREAMS);
@@ -410,6 +441,8 @@ export class LiveService {
       });
     }
 
+    cacheService.del(CACHE_KEYS.LIVE_STREAM(streamId)).catch(() => undefined);
+
     return this.countViewers(streamId);
   }
 
@@ -423,6 +456,8 @@ export class LiveService {
       where: { id: streamId, active: true },
       data: { viewerCount: count },
     });
+
+    cacheService.del(CACHE_KEYS.LIVE_STREAM(streamId)).catch(() => undefined);
 
     return count;
   }
@@ -467,10 +502,13 @@ export class LiveService {
     // Check if stream has chat paused
     const stream = await prisma.liveStream.findUnique({
       where: { id: streamId },
-      select: { chatPaused: true, slowMode: true, slowModeInterval: true, bannedUsers: true, mutedUsers: true },
+      select: { chatPaused: true, slowMode: true, slowModeInterval: true, bannedUsers: true, mutedUsers: true, active: true, status: true },
     });
 
     if (!stream) throw new Error("Stream not found");
+    // A comment must only ever land on a genuinely live session. This also
+    // rejects the REST `POST /:streamId/message` path against ended sessions.
+    if (!stream.active || stream.status !== 'LIVE') throw new Error("Stream is not live");
     if (stream.chatPaused) throw new Error("Chat is paused");
     
     // Check if user is banned
@@ -510,9 +548,17 @@ export class LiveService {
     if (!allowedReactions.has(emoji)) throw new Error('Unsupported reaction');
     const stream = await prisma.liveStream.findUnique({
       where: { id: streamId },
-      select: { active: true, status: true },
+      select: { active: true, status: true, bannedUsers: true, mutedUsers: true },
     });
     if (!stream?.active || stream.status !== 'LIVE') throw new Error('Stream is not live');
+
+    // Comments already reject banned/muted users in `postChatMessage`; reactions
+    // must enforce the same stream-moderation rules or a banned user could keep
+    // spamming floating hearts and the `likes` counter even after being removed.
+    const bannedUsers: string[] = stream.bannedUsers ? JSON.parse(stream.bannedUsers) : [];
+    if (bannedUsers.includes(userId)) throw new Error('You are banned from this stream');
+    const mutedUsers: string[] = stream.mutedUsers ? JSON.parse(stream.mutedUsers) : [];
+    if (mutedUsers.includes(userId)) throw new Error('You are muted in this stream');
 
     // Aggregated like analytics instead of a row-per-tap flood:
     //  - A LiveReaction row is kept only as a deduped identity marker (first time
@@ -535,6 +581,10 @@ export class LiveService {
       data: { likes: { increment: 1 } },
       select: { likes: true },
     });
+
+    // The `likes` counter drives trending + stream detail; keep the cached
+    // stream and discovery copy in sync (debounced via the cache layer).
+    cacheService.del(CACHE_KEYS.LIVE_STREAM(streamId)).catch(() => undefined);
 
     return { totalLikes: updated.likes };
   }
@@ -818,10 +868,23 @@ export class LiveService {
   }
 
   async likeStream(streamId: string) {
-    return prisma.liveStream.update({
+    // The REST like path is a fallback for legacy clients; it must never mutate
+    // an ended session. The socket `reaction` path is the primary realtime way
+    // to like a live stream and is already guarded by `addReaction`.
+    const stream = await prisma.liveStream.findUnique({
+      where: { id: streamId },
+      select: { id: true, active: true, status: true },
+    });
+    if (!stream) throw new Error('Stream not found');
+    if (!stream.active || stream.status !== 'LIVE') throw new Error('Stream is not live');
+
+    const updated = await prisma.liveStream.update({
       where: { id: streamId },
       data: { likes: { increment: 1 } },
+      select: { likes: true },
     });
+    cacheService.del(CACHE_KEYS.LIVE_STREAM(streamId)).catch(() => undefined);
+    return updated;
   }
 
   async getTrendingStreams(limit: number = 10) {
