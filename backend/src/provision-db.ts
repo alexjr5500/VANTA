@@ -5,20 +5,32 @@ import path from 'path';
  * Provision the PostgreSQL schema before the API starts listening.
  *
  * This is the application-level safety net for Railway: `backend/railway.json`
- * already runs `npx prisma db execute` (additive sync) + `npx prisma db push`
- * in its start command, but provisioning from inside the app guarantees the
- * schema is created even if a deployment platform setting ever overrides that
- * start command. It only runs when:
+ * already runs `npx prisma migrate deploy` in its start command, but
+ * provisioning from inside the app guarantees the schema is applied even if a
+ * deployment platform setting ever overrides that start command. It only runs
+ * when:
  *
  *   - NODE_ENV === "production" (never in local dev/tests), and
  *   - DATABASE_URL is a PostgreSQL URL (never SQLite).
  *
- * It never passes `--accept-data-loss`: instead, an idempotent, ADDITIVE-ONLY
- * SQL script (prisma/startup-sync.sql, checked in next to the schema) is
- * applied first, so the reviewed additive provider-accounts/OAuth migration is
- * never blocked by `prisma db push`'s data-loss guard. `prisma db push` still
- * runs WITHOUT --accept-data-loss afterwards, so any genuinely destructive
- * schema drift fails loudly (after retries) instead of dropping data.
+ * Schema management is PRISMA MIGRATE ONLY:
+ *
+ *   * `prisma migrate deploy` applies the COMMITTED, reviewed migrations in
+ *     backend/prisma/migrations/ — including
+ *     20261005000000_baseline_production_schema (an idempotent, additive-only
+ *     snapshot of the production schema) and the additive
+ *     20261006000000_transfer_otp_challenges migration that adds the
+ *     CoinTransfer.requestId idempotency column + UNIQUE(senderId, requestId)
+ *     without touching existing rows (legacy rows keep NULL requestId).
+ *
+ *   * We deliberately do NOT use `prisma db push` in production anymore: `db
+ *     push` is a diff-based "make the schema match" tool that refuses to add a
+ *     new unique constraint without --accept-data-loss (the exact failure that
+ *     crashed the production deploy), and it never records migration history.
+ *     `migrate deploy` applies the exact reviewed SQL instead, so the 12
+ *     existing COMPLETED CoinTransfer rows and all wallet balances are
+ *     untouched. A genuinely breaking migration fails loudly (after retries)
+ *     instead of dropping data.
  */
 export function provisionDatabaseSchema(options: { retries?: number; retryDelayMs?: number } = {}): void {
   const { retries = 10, retryDelayMs = 5000 } = options;
@@ -40,28 +52,18 @@ export function provisionDatabaseSchema(options: { retries?: number; retryDelayM
 
   const backendDir = path.join(__dirname, '..'); // dist/ -> backend/
   const schemaPath = path.join(backendDir, 'prisma', 'schema.prisma');
-  const syncSqlPath = path.join(backendDir, 'prisma', 'startup-sync.sql');
   const prismaCli = require.resolve('prisma/build/index.js', { paths: [backendDir] });
   const nodeBin = process.execPath || process.argv[0];
 
   const runSync = (): void => {
-    // 1. Idempotent, additive-only replay of the reviewed migrations so the
-    //    subsequent `prisma db push` is never blocked by (and never needs
-    //    --accept-data-loss for) pending additive changes.
+    // Apply all committed migrations that have not yet been recorded in the
+    // _prisma_migrations table. New objects are added, existing rows are never
+    // touched. On a database that predates Prisma Migrate the idempotent
+    // baseline migration is a no-op (CREATE TABLE IF NOT EXISTS skips existing
+    // tables) and only the pending additive migrations run.
     execFileSync(
       nodeBin,
-      [prismaCli, 'db', 'execute', '--schema', schemaPath, '--file', syncSqlPath],
-      {
-        cwd: backendDir,
-        stdio: 'inherit',
-        env: { ...process.env, PRISMA_HIDE_UPDATE_MESSAGE: '1', CHECKPOINT_DISABLE: '1' },
-      }
-    );
-    // 2. Sync any remaining (new-object) changes and FAIL LOUDLY on any
-    //    destructive drift (no --accept-data-loss, ever).
-    execFileSync(
-      nodeBin,
-      [prismaCli, 'db', 'push', '--skip-generate', '--schema', schemaPath],
+      [prismaCli, 'migrate', 'deploy', '--schema', schemaPath],
       {
         cwd: backendDir,
         stdio: 'inherit',
@@ -78,11 +80,11 @@ export function provisionDatabaseSchema(options: { retries?: number; retryDelayM
       if (attempt >= retries) {
         const detail = err instanceof Error ? err.message : String(err);
         throw new Error(
-          `prisma schema sync failed after ${retries} attempts while provisioning the PostgreSQL schema: ${detail}`
+          `prisma migrate deploy failed after ${retries} attempts while provisioning the PostgreSQL schema: ${detail}`
         );
       }
       console.error(
-        `[SCHEMA] prisma schema sync attempt ${attempt}/${retries} failed; retrying in ${retryDelayMs}ms`
+        `[SCHEMA] prisma migrate deploy attempt ${attempt}/${retries} failed; retrying in ${retryDelayMs}ms`
       );
       sleepSync(retryDelayMs);
     }

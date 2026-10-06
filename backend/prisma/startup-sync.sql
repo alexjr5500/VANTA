@@ -1,25 +1,31 @@
 -- ============================================================================
--- VANTA — startup schema synchronization (idempotent, additive-only)
+-- VANTA — LEGACY startup schema-sync file (NO LONGER EXECUTED)
 -- ============================================================================
--- Runs BEFORE `prisma db push` on every production start (backend/railway.json
--- start command and backend/src/provision-db.ts) and replays the reviewed
--- additive migration
+-- HISTORICAL CONTEXT ONLY:
 --
---     backend/prisma/migrations/20260924000000_provider_accounts_oauth/migration.sql
+-- This file was previously run BEFORE `prisma db push` on every production
+-- start (backend/railway.json and backend/src/provision-db.ts) to replay the
+-- reviewed additive migrations in an idempotent, non-destructive way so that
+-- `prisma db push` — which refuses to add unique constraints without
+-- --accept-data-loss — never got blocked by already-reviewed additive changes.
 --
--- in a strictly idempotent AND non-destructive way:
+-- That scheme is exactly what broke the production deploy for the
+-- CoinTransfer.requestId / UNIQUE(senderId, requestId) change (this file did
+-- not cover it, and `prisma db push` refused the new unique index).
 --
---   * tables / columns / indexes are only CREATED when missing (IF NOT EXISTS
---     / catalog checks) - never dropped, never altered destructively;
---   * existing rows are never touched;
---   * therefore the `prisma db push` that follows is never blocked by (and
---     never needs --accept-data-loss for) this already-reviewed additive
---     change: once applied, `prisma db push` sees the schema as fully in sync.
+-- AS OF THIS CHANGE, production schema management is:
 --
--- This file stays strictly additive so the last line of defense is preserved:
--- `prisma db push` still runs WITHOUT --accept-data-loss, meaning any
--- genuinely destructive schema drift will abort the deployment loudly instead
--- of being applied silently.
+--     npx prisma migrate deploy
+--
+-- which applies the committed PostgreSQL migrations in
+-- backend/prisma/migrations/ (baseline + additive CoinTransfer/OTP/PhoneOTP/
+-- wallet-reconciliation migrations). `prisma db push` and this file are no
+-- longer used at deploy time. The content below is preserved for reference:
+-- it documents exactly which objects the previously hand-replayed additive
+-- migrations created on the production database.
+--
+-- Do NOT re-enable this file without first re-applying the migration history
+-- it bypasses (see backend/prisma/migrations-archive/README.md).
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------

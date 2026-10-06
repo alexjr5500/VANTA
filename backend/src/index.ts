@@ -638,10 +638,11 @@ async function startServer() {
       throw new Error('DATABASE_URL is not set. Set it in .env or environment.');
     }
 
-    // Provision the PostgreSQL schema (production only, retried, never
-    // --accept-data-loss). railway.json runs `prisma db push` in its start
-    // command; this in-app step guarantees the schema exists even if a
-    // deployment platform setting ever overrides that start command.
+    // Provision the PostgreSQL schema (production only, retried, Prisma
+    // Migrate only — never `db push`, never --accept-data-loss). railway.json
+    // runs `npx prisma migrate deploy` in its start command; this in-app step
+    // guarantees committed migrations are applied even if a deployment
+    // platform setting ever overrides that start command.
     provisionDatabaseSchema();
 
     await prisma.$connect();

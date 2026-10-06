@@ -73,25 +73,32 @@ Storage choice (pick ONE):
 
 **Do NOT set** `HTTPS_DEV_CERT` / `HTTPS_DEV_KEY` — dev-only absolute paths that would crash prod.
 
-The build pipeline in `railway.json` automatically: `npm install` → swaps schema provider sqlite→postgresql → `prisma generate` → `tsc build` → `prisma db push` (creates Postgres schema; old SQLite migrations are not used).
+The build pipeline in `railway.json` automatically: `npm install` → `prisma generate` → `tsc build`. Schema is applied at
+START (not build) via `npx prisma migrate deploy` against the committed PostgreSQL migrations in `backend/prisma/migrations/`
+(idempotent baseline + additive CoinTransfer/OTP migrations; the old SQLite-era migrations are archived in
+`backend/prisma/migrations-archive/` and are NOT used). `prisma db push` is intentionally NOT used in production anymore —
+it was the root cause of the `CoinTransfer` `@@unique([senderId, requestId])` startup crash (it refuses to add unique
+constraints without `--accept-data-loss`).
 
 6. After first deploy, run ONE-time seeds:
 ```bash
-railway run -- npx prisma db push --accept-data-loss   # already ran in build; safe re-run
+railway run -- npx prisma migrate deploy   # idempotent; normally already applied by the start command
 railway run -- npm run seed                  # base seed (admin/categories)
 railway run -- npm run seed:gifts           # gift catalog (73 gifts — the flow you tested)
 railway run -- npm run seed:dev-wallet     # optional dev wallet
 ```
 (`railway run` executes with the service's vars; if `ts-node` isn't in prod, use `railway run -- npx ts-node --transpile-only prisma/seed.ts` etc.)
+Never run `prisma db push --accept-data-loss` against production: it can silently alter/drop schema, and the
+`CoinTransfer` unique-constraint case shows it blocks legitimate additive changes unless the destructive flag is passed.
 
 > **Purchase catalog is auto-provisioned — no manual seed needed for packages.**
 > The VANTA Coin packages (`SparkCoinPackage`) and the Verified Badge plans
 > (`SubscriptionPlan`) are provisioned automatically on every backend start by
-> the in-app startup routine (`src/services/purchase-catalog.service.ts`) and by
-> `prisma/startup-sync.sql`, both of which upsert the same canonical catalog the
-> frontend sends ids for. The startup-sync seed block runs after `prisma db push`
-> creates the tables (first boot on a brand-new DB is covered by the in-app
-> startup provisioning). Coin packages therefore always exist as real rows with
+> the in-app startup routine (`src/services/purchase-catalog.service.ts`), which
+> upserts the same canonical catalog the frontend sends ids for. (The legacy
+> `prisma/startup-sync.sql` is no longer run at deploy time; see its header.)
+> First boot on a brand-new DB is covered by the same in-app provisioning.
+> Coin packages therefore always exist as real rows with
 > ids (`pkg_starter`, `pkg_popular`, …) that satisfy the
 > `PurchaseOrder_packageId_fkey` foreign key.
 ---
