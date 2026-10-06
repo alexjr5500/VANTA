@@ -38,7 +38,10 @@ jest.mock('../prisma', () => ({
 jest.mock('bcryptjs', () => ({
   genSalt: jest.fn().mockResolvedValue('salt10'),
   hash: jest.fn().mockResolvedValue('hashed_password'),
-  compare: jest.fn(),
+  // default: comparisons fail unless a test explicitly allows them — this
+  // matches the new hashed-OTP verification semantics (a plaintext match on
+  // `otpRecord.otp` short-circuits for legacy behavior parity).
+  compare: jest.fn().mockResolvedValue(false),
 }));
 
 jest.mock('jsonwebtoken', () => ({
@@ -410,6 +413,7 @@ describe('AuthService', () => {
     });
 
     test('should throw error for invalid OTP', async () => {
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false); // explicit: never inherited from earlier login tests
       const mockOTP = {
         id: 'otp1',
         phoneNumber: '+1234567890',

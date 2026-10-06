@@ -167,7 +167,25 @@ export class SessionManager {
     });
 
     if (!session) {
-      throw new Error('Session not found');
+      // REFRESH-TOKEN REUSE DETECTION. A presented refresh token that matches
+      // no live session means it was already rotated (or the session was
+      // revoked). That is a classic theft indicator: an attacker who stole a
+      // refresh token races the legitimate client when both try to refresh.
+      // Fail closed: audit the event and sever the referenced session so the
+      // stale token can never re-authenticate.
+      if (decoded && decoded.sessionId) {
+        await prisma.session.updateMany({
+          where: { id: decoded.sessionId, userId: decoded.userId },
+          data: { refreshToken: null },
+        });
+      }
+      await auditLog.log({
+        userId: decoded.userId,
+        action: 'REFRESH_TOKEN_REUSE_DETECTED',
+        metadata: { sessionId: decoded.sessionId || null, rotation: true },
+        severity: 'CRITICAL',
+      });
+      throw new Error('Invalid refresh token');
     }
 
     if (session.refreshExpiresAt && session.refreshExpiresAt < new Date()) {

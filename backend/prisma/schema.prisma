@@ -135,6 +135,9 @@ model User {
   // Wallet Audit Logs
   walletAuditLogs WalletAuditLog[]
 
+  // Transfer OTP challenges (step-up verification for coin transfers)
+  transferOtpChallenges TransferOtpChallenge[]
+
   // Welcome Reward
   welcomeReward    WelcomeReward?
   coinTransactions CoinTransaction[]
@@ -1102,6 +1105,21 @@ model SecurityLog {
   @@index([userId, action, createdAt])
   @@index([ipAddress, createdAt])
 }
+/// Phone number OTP used by the phone sign-in flow. Stores ONLY a one-way
+/// hash (never the plaintext code), is expiring and attempt-limited, and is
+/// deleted on successful verification (single-use).
+model PhoneOTP {
+  id          String    @id @default(cuid())
+  phoneNumber String
+  otp         String // bcrypt hash of the OTP — never the plaintext code
+  expiresAt   DateTime
+  attempts    Int       @default(0)
+  ipAddress   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([phoneNumber, createdAt])
+  @@index([expiresAt])
+}
 
 model Session {
   id                String    @id @default(cuid())
@@ -1604,6 +1622,12 @@ model CoinTransfer {
   note              String?
   status            String    @default("COMPLETED") // PENDING, COMPLETED, FAILED, REVERSED
   otpVerified       Boolean   @default(false)
+  // Client-supplied idempotency key. UNIQUE(senderId, requestId) guarantees a
+  // double-submitted / retried / reconnected request can never debit the sender
+  // twice. NULL means "no idempotency guarantee" and remains multi-row legal.
+  requestId         String?
+  // DEPRECATED — legacy plaintext OTP fields. NO new code may write them.
+  // Superceded by the TransferOtpChallenge model.
   otpCode           String?
   otpExpiresAt      DateTime?
   ipAddress         String?
@@ -1613,11 +1637,42 @@ model CoinTransfer {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
+  @@unique([senderId, requestId])
   @@index([senderId, createdAt])
   @@index([receiverId, createdAt])
   @@index([senderId, receiverId, createdAt])
   @@index([status, createdAt])
   @@index([ipAddress, createdAt])
+}
+
+/// Step-up OTP challenge for high-value coin transfers.
+///
+/// Unlike the legacy CoinTransfer.otpCode plaintext field, this model only ever
+/// stores a one-way hash of the OTP, plus the transfer intent it was issued for
+/// (recipient + amount). Verification is one-time (consumedAt), time-limited
+/// (expiresAt), attempt-limited (maxAttempts/attempts) and user + session
+/// bound. A successful verification marks the challenge consumed so it can
+/// never be replayed; a failed attempt increments a counter and is audited.
+model TransferOtpChallenge {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Session the challenge was bound to (when issued with an authenticated session).
+  sessionId         String?
+  receiverId        String
+  amount            Int
+  otpHash           String
+  expiresAt         DateTime
+  maxAttempts       Int       @default(3)
+  attempts          Int       @default(0)
+  ipAddress         String?
+  deviceFingerprint String?
+  consumedAt        DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, expiresAt])
+  @@index([sessionId, createdAt])
 }
 
 model WalletAuditLog {
@@ -1634,6 +1689,31 @@ model WalletAuditLog {
   @@index([action, createdAt])
   @@index([userId, action, createdAt])
   @@index([ipAddress, createdAt])
+}
+
+/// Automated wallet reconciliation results (Phase 10).
+///
+/// A reconciliation run computes the authoritative balance from the Wallet
+/// ledger (WalletTransaction rows) and compares it against the stored
+/// Wallet.coinBalance. Each run that finds a MATCH or a DISCREPANCY records ONE
+/// row here so discrepancies are auditable and never silently "fixed". Manual
+/// and periodic runs are driven by the economy service; a discrepancy can
+/// optionally freeze affected financial operations depending on severity.
+model WalletReconciliationLog {
+  id            String   @id @default(cuid())
+  userId        String?
+  walletId      String?
+  storedBalance Int      @default(0)
+  ledgerBalance Int      @default(0)
+  difference    Int      @default(0)
+  currency      String   @default("VANTA_COIN")
+  status        String   @default("DISCREPANCY") // MATCH | DISCREPANCY
+  details       String? // JSON
+  createdAt     DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([walletId, createdAt])
 }
 
 model AdCampaign {

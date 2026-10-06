@@ -3,7 +3,7 @@ import { PaymentProviderFactory } from "./payment-provider.interface";
 import { notificationService } from "./notification.service";
 import * as crypto from "crypto";
 import * as bcrypt from "bcryptjs";
-import { calculateTransferFee, coinsToUsd, VANTA_COINS_PER_USD, WITHDRAWAL_FEE_RATE, MIN_WITHDRAWAL_AMOUNT } from "../config/wallet.config";
+import { calculateTransferFee, coinsToUsd, VANTA_COINS_PER_USD, WITHDRAWAL_FEE_RATE, MIN_WITHDRAWAL_AMOUNT, PLATFORM_TRANSFER_LIMITS } from "../config/wallet.config";
 import {
   COIN_PAYMENT_ORDER_TTL_SECONDS,
   COIN_PAYMENT_CREDITABLE_STATUSES,
@@ -71,6 +71,50 @@ const FOLLOWER_REWARD_CLAIM_TYPE = TX_TYPES.FOLLOWER_REWARD_CLAIM;
 export function resolveAvailableCoins(wallet: { coinBalance: number; lockedCoins?: number }): number {
   return Math.max(0, (wallet.coinBalance || 0) - (wallet.lockedCoins || 0));
 }
+
+/** UTC start of today (used for daily-limit rollover). */
+export function startOfUTCDay(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+export interface EffectiveTransferLimits {
+  dailyLimit: number;
+  singleTxLimit: number;
+  otpThreshold: number;
+}
+
+/**
+ * Effective transfer limits = min(user-configured TransferLimit, platform cap).
+ *
+ * A user may LOWER their own limits for extra safety, but the server always
+ * clamps them against PLATFORM_TRANSFER_LIMITS so a compromised account can
+ * never raise its own risk controls (Phase 6). Every transfer enforces these
+ * effective values inside the database transaction.
+ */
+export function resolveEffectiveTransferLimits(
+  limit?: { dailyLimit?: number; singleTxLimit?: number; otpThreshold?: number } | null
+): EffectiveTransferLimits {
+  const cap = PLATFORM_TRANSFER_LIMITS;
+  const clamp = (value: number | undefined, fallback: number, max: number): number => {
+    if (!Number.isFinite(value)) return fallback;
+    return Math.min(Math.max(0, Math.trunc(value)), max);
+  };
+  return {
+    dailyLimit: clamp(limit?.dailyLimit, cap.maxDaily, cap.maxDaily),
+    singleTxLimit: clamp(limit?.singleTxLimit, cap.maxSingleTxLimit, cap.maxSingleTxLimit),
+    otpThreshold: Math.min(
+      Math.max(cap.minOtpThreshold, clamp(limit?.otpThreshold, cap.maxOtpThreshold, cap.maxOtpThreshold)),
+      cap.maxOtpThreshold
+    ),
+  };
+}
+
+/** OTP delivery/expiry policy for transfer step-up (matches OTP_EXPIRY_MINUTES). */
+export const TRANSFER_OTP_CONSTANTS = Object.freeze({
+  length: 6,
+  expiryMs: 10 * 60 * 1000, // 10 minutes
+  maxAttempts: 3,
+} as const);
 
 // ============================================================================
 // HELPER: Resolve user display info
@@ -688,11 +732,25 @@ export class WalletService {
     note?: string,
     otpCode?: string,
     ipAddress?: string,
-    deviceFingerprint?: string
+    deviceFingerprint?: string,
+    requestId?: string,
+    challengeId?: string,
+    sessionId?: string
   ) {
     if (senderId === receiverId) {
       throw new Error("Cannot send coins to yourself");
     }
+
+    // Validate amount as a whole (integer) number of coins.
+    const safeAmount = Math.trunc(Number(amount));
+    if (!Number.isSafeInteger(safeAmount) || safeAmount <= 0) {
+      throw new Error("Transfer amount must be a positive whole number");
+    }
+
+    // Calculate fee (5% sender pays)
+    const fee = calculateTransferFee(safeAmount);
+    const totalDeduction = safeAmount + fee;
+    const netReceived = safeAmount;
 
     const senderWallet = await this.ensureWallet(senderId);
     const receiverWallet = await this.ensureWallet(receiverId);
@@ -705,54 +763,76 @@ export class WalletService {
       throw new Error("Recipient's wallet is frozen.");
     }
 
-    // Validate amount
-    if (amount <= 0) {
-      throw new Error("Transfer amount must be positive");
-    }
-
-    // Calculate fee (5% sender pays)
-    const fee = calculateTransferFee(amount);
-    const totalDeduction = amount + fee;
-    const netReceived = amount;
-
-    // Check balance — reserved coins are locked and cannot be spent elsewhere.
-    const senderAvailable = resolveAvailableCoins(senderWallet);
-    if (senderAvailable < totalDeduction) {
-      throw new Error(
-        `Insufficient balance. You need ${totalDeduction} coins (${amount} + ${fee} fee) but only have ${senderAvailable} available`
-      );
-    }
-
-    // Check if OTP is needed for high-value transfers
+    // Phase 6 — effective limits (user config clamped to platform maximums).
     const transferLimit = await prisma.transferLimit.findUnique({
       where: { walletId: senderWallet.id },
     });
-    if (transferLimit && totalDeduction >= transferLimit.otpThreshold) {
-      if (!otpCode) {
-        // Generate and send OTP
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min expiry
+    const limits = resolveEffectiveTransferLimits(transferLimit);
 
-        // Store OTP in the transfer record (we'll create a pending transfer)
-        await this.logAudit(senderId, "OTP_SENT", {
+    // Platform per-transfer cap and the user's (clamped) per-transaction limit.
+    if (totalDeduction > PLATFORM_TRANSFER_LIMITS.maxPerTransfer) {
+      throw new Error(
+        `Transfer exceeds the platform maximum of ${PLATFORM_TRANSFER_LIMITS.maxPerTransfer.toLocaleString()} coins`
+      );
+    }
+    if (totalDeduction > limits.singleTxLimit) {
+      throw new Error(
+        `Transfer exceeds your per-transaction limit of ${limits.singleTxLimit.toLocaleString()} coins`
+      );
+    }
+
+    // Preflight balance check (UX only — the authoritative check + CAS happen
+    // inside the database transaction so concurrent transfers can never race it).
+    const senderAvailable = resolveAvailableCoins(senderWallet);
+    if (senderAvailable < totalDeduction) {
+      throw new Error(
+        `Insufficient balance. You need ${totalDeduction} coins (${safeAmount} + ${fee} fee) but only have ${senderAvailable} available`
+      );
+    }
+
+    // Idempotency (Phase 4): a retried/double-submitted request with the same
+    // requestId must never debit twice. UNIQUE(senderId, requestId) is the
+    // database-level guard; this lookup is the fast path that returns the
+    // already-committed transfer.
+    if (requestId) {
+      const existing = await prisma.coinTransfer.findUnique({
+        where: { senderId_requestId: { senderId, requestId } },
+      });
+      if (existing) {
+        return {
+          transfer: existing,
+          replayed: true,
+          message: "This transfer was already processed.",
+        };
+      }
+    }
+
+    // Step-up OTP for high-value transfers (Phase 5).
+    // The effective threshold is min(user setting, platform cap) computed by
+    // resolveEffectiveTransferLimits — a user can never raise the threshold
+    // past the platform-defined ceiling.
+    if (totalDeduction >= limits.otpThreshold) {
+      if (!otpCode) {
+        // First leg: issue a server-side challenge and deliver the OTP.
+        const challenge = await this.issueTransferOtp({
+          userId: senderId,
+          sessionId,
+          receiverId,
           amount: totalDeduction,
           ipAddress,
+          deviceFingerprint,
         });
-
-        // Send OTP via notification
-        await notificationService.createNotification(
-          senderId,
-          "WALLET_OTP",
-          "Transfer OTP",
-          `Your OTP for transferring ${amount} coins is: ${otp}. Valid for 10 minutes.`,
-          { amount, otp }
-        );
-
-        return { requiresOTP: true, message: "OTP sent to your email/phone" };
+        return {
+          requiresOTP: true,
+          challengeId: challenge.id,
+          expirySeconds: TRANSFER_OTP_CONSTANTS.expiryMs / 1000,
+          message: "OTP sent to your email/phone",
+        };
       }
 
-      // Verify OTP (in production, verify against stored OTP)
-      // For now, we'll accept any 6-digit code as this would connect to email/SMS service
+      if (!challengeId) {
+        throw new Error("An OTP challenge id is required to complete this transfer");
+      }
     }
 
     // Fraud detection - check for duplicate transfers
@@ -792,17 +872,101 @@ export class WalletService {
     const senderLabel = formatUserLabel(senderInfo);
     const receiverLabel = formatUserLabel(receiverInfo);
 
-    // Execute transfer atomically
+    // Execute transfer atomically.
+    // The balance check (`coinBalance >= totalDeduction`) is enforced INSIDE the
+    // mutation itself via compare-and-swap updateMany, never by a read-then-write
+    // sequence, so concurrent transfers / retries / double-submits can never
+    // overspend or drive a balance negative.
     const result = await prisma.$transaction(async (tx) => {
-      // Update both wallets
-      const updatedSender = await tx.wallet.update({
-        where: { userId: senderId },
+      // Re-read the sender inside the transaction for authoritative checks.
+      const senderCurrent = await tx.wallet.findUniqueOrThrow({ where: { userId: senderId } });
+      if (senderCurrent.isFrozen || resolveAvailableCoins(senderCurrent) < totalDeduction) {
+        throw new Error("Insufficient available coins");
+      }
+
+      // If step-up OTP applies, verify the challenge and consume it exactly once
+      // INSIDE this transaction — a failed/expired/reused challenge aborts the
+      // whole transfer (no ledger entry, no event).
+      if (totalDeduction >= limits.otpThreshold) {
+        const challenge = await tx.transferOtpChallenge.findUnique({ where: { id: challengeId! } });
+        if (
+          !challenge ||
+          challenge.userId !== senderId ||
+          challenge.receiverId !== receiverId ||
+          challenge.amount !== totalDeduction
+        ) {
+          throw new Error("Invalid OTP challenge");
+        }
+        if (challenge.sessionId && sessionId && challenge.sessionId !== sessionId) {
+          throw new Error("OTP challenge is bound to another session");
+        }
+        if (challenge.consumedAt) {
+          throw new Error("OTP challenge has already been used");
+        }
+        if (challenge.expiresAt < new Date()) {
+          throw new Error("OTP challenge has expired");
+        }
+        if (challenge.attempts >= challenge.maxAttempts) {
+          throw new Error("Too many OTP attempts. Please request a new code.");
+        }
+
+        const valid = await bcrypt.compare(otpCode || "", challenge.otpHash);
+        if (!valid) {
+          await tx.transferOtpChallenge.update({
+            where: { id: challenge.id },
+            data: { attempts: { increment: 1 } },
+          });
+          await tx.walletAuditLog.create({
+            data: {
+              userId: senderId,
+              action: "OTP_FAILED",
+              details: JSON.stringify({ challengeId: challenge.id, receiverId, amount: totalDeduction }),
+              ipAddress,
+            },
+          });
+          this.logTally("otp_failed");
+          throw new Error("Invalid OTP");
+        }
+
+        const consumed = await tx.transferOtpChallenge.updateMany({
+          where: { id: challenge.id, consumedAt: null },
+          data: { consumedAt: new Date() },
+        });
+        if (consumed.count !== 1) {
+          throw new Error("OTP challenge has already been used");
+        }
+        await tx.walletAuditLog.create({
+          data: {
+            userId: senderId,
+            action: "OTP_VERIFIED",
+            details: JSON.stringify({ challengeId: challenge.id, receiverId, amount: totalDeduction }),
+            ipAddress,
+          },
+        });
+      }
+
+      // Compare-and-swap debit: only succeeds while the exact conditions hold.
+      const debit = await tx.wallet.updateMany({
+        where: {
+          userId: senderId,
+          isFrozen: false,
+          coinBalance: { gte: totalDeduction },
+        },
         data: {
           coinBalance: { decrement: totalDeduction },
-          totalCoinsSent: { increment: amount },
+          totalCoinsSent: { increment: safeAmount },
         },
       });
+      if (debit.count !== 1) {
+        throw new Error("Insufficient coins");
+      }
+      const updatedSender = await tx.wallet.findUniqueOrThrow({ where: { userId: senderId } });
 
+      // Credit the receiver (revalidated inside the tx).
+      const receiverCurrent = await tx.wallet.findUniqueOrThrow({ where: { userId: receiverId } });
+      if (receiverCurrent.isFrozen) {
+        throw new Error("Recipient's wallet is frozen.");
+      }
       const updatedReceiver = await tx.wallet.update({
         where: { userId: receiverId },
         data: {
@@ -811,17 +975,18 @@ export class WalletService {
         },
       });
 
-      // Create coin transfer record
+      // Create coin transfer record (idempotency key included).
       const transfer = await tx.coinTransfer.create({
         data: {
           senderId,
           receiverId,
-          amount,
+          amount: safeAmount,
           fee,
           netAmount: netReceived,
           note,
           status: "COMPLETED",
           otpVerified: !!otpCode,
+          requestId: requestId || null,
           ipAddress,
           deviceFingerprint,
         },
@@ -838,9 +1003,9 @@ export class WalletService {
           fee,
           balance: updatedSender.coinBalance,
           status: "COMPLETED",
-          description: buildTransactionDescription(TX_TYPES.TRANSFER_SENT, amount, receiverLabel, note),
+          description: buildTransactionDescription(TX_TYPES.TRANSFER_SENT, safeAmount, receiverLabel, note),
           reference: transfer.id,
-          metadata: JSON.stringify({ receiverId, amount, fee, note }),
+          metadata: JSON.stringify({ receiverId, amount: safeAmount, fee, note }),
         },
       });
 
@@ -860,12 +1025,38 @@ export class WalletService {
         },
       });
 
-      // Update daily used amount
+      // Update daily used amount — CAS on the read snapshot so two concurrent
+      // transfers cannot both pass the daily-limit check.
       if (transferLimit) {
-        await tx.transferLimit.update({
-          where: { walletId: senderWallet.id },
-          data: { dailyUsed: { increment: totalDeduction } },
-        });
+        const today = startOfUTCDay(new Date());
+        const needsReset = !transferLimit.lastResetDate || transferLimit.lastResetDate < today;
+        const baseUsed = needsReset ? 0 : transferLimit.dailyUsed || 0;
+        if (baseUsed + totalDeduction > limits.dailyLimit) {
+          throw new Error(
+            `Daily transfer limit of ${limits.dailyLimit.toLocaleString()} coins exceeded`
+          );
+        }
+        if (needsReset) {
+          const reset = await tx.transferLimit.updateMany({
+            where: { id: transferLimit.id, lastResetDate: { lt: today } },
+            data: { dailyUsed: totalDeduction, lastResetDate: today },
+          });
+          if (reset.count !== 1) {
+            throw new Error("Daily transfer limit changed concurrently; please retry");
+          }
+        } else {
+          const advanced = await tx.transferLimit.updateMany({
+            where: {
+              id: transferLimit.id,
+              lastResetDate: { equals: transferLimit.lastResetDate },
+              dailyUsed: { equals: transferLimit.dailyUsed },
+            },
+            data: { dailyUsed: baseUsed + totalDeduction, lastResetDate: today },
+          });
+          if (advanced.count !== 1) {
+            throw new Error("Daily transfer limit changed concurrently; please retry");
+          }
+        }
       }
 
       // Log audit
@@ -876,10 +1067,11 @@ export class WalletService {
           details: JSON.stringify({
             transferId: transfer.id,
             receiverId,
-            amount,
+            amount: safeAmount,
             fee,
             netReceived,
             ipAddress,
+            requestId: requestId || null,
           }),
           ipAddress,
         },
@@ -893,8 +1085,8 @@ export class WalletService {
       senderId,
       "WALLET_TRANSFER_SENT",
       "Transfer Sent",
-      `You sent ${amount.toLocaleString()} coins (fee: ${fee}) to ${receiverLabel}.`,
-      { transferId: result.transfer.id, amount, fee, receiverId }
+      `You sent ${safeAmount.toLocaleString()} coins (fee: ${fee}) to ${receiverLabel}.`,
+      { transferId: result.transfer.id, amount: safeAmount, fee, receiverId }
     );
 
     await notificationService.createNotification(
@@ -921,20 +1113,179 @@ export class WalletService {
     }
   ) {
     const wallet = await this.ensureWallet(userId);
+
+    // Phase 6 — server-side clamping. Users may LOWER their own limits for
+    // extra safety but can never set them ABOVE the platform maximums, so a
+    // compromised account cannot self-exempt from step-up OTP or velocity
+    // controls. The effective limits are additionally re-enforced inside every
+    // transfer mutation.
+    const cap = PLATFORM_TRANSFER_LIMITS;
+    const clampInt = (value: number | undefined, fallback: number, max: number, label: string): number => {
+      if (value === undefined) return fallback;
+      const n = Math.trunc(Number(value));
+      if (!Number.isSafeInteger(n) || n < 0) {
+        throw new Error(`${label} must be a non-negative whole number`);
+      }
+      return Math.min(n, max);
+    };
+
+    const data: {
+      dailyLimit?: number;
+      singleTxLimit?: number;
+      otpThreshold?: number;
+    } = {};
+
+    if (updates.dailyLimit !== undefined) {
+      data.dailyLimit = clampInt(updates.dailyLimit, cap.maxDaily, cap.maxDaily, 'dailyLimit');
+    }
+    if (updates.singleTxLimit !== undefined) {
+      data.singleTxLimit = clampInt(updates.singleTxLimit, cap.maxSingleTxLimit, cap.maxSingleTxLimit, 'singleTxLimit');
+    }
+    if (updates.otpThreshold !== undefined) {
+      // Never allow raising the OTP threshold above the platform cap (that
+      // would reduce which transfers require step-up verification).
+      const n = Math.trunc(Number(updates.otpThreshold));
+      if (!Number.isSafeInteger(n) || n < 0) {
+        throw new Error('otpThreshold must be a non-negative whole number');
+      }
+      data.otpThreshold = Math.min(Math.max(cap.minOtpThreshold, n), cap.maxOtpThreshold);
+    }
+
     const limit = await prisma.transferLimit.findUnique({
       where: { walletId: wallet.id },
     });
 
     if (!limit) {
-      return prisma.transferLimit.create({
-        data: { walletId: wallet.id, ...updates },
+      const created = await prisma.transferLimit.create({
+        data: { walletId: wallet.id, ...data },
       });
+      return { ...created, effective: resolveEffectiveTransferLimits(created), clamped: true };
     }
 
-    return prisma.transferLimit.update({
+    const updated = await prisma.transferLimit.update({
       where: { walletId: wallet.id },
-      data: updates,
+      data,
     });
+
+    await this.logAudit(userId, 'LIMIT_CHANGE', {
+      walletId: wallet.id,
+      applied: data,
+      clampedToPlatformCaps: true,
+    });
+
+    return { ...updated, effective: resolveEffectiveTransferLimits(updated), clamped: true };
+  }
+
+  // ============================================================
+  // TRANSFER STEP-UP OTP (Phase 5)
+  // ============================================================
+
+  /**
+   * Issue a transfer OTP challenge.
+   *
+   * SECURITY PROPERTIES
+   *  - OTP is generated with crypto.randomInt (CSPRNG), never Math.random.
+   *  - Only a one-way bcrypt hash is stored — never the plaintext OTP.
+   *  - The challenge is bound to user + session + recipient + amount, expires,
+   *    is attempt-limited and single-use (consumed inside the transfer tx).
+   *  - The plaintext OTP is ONLY delivered through the notification channel
+   *    (the delivery medium); it is never persisted, logged or returned.
+   */
+  async issueTransferOtp(input: {
+    userId: string;
+    sessionId?: string;
+    receiverId: string;
+    amount: number;
+    ipAddress?: string;
+    deviceFingerprint?: string;
+  }) {
+    const { userId, sessionId, receiverId, amount, ipAddress, deviceFingerprint } = input;
+    const otp = crypto.randomInt(100000, 1000000).toString();
+    const otpHash = await bcrypt.hash(otp, 10);
+    const expiresAt = new Date(Date.now() + TRANSFER_OTP_CONSTANTS.expiryMs);
+
+    const challenge = await prisma.transferOtpChallenge.create({
+      data: {
+        userId,
+        sessionId: sessionId || null,
+        receiverId,
+        amount,
+        otpHash,
+        expiresAt,
+        maxAttempts: TRANSFER_OTP_CONSTANTS.maxAttempts,
+        ipAddress: ipAddress || null,
+        deviceFingerprint: deviceFingerprint || null,
+      },
+    });
+
+    // Delivery channel only — metadata carries the challenge reference, NOT the
+    // OTP, so the code is never written to notification metadata/logs.
+    await notificationService.createNotification(
+      userId,
+      "WALLET_OTP",
+      "Transfer OTP",
+      `Your OTP for transferring ${amount.toLocaleString()} coins is ${otp}. Valid for ${TRANSFER_OTP_CONSTANTS.expiryMs / 60000} minutes.`,
+      {
+        challengeId: challenge.id,
+        receiverId,
+        amount,
+        flows: ["transfer"],
+      }
+    );
+
+    await this.logAudit(userId, "OTP_SENT", {
+      challengeId: challenge.id,
+      receiverId,
+      amount,
+    });
+
+    return challenge;
+  }
+
+  /**
+   * Verify a transfer OTP challenge WITHOUT executing a transfer. Intended for
+   * pre-validation UX; the authoritative consumption happens inside the
+   * transfer transaction. Never exposes whether the code was correct — callers
+   * get a boolean `valid` and a challenge that stays unconsumed on failure.
+   */
+  async verifyTransferOtp(input: {
+    userId: string;
+    challengeId: string;
+    otpCode: string;
+    sessionId?: string;
+  }): Promise<{ valid: boolean; reason?: string }> {
+    const { userId, challengeId, otpCode, sessionId } = input;
+    const challenge = await prisma.transferOtpChallenge.findUnique({
+      where: { id: challengeId },
+    });
+    if (!challenge || challenge.userId !== userId) {
+      return { valid: false, reason: "invalid" };
+    }
+    if (challenge.consumedAt) return { valid: false, reason: "used" };
+    if (challenge.expiresAt < new Date()) return { valid: false, reason: "expired" };
+    if (challenge.attempts >= challenge.maxAttempts) return { valid: false, reason: "attempts" };
+    if (sessionId && challenge.sessionId && challenge.sessionId !== sessionId) {
+      return { valid: false, reason: "session" };
+    }
+
+    const valid = await bcrypt.compare(otpCode || "", challenge.otpHash);
+    if (valid) {
+      await prisma.transferOtpChallenge.updateMany({
+        where: { id: challenge.id, consumedAt: null },
+        data: { consumedAt: new Date() },
+      });
+      return { valid: true };
+    }
+
+    await prisma.transferOtpChallenge.update({
+      where: { id: challenge.id },
+      data: { attempts: { increment: 1 } },
+    });
+    await this.logAudit(userId, "OTP_FAILED", {
+      challengeId: challenge.id,
+      attemptsRemaining: challenge.maxAttempts - challenge.attempts - 1,
+    });
+    return { valid: false, reason: "invalid" };
   }
 
   // ============================================================
@@ -1098,22 +1449,32 @@ export class WalletService {
       throw new Error("You already have a pending withdrawal request. Please wait for it to be processed.");
     }
 
-    // Atomic transaction: deduct earnings + create withdrawal record + create transaction
+    // Atomic transaction: deduct earnings + create withdrawal record + create transaction.
+    // Both the single-PENDING invariant and the balance check are enforced
+    // INSIDE the transaction (serialized), and the earnings debit is a
+    // compare-and-swap so two concurrent requests can never both succeed.
     const result = await prisma.$transaction(async (tx) => {
-      // Re-check balance inside transaction to prevent race conditions
-      const currentWallet = await tx.wallet.findUniqueOrThrow({ where: { userId } });
-      if (currentWallet.earningsBalance < amount) {
-        throw new Error("Insufficient earnings balance");
+      // Re-check single-PENDING invariant inside the transaction: two
+      // concurrent requests can both pass the preflight lookup above.
+      const existingPending = await tx.withdrawal.count({
+        where: { userId, status: "PENDING" },
+      });
+      if (existingPending > 0) {
+        throw new Error("You already have a pending withdrawal request. Please wait for it to be processed.");
       }
 
-      // Deduct earnings
-      const updatedWallet = await tx.wallet.update({
-        where: { userId },
+      // Re-check balance AND debit in the same conditional mutation.
+      const debit = await tx.wallet.updateMany({
+        where: { userId, isFrozen: false, earningsBalance: { gte: amount } },
         data: {
           earningsBalance: { decrement: amount },
           totalWithdrawn: { increment: netAmount },
         },
       });
+      if (debit.count !== 1) {
+        throw new Error("Insufficient earnings balance");
+      }
+      const updatedWallet = await tx.wallet.findUniqueOrThrow({ where: { userId } });
 
       // Create withdrawal record
       const withdrawal = await tx.withdrawal.create({
@@ -1196,16 +1557,22 @@ export class WalletService {
       throw new Error("Only pending withdrawals can be processed");
     }
 
-    // Atomic transaction: update withdrawal status + create transaction
+    // Atomic transaction: conditionally flip PENDING -> COMPLETED. The CAS
+    // (where status = PENDING) guarantees two concurrent admin approvals can
+    // never both succeed — the loser updates 0 rows and aborts.
     const result = await prisma.$transaction(async (tx) => {
-      const updated = await tx.withdrawal.update({
-        where: { id: withdrawalId },
+      const claim = await tx.withdrawal.updateMany({
+        where: { id: withdrawalId, status: "PENDING" },
         data: {
           status: "COMPLETED",
           processedBy: adminId,
           processedAt: new Date(),
         },
       });
+      if (claim.count !== 1) {
+        throw new Error("Withdrawal can only be processed once");
+      }
+      const updated = await tx.withdrawal.findUniqueOrThrow({ where: { id: withdrawalId } });
 
       // Update the wallet transaction status
       await tx.walletTransaction.updateMany({
@@ -1255,10 +1622,12 @@ export class WalletService {
       throw new Error("Only pending withdrawals can be rejected");
     }
 
-    // Atomic transaction: update withdrawal status + refund earnings
+    // Atomic transaction: conditionally flip PENDING -> FAILED + refund once.
+    // The CAS prevents a DOUBLE REFUND if two admins reject concurrently (or
+    // a process + reject race) — only the first transition wins.
     const result = await prisma.$transaction(async (tx) => {
-      const updated = await tx.withdrawal.update({
-        where: { id: withdrawalId },
+      const claim = await tx.withdrawal.updateMany({
+        where: { id: withdrawalId, status: "PENDING" },
         data: {
           status: "FAILED",
           processedBy: adminId,
@@ -1266,6 +1635,10 @@ export class WalletService {
           adminNotes: reason,
         },
       });
+      if (claim.count !== 1) {
+        throw new Error("Withdrawal can only be rejected once");
+      }
+      const updated = await tx.withdrawal.findUniqueOrThrow({ where: { id: withdrawalId } });
 
       // Refund earnings to user
       await tx.wallet.update({
@@ -1306,6 +1679,73 @@ export class WalletService {
       "Withdrawal Rejected",
       `Your withdrawal of $${withdrawal.amount.toFixed(2)} was rejected. ${reason || "Please contact support."}`,
       { withdrawalId, amount: withdrawal.amount, reason }
+    );
+
+    return result;
+  }
+
+  /**
+   * User-initiated cancellation of a PENDING withdrawal. Atomically refunds
+   * the reserved earnings exactly once (CAS-guarded status transition).
+   */
+  async cancelWithdrawal(withdrawalId: string, userId: string) {
+    const withdrawal = await prisma.withdrawal.findUnique({
+      where: { id: withdrawalId },
+    });
+
+    if (!withdrawal) {
+      throw new Error("Withdrawal not found");
+    }
+    if (withdrawal.userId !== userId) {
+      throw new Error("You can only cancel your own withdrawals");
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const claim = await tx.withdrawal.updateMany({
+        where: { id: withdrawalId, userId, status: "PENDING" },
+        data: {
+          status: "CANCELLED",
+          processedBy: userId,
+          processedAt: new Date(),
+          adminNotes: "Cancelled by user",
+        },
+      });
+      if (claim.count !== 1) {
+        throw new Error("This withdrawal can no longer be cancelled");
+      }
+      const updated = await tx.withdrawal.findUniqueOrThrow({ where: { id: withdrawalId } });
+
+      // Refund reserved earnings exactly once.
+      await tx.wallet.update({
+        where: { userId },
+        data: {
+          earningsBalance: { increment: withdrawal.amount },
+          totalWithdrawn: { decrement: withdrawal.netAmount },
+        },
+      });
+
+      await tx.walletTransaction.updateMany({
+        where: { reference: withdrawalId, type: "WITHDRAWAL" },
+        data: { status: "CANCELLED" },
+      });
+
+      await tx.walletAuditLog.create({
+        data: {
+          userId,
+          action: "WITHDRAWAL_CANCELLED",
+          details: JSON.stringify({ withdrawalId, amount: withdrawal.amount }),
+        },
+      });
+
+      return updated;
+    });
+
+    await notificationService.createNotification(
+      userId,
+      "WALLET_WITHDRAWAL_CANCELLED",
+      "Withdrawal Cancelled",
+      `Your withdrawal request of $${withdrawal.amount.toFixed(2)} was cancelled and the funds returned to your earnings balance.`,
+      { withdrawalId, amount: withdrawal.amount }
     );
 
     return result;
@@ -1654,6 +2094,121 @@ export class WalletService {
   // ============================================================
   // AUDIT LOGGING
   // ============================================================
+
+  // ============================================================
+  // RECONCILIATION (Phase 10)
+  // ============================================================
+
+  /**
+   * Reconcile a single wallet: compute the authoritative balance from the
+   * Wallet ledger (WalletTransaction rows) and compare it against the stored
+   * Wallet.coinBalance. Every run records exactly one WalletReconciliationLog
+   * row (MATCH or DISCREPANCY). Discrepancies are NEVER silently fixed — they
+   * are audited and surfaced; a caller can optionally freeze the wallet.
+   */
+  async reconcileWallet(userId: string): Promise<{
+    status: 'MATCH' | 'DISCREPANCY';
+    storedBalance: number;
+    ledgerBalance: number;
+    difference: number;
+    logId: string;
+  }> {
+    const wallet = await this.ensureWallet(userId);
+    const txns = await prisma.walletTransaction.findMany({
+      where: { userId },
+      select: { type: true, amount: true },
+    });
+    const ledgerBalance = txns.reduce((sum, t) => {
+      if (INCOMING_TYPES.has(t.type as any)) return sum + Math.trunc(t.amount);
+      if (OUTGOING_TYPES.has(t.type as any)) return sum - Math.trunc(t.amount);
+      return sum; // unknown types do not affect the coin ledger
+    }, 0);
+    const storedBalance = wallet.coinBalance || 0;
+    const difference = storedBalance - ledgerBalance;
+    const status: 'MATCH' | 'DISCREPANCY' = difference === 0 ? 'MATCH' : 'DISCREPANCY';
+
+    const log = await prisma.walletReconciliationLog.create({
+      data: {
+        userId,
+        walletId: wallet.id,
+        storedBalance,
+        ledgerBalance,
+        difference,
+        status,
+        details: JSON.stringify({ transactionCount: txns.length, computedAt: new Date().toISOString() }),
+      },
+    });
+
+    if (status === 'DISCREPANCY') {
+      await this.logAudit(userId, 'RECONCILIATION_DISCREPANCY', {
+        storedBalance,
+        ledgerBalance,
+        difference,
+        reconciliationLogId: log.id,
+      });
+      this.logTally('reconciliation_discrepancy', { userId, difference });
+    }
+
+    return { status, storedBalance, ledgerBalance, difference, logId: log.id };
+  }
+
+  /**
+   * Reconcile all wallets (manual or periodic run). When
+   * `freezeOnDiscrepancy` is enabled, wallets with a difference are frozen
+   * with an auditable reason rather than silently adjusted.
+   */
+  async reconcileAllWallets(options?: {
+    limit?: number;
+    freezeOnDiscrepancy?: boolean;
+  }): Promise<{ checked: number; discrepancies: number; frozen: number }> {
+    const wallets = await prisma.wallet.findMany({
+      take: Math.min(Math.max(1, options?.limit || 500), 1000),
+      select: { id: true, userId: true, coinBalance: true },
+    });
+    let discrepancies = 0;
+    let frozen = 0;
+    for (const wallet of wallets) {
+      const result = await this.reconcileWallet(wallet.userId);
+      if (result.status === 'DISCREPANCY') {
+        discrepancies++;
+        if (options?.freezeOnDiscrepancy) {
+          const update = await prisma.wallet.updateMany({
+            where: { id: wallet.id, isFrozen: false },
+            data: {
+              isFrozen: true,
+              frozenBy: 'system:reconciliation',
+              freezeReason: `Reconciliation discrepancy: stored=${result.storedBalance}, ledger=${result.ledgerBalance}`,
+            },
+          });
+          if (update.count === 1) frozen++;
+        }
+      }
+    }
+    return { checked: wallets.length, discrepancies, frozen };
+  }
+
+  // ============================================================
+  // OBSERVABILITY (Phase 18)
+  // ============================================================
+
+  /**
+   * Lightweight structured metric hook for financial operations. In production
+   * this is the plug point for a real metrics emitter (Prometheus / DataDog /
+   * StatsD); the call sites already carry the stable counter names.
+   */
+  private logTally(counter: string, metadata?: Record<string, unknown>): void {
+    if (process.env.NODE_ENV === 'production') {
+      // Replace with a real metrics client in production. Kept as a structured
+      // console line today so no financial failure is ever silent.
+      console.info(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          metric: `wallet.${counter}`,
+          ...(metadata || {}),
+        })
+      );
+    }
+  }
 
   private async logAudit(userId: string, action: string, details?: any) {
     await prisma.walletAuditLog.create({

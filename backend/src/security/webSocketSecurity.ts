@@ -42,16 +42,35 @@ export async function authenticateSocket(
       return next(new Error('Invalid token'));
     }
 
-    // Verify session
-    const session = await prisma.session.findFirst({
-      where: {
-        userId: decoded.userId,
-        expiresAt: { gt: new Date() },
-      },
+    // Verify the EXACT session bound to this access token. The access token is
+    // stored on the Session row, so lookup by token proves the session has not
+    // been revoked, rotated or expired — a revoked/rotated session can never
+    // (re)establish a socket connection.
+    const session = await prisma.session.findUnique({
+      where: { token: token as string },
       include: { user: { select: { status: true, role: true } } },
     });
 
-    if (!session || session.user.status !== 'ACTIVE') {
+    if (!session || session.userId !== decoded.userId) {
+      await auditLog.log({
+        userId: decoded.userId,
+        action: 'SOCKET_SESSION_REJECTED',
+        metadata: { reason: 'token/session mismatch or revoked session' },
+        severity: 'WARNING',
+      });
+      return next(new Error('Session invalid or revoked'));
+    }
+
+    if (decoded.sessionId && decoded.sessionId !== session.id) {
+      return next(new Error('Session invalid or revoked'));
+    }
+
+    if (session.expiresAt < new Date()) {
+      await prisma.session.delete({ where: { id: session.id } }).catch(() => {});
+      return next(new Error('Session expired'));
+    }
+
+    if (!session.user || session.user.status !== 'ACTIVE') {
       return next(new Error('Session invalid or account restricted'));
     }
 

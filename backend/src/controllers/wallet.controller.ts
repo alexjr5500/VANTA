@@ -66,10 +66,15 @@ export const processDeposit = async (req: AuthRequest, res: Response): Promise<v
 export const transferCoins = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
-    const { receiverId, receiverUsername, amount, note, otpCode } = req.body;
+    const sessionId = req.user?.sessionId;
+    const { receiverId, receiverUsername, amount, note, otpCode, requestId, challengeId } = req.body;
     if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
     if (!amount) {
       res.status(400).json({ error: 'Amount is required' });
+      return;
+    }
+    if (requestId !== undefined && (typeof requestId !== 'string' || requestId.length > 100 || !/^[A-Za-z0-9._-]+$/.test(requestId))) {
+      res.status(400).json({ error: 'requestId must be a short string (letters, numbers, . _ -)' });
       return;
     }
 
@@ -93,7 +98,7 @@ export const transferCoins = async (req: AuthRequest, res: Response): Promise<vo
     }
 
     const result = await walletService.transferCoins(
-      userId, resolvedReceiverId, amount, note, otpCode, req.ip
+      userId, resolvedReceiverId, amount, note, otpCode, req.ip, undefined, requestId, challengeId, sessionId
     );
     res.status(200).json(result);
   } catch (error) {
@@ -273,6 +278,23 @@ export const getWithdrawals = async (req: AuthRequest, res: Response): Promise<v
     if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
     const withdrawals = await walletService.getWithdrawals(userId, limit);
     res.status(200).json(withdrawals);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const cancelWithdrawal = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    const withdrawalId = req.params.withdrawalId;
+    if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+    if (!withdrawalId) {
+      res.status(400).json({ error: 'withdrawalId is required' });
+      return;
+    }
+    const withdrawal = await walletService.cancelWithdrawal(withdrawalId, userId);
+    res.status(200).json({ message: 'Withdrawal cancelled', withdrawal });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });

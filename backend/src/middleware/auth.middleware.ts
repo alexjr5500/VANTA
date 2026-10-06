@@ -1,109 +1,41 @@
-import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
-import { prisma } from '../prisma';
+/**
+ * VANTA Canonical Authentication Middleware — single source of truth.
+ *
+ * This module used to contain a second, parallel JWT implementation
+ * (`authenticateJWT` / `optionallyAuthenticateJWT`). That duplication was a
+ * security risk: the two paths could drift (session checks, expiry handling,
+ * account-status enforcement), and a route "protected" by one middleware could
+ * silently behave differently under the other.
+ *
+ * The canonical security layer lives in `src/security/authMiddleware.ts`. This
+ * file is now a thin, behavior-preserving re-export shim so every existing
+ * route/controller that imports `authenticateJWT`, `optionallyAuthenticateJWT`
+ * or `AuthRequest` transparently uses the canonical implementation — no route
+ * file needs to change and there is exactly ONE authentication code path.
+ *
+ *  authenticateJWT           == authenticate
+ *  optionallyAuthenticateJWT == optionalAuth
+ *  AuthRequest               == AuthenticatedRequest
+ */
+import {
+  authenticate,
+  optionalAuth,
+  AuthenticatedRequest,
+} from '../security/authMiddleware';
+import type { Request, Response, NextFunction } from 'express';
 
-export interface AuthRequest extends Request {
-  user?: {
-    userId: string;
-    role: string;
-    sessionId?: string;
-  };
-  token?: string;
-}
+// Canonical JWT auth: 401 when missing/invalid, 403 when suspended/banned,
+// rejected when the exact session is revoked, expired or swapped.
+export const authenticateJWT = authenticate;
 
-export const authenticateJWT = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Authorization header missing or invalid' });
-    return;
-  }
+// Canonical optional auth: sets req.user when a valid session is presented,
+// otherwise continues anonymously (never fails the request).
+export const optionallyAuthenticateJWT = optionalAuth;
 
-  const token = authHeader.split(' ')[1];
-  try {
-    if (!process.env.JWT_SECRET) {
-      res.status(500).json({ error: 'Server configuration error: JWT_SECRET not set' });
-      return;
-    }
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const decodedPayload = decoded as { userId?: string; role?: string; type?: string };
+// Type alias — keep the legacy identifier so controllers don't need churn.
+export interface AuthRequest extends AuthenticatedRequest {}
 
-    if (!decodedPayload || !decodedPayload.userId || decodedPayload.type !== 'access') {
-      res.status(401).json({ error: 'Invalid or expired token' });
-      return;
-    }
+// Re-export the canonical middleware types for convenience.
+export type { Request, Response, NextFunction };
 
-    const session = await prisma.session.findUnique({ where: { token } });
-    if (!session || session.expiresAt < new Date()) {
-      res.status(401).json({ error: 'Session expired or invalid' });
-      return;
-    }
-
-    if (session.userId !== decodedPayload.userId) {
-      res.status(401).json({ error: 'Invalid session' });
-      return;
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: decodedPayload.userId },
-      select: { role: true, status: true },
-    });
-    if (!user) {
-      res.status(401).json({ error: 'User not found' });
-      return;
-    }
-    if (user.status !== 'ACTIVE') {
-      res.status(403).json({ error: user.status === 'SUSPENDED' ? 'Account suspended' : 'Account restricted' });
-      return;
-    }
-
-    await prisma.session.update({ where: { id: session.id }, data: { lastActiveAt: new Date() } });
-
-    req.user = {
-      userId: decodedPayload.userId,
-      role: user.role,
-      sessionId: session.id,
-    };
-    req.token = token;
-    next();
-  } catch (error) {
-    res.status(401).json({ error: 'Invalid or expired token' });
-  }
-};
-
-export const optionallyAuthenticateJWT = async (req: AuthRequest, _res: Response, next: NextFunction): Promise<void> => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ') || !process.env.JWT_SECRET) {
-    next();
-    return;
-  }
-
-  const token = authHeader.slice('Bearer '.length);
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET) as { userId?: string; role?: string; type?: string };
-    if (!decoded.userId || decoded.type !== 'access') {
-      next();
-      return;
-    }
-
-    const session = await prisma.session.findUnique({ where: { token } });
-    if (!session || session.userId !== decoded.userId || session.expiresAt < new Date()) {
-      next();
-      return;
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: { role: true, status: true },
-    });
-    if (!user || user.status !== 'ACTIVE') {
-      next();
-      return;
-    }
-
-    req.user = { userId: decoded.userId, role: user.role, sessionId: session.id };
-    req.token = token;
-  } catch {
-    // Public routes remain accessible when an optional credential is invalid.
-  }
-  next();
-};
+export default authenticate;

@@ -8,6 +8,28 @@ export const WITHDRAWAL_FEE_RATE = 0.10;
 export const MIN_WITHDRAWAL_AMOUNT = 10;
 
 /**
+ * PLATFORM transfer-risk controls (Phase 6). These are the absolute ceiling a
+ * user-configured TransferLimit may never exceed. Users may LOWER their limits
+ * for extra safety, but can never raise them past these platform-defined
+ * maximums, so a compromised account cannot self-exempt from step-up OTP or
+ * velocity controls. The server always computes the EFFECTIVE limit as
+ * `min(userLimit, platformCap)` and enforces it inside the transfer mutation.
+ */
+export const PLATFORM_TRANSFER_LIMITS = Object.freeze({
+  /** Maximum coins a single transfer may move (sender total, incl. fee). */
+  maxPerTransfer: 10_000_000,
+  /** Maximum coins a user may move in one rolling day (sender total). */
+  maxDaily: 10_000_000,
+  /** Absolute cap for the user-configurable per-transfer limit. */
+  maxSingleTxLimit: 10_000_000,
+  /** Absolute ceiling for the step-up OTP threshold. A user may LOWER the
+   *  amount at which OTP is required, but never raise it above this cap. */
+  maxOtpThreshold: 10_000,
+  /** Floor for the step-up OTP threshold — cannot be set below this. */
+  minOtpThreshold: 1_000,
+} as const);
+
+/**
  * VANTA purchase packages.
  *
  * This is the approved customer-facing purchase catalog. Keep package IDs,

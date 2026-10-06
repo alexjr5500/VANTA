@@ -54,6 +54,8 @@ export async function transferCoins(data: {
   note?: string;
   pin?: string;
   otpCode?: string;
+  requestId?: string;
+  challengeId?: string;
 }) {
   const res = await fetch(`${WALLET_URL}/transfer`, {
     method: 'POST',

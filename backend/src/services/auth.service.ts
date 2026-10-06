@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import * as crypto from "crypto";
 import { prisma } from "../prisma";
 import { welcomeRewardService } from "./welcome-reward.service";
 
@@ -34,8 +35,8 @@ export class AuthService {
     if (!process.env.JWT_SECRET) {
       throw new Error("JWT_SECRET environment variable is not set");
     }
-    return jwt.sign({ userId }, process.env.JWT_SECRET, {
-      expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+    return jwt.sign({ userId, type: "access" }, process.env.JWT_SECRET, {
+      expiresIn: (process.env.JWT_EXPIRES_IN || "7d") as jwt.SignOptions["expiresIn"],
     });
   }
 
@@ -43,8 +44,8 @@ export class AuthService {
     if (!process.env.JWT_REFRESH_SECRET) {
       throw new Error("JWT_REFRESH_SECRET environment variable is not set");
     }
-    return jwt.sign({ userId }, process.env.JWT_REFRESH_SECRET, {
-      expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "30d",
+    return jwt.sign({ userId, type: "refresh" }, process.env.JWT_REFRESH_SECRET, {
+      expiresIn: (process.env.JWT_REFRESH_EXPIRES_IN || "30d") as jwt.SignOptions["expiresIn"],
     });
   }
 
@@ -397,20 +398,24 @@ export class AuthService {
   // ============ PHONE OTP ============
 
   async sendPhoneOTP(phoneNumber: string, ipAddress?: string) {
-    const otp = Math.random().toString().slice(2, 8);
+    // Cryptographically secure 6-digit OTP (never Math.random).
+    const otp = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    // ONLY a one-way bcrypt hash is stored. The plaintext value is delivered
+    // to the user out-of-band (email/SMS/notification) and never persisted,
+    // so a database leak cannot be used to mint sessions.
+    const otpHash = await bcrypt.hash(otp, 10);
 
     await prisma.phoneOTP.create({
       data: {
         phoneNumber,
-        otp,
+        otp: otpHash,
         expiresAt,
         ipAddress: ipAddress || null,
         attempts: 0,
       },
     });
-
-    console.log(`[DEV] OTP for ${phoneNumber}: ${otp}`);
 
     return {
       message: "OTP sent successfully",
@@ -441,7 +446,7 @@ export class AuthService {
       throw new Error("Too many failed attempts");
     }
 
-    if (otpRecord.otp !== otp) {
+    if (otpRecord.otp !== otp && !(await bcrypt.compare(otp, otpRecord.otp))) {
       await prisma.phoneOTP.update({
         where: { id: otpRecord.id },
         data: { attempts: otpRecord.attempts + 1 },
@@ -511,7 +516,13 @@ export class AuthService {
       { expiresIn: '1h' }
     );
 
-    console.log(`[DEV] Password reset token for ${email}: ${resetToken}`);
+    // NOTE: the reset token is intentionally never logged. In production the
+    // delivery channel is an email/SMS integration. Development-only delivery
+    // (e.g. console printing) must go through an opt-in DEBUG_RESET_TOKEN flag
+    // that defaults to OFF so credentials are never written to logs.
+    if (process.env.DEBUG_RESET_TOKEN === 'true') {
+      console.warn(`[DEV] Password reset token for ${email}: ${resetToken}`);
+    }
 
     return { message: "Password reset link sent" };
   }

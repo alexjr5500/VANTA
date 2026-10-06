@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { 
   getWallet, getBalance, getTransactionHistory, getTransfersSent, getTransfersReceived,
   getGiftHistory, getDeposits, getWithdrawalHistory,
-  saveWalletAddress, requestWithdrawal, getWithdrawals,
+  saveWalletAddress, requestWithdrawal, getWithdrawals, cancelWithdrawal,
   processDeposit, transferCoins,
   setupPin, updatePin, verifyPin,
   updateTransferLimit, getWalletAnalytics,
@@ -26,7 +26,9 @@ router.post('/deposit', processDeposit);
 router.get('/deposits', getDeposits);
 
 // Transfers
-router.post('/transfer', transferCoins);
+// Rate-limited so a single account cannot mint/spam OTP challenges or probe
+// codes — the OTP limiter window/max comes from RATE_LIMIT_OTP_* env config.
+router.post('/transfer', rateLimiter.otp, transferCoins);
 router.get('/transfers/sent', getTransfersSent);
 router.get('/transfers/received', getTransfersReceived);
 
@@ -45,6 +47,7 @@ router.get('/gift-history', getGiftHistory);
 
 // Withdrawals (disabled)
 router.post('/withdraw', requestWithdrawal);
+router.post('/withdrawals/:withdrawalId/cancel', cancelWithdrawal);
 router.get('/withdrawals', getWithdrawals);
 router.get('/withdrawals/history', getWithdrawalHistory);
 
