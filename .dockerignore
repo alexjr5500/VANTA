@@ -1,0 +1,202 @@
+# Dependencies
+node_modules/
+# The root package-lock.json is tracked for deterministic Railway/Vercel installs.
+# Nested lockfiles are not used (npm workspaces consolidate at the root).
+/frontend/package-lock.json
+/backend/package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment variables
+.env
+.env.*
+!.env.example
+.env.local
+.env.*.local
+.env.production.local
+.env.development.local
+backend/.env
+frontend/.env.local
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+.vercel/
+backend/dist/
+frontend/.next/
+
+/tmp-*.ps1
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+backend/backend.log
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.vim/
+.project
+.classpath
+*.sublime-project
+*.sublime-workspace
+
+# Local browser profiles and exports (may contain cookies/login data)
+.edge-*/
+
+# Local visual-checking artifacts (headless-browser profile, screenshots, scripts)
+tmp-vischeck/
+tmp-cdp/
+# Dumped webpack chunk dumps from local production visual-check runs
+tmp-prod-*.js
+
+# Temporary test marker files
+backend/jest-*-done.txt
+
+# Testing
+coverage/
+.nyc_output/
+jest.config.js.map
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+backend/dev.db
+
+# Uploads & temporary files
+backend/public/uploads/*
+!backend/public/uploads/.gitkeep
+public/uploads/*
+!public/uploads/.gitkeep
+tmp/
+temp/
+
+# Electron
+electron/dist/
+electron/build/
+
+# System
+.cache/
+.turbo/
+dist-ssr/
+
+# Optional npm cache directory
+.npm
+
+# Misc
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+.cache
+.eslintcache
+
+# Local authentication/test tokens
+*.token
+*.token.*
+.notification-test-token.tmp
+
+# Backend
+backend/backups/*
+backend/backend.err
+backend/coverage/
+
+# Frontend temp files
+frontend/_tmp_*
+frontend/*.bak
+frontend/*.tmp
+
+# Infrastructure
+infrastructure/backup/*
+
+# Temporary root files
+_step*.js
+_pre*.js
+_tr*.js
+_run*.js
+_append.ts
+_base.js
+_class_content.txt
+
+# Prisma migrations
+# prisma/migrations/
+
+# Next.js
+frontend/.next/
+frontend/out/
+
+# Backend build
+backend/dist/
+
+# DOTENV files (ALL environments)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Supabase types
+frontend/supabase/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+terraform/.terraform/
+
+# Portable Git (development convenience)
+git-portable/
+
+# Temporary/backup files
+*.bak
+*.tgz
+task-progress-log.md
+
+# Temporary install artifacts
+backend/tmp_install/
+
+# Broken/null files
+# Deployment secrets (generated locally by scripts/prepare-prod-env.ps1; NEVER commit)
+deploy/.env.production
+backend/prisma/backend/prisma/dev.db
+backend/prisma/backend/prisma/dev.db-journal
+
+.env-backup/
+
+# Local development artifacts & helper scripts (not part of the product)
+.kilo/
+run-next-build.cmd
+
+# Scratch / debug output from local dev session (never commit)
+/backend/ferr.txt
+/backend/fout.txt
+/backend/final-log.txt
+/tmp-*.txt
+backend/scripts/brace-check.js
+backend/scripts/db-conn-test.js
+backend/scripts/verify-env-loading.js
+backend/scripts/verify-env-loading.ts
+
+# Scratch SQLite purchase-FK integration harness (generated client + scratch DB)
+backend/.sqlite-test-client/
+backend/prisma/vanta-integration-test.db
