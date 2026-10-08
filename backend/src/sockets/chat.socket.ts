@@ -2,24 +2,19 @@ import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { chatService } from '../services/chat.service';
 import { notificationService } from '../services/notification.service';
+import { callSessionService } from '../services/call-session.service';
+import { presenceRegistry } from '../services/push/presence-registry';
+import { pushNotificationService } from '../services/push/push-notification.service';
 import { prisma } from '../prisma';
 
-const connectedUsers = new Map<string, Set<string>>();
 let chatIO: Server | null = null;
 
 function addConnection(userId: string, socketId: string) {
-  const sockets = connectedUsers.get(userId) || new Set<string>();
-  sockets.add(socketId);
-  connectedUsers.set(userId, sockets);
-  return sockets.size;
+  return presenceRegistry.addConnection(userId, socketId);
 }
 
 function removeConnection(userId: string, socketId: string) {
-  const sockets = connectedUsers.get(userId);
-  if (!sockets) return 0;
-  sockets.delete(socketId);
-  if (!sockets.size) connectedUsers.delete(userId);
-  return sockets.size;
+  return presenceRegistry.removeConnection(userId, socketId);
 }
 
 /**
@@ -163,15 +158,15 @@ export const handleChatSocket = (io: Server) => {
 
     socket.on('call_user', (data) => {
       const { userToCall, signalData, from, name } = data;
-      if (connectedUsers.has(userToCall)) io.to(`user_${userToCall}`).emit('incoming_call', { signal: signalData, from, name });
+      if (presenceRegistry.hasTarget(userToCall)) io.to(`user_${userToCall}`).emit('incoming_call', { signal: signalData, from, name });
     });
 
     socket.on('answer_call', (data) => {
-      if (connectedUsers.has(data.to)) io.to(`user_${data.to}`).emit('call_accepted', data.signal);
+      if (presenceRegistry.hasTarget(data.to)) io.to(`user_${data.to}`).emit('call_accepted', data.signal);
     });
 
     socket.on('end_call', (data) => {
-      if (connectedUsers.has(data.to)) io.to(`user_${data.to}`).emit('call_ended');
+      if (presenceRegistry.hasTarget(data.to)) io.to(`user_${data.to}`).emit('call_ended');
     });
 
     // ============================================================================
@@ -186,25 +181,58 @@ export const handleChatSocket = (io: Server) => {
     // Caller -> server -> callee. Carries the initial SDP offer.
     socket.on('call:user', async (data: any) => {
       const { conversationId, callId, type, signalData } = data || {};
+      if (!conversationId || !callId) return;
       const calleeId = await getDirectCallPeer(conversationId, userId);
       if (!calleeId) return;
-      if (!connectedUsers.has(calleeId)) {
-        socket.emit('call:unreachable', { callId, conversationId, from: userId });
-        return;
-      }
+
       const caller = await prisma.user.findUnique({
         where: { id: userId },
         select: { username: true, fullName: true, avatar: true },
       }).catch(() => null);
+      const callType = type === 'video' ? 'video' : 'voice';
+
+      // Persist the call server-side so an OFFLINE callee can still be reached
+      // via push and answer from a cold start (the offer is stored and served
+      // back to the callee by GET /api/calls/:callId).
+      try {
+        await callSessionService.startCall({
+          callId,
+          conversationId,
+          callerId: userId,
+          calleeId,
+          type: callType,
+          offerSdp: typeof signalData === 'string' ? signalData : JSON.stringify(signalData || {}),
+        });
+      } catch (error) {
+        console.error('[chat] failed to persist call session:', error?.message || error);
+      }
+
+      // Realtime ring for online callees (existing in-app UX) — never blocks an
+      // offline callee: the push below reaches them instead.
       io.to(`user_${calleeId}`).emit('incoming_call', {
         callId,
         conversationId,
-        type: type === 'video' ? 'video' : 'voice',
+        type: callType,
         from: userId,
         fromName: caller?.fullName || caller?.username || userId,
         avatar: caller?.avatar || null,
         signal: signalData,
       });
+
+      // OS-level push: rings the callee's devices EVEN when the app is closed,
+      // backgrounded, locked, or recently terminated.
+      try {
+        await pushNotificationService.notifyIncomingCall(calleeId, {
+          callId,
+          conversationId,
+          callerId: userId,
+          type: callType,
+          callerName: caller?.fullName || caller?.username,
+        });
+        console.log(JSON.stringify({ event: 'incoming_call_push_sent', callId, callerId: userId, calleeId }));
+      } catch (error) {
+        console.log(JSON.stringify({ event: 'incoming_call_push_failed', callId, callerId: userId, calleeId, error: (error as Error)?.message }));
+      }
     });
 
     // Relay ICE candidates and SDP answers between the two call participants.
@@ -213,6 +241,15 @@ export const handleChatSocket = (io: Server) => {
       if (!to || !conversationId || !callId) return;
       const peer = await getDirectCallPeer(conversationId, userId);
       if (!peer || peer !== to) return;
+      // Buffer the caller's ICE candidates while the call is still ringing so an
+      // offline callee can fetch them when answering from a cold-start push.
+      if (signal && typeof signal === 'object' && (signal as any).candidate) {
+        try {
+          await callSessionService.bufferCallerCandidate(callId, to, JSON.stringify(signal));
+        } catch (error) {
+          // Best-effort — realtime relay below still works.
+        }
+      }
       io.to(`user_${to}`).emit('call_signal', { callId, conversationId, data: signal, from: userId });
     });
 
@@ -222,7 +259,15 @@ export const handleChatSocket = (io: Server) => {
       if (!to || !conversationId || !callId) return;
       const peer = await getDirectCallPeer(conversationId, userId);
       if (!peer || peer !== to) return;
+      // Authoritative transition: only a still-RINGING call can be answered, so
+      // a push answer + an in-app answer racing each other never double-answer.
+      const result = await callSessionService.transition(callId, ['RINGING'], 'ANSWERED', { answeredBy: userId }).catch(() => null);
       io.to(`user_${to}`).emit('call_accepted', { callId, conversationId, signal, by: userId });
+      if (result?.changed) {
+        // Stop the ring on the callee's OTHER connected devices.
+        io.to(`user_${userId}`).emit('call_ringing_stopped', { callId, conversationId, reason: 'answered' });
+        void pushNotificationService.notifyCallResolution(userId, callId, 'call_answered').catch(() => undefined);
+      }
     });
 
     // Callee declined.
@@ -231,7 +276,12 @@ export const handleChatSocket = (io: Server) => {
       if (!to || !conversationId || !callId) return;
       const peer = await getDirectCallPeer(conversationId, userId);
       if (!peer || peer !== to) return;
+      const result = await callSessionService.transition(callId, ['RINGING'], 'DECLINED').catch(() => null);
       io.to(`user_${to}`).emit('call_declined', { callId, conversationId, by: userId });
+      if (result?.changed) {
+        io.to(`user_${userId}`).emit('call_ringing_stopped', { callId, conversationId, reason: 'declined' });
+        void pushNotificationService.notifyCallResolution(userId, callId, 'call_declined').catch(() => undefined);
+      }
     });
 
     // Caller cancelled before the callee answered.
@@ -240,7 +290,13 @@ export const handleChatSocket = (io: Server) => {
       if (!to || !conversationId || !callId) return;
       const peer = await getDirectCallPeer(conversationId, userId);
       if (!peer || peer !== to) return;
+      const result = await callSessionService.transition(callId, ['RINGING'], 'CANCELLED').catch(() => null);
       io.to(`user_${to}`).emit('call_cancelled', { callId, conversationId, by: userId });
+      if (result?.changed) {
+        // Notify the callee: the ringing notification must disappear everywhere.
+        io.to(`user_${to}`).emit('call_ringing_stopped', { callId, conversationId, reason: 'cancelled' });
+        void pushNotificationService.notifyCallResolution(to, callId, 'call_cancelled').catch(() => undefined);
+      }
     });
 
     // Either side ended an established call.
@@ -249,7 +305,11 @@ export const handleChatSocket = (io: Server) => {
       if (!to || !conversationId || !callId) return;
       const peer = await getDirectCallPeer(conversationId, userId);
       if (!peer || peer !== to) return;
+      const result = await callSessionService.transition(callId, ['RINGING', 'ANSWERED'], 'ENDED', { endedBy: userId }).catch(() => null);
       io.to(`user_${to}`).emit('call_ended', { callId, conversationId, by: userId });
+      if (result?.changed) {
+        void pushNotificationService.notifyCallResolution(to, callId, 'call_ended').catch(() => undefined);
+      }
     });
 
     // Mid-call media-type change (voice <-> video). The WebRTC connection stays

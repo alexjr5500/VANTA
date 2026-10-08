@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, memo, useCallback } from 'react';
+import React, { useState, useEffect, memo, useCallback, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
@@ -40,6 +40,7 @@ import { mountVisualViewport } from '@/lib/visualViewport';
 import IncomingCallBanner from '@/components/messages/IncomingCallBanner';
 import ChatCallOverlay from '@/components/messages/ChatCallOverlay';
 import GlobalGiftAnimations from '@/components/gifts/GlobalGiftAnimations';
+import { useToast } from '@/components/ui/Toast';
 
 const notificationDestination = (notification: any) => {
   let data: any = notification?.data;
@@ -213,6 +214,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setIsClient(true);
+  }, []);
+
+  // Surface push-intent failures (e.g. "call no longer available" after
+  // tapping Answer on an expired notification) as toasts.
+  const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  useEffect(() => {
+    const onPushToast = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: string }>).detail?.message;
+      if (message) {
+        void toastRef.current.error('Call unavailable', message);
+      }
+    };
+    window.addEventListener('vanta-push-toast', onPushToast);
+    return () => window.removeEventListener('vanta-push-toast', onPushToast);
   }, []);
 
   // Mount the global visual-viewport / mobile-keyboard tracker once. It writes

@@ -17,6 +17,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { NotificationProvider } from "@/context/NotificationContext";
 import { ChatUnreadProvider } from "@/context/ChatUnreadContext";
 import { CallProvider } from "@/context/CallContext";
+import { PushProvider } from "@/context/PushContext";
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://vanta.app'),
@@ -139,7 +140,8 @@ export default async function RootLayout({
           <AccessibilityProvider>
             <ThemeProvider>
               <AuthProvider>
-                <CallProvider>
+                <PushProvider>
+                  <CallProvider>
                   <ToastProvider>
                     <NotificationProvider>
                       <ChatUnreadProvider>
@@ -154,6 +156,7 @@ export default async function RootLayout({
                     </NotificationProvider>
                   </ToastProvider>
                 </CallProvider>
+                </PushProvider>
               </AuthProvider>
             </ThemeProvider>
           </AccessibilityProvider>

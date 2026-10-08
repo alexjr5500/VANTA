@@ -21,6 +21,7 @@ import {
 import PageHeader from '@/components/ui/PageHeader';
 import { useAuth } from '@/context/AuthContext';
 import { apiGet, apiPut } from '@/lib/apiClient';
+import { usePush } from '@/context/PushContext';
 import { useToast } from '@/components/ui/Toast';
 import {
   SettingsGroup,
@@ -122,6 +123,30 @@ export default function NotificationSettingsPage() {
   };
 
   const paused = !backend.pushAlerts;
+// OS-level push for THIS device (Web Push subscription registration).
+  const push = usePush();
+  const pushOnThisDevice = push.status === 'enabled' || push.status === 'granted';
+  const pushDescription =
+    push.status === 'unsupported' || !push.supported
+      ? "OS notifications aren't supported in this browser. Open VANTA on a phone or computer that supports Web Push (Chrome/Android, Safari 16.4+, Edge/Firefox)."
+      : push.status === 'unconfigured'
+        ? 'Push is not yet configured on the server. Ask the administrator to set the VAPID push keys.'
+        : push.status === 'permission-denied'
+          ? 'Notifications are blocked in your browser settings. Enable them (site settings → Notifications), then tap to retry.'
+          : push.status === 'permission-pending'
+            ? 'Tap to allow notifications even when VANTA is fully closed — this is what makes incoming calls and messages reach you.'
+            : push.status === 'enabled'
+              ? 'This device receives notifications even when VANTA is closed or locked.'
+              : 'Push status unknown — tap to re-check.';
+  const enableDevicePush = () => {
+    void push.enablePush().then((result) => {
+      if (result.ok) {
+        toast.success('Push enabled', 'This device will notify you when the app is closed.');
+      } else if (push.permission === 'denied') {
+        toast.error('Notifications blocked', 'Allow notifications for VANTA in your browser settings, then try again.');
+      }
+    });
+  };
 
   return (
     <div className="space-y-8 pb-24">
@@ -170,6 +195,16 @@ export default function NotificationSettingsPage() {
                 </p>
               </div>
             )}
+            <ToggleRow
+              icon={BellRing}
+              title="This device"
+              description={pushDescription}
+              checked={pushOnThisDevice}
+              onChange={(enabled) => {
+                if (enabled) enableDevicePush();
+                else void push.disablePush();
+              }}
+            />
             <ToggleRow
               icon={Mail}
               title="Email Notifications"

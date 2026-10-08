@@ -71,3 +71,10 @@ export { liveKitService, LiveKitService } from "./livekit.service";
 
 // Ad service
 export { adService, AdService } from "./ad.service";
+
+// OS-level push notifications & server-side call sessions
+export { pushNotificationService } from "./push/push-notification.service";
+export { presenceRegistry } from "./push/presence-registry";
+export { webPushProvider } from "./push/web-push.provider";
+export { fcmProvider } from "./push/fcm.provider";
+export { callSessionService, CallSessionService } from "./call-session.service";

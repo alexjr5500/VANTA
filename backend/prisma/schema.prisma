@@ -158,6 +158,14 @@ model User {
   followerRewardClaims    FollowerRewardClaim[]    @relation("FollowerRewardClaimant")
   createdRewardClaims     FollowerRewardClaim[]    @relation("FollowerRewardCreatorClaim")
 
+  // OS-level push notification devices (web push subscriptions / FCM tokens)
+  pushDevices   PushDevice[]
+  pushDeliveries PushDelivery[]
+
+  // Server-side call sessions (incoming-call push state + answer/decline race safety)
+  callSessionsAsCaller CallSession[] @relation("CallSessionCaller")
+  callSessionsAsCallee CallSession[] @relation("CallSessionCallee")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3088,4 +3096,89 @@ model FollowerRewardClaim {
   @@index([campaignId, status])
   @@index([userId, createdAt])
   @@index([creatorId, createdAt])
+}
+
+// ===========================================================================
+// OS-LEVEL PUSH NOTIFICATIONS
+// ===========================================================================
+
+/// A registered notification endpoint owned by an authenticated user. The token
+/// is either a W3C Web Push subscription (JSON: {endpoint, keys:{p256dh,auth}},
+/// provider = "webpush") or a Firebase Cloud Messaging registration token
+/// (provider = "fcm", platform android/ios). One user may have many devices
+/// (phone, tablet, laptop, desktop); all ACTIVE devices can receive pushes.
+model PushDevice {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token       String    @unique // Web Push subscription JSON or FCM registration token
+  platform    String    @default("web") // web | android | ios
+  provider    String    @default("webpush") // webpush | fcm
+  deviceModel String?
+  appVersion  String?
+  isActive    Boolean   @default(true)
+  lastSeenAt  DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, isActive])
+  @@index([userId, platform])
+  @@index([isActive, updatedAt])
+  @@index([userId, updatedAt])
+}
+
+/// Durable delivery ledger. UNIQUE(eventId, deviceId) is the database-level
+/// idempotency guard: a retried delivery (network retry, duplicate backend
+/// worker, FCM redelivery) of the SAME event to the SAME device is a no-op
+/// instead of a second push. Also powers push observability (attempts,
+/// successes, failures, invalid tokens by type/platform).
+model PushDelivery {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventId   String // dedup key: notification id, callId, message id, ...
+  type      String // incoming_call | message | follow | gift | wallet | system | ...
+  deviceId  String?
+  platform  String
+  provider  String
+  status    String // SENT | FAILED | INVALID_TOKEN | SKIPPED
+  error     String?
+  createdAt DateTime @default(now())
+
+  @@unique([eventId, deviceId])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([createdAt])
+}
+
+/// Server-side record of a private 1-to-1 call. Introduced so an incoming call
+/// works when the callee is NOT connected to the app (the WebRTC offer is
+/// stored here and re-fetched by the push "Answer" action), and so call state
+/// races (cancel vs answer, answered on another device, missed call) resolve
+/// authoritatively instead of creating ghost calls.
+model CallSession {
+  id             String   @id @default(cuid())
+  callId         String   @unique
+  conversationId String
+  callerId       String
+  calleeId       String
+  type           String   @default("VOICE") // VOICE | VIDEO
+  status         String   @default("RINGING") // RINGING | ANSWERED | CANCELLED | DECLINED | ENDED | EXPIRED | UNREACHABLE
+  offerSdp       String? // caller's SDP offer — used to answer from a cold start
+  iceCandidates  String? // JSON array of the caller's buffered ICE candidates (cold-start answer)
+  answeredBy     String? // userId that answered (for multi-device stop-ringing)
+  answeredAt     DateTime?
+  endedBy        String?
+  endedAt        DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  expiresAt      DateTime // RINGING must resolve by this time
+
+  caller User @relation("CallSessionCaller", fields: [callerId], references: [id], onDelete: Cascade)
+  callee User @relation("CallSessionCallee", fields: [calleeId], references: [id], onDelete: Cascade)
+
+  @@index([calleeId, status])
+  @@index([callerId, status])
+  @@index([conversationId, createdAt])
+  @@index([status, expiresAt])
 }

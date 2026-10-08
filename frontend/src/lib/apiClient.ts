@@ -337,10 +337,11 @@ export const apiPatch = async <T>(
 
 export const apiDelete = async <T>(
   path: string,
-  token?: string
+  token?: string,
+  payload?: unknown
 ): Promise<T> => {
   invalidateCache(path.split('/').slice(1, 3).join('/'));
-  return makeRequest<T>('DELETE', path, { token });
+  return makeRequest<T>('DELETE', path, { body: payload, token });
 };
 
 /**

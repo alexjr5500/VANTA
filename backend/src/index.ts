@@ -46,6 +46,8 @@ import verificationRoutes from './routes/verification.routes';
 import creatorRoutes from './routes/creator.routes';
 import adRoutes from './routes/ad.routes';
 import rtcRoutes from './routes/rtc.routes';
+import pushRoutes from './routes/push.routes';
+import callsRoutes from './routes/calls.routes';
 import { aiRouter, registerAISocketHandlers } from './ai';
 import { analyticsRouter, registerAnalyticsSocketHandlers, analyticsEngine } from './analytics';
 import analyticsRoutes from './routes/analytics.routes';
@@ -459,6 +461,12 @@ app.use('/api/ads', adRoutes);
 
 // WebRTC ICE server configuration for private calls (public STUN/TURN list).
 app.use('/api/rtc', rtcRoutes);
+
+// OS-level push notifications: device token registration + public push config.
+app.use('/api/push', pushRoutes);
+
+// Server-side call session lookup (push "Answer" action / cold-start join).
+app.use('/api/calls', callsRoutes);
 
 // ============================================================================
 // AI ROUTES

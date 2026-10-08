@@ -487,6 +487,8 @@ export const JOB_TYPES = {
   STREAM_METRICS_UPDATE: 'stream:metrics:update',
   RECOMMENDATIONS_UPDATE: 'recommendations:update',
   SEARCH_INDEX_UPDATE: 'search:index:update',
+  PUSH_DELIVER: 'push:deliver',
+  CALL_EXPIRE: 'call:expire',
 };
 
 // Job priority constants

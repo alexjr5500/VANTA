@@ -1,5 +1,6 @@
 import { prisma } from "../prisma";
 import { BADGE_USER_SELECT, enrichPublicUser } from "./public-verification";
+import { pushNotificationService } from "./push/push-notification.service";
 
 // Store reference to emit notifications via socket
 let ioRef: any = null;
@@ -287,6 +288,15 @@ export class NotificationService {
     // Also emit unread count update
     const unreadCount = await this.getUnreadCount(userId);
     emitToUser(userId, "unread_count", { count: unreadCount });
+
+    // OS-level push for offline/background/terminated recipients. Foreground
+    // users already received the realtime event above (socket), so the push
+    // layer suppresses itself when the user has a live connection.
+    try {
+      void pushNotificationService.dispatchForCreatedNotification(notification);
+    } catch (error: any) {
+      console.error("[push] dispatch for created notification failed:", error?.message || error);
+    }
 
     return notification;
   }

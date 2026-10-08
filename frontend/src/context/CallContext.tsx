@@ -1,7 +1,8 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import type { Socket } from 'socket.io-client';
 import { useAuth } from '@/context/AuthContext';
 import { createSocket } from '@/lib/socketClient';
@@ -38,13 +39,25 @@ interface CallContextValue {
 
 const CallContext = createContext<CallContextValue | undefined>(undefined);
 
+const ANSWER_FAILURE_MESSAGES: Record<string, string> = {
+  'no-session': 'Your session expired. Open VANTA and try again.',
+  busy: 'You are already in a call.',
+  invalid: 'This call link is not valid.',
+  unavailable: 'The call is no longer available.',
+  network: 'Could not reach the call. Check your connection and try again.',
+  permission: 'VANTA needs microphone access to answer the call.',
+  rtc: 'Could not connect to the call. Please try again.',
+};
+
 export function CallProvider({ children }: { children: ReactNode }) {
   const { token, user } = useAuth();
+  const router = useRouter();
   const [socket, setSocket] = useState<Socket | null>(null);
   const [callTarget, setCallTarget] = useState<CallTarget>({
     activeConversationId: null,
     isDirect: false,
   });
+  const handledPushIntent = useRef(false);
 
   // One persistent, authenticated socket for call signaling that outlives page
   // navigation. It connects as soon as the user is signed in and disconnects on
@@ -72,6 +85,59 @@ export function CallProvider({ children }: { children: ReactNode }) {
     peerName: callTarget.peerName,
     peerAvatar: callTarget.peerAvatar,
   });
+
+  // --------------------------------------------------------------------------
+  // OS push intents: the app was opened by tapping Answer / Decline on a push
+  // notification. Params: vantaCall, callId, conversation, caller, type, name.
+  // --------------------------------------------------------------------------
+  useEffect(() => {
+    if (!token || !user) return;
+    const params = new URLSearchParams(window.location.search);
+    const intent = params.get('vantaCall');
+    if (intent !== 'answer' && intent !== 'decline') return;
+    if (handledPushIntent.current) return;
+    handledPushIntent.current = true;
+
+    const callId = params.get('callId') || '';
+    const conversationId = params.get('conversation') || '';
+    const caller = params.get('caller') || '';
+    const type: 'voice' | 'video' = params.get('type') === 'video' ? 'video' : 'voice';
+    const name = params.get('name') || '';
+
+    // Open the right conversation inside the chat shell.
+    if (conversationId) {
+      setCallTarget({
+        activeConversationId: conversationId,
+        isDirect: true,
+        ...(caller ? { peerPartnerId: caller, peerName: name || undefined } : {}),
+      });
+      void router.push(`/chat?conversation=${encodeURIComponent(conversationId)}`, { scroll: false });
+    }
+
+    if (intent === 'answer' && callId && conversationId && caller) {
+      void chatCalls.answerCallFromPush({ callId, conversationId, callerId: caller, callType: type, callerName: name || undefined })
+        .then((result) => {
+          if (!result.ok) {
+            setCallTarget({ activeConversationId: null, isDirect: false });
+            window.dispatchEvent(new CustomEvent('vanta-push-toast', {
+              detail: { message: ANSWER_FAILURE_MESSAGES[result.reason || 'unavailable'] || 'Could not join the call.' },
+            }));
+          }
+        });
+    } else if (intent === 'decline' && callId && conversationId && caller) {
+      socket?.emit('call:decline', { conversationId, callId, to: caller });
+    }
+
+    // Clean the intent params (keep ?conversation so the chat thread opens).
+    const url = new URL(window.location.href);
+    url.searchParams.delete('vantaCall');
+    url.searchParams.delete('callId');
+    url.searchParams.delete('caller');
+    url.searchParams.delete('type');
+    url.searchParams.delete('name');
+    window.history.replaceState(null, '', url.toString());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, user]);
 
   const value = useMemo<CallContextValue>(
     () => ({ chatCalls, setCallTarget }),

@@ -109,6 +109,8 @@ dist-ssr/
 *.pfx
 credentials*.json
 secrets*.json
+service-account*.json
+firebase-service-account*.json
 .cache
 .eslintcache
 

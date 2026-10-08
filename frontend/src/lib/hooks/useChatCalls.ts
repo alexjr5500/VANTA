@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Socket } from 'socket.io-client';
 import { apiPost } from '@/lib/apiClient';
-import { API_BASE_URL } from '@/lib/api';
+import { API_BASE_URL, authHeaders } from '@/lib/api';
 import type { AuthUser } from '@/lib/authApi';
 import { applyContinuousAutofocus, pickPrimaryCamera, pickVideoConstraints } from '@/lib/cameraCapture';
 
@@ -54,6 +54,14 @@ interface UseChatCallsOptions {
   peerAvatar?: string;
 }
 
+export interface CallAnswerIntent {
+  callId: string;
+  conversationId: string;
+  callerId: string;
+  callType: CallType;
+  callerName?: string;
+}
+
 export interface UseChatCallsReturn {
   status: CallStatus;
   callType: CallType;
@@ -72,6 +80,12 @@ export interface UseChatCallsReturn {
   endedReason: string | null;
   startCall: (type: CallType) => Promise<void>;
   acceptCall: () => Promise<void>;
+  /**
+   * Answer a call from a cold start (push "Answer" on a terminated app). Fetches
+   * and validates the call server-side, rebuilds the PeerConnection from the
+   * stored offer + buffered ICE, and replies with the SDP answer.
+   */
+  answerCallFromPush: (intent: CallAnswerIntent) => Promise<{ ok: boolean; reason?: string }>;
   declineCall: () => void;
   endCall: () => void;
   cancelCall: () => void;
@@ -149,6 +163,29 @@ const makeCallId = (): string =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `vanta-call-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+/**
+ * Best-effort push coordination with the VANTA service worker:
+ *  - 'vanta-call-handled' tells the SW this page already surfaced an incoming
+ *    call via the realtime socket, so it should not show a duplicate OS
+ *    notification.
+ *  - 'vanta-dismiss-call' asks the SW to close a visible incoming-call
+ *    notification (declined / answered elsewhere / ended).
+ */
+function postToServiceWorker(message: Record<string, unknown>): void {
+  try {
+    navigator.serviceWorker.controller?.postMessage(message);
+  } catch {
+    // ignore
+  }
+  try {
+    void navigator.serviceWorker.ready.then((registration) => {
+      registration?.active?.postMessage?.(message);
+    }).catch(() => undefined);
+  } catch {
+    // ignore
+  }
+}
 
 const readPermissionError = (error: unknown): string => {
   const name = error instanceof DOMException ? error.name : (error as any)?.name;
@@ -458,6 +495,99 @@ const logCall = useCallback(
     }
   }, []);
 
+const answerCallFromPush = useCallback(async (intent: CallAnswerIntent) => {
+    const socketNow = socketRef.current;
+    const userNow = userRef.current;
+    const currentToken = tokenRef.current;
+    if (!socketNow || !userNow || !currentToken) return { ok: false, reason: 'no-session' };
+    if (statusRef.current !== 'idle') return { ok: false, reason: 'busy' };
+    if (!intent.callId || !intent.conversationId || !intent.callerId) return { ok: false, reason: 'invalid' };
+
+    // Never trust the push payload: validate the call with the SERVER and fetch
+    // the stored offer + buffered ICE candidates for the cold-start join.
+    let sessionData: any = null;
+    try {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 8000);
+      const response = await fetch(`${API_BASE_URL}/api/calls/${encodeURIComponent(intent.callId)}`, {
+        headers: { Accept: 'application/json', ...authHeaders(currentToken) },
+        signal: controller.signal,
+      });
+      window.clearTimeout(timeout);
+      if (response.ok) {
+        const body = (await response.json()) as any;
+        if (body?.success && body?.call) sessionData = body.call;
+      }
+    } catch {
+      // fall through → network/parse failure below
+    }
+    if (!sessionData || !sessionData.offerSdp) {
+      return { ok: false, reason: sessionData ? 'unavailable' : 'network' };
+    }
+
+    let stream: MediaStream;
+    try {
+      const devices = intent.callType === 'video' ? await navigator.mediaDevices.enumerateDevices().catch(() => []) : [];
+      const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
+      const input = pickPrimaryCamera(videoInputs);
+      const videoConstraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: intent.callType === 'video' ? videoConstraints : false,
+      });
+    } catch (mediaError) {
+      return { ok: false, reason: 'permission', message: readPermissionError(mediaError) };
+    }
+
+    setError(null);
+    setPermissionError(null);
+    setEndedReason(null);
+    loggedRef.current = false;
+    sessionRef.current = {
+      callId: intent.callId,
+      conversationId: intent.conversationId,
+      type: intent.callType,
+      peerId: intent.callerId,
+      callerId: intent.callerId,
+    };
+    localStreamRef.current = stream;
+    setLocalStream(stream);
+    setIsMicOn(true);
+    setIsCamOn(intent.callType === 'video');
+    setCallType(intent.callType);
+    setPeerId(intent.callerId);
+    setPeerLabel(intent.callerName || '');
+    setPeerAvatarUrl(null);
+    updateStatus('connecting');
+
+    const pc = await attachPeerConnection(stream);
+    try {
+      const offer = typeof sessionData.offerSdp === 'string' ? JSON.parse(sessionData.offerSdp) : sessionData.offerSdp;
+      await pc.setRemoteDescription(offer);
+    } catch (remoteError) {
+      cleanupCall();
+      return { ok: false, reason: 'rtc' };
+    }
+    for (const candidate of sessionData.iceCandidates || []) {
+      if (typeof candidate !== 'string') continue;
+      try { await pc.addIceCandidate(JSON.parse(candidate)); } catch { /* late candidates re-emit live */ }
+    }
+    try {
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socketRef.current?.emit('call:accept', {
+        conversationId: intent.conversationId,
+        callId: intent.callId,
+        signal: pc.localDescription,
+        to: intent.callerId,
+      });
+    } catch (answerError) {
+      cleanupCall();
+      return { ok: false, reason: 'rtc' };
+    }
+    return { ok: true };
+  }, [attachPeerConnection, cleanupCall, updateStatus]);
+
 const startCall = useCallback(async (type: CallType) => {
     const socketNow = socketRef.current;
     const userNow = userRef.current;
@@ -631,6 +761,7 @@ const startCall = useCallback(async (type: CallType) => {
       signal: pc.localDescription,
       to: session.peerId,
     });
+    postToServiceWorker({ type: 'vanta-dismiss-call', callId: session.callId });
   }, [attachPeerConnection, cleanupCall, flushPendingCandidates, updateStatus]);
 
 const declineCall = useCallback(() => {
@@ -642,6 +773,7 @@ const declineCall = useCallback(() => {
       callId: session.callId,
       to: session.peerId,
     });
+    postToServiceWorker({ type: 'vanta-dismiss-call', callId: session.callId });
     void logCall('DECLINED', 0);
     cleanupCall();
   }, [cleanupCall, logCall]);
@@ -668,6 +800,7 @@ const declineCall = useCallback(() => {
         });
         void logCall('CANCELLED', 0);
       }
+      postToServiceWorker({ type: 'vanta-dismiss-call', callId: session.callId });
     }
     setEndedReason(currentStatus === 'outgoing' || currentStatus === 'ringing' ? 'Call cancelled' : 'Call ended');
     cleanupCall();
@@ -962,6 +1095,10 @@ const declineCall = useCallback(() => {
       setEndedReason(null);
       updateStatus('incoming');
 
+      // Tell the service worker this page already surfaced the incoming call via
+      // its realtime socket — no duplicate OS notification while focused.
+      postToServiceWorker({ type: 'vanta-call-handled', callId: payload.callId });
+
       // The callee's audible ring is now the VANTA ringtone played by the
       // global IncomingCallBanner (frontend/public/sounds/vanta-ringtone.mp3),
       // so no synthesized tone is started here. The caller's ringback below is
@@ -1083,6 +1220,16 @@ const declineCall = useCallback(() => {
       setTimeout(() => cleanupCall(), 1500);
     };
 
+    // The call was answered/declined/cancelled (possibly on ANOTHER device): a
+    // still-ringing incoming call on THIS device must stop immediately.
+    const onRingingStopped = (payload: { callId: string; reason?: string }) => {
+      const session = sessionRef.current;
+      if (!session || session.callId !== payload.callId) return;
+      if (statusRef.current !== 'incoming') return;
+      cleanupCall();
+      postToServiceWorker({ type: 'vanta-call-handled', callId: payload.callId });
+    };
+
     // The peer switched the call between voice and video WITHOUT ending it.
     // Keep the local session type in sync so both overlays agree on the mode.
     const onCallMediaUpdated = (payload: { callId: string; conversationId: string; from: string; type: CallType }) => {
@@ -1137,6 +1284,7 @@ const declineCall = useCallback(() => {
     socket.on('call_unreachable', onCallUnreachable);
     socket.on('call_media_updated', onCallMediaUpdated);
     socket.on('call_renegotiate', onCallRenegotiate);
+    socket.on('call_ringing_stopped', onRingingStopped);
 
     return () => {
       socket.off('incoming_call', onIncomingCall);
@@ -1148,6 +1296,7 @@ const declineCall = useCallback(() => {
       socket.off('call_unreachable', onCallUnreachable);
       socket.off('call_media_updated', onCallMediaUpdated);
       socket.off('call_renegotiate', onCallRenegotiate);
+      socket.off('call_ringing_stopped', onRingingStopped);
     };
   }, [socket, cleanupCall, flushPendingCandidates, logCall, updateStatus]);
 
@@ -1198,6 +1347,7 @@ const declineCall = useCallback(() => {
     endedReason,
     startCall,
     acceptCall,
+    answerCallFromPush,
     declineCall,
     endCall,
     cancelCall,
