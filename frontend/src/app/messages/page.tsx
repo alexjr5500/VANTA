@@ -1870,6 +1870,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                               <Check size={10} className="inline mr-1 text-gray-500" />
                             )}
                             {conv.lastMessage.type === 'STORY_REPLY' && <span className="inline-flex items-center gap-1 rounded bg-[#d6a83f]/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-[#d6a83f]"><MessageCircle size={9} />Story reply</span>}
+                            {(conv.type === 'group' || conv.type === 'channel') && conv.lastMessage.sender && conv.lastMessage.sender !== 'Unknown' && (
+                              <span className="font-medium text-white/60">{conv.lastMessage.sender === user?.username ? 'You' : conv.lastMessage.sender}: </span>
+                            )}
                             {conv.lastMessage.text}
                           </p>
                         ) : (
@@ -2000,6 +2003,14 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   const showDate = !previousDate || currentDate.toDateString() !== previousDate.toDateString();
                   const dateLabel = currentDate.toDateString() === new Date().toDateString() ? 'Today' : currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
                   const senderRole = activeConv.participants?.find((participant: any) => participant.id === msg.sender.id)?.role;
+                  const senderName = msg.sender.fullName || msg.sender.username || 'Unknown user';
+                  // Group & channel chats always show the full sender identity
+                  // (circular avatar + display name) so every message is clearly
+                  // attributed — including the current user's own messages.
+                  // 1:1 DMs keep the existing compact layout (name above incoming
+                  // bubbles only).
+                  const isGroupLike = activeConv?.type === 'group' || activeConv?.type === 'channel';
+                  const showSenderIdentity = !msg.isOwn || isGroupLike;
                   return <div key={msg.id}>{showDate && <div className="my-5 flex justify-center"><span className="rounded-full border border-white/[0.06] bg-[#0d0d0f] px-3 py-1 text-[9px] text-white/35">{dateLabel}</span></div>}{msg.id === firstUnreadId && <div className="my-4 flex items-center gap-3"><span className="h-px flex-1 bg-[#d6a83f]/25"/><span className="rounded-full border border-[#d6a83f]/30 bg-[#d6a83f]/10 px-3 py-1 text-[9px] font-semibold uppercase tracking-[.14em] text-[#f2c75c]">New messages</span><span className="h-px flex-1 bg-[#d6a83f]/25"/></div>}
                   <div
                     id={`message-${msg.id}`}
@@ -2011,13 +2022,19 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     onPointerMove={event => { cancelMessageLongPress(); trackMessageSwipe(event, msg); }}
                     onContextMenu={event => { if (!msg.pending) { event.preventDefault(); setMessageContextId(msg.id); } }}
                   >
-                    <div className="w-fit max-w-[78%] min-w-0">
-                      {!msg.isOwn && (
-                        <div className="flex max-w-[min(100%,420px)] items-center gap-2">
-                          <span className="truncate text-[11px] font-medium text-[#c8c8cc]">{msg.sender.fullName || msg.sender.username}</span>
-                          {['OWNER', 'ADMIN', 'MODERATOR'].includes(senderRole || '') && <span className="text-[8px] font-bold uppercase text-[#d6a83f]">{senderRole === 'OWNER' ? 'Owner' : senderRole === 'MODERATOR' ? 'Moderator' : 'Admin'}</span>}
+                    <div className={cn('flex w-fit min-w-0 items-start gap-2.5', msg.isOwn ? 'flex-row-reverse' : 'flex-row')}>
+                      {showSenderIdentity && (
+                        <div className="shrink-0">
+                          <Avatar src={msg.sender.avatar} alt={senderName} size="sm" />
                         </div>
                       )}
+                      <div className="w-fit max-w-[78%] min-w-0">
+                        {showSenderIdentity && (
+                          <div className={cn('flex max-w-[min(100%,420px)] items-center gap-2', msg.isOwn && 'justify-end')}>
+                            <span className="truncate text-[11px] font-medium text-[#c8c8cc]">{senderName}</span>
+                            {!msg.isOwn && ['OWNER', 'ADMIN', 'MODERATOR'].includes(senderRole || '') && <span className="text-[8px] font-bold uppercase text-[#d6a83f]">{senderRole === 'OWNER' ? 'Owner' : senderRole === 'MODERATOR' ? 'Moderator' : 'Admin'}</span>}
+                          </div>
+                        )}
                       <div className={cn(
                         'chat-bubble-text w-fit max-w-full overflow-hidden border text-[14px] leading-[1.45] shadow-[0_1px_3px_rgba(0,0,0,.22)]',
                         msg.isOwn
@@ -2106,6 +2123,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                         )}
                       </div>
                       {msg.reactions && msg.reactions.length > 0 && <div className={cn('mt-1 flex flex-wrap gap-1', msg.isOwn && 'justify-end')}>{Array.from(new Set(msg.reactions.map(item => item.reaction))).map(reaction => <button key={reaction} onClick={() => reactToMessage(msg, reaction)} className="rounded-full border border-white/10 bg-[#161616] px-2 py-0.5 text-xs">{reaction} {msg.reactions?.filter(item => item.reaction === reaction).length}</button>)}</div>}
+                    </div>
                     </div>
                   </div>
                   </div>})

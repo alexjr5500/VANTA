@@ -87,7 +87,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-bold text-white mb-4">9. Contact</h2>
-            <p>For questions about these terms, contact <a href="mailto:legal@vanta.app" className="text-white/60 hover:text-white transition-colors">legal@vanta.app</a>.</p>
+            <p>For questions about these terms, contact <a href="mailto:vantapp74@gmail.com" className="text-white/60 hover:text-white transition-colors">vantapp74@gmail.com</a>.</p>
           </section>
         </div>
       </div>
