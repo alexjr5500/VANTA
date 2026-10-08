@@ -13,14 +13,15 @@ import type { VerificationType } from '@/types/verification';
 
 type User = { id: string; username: string; fullName?: string | null; avatar?: string | null; verified?: boolean; verificationType?: VerificationType | null; role?: string };
 export type CommentItem = { id: string; userId: string; content: string; createdAt: string; updatedAt?: string; edited?: boolean; liked?: boolean; parentId?: string | null; user: User; _count?: { likes: number; replies: number }; replies?: CommentItem[] };
-type Props = { postId: string; postAuthor?: User; initialCount: number; token: string; currentUser?: User | null; onClose: () => void; onCountChange: (count: number) => void; kind?: 'post' | 'reel' };
+type Props = { postId: string; postAuthor?: User; initialCount: number; token: string; currentUser?: User | null; onClose?: () => void; onCountChange: (count: number) => void; kind?: 'post' | 'reel'; inline?: boolean };
 
 const EMOJIS = ['😀', '😂', '😍', '🥳', '😎', '🙌', '👏', '🔥', '❤️', '💜', '✨', '🎉', '🌹', '💯', '🙏', '😅', '🤔', '😭', '🤣', '🚀', '👑', '💎', '🫶', '😮'];
 const timeAgo = (value: string) => { const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000)); if (seconds < 60) return 'now'; if (seconds < 3600) return `${Math.floor(seconds / 60)}m`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`; return `${Math.floor(seconds / 86400)}d`; };
 const cnSort = (active: boolean) => `rounded-full px-3 py-1.5 text-[11px] font-medium transition ${active ? 'bg-[#d6a83f]/15 text-[#f2c75c]' : 'text-[#858585] hover:text-white'}`;
 
-export default function CommentPanel({ postId, postAuthor, initialCount, token, currentUser, onClose, onCountChange, kind = 'post' }: Props) {
+export default function CommentPanel({ postId, postAuthor, initialCount, token, currentUser, onClose, onCountChange, kind = 'post', inline = false }: Props) {
   const toast = useToast();
+  const isInline = Boolean(inline);
   // Reels are stored in the prisma.video table and their comments live under
   // /api/reels; Posts live under /api/feed. Routing Reel IDs to /api/feed would
   // look them up in the Post table and fail. Points of divergence between the
@@ -60,14 +61,16 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
     finally { setLoading(false); setLoadingMore(false); }
   }, [base, cursor, postId, search, sort, token, toast]);
 
-  useEffect(() => { void load(true); inputRef.current?.focus(); }, [sort]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void load(true); if (!isInline) inputRef.current?.focus(); }, [sort]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Escape closes the sheet (Escape is ignored while a comment is submitting).
+  // The inline page variant never steals Escape — the page owns its own keys.
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !submittingRef.current) onClose(); };
+    if (isInline) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !submittingRef.current) onClose?.(); };
     addEventListener('keydown', onKey);
     return () => removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, isInline]);
 
   useEffect(() => {
     const socket = createSocket(token, `comments:${postId}`);
@@ -149,6 +152,84 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
 
   const CommentRow = ({ comment, depth = 0 }: { comment: CommentItem; depth?: number }) => <article className="group border-b border-white/[0.05] px-3 py-3" style={{ marginLeft: Math.min(depth, 4) * 14 }}><div className="flex gap-3"><Avatar src={comment.user.avatar} alt={comment.user.username} size="sm" /><div className="min-w-0 flex-1"><div className="flex items-center gap-1 text-xs"><strong className="text-white">{comment.user.fullName || comment.user.username}</strong>{comment.user.verified && comment.user.verificationType && <VerificationBadge verified type={comment.user.verificationType} size="xs" className="align-[-1px]" />}{comment.user.role === 'CREATOR' && <span className="rounded bg-fuchsia-500/15 px-1.5 py-0.5 text-[9px] text-fuchsia-200">CREATOR</span>}<span className="text-white/35">@{comment.user.username} · {timeAgo(comment.createdAt)}</span>{comment.edited && <span className="text-white/30">· edited</span>}</div><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-white/80">{renderTextWithLinks(comment.content, 'linkify', { mentions: true })}</p><div className="mt-2 flex items-center gap-1.5 text-[12px] text-white/50"><button onClick={() => toggleLike(comment)} aria-label={comment.liked ? 'Unlike comment' : 'Like comment'} className={`rounded-full px-2.5 py-1 transition hover:bg-white/[0.06] ${comment.liked ? 'text-[#f2c75c]' : 'hover:text-white'}`}><Heart size={13} className="mr-1 inline" fill={comment.liked ? 'currentColor' : 'none'} />Like {comment._count?.likes || 0}</button><button onClick={() => { setReplyTo(comment); inputRef.current?.focus(); }} aria-label="Reply to comment" className="rounded-full px-2.5 py-1 transition hover:bg-white/[0.06] hover:text-white"><Reply size={13} className="mr-1 inline" />Reply</button><button onClick={() => setMenu(menu === comment.id ? null : comment.id)} aria-label="More comment actions"><MoreHorizontal size={15} /></button></div>{menu === comment.id && <div className="mt-2 flex flex-wrap gap-2 rounded-xl border border-white/10 bg-white/[.04] p-2 text-[11px] text-white/70"><button onClick={() => { navigator.clipboard.writeText(comment.content); setMenu(null); toast.success('Comment copied'); }}><Copy size={12} className="mr-1 inline" />Copy</button>{comment.userId === currentUser?.id && <><button onClick={() => { setEditing(comment); setText(comment.content); setMenu(null); inputRef.current?.focus(); }}><Edit3 size={12} className="mr-1 inline" />Edit</button><button onClick={() => void remove(comment)} className="text-rose-300"><Trash2 size={12} className="mr-1 inline" />Delete</button></>}<button onClick={() => void report(comment)} className="text-amber-200"><Flag size={12} className="mr-1 inline" />Report</button></div>}{(comment._count?.replies || 0) > 0 && <div className="mt-3">{!expanded[comment.id] ? <button onClick={() => void loadReplies(comment)} className="text-xs font-semibold text-[#c8c8cc]">View {comment._count?.replies} {comment._count?.replies === 1 ? 'reply' : 'replies'} <ChevronDown size={13} className="inline" /></button> : <><button onClick={() => setExpanded(items => ({ ...items, [comment.id]: false }))} className="text-xs font-semibold text-[#c8c8cc]">Hide replies <ChevronUp size={13} className="inline" /></button>{replyLoading === comment.id ? <Loader2 size={14} className="ml-2 inline animate-spin" /> : comment.replies?.map(reply => <CommentRow key={reply.id} comment={reply} depth={depth + 1} />)}{replyCursors[comment.id] && <button onClick={() => void loadReplies(comment, false)} className="mt-2 text-xs text-white/50">Load more replies</button>}</>}</div>}</div></div></article>;
 
+  // Shared delete-confirmation dialog (used by both the sheet and inline modes).
+  const deleteConfirmDialog = deleteConfirm && <><motion.div
+      className="fixed inset-0 z-[90] bg-black/65 backdrop-blur-sm"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      onClick={() => setDeleteConfirm(null)}
+      aria-label="Cancel delete"
+    />
+    <motion.section
+      role="alertdialog"
+      aria-modal="true"
+      aria-label="Delete comment"
+      initial={{ opacity: 0, scale: .97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: .97 }}
+      className="fixed left-1/2 top-1/2 z-[95] w-[min(380px,calc(100%-24px))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-white/10 bg-[#151517] p-5 shadow-2xl"
+    >
+      <header className="mb-3 flex items-center justify-between"><h2 className="font-semibold">Delete this comment?</h2><button type="button" onClick={() => setDeleteConfirm(null)} className="grid h-9 w-9 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={18} /></button></header>
+      <p className="mb-5 text-sm leading-6 text-[#c8c8cc]/65">This cannot be undone. The comment will be removed permanently.</p>
+      <div className="flex items-center justify-end gap-2">
+        <button type="button" onClick={() => setDeleteConfirm(null)} className="min-h-11 rounded-lg border border-white/10 px-4 text-sm text-[#c8c8cc] transition hover:bg-white/[0.05]">Cancel</button>
+        <button type="button" onClick={() => void confirmDeleteComment()} className="min-h-11 rounded-lg bg-[#b4232f] px-4 text-sm font-semibold text-white transition hover:bg-[#9f1d2a]">Delete comment</button>
+      </div>
+    </motion.section></>;
+
+  // Inline mode renders the exact same comment system (same fetch, optimistic
+  // submit, replies, likes, edit/delete/report, realtime and counts) as a
+  // page-flow conversation instead of a bottom sheet — used on Post / Reel
+  // detail pages so comments live directly under the content.
+  if (isInline) {
+    return (
+      <section aria-label="Comments" className="w-full min-w-0">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-t border-white/[.08] px-4 pt-4 sm:px-5">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/[0.05]"><MessageCircle size={15} className="text-[#c8c8cc]" /></span>
+            <h2 id="comments-title" className="truncate text-sm font-bold text-[#f5f5f5]">Comments <span className="font-normal text-white/40">· {initialCount}</span></h2>
+          </div>
+          <span className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.04] p-0.5">
+            <button onClick={() => setSort('newest')} className={cnSort(sort === 'newest')}>Newest</button>
+            <button onClick={() => setSort('top')} className={cnSort(sort === 'top')}>Top</button>
+          </span>
+        </header>
+        {loading ? (
+          <div className="space-y-4 px-4 py-6 sm:px-5">{[1, 2, 3].map(item => <div key={item} className="flex animate-pulse gap-3"><div className="h-9 w-9 rounded-full bg-white/10" /><div className="h-14 flex-1 rounded-lg bg-white/[.05]" /></div>)}</div>
+        ) : loadError ? (
+          <div className="px-4 py-10 text-center sm:px-5">
+            <div className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-white/[0.04]"><MessageCircle size={18} className="text-white/25" /></div>
+            <p className="mt-3 text-sm font-medium text-white/55">Comments could not load</p>
+            <p className="mt-1 text-xs text-white/30">Check your connection and try again.</p>
+            <button type="button" onClick={() => void load(true)} className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.05] px-4 text-xs font-medium text-white transition hover:bg-white/[0.1]"><RefreshCw size={14} /> Retry</button>
+          </div>
+        ) : comments.length ? (
+          <div className="px-4 sm:px-5">{comments.map(comment => <CommentRow key={comment.id} comment={comment} />)}</div>
+        ) : (
+          <div className="px-4 py-10 text-center sm:px-5">
+            <div className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-white/[0.04]"><MessageCircle size={18} className="text-white/25" /></div>
+            <p className="mt-3 text-sm font-medium text-white/55">{search.trim() ? 'No matching comments' : 'Be the first to share your thoughts.'}</p>
+            <p className="mt-1 text-xs text-white/30">{search.trim() ? 'Try a different search or clear the search to see all comments.' : 'Start the conversation — your thoughts belong here.'}</p>
+            {search.trim() && <button type="button" onClick={() => { setSearch(''); void load(true); }} className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-white/10 bg-white/[0.05] px-3.5 text-xs font-medium text-white transition hover:bg-white/[0.1]">Clear search</button>}
+          </div>
+        )}
+        {loadingMore && <Loader2 className="mx-auto my-4 animate-spin text-white/50" />}
+        <form onSubmit={submit} className="relative shrink-0 px-4 pb-3 pt-2 sm:px-5">
+          <div className="mb-2 flex items-center gap-2 text-[11px] text-white/50">
+            {replyTo && <><span>Replying to @{replyTo.user.username}</span><button type="button" onClick={() => setReplyTo(null)} aria-label="Cancel reply"><X size={12} /></button></>}
+            {editing && <><span>Editing comment</span><button type="button" onClick={() => { setEditing(null); setText(''); }} aria-label="Cancel edit"><X size={12} /></button></>}
+          </div>
+          <div className="flex items-center gap-2">
+            <Avatar src={currentUser?.avatar} alt={currentUser?.username || 'Your avatar'} size="xs" />
+            <input ref={inputRef} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submit(); } }} placeholder="Add a comment..." aria-label="Add a comment" maxLength={2000} className="min-w-0 flex-1 rounded-full border border-white/10 bg-black/25 px-3.5 py-2.5 text-sm text-white outline-none placeholder:text-white/30 focus:bg-white/[0.05]" />
+            <button type="button" onClick={() => setEmojiOpen(value => !value)} aria-label="Add emoji" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[#858585] hover:bg-white/[.06] hover:text-white"><Smile size={17} /></button>
+            <button type="button" onClick={() => setText(value => `${value}${value ? ' ' : ''}@`)} aria-label="Mention a user" className="hidden h-9 w-9 shrink-0 place-items-center rounded-lg text-[#858585] hover:bg-white/[.06] hover:text-white sm:grid"><AtSign size={17} /></button>
+            <button type="submit" aria-label="Send comment" disabled={!text.trim() || submitting} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[#c9a227]/60 bg-[#c9a227] text-black transition hover:bg-[#f2c75c] disabled:opacity-30">{submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}</button>
+          </div>
+          {emojiOpen && <div className="absolute bottom-16 right-4 grid w-64 max-w-[calc(100vw-2rem)] grid-cols-8 gap-1 rounded-lg border border-white/10 bg-[#151517] p-3 shadow-2xl">{EMOJIS.map(emoji => <button type="button" key={emoji} onClick={() => setText(value => value + emoji)} className="rounded-md p-1 text-lg hover:bg-white/10" aria-label={`Add ${emoji}`}>{emoji}</button>)}</div>}
+        </form>
+        {deleteConfirmDialog}
+      </section>
+    );
+  }
+
   return <AnimatePresence><motion.div className="fixed inset-0 z-[70] bg-black/70 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} /><motion.section role="dialog" aria-modal="true" aria-labelledby="comments-title" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ duration: .2 }} className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-[80] flex h-[var(--vanta-vh,100dvh)] w-full flex-col border-t border-white/10 bg-[#0d0d0f] shadow-2xl sm:left-1/2 sm:h-[88dvh] sm:max-w-[700px] sm:-translate-x-1/2 sm:rounded-t-lg">
     <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.08] px-4 py-3.5 sm:px-5">
       <div className="flex min-w-0 items-center gap-2.5">
@@ -169,24 +250,5 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
     </div>
     <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-4 sm:px-5" onScroll={e => { const target = e.currentTarget; if (target.scrollHeight - target.scrollTop - target.clientHeight < 160 && cursor && !loadingMore) void load(false); }}>{loading ? <div className="space-y-4 py-6">{[1, 2, 3].map(item => <div key={item} className="flex animate-pulse gap-3"><div className="h-9 w-9 rounded-full bg-white/10" /><div className="h-14 flex-1 rounded-lg bg-white/[.05]" /></div>)}</div> : loadError ? <div className="px-4 py-14 text-center sm:px-5"><div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-white/[0.04]"><MessageCircle size={20} className="text-white/25" /></div><p className="mt-3 text-sm font-medium text-white/55">Comments could not load</p><p className="mt-1 text-xs text-white/30">Check your connection and try again.</p><button type="button" onClick={() => void load(true)} className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.05] px-4 text-xs font-medium text-white transition hover:bg-white/[0.1]"><RefreshCw size={14} /> Retry</button></div> : comments.length ? comments.map(comment => <CommentRow key={comment.id} comment={comment} />) : <div className="px-4 py-14 text-center sm:px-5"><div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-white/[0.04]"><MessageCircle size={20} className="text-white/25" /></div><p className="mt-3 text-sm font-medium text-white/55">{search.trim() ? 'No matching comments' : 'No comments yet'}</p><p className="mt-1 text-xs text-white/30">{search.trim() ? 'Try a different search or clear the search to see all comments.' : 'Start the conversation — your thoughts belong here.'}</p>{search.trim() && <button type="button" onClick={() => { setSearch(''); void load(true); }} className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-white/10 bg-white/[0.05] px-3.5 text-xs font-medium text-white transition hover:bg-white/[0.1]">Clear search</button>}</div>}{loadingMore && <Loader2 className="mx-auto my-4 animate-spin text-white/50" />}</div>
     <form onSubmit={submit} className="relative shrink-0 border-t border-white/[.08] bg-[#0d0d0f] px-4 pt-3 pb-[calc(.75rem+env(safe-area-inset-bottom))] sm:px-5"><div className="mb-2 flex items-center gap-2 text-[11px] text-white/50">{replyTo && <><span>Replying to @{replyTo.user.username}</span><button type="button" onClick={() => setReplyTo(null)} aria-label="Cancel reply"><X size={12} /></button></>}{editing && <><span>Editing comment</span><button type="button" onClick={() => { setEditing(null); setText(''); }} aria-label="Cancel edit"><X size={12} /></button></>}</div><div className="flex items-center gap-2"><Avatar src={currentUser?.avatar} alt={currentUser?.username || 'Your avatar'} size="xs" /><input ref={inputRef} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submit(); } }} placeholder="Write a comment..." aria-label="Write a comment" maxLength={2000} className="min-w-0 flex-1 rounded-full border border-white/10 bg-black/25 px-3.5 py-2.5 text-sm text-white outline-none placeholder:text-white/30 focus:bg-white/[0.05]" /><button type="button" onClick={() => setEmojiOpen(value => !value)} aria-label="Add emoji" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[#858585] hover:bg-white/[.06] hover:text-white"><Smile size={17} /></button><button type="button" onClick={() => setText(value => `${value}${value ? ' ' : ''}@`)} aria-label="Mention a user" className="hidden h-9 w-9 shrink-0 place-items-center rounded-lg text-[#858585] hover:bg-white/[.06] hover:text-white sm:grid"><AtSign size={17} /></button><button type="submit" aria-label="Send comment" disabled={!text.trim() || submitting} className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[#c9a227]/60 bg-[#c9a227] text-black transition hover:bg-[#f2c75c] disabled:opacity-30">{submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}</button></div>{emojiOpen && <div className="absolute bottom-16 right-4 grid w-64 max-w-[calc(100vw-2rem)] grid-cols-8 gap-1 rounded-lg border border-white/10 bg-[#151517] p-3 shadow-2xl">{EMOJIS.map(emoji => <button type="button" key={emoji} onClick={() => setText(value => value + emoji)} className="rounded-md p-1 text-lg hover:bg-white/10" aria-label={`Add ${emoji}`}>{emoji}</button>)}</div>}</form>
-  </motion.section>{deleteConfirm && <><motion.div
-      className="fixed inset-0 z-[90] bg-black/65 backdrop-blur-sm"
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={() => setDeleteConfirm(null)}
-      aria-label="Cancel delete"
-    />
-    <motion.section
-      role="alertdialog"
-      aria-modal="true"
-      aria-label="Delete comment"
-      initial={{ opacity: 0, scale: .97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: .97 }}
-      className="fixed left-1/2 top-1/2 z-[95] w-[min(380px,calc(100%-24px))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-white/10 bg-[#151517] p-5 shadow-2xl"
-    >
-      <header className="mb-3 flex items-center justify-between"><h2 className="font-semibold">Delete this comment?</h2><button type="button" onClick={() => setDeleteConfirm(null)} className="grid h-9 w-9 place-items-center rounded-full text-[#c8c8cc]" aria-label="Close"><X size={18} /></button></header>
-      <p className="mb-5 text-sm leading-6 text-[#c8c8cc]/65">This cannot be undone. The comment will be removed permanently.</p>
-      <div className="flex items-center justify-end gap-2">
-        <button type="button" onClick={() => setDeleteConfirm(null)} className="min-h-11 rounded-lg border border-white/10 px-4 text-sm text-[#c8c8cc] transition hover:bg-white/[0.05]">Cancel</button>
-        <button type="button" onClick={() => void confirmDeleteComment()} className="min-h-11 rounded-lg bg-[#b4232f] px-4 text-sm font-semibold text-white transition hover:bg-[#9f1d2a]">Delete comment</button>
-      </div>
-    </motion.section></>}</AnimatePresence>;
+  </motion.section>{deleteConfirmDialog}</AnimatePresence>;
 }

@@ -4,6 +4,7 @@ import { prisma } from "../prisma";
 import { uploadService } from "../services";
 import { contentViewService } from "../services/content-view.service";
 import { buildReelFeed } from "../services/reel-feed.service";
+import { BADGE_USER_SELECT, enrichItemAuthors } from "../services/public-verification";
 
 const parseLimit = (value: unknown, defaultLimit = 20) => {
   const parsed = typeof value === "string" ? parseInt(value, 10) : NaN;
@@ -224,8 +225,9 @@ export const deleteReelComment = async (req: AuthRequest, res: Response): Promis
   }
 };
 
-export const getReelById = async (req: Request, res: Response): Promise<void> => {
+export const getReelById = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const userId = req.user?.userId;
     const reel = await prisma.video.findUnique({
       where: { id: req.params.id, publishStatus: "PUBLISHED" },
       include: {
@@ -236,8 +238,13 @@ export const getReelById = async (req: Request, res: Response): Promise<void> =>
             fullName: true,
             avatar: true,
             verified: true,
+            ...BADGE_USER_SELECT,
           },
         },
+        // Viewer-aware state (mirrors the GET /api/reels feed serialization so a
+        // Reel behaves identically whether opened from the feed or a detail link).
+        likes: userId ? { where: { userId }, select: { id: true } } : false,
+        saves: userId ? { where: { userId }, select: { id: true } } : false,
         _count: { select: { likes: true, comments: true, saves: true } },
       },
     });
@@ -247,7 +254,16 @@ export const getReelById = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
-    res.status(200).json(reel);
+    const { creator, likes, saves, _count, ...rest } = reel as any;
+    res.status(200).json(enrichItemAuthors({
+      ...rest,
+      creator,
+      likesCount: _count.likes,
+      commentsCount: _count.comments,
+      savesCount: _count.saves,
+      isLiked: userId ? (likes?.length ?? 0) > 0 : false,
+      isSaved: userId ? (saves?.length ?? 0) > 0 : false,
+    }));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
     res.status(400).json({ error: message });

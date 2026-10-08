@@ -20,7 +20,7 @@ const router = Router();
 
 // Public routes
 router.get("/", optionallyAuthenticateJWT, getReels);
-router.get("/:id", getReelById);
+router.get("/:id", optionallyAuthenticateJWT, getReelById);
 router.get("/:id/comments", getReelComments);
 router.post("/:id/views", authenticateJWT, incrementReelViews);
 
