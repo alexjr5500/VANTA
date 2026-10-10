@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthenticatedRequest, CryptoUtils, SecurityValidator, sessionManager, twoFactorAuth, auditLog, botProtection, GDPRCompliance, config } from '../security';
 import { prisma } from '../prisma';
+import { authService } from '../services/auth.service';
 
 // ============================================================================
 // REGISTRATION
@@ -134,6 +135,21 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // Verify both current bcrypt hashes and legacy Argon2id hashes FIRST.
+    // Account-status and email-verification checks intentionally run AFTER a
+    // correct password so an unauthenticated attacker cannot distinguish
+    // suspended/banned/2FA users from invalid credentials (account
+    // enumeration). A legitimate user with the right password still receives
+    // the precise status message.
+    const isPasswordValid = await CryptoUtils.verifyPassword(user.passwordHash, password);
+    if (!isPasswordValid) {
+      await botProtection.recordLoginAttempt(user.id, false, req);
+      await auditLog.log({ userId: user.id, action: 'LOGIN_FAILED', ipAddress: req.ip, userAgent: req.headers['user-agent'], severity: 'WARNING' });
+      res.status(401).json({ error: 'Invalid email or password' });
+      return;
+    }
+    if (process.env.NODE_ENV === 'development') console.info('[Auth] Password verified', { userId: user.id });
+
     if (user.status !== 'ACTIVE') {
       const accountErrors: Record<string, { status: number; error: string }> = {
         SUSPENDED: { status: 403, error: 'Account suspended' },
@@ -151,16 +167,6 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       res.status(403).json({ error: 'Email not verified' });
       return;
     }
-
-    // Verify both current bcrypt hashes and legacy Argon2id hashes.
-    const isPasswordValid = await CryptoUtils.verifyPassword(user.passwordHash, password);
-    if (!isPasswordValid) {
-      await botProtection.recordLoginAttempt(user.id, false, req);
-      await auditLog.log({ userId: user.id, action: 'LOGIN_FAILED', ipAddress: req.ip, userAgent: req.headers['user-agent'], severity: 'WARNING' });
-      res.status(401).json({ error: 'Invalid email or password' });
-      return;
-    }
-    if (process.env.NODE_ENV === 'development') console.info('[Auth] Password verified', { userId: user.id });
 
     // Check lockout only after password verification so the response does not
     // disclose whether a supplied password is valid.
@@ -460,6 +466,15 @@ export const changePassword = async (req: AuthenticatedRequest, res: Response): 
 
     const newHash = await CryptoUtils.hashPassword(newPassword);
     await prisma.user.update({ where: { id: req.user.userId }, data: { passwordHash: newHash } });
+
+    // Security hardening: a password change is a strong signal the account may
+    // have been compromised. Revoke every OTHER session so a stolen access or
+    // refresh token cannot keep using the account; only the current session
+    // (the one that proved the password) survives.
+    const currentSessionId = req.user.sessionId;
+    await prisma.session.deleteMany({
+      where: { userId: req.user.userId, id: { not: currentSessionId } },
+    });
     await auditLog.log({ userId: req.user.userId, action: 'PASSWORD_CHANGED', ipAddress: req.ip, severity: 'INFO' });
 
     res.status(200).json({ message: 'Password changed successfully' });
@@ -475,11 +490,18 @@ export const changePassword = async (req: AuthenticatedRequest, res: Response): 
 export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email } = req.body;
-    if (!email) { res.status(400).json({ error: 'Email is required' }); return; }
+    if (typeof email !== 'string' || !email.trim()) {
+      res.status(400).json({ error: 'Email is required' });
+      return;
+    }
+    const normalized = email.trim().toLowerCase();
 
-    await auditLog.log({ action: 'PASSWORD_RESET_REQUESTED', ipAddress: req.ip, metadata: { email: SecurityValidator.sanitizeText(email) } });
+    await auditLog.log({ action: 'PASSWORD_RESET_REQUESTED', ipAddress: req.ip, metadata: { email: SecurityValidator.sanitizeText(normalized) } });
 
-    // In production, send email with reset link
+    // Real, server-side reset-token flow (rate limited at the route). The
+    // response stays identical whether or not the account exists, so this
+    // endpoint never discloses account existence.
+    await authService.forgotPassword(normalized);
     res.status(200).json({ message: 'If an account exists with this email, a password reset link will be sent' });
   } catch (error) {
     res.status(200).json({ message: 'If an account exists with this email, a password reset link will be sent' });
@@ -487,22 +509,40 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
 };
 
 export const verifyResetToken = async (req: Request, res: Response): Promise<void> => {
-  // In production, verify the JWT reset token
-  res.status(200).json({ valid: true, message: 'Token is valid' });
+  // Previously this endpoint ALWAYS answered { valid: true } for any input.
+  // It now verifies the actual signed, expiring password-reset token so a
+  // client can never be shown a false positive.
+  try {
+    const { token } = req.body;
+    if (typeof token !== 'string' || !token) {
+      res.status(400).json({ valid: false, message: 'Token is required' });
+      return;
+    }
+    const valid = await authService.verifyPasswordResetToken(token);
+    res.status(200).json({ valid, message: valid ? 'Token is valid' : 'Token is invalid or expired' });
+  } catch (error) {
+    res.status(400).json({ valid: false, message: 'Token is invalid or expired' });
+  }
 };
 
 export const resetPassword = async (req: Request, res: Response): Promise<void> => {
+  // Previously this endpoint always returned "Password reset successfully"
+  // WITHOUT changing anything — a security control that did not exist. It now
+  // verifies the signed reset token, updates the hash and revokes every
+  // session for the account (see AuthService.resetPassword).
   try {
     const { token, newPassword } = req.body;
-    if (!token || !newPassword) { res.status(400).json({ error: 'Token and new password are required' }); return; }
+    if (typeof token !== 'string' || !token) { res.status(400).json({ error: 'Token and new password are required' }); return; }
+    if (typeof newPassword !== 'string' || !newPassword) { res.status(400).json({ error: 'Token and new password are required' }); return; }
 
     const passValidation = SecurityValidator.isStrongPassword(newPassword);
     if (!passValidation.valid) { res.status(400).json({ error: passValidation.errors.join('. ') }); return; }
 
-    // In production, verify reset token JWT and update password
-    res.status(200).json({ message: 'Password reset successfully' });
+    const result = await authService.resetPassword(token, newPassword);
+    await auditLog.log({ action: 'PASSWORD_RESET_COMPLETED', ipAddress: req.ip, severity: 'INFO' });
+    res.status(200).json({ message: result.message });
   } catch (error) {
-    res.status(400).json({ error: 'Password reset failed' });
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Password reset failed' });
   }
 };
 
@@ -511,10 +551,20 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
 // ============================================================================
 
 export const verifyEmail = async (req: Request, res: Response): Promise<void> => {
+  // Previously this endpoint always returned "Email verified successfully"
+  // without verifying anything. It now requires a real, signed
+  // email-verification token and only marks the account verified on success.
   try {
     const { token } = req.body;
-    if (!token) { res.status(400).json({ error: 'Verification token is required' }); return; }
-    // In production, verify JWT token and update user
+    if (typeof token !== 'string' || !token) {
+      res.status(400).json({ error: 'Verification token is required' });
+      return;
+    }
+    const verified = await authService.verifyEmailToken(token);
+    if (!verified) {
+      res.status(400).json({ error: 'Invalid or expired verification token' });
+      return;
+    }
     res.status(200).json({ message: 'Email verified successfully' });
   } catch (error) {
     res.status(400).json({ error: 'Email verification failed' });
@@ -526,24 +576,20 @@ export const verifyEmail = async (req: Request, res: Response): Promise<void> =>
 // ============================================================================
 
 export const googleAuth = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { idToken } = req.body;
-    if (!idToken) { res.status(400).json({ error: 'Google ID token is required' }); return; }
-    // In production, verify with Google's API
-    res.status(200).json({ message: 'Google authentication not fully implemented', token: '', refreshToken: '', expiresIn: 900, user: {} });
-  } catch (error) {
-    res.status(400).json({ error: 'Google authentication failed' });
-  }
+  // Legacy stub: it previously returned a fake "success" with EMPTY tokens.
+  // No client calls it (the real flow is the /api/auth/oauth authorization
+  // code flow), and a fake success would let a client believe it is signed in.
+  // Fail explicitly instead of lying.
+  res.status(501).json({
+    error: 'Legacy token-endpoint is not supported. Use the /api/auth/oauth authorization-code flow.',
+  });
 };
 
 export const appleAuth = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { identityToken, userIdentifier } = req.body;
-    if (!identityToken || !userIdentifier) { res.status(400).json({ error: 'Identity token and user identifier are required' }); return; }
-    res.status(200).json({ message: 'Apple authentication not fully implemented', token: '', refreshToken: '', expiresIn: 900, user: {} });
-  } catch (error) {
-    res.status(400).json({ error: 'Apple authentication failed' });
-  }
+  // Legacy stub — see googleAuth. No client calls it; fail explicitly.
+  res.status(501).json({
+    error: 'Legacy token-endpoint is not supported. Use the /api/auth/oauth authorization-code flow.',
+  });
 };
 
 // ============================================================================
@@ -551,11 +597,52 @@ export const appleAuth = async (req: Request, res: Response): Promise<void> => {
 // ============================================================================
 
 export const phoneSendOTP = async (req: Request, res: Response): Promise<void> => {
-  res.status(200).json({ message: 'OTP sent successfully', expiresIn: 600 });
+  // Wired to the real, cryptographically-secure OTP service (the plaintext OTP
+  // is delivered out-of-band, only a bcrypt hash is persisted). The delivery
+  // medium (SMS/email/push) must be configured by the operator — the endpoint
+  // never fakes a send.
+  try {
+    const { phoneNumber } = req.body;
+    if (typeof phoneNumber !== 'string' || !phoneNumber.trim()) {
+      res.status(400).json({ error: 'Phone number is required' });
+      return;
+    }
+    const result = await authService.sendPhoneOTP(phoneNumber.trim(), req.ip);
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Failed to send OTP' });
+  }
 };
 
 export const phoneVerifyOTP = async (req: Request, res: Response): Promise<void> => {
-  res.status(200).json({ message: 'Phone verification not fully implemented', token: '', refreshToken: '', expiresIn: 900, user: {} });
+  try {
+    const { phoneNumber, otp } = req.body;
+    if (typeof phoneNumber !== 'string' || !phoneNumber.trim() || typeof otp !== 'string' || !otp.trim()) {
+      res.status(400).json({ error: 'Phone number and OTP are required' });
+      return;
+    }
+    const result = await authService.verifyPhoneOTP(
+      phoneNumber.trim(),
+      otp.trim(),
+      req.headers['user-agent']?.toString(),
+      req.ip
+    );
+    res.status(200).json({
+      message: 'Phone verification successful',
+      token: result.token,
+      refreshToken: result.refreshToken,
+      expiresIn: 900,
+      user: {
+        id: result.user.id,
+        email: result.user.email,
+        username: result.user.username,
+        fullName: result.user.fullName,
+      },
+      isNewUser: result.isNewUser,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Phone verification failed' });
+  }
 };
 
 // ============================================================================

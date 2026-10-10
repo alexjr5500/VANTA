@@ -47,7 +47,7 @@ router.post('/register', rateLimiter.register, register);
 
 // Login with rate limiting and brute force protection
 router.post('/login', rateLimiter.login, checkLoginAttempts, login);
-router.post('/login/2fa', rateLimiter.api, completeLogin2FA);
+router.post('/login/2fa', rateLimiter.login2fa, completeLogin2FA);
 
 // Token refresh
 router.post('/refresh', rateLimiter.api, refreshToken);

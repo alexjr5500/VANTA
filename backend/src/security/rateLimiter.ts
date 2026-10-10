@@ -199,6 +199,22 @@ class RateLimiter {
     max: 120,
     message: 'Too many webhook requests.',
   });
+
+  /**
+   * 2FA completion during login — keyed per target account (plus IP) so a
+   * TOTP brute-force is throttled per user rather than merely per caller IP.
+   */
+  login2fa = this.createLimiter({
+    windowMs: parseInt(process.env.RATE_LIMIT_LOGIN2FA_WINDOW || '900000', 10), // 15 min
+    max: parseInt(process.env.RATE_LIMIT_LOGIN2FA_MAX || '10', 10),
+    message: 'Too many 2FA attempts. Please try again later.',
+    keyGenerator: (req) => {
+      const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      const body = (req.body || {}) as any;
+      const userId = typeof body?.userId === 'string' ? body.userId : '';
+      return userId ? `login2fa:${userId}:${ip}` : `login2fa:${ip}`;
+    },
+  });
 }
 
 export const rateLimiter = new RateLimiter();

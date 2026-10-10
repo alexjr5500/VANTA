@@ -2,6 +2,7 @@ import { Server, Socket } from 'socket.io';
 import { prisma } from '../prisma';
 import { giftService } from '../services/gift.service';
 import { liveRateLimiter } from '../security/liveRateLimiter';
+import { authenticateSocket } from '../security/webSocketSecurity';
 
 // Cache of active combo timers per stream
 const streamCombos = new Map<string, Map<string, { count: number; timer: NodeJS.Timeout }>>();
@@ -9,25 +10,32 @@ const streamCombos = new Map<string, Map<string, { count: number; timer: NodeJS.
 export function handleGiftSocket(io: Server) {
   const giftNamespace = io.of('/gifts');
 
-  giftNamespace.use((socket, next) => {
-    const token = socket.handshake.auth.token;
-    if (!token) return next(new Error('Authentication required'));
-
-    const jwt = require('jsonwebtoken');
-    if (!process.env.JWT_SECRET) {
-      return next(new Error('Server configuration error'));
-    }
-    jwt.verify(token, process.env.JWT_SECRET, (err: any, decoded: any) => {
-      if (err) return next(new Error('Invalid token'));
-      socket.data.userId = decoded.userId;
-      socket.data.username = decoded.username || 'Unknown';
-      next();
-    });
-  });
+  // VANTA-003 (security audit): this namespace previously authenticated with a
+  // bare `jwt.verify` — the signature was checked but the session was never
+  // validated against the database, the user's account status was not checked,
+  // and the token type claim was not verified. Because `gift:send` executes a
+  // REAL financial transaction (vanta.coin moves), a revoked session or
+  // suspended account could keep sending gifts over the socket for the full
+  // access-token lifetime. The canonical session-aware middleware now runs on
+  // every /gifts connection: revoked sessions, rotated tokens, expired tokens
+  // and suspended/banned accounts are rejected at the handshake, exactly like
+  // the REST API.
+  giftNamespace.use(authenticateSocket);
 
   giftNamespace.on('connection', (socket: Socket) => {
-    const userId = socket.data.userId;
-    const username = socket.data.username;
+    const userId = (socket as any).userId || socket.data.userId;
+    if (!userId) {
+      socket.disconnect();
+      return;
+    }
+
+    // Resolve the verified user's public identity for gift event attribution
+    // (authenticateSocket binds the id; the username is looked up server-side,
+    // never taken from a client claim).
+    const usernamePromise = prisma.user.findUnique({
+      where: { id: userId },
+      select: { username: true, fullName: true },
+    }).then((u) => (u && u.username) || 'Unknown').catch(() => 'Unknown');
 
     // Personal room for real-time gift delivery wherever the user is in the app.
     socket.join(`user_${userId}`);
@@ -68,6 +76,7 @@ export function handleGiftSocket(io: Server) {
           requestId,
         });
         const { transaction, gift } = result;
+        const username = await usernamePromise;
 
         // `sendGift` is the single publisher of the canonical `gift_received`
         // event (stream room + recipient/sender user rooms). Reuse that rich

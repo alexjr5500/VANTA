@@ -565,6 +565,50 @@ export class AuthService {
       throw new Error("Invalid or expired token");
     }
   }
+
+  // ============ EMAIL VERIFICATION ============
+
+  /**
+   * Issue a short-lived, single-purpose email-verification token for a user.
+   * The token only proves the email-verification intent server-side; delivery
+   * is handled by the caller (email provider). It is bound by signature, type
+   * and expiry — a client cannot fabricate one without JWT_SECRET.
+   */
+  async issueEmailVerificationToken(userId: string): Promise<string> {
+    if (!process.env.JWT_SECRET) {
+      throw new Error("JWT_SECRET environment variable is not set");
+    }
+    return jwt.sign(
+      { userId, type: 'email-verification' },
+      process.env.JWT_SECRET,
+      { expiresIn: (process.env.EMAIL_VERIFICATION_EXPIRES_IN || '24h') as jwt.SignOptions["expiresIn"] }
+    );
+  }
+
+  /**
+   * Verify an email-verification token and, when valid, mark the account's
+   * email as verified. Returns false (no DB write) for invalid/expired/wrong
+   * type tokens — the previous behaviour of always reporting success is a
+   * security control lie and has been removed.
+   */
+  async verifyEmailToken(token: string): Promise<boolean> {
+    try {
+      if (!process.env.JWT_SECRET) {
+        throw new Error("JWT_SECRET environment variable is not set");
+      }
+      const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
+      if (decoded.type !== 'email-verification' || typeof decoded.userId !== 'string') {
+        return false;
+      }
+      const updated = await prisma.user.updateMany({
+        where: { id: decoded.userId },
+        data: { emailVerified: true },
+      });
+      return updated.count === 1;
+    } catch {
+      return false;
+    }
+  }
 }
 
 export const authService = new AuthService();

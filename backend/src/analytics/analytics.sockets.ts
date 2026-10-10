@@ -6,6 +6,7 @@
 import { Server, Socket } from 'socket.io';
 import { analyticsEngine } from './analytics.service';
 import { AnalyticsEvent, METRIC_DEFINITIONS } from './analytics.types';
+import { authenticateSocket } from '../security/webSocketSecurity';
 
 // Track which clients are subscribed to which analytics events
 interface AnalyticsSubscription {
@@ -25,9 +26,26 @@ const DASHBOARD_BROADCAST_INTERVAL = 5000; // 5 seconds for dashboard data
 export function registerAnalyticsSocketHandlers(io: Server): void {
   const analyticsNamespace = io.of('/analytics');
 
+  // VANTA-004 (security audit): the /analytics namespace previously carried NO
+  // authentication middleware, so unauthenticated clients could stream internal
+  // platform metrics (executive dashboard, DAU/MAU, revenue) and inject
+  // analytics events for arbitrary userIds. Authenticate every connection with
+  // the canonical session-aware middleware; admin channels additionally check
+  // the verified role below.
+  analyticsNamespace.use(authenticateSocket);
+
   analyticsNamespace.on('connection', (socket: Socket) => {
     const userId = (socket as any).userId;
     const role = (socket as any).role || 'USER';
+
+    // Connections that somehow pass without a verified identity are dropped.
+    if (!userId) {
+      socket.disconnect();
+      return;
+    }
+
+    // Privileged analytics roles (mirrors the REST admin analytics gating).
+    const isPrivileged = ['ADMIN', 'CEO', 'SUPER_ADMIN'].includes(role);
 
     // Create subscription entry
     subscriptions.set(socket.id, {
@@ -41,13 +59,13 @@ export function registerAnalyticsSocketHandlers(io: Server): void {
 
     // Join analytics room based on role
     socket.join('analytics');
-    if (['ADMIN', 'SUPER_ADMIN'].includes(role)) {
+    if (isPrivileged) {
       socket.join('analytics:admin');
     }
-    if (['CREATOR', 'ADMIN', 'SUPER_ADMIN'].includes(role)) {
+    if (['CREATOR', 'ADMIN', 'CEO', 'SUPER_ADMIN'].includes(role)) {
       socket.join('analytics:creator');
     }
-    if (['MODERATOR', 'ADMIN', 'SUPER_ADMIN'].includes(role)) {
+    if (['MODERATOR', 'ADMIN', 'CEO', 'SUPER_ADMIN'].includes(role)) {
       socket.join('analytics:moderator');
     }
 
@@ -128,17 +146,25 @@ export function registerAnalyticsSocketHandlers(io: Server): void {
       socket.join('analytics:creator');
     });
 
-    // Manually trigger an analytics event
+    // Manually trigger an analytics event.
+    // VANTA-004: the userId is always bound to the authenticated socket identity —
+    // a client can never attribute an event to another user.
     socket.on('analytics:track', (data: AnalyticsEvent) => {
       analyticsEngine.track({
         ...data,
-        userId: data.userId || userId,
+        userId,
         timestamp: new Date().toISOString(),
       });
     });
 
     // Request specific dashboard data
     socket.on('analytics:request:dashboard', async (data: { dashboard: string; period?: string }) => {
+      // VANTA-004: executive/realtime dashboards contain internal platform
+      // metrics (DAU/MAU, revenue) — privileged roles only.
+      if (data.dashboard === 'executive' && !isPrivileged) {
+        socket.emit('analytics:error', { message: 'You do not have permission to view this dashboard' });
+        return;
+      }
       try {
         let result: any;
         
