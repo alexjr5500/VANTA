@@ -73,16 +73,31 @@ Storage choice (pick ONE):
 
 **Do NOT set** `HTTPS_DEV_CERT` / `HTTPS_DEV_KEY` — dev-only absolute paths that would crash prod.
 
-The build pipeline in `railway.json` automatically: `npm install` → `prisma generate` → `tsc build`. Schema is applied at
-START (not build) via `npx prisma migrate deploy` against the committed PostgreSQL migrations in `backend/prisma/migrations/`
-(idempotent baseline + additive CoinTransfer/OTP migrations; the old SQLite-era migrations are archived in
-`backend/prisma/migrations-archive/` and are NOT used). `prisma db push` is intentionally NOT used in production anymore —
-it was the root cause of the `CoinTransfer` `@@unique([senderId, requestId])` startup crash (it refuses to add unique
-constraints without `--accept-data-loss`).
+The build pipeline in `railway.json` automatically: `npm install` → `prisma generate` → `tsc build`. Schema is applied in
+Railway's **PRE-DEPLOY phase** (`deploy.preDeployCommand` → `node dist/deploy/migrate-deploy.js`), which runs **once per
+deployment in its own container, before any application replica starts** — so replicas can never migrate concurrently.
+It applies the committed PostgreSQL migrations in `backend/prisma/migrations/` (idempotent baseline + additive
+CoinTransfer/OTP/push/password-reset migrations; the old SQLite-era migrations are archived in
+`backend/prisma/migrations-archive/` and are NOT used). `prisma db push` is intentionally NOT used in production — it was
+the root cause of the `CoinTransfer` `@@unique([senderId, requestId])` startup crash (it refuses to add unique constraints
+without `--accept-data-loss`), and because it never records `_prisma_migrations` it is also the root cause of the **P3005**
+"database schema is not empty" failure.
+
+The pre-deploy step retries **only transient** connection failures (`P1001`/`P1002`/… — the database is still starting).
+**Permanent** failures fail fast with the exact remediation instead of retrying forever:
+- `P3005` → the schema predates Prisma Migrate and must be **baselined once**. Follow
+  `backend/prisma/MIGRATION_RUNBOOK.md` (§3–§4): verify a backup, confirm the live schema, then
+  `npx prisma migrate resolve --applied 20261005000000_baseline_production_schema`. Mark **only** the baseline — the later
+  additive migrations are not in production yet and must actually run.
+- `P3009`/`P3018`/… → a migration failed or history drifted; reconcile explicitly with `migrate resolve`.
+
+In-app provisioning (`src/provision-db.ts`) is a **no-op by default** so a normal boot never re-runs migrations. Set
+`VANTA_PROVISION_SCHEMA_ON_START=true` only as a fallback if a platform setting overrides the pre-deploy command, and keep
+the service at a single replica if you do.
 
 6. After first deploy, run ONE-time seeds:
 ```bash
-railway run -- npx prisma migrate deploy   # idempotent; normally already applied by the start command
+railway run -- npx prisma migrate status   # must report "Database schema is up to date"
 railway run -- npm run seed                  # base seed (admin/categories)
 railway run -- npm run seed:gifts           # gift catalog (73 gifts — the flow you tested)
 railway run -- npm run seed:dev-wallet     # optional dev wallet
@@ -90,6 +105,7 @@ railway run -- npm run seed:dev-wallet     # optional dev wallet
 (`railway run` executes with the service's vars; if `ts-node` isn't in prod, use `railway run -- npx ts-node --transpile-only prisma/seed.ts` etc.)
 Never run `prisma db push --accept-data-loss` against production: it can silently alter/drop schema, and the
 `CoinTransfer` unique-constraint case shows it blocks legitimate additive changes unless the destructive flag is passed.
+Never run `prisma migrate reset` against production — it **destroys all user data**.
 
 > **Purchase catalog is auto-provisioned — no manual seed needed for packages.**
 > The VANTA Coin packages (`SparkCoinPackage`) and the Verified Badge plans

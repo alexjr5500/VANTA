@@ -400,11 +400,26 @@ app.use(express.static(publicDir, {
 // is visible instantly instead of surfacing only as broken <video> loads.
 app.get('/health', async (req: Request, res: Response) => {
   const mediaStorage = await getStorageDiagnostics();
+
+  // Database reachability probe. This is what makes a broken deploy legible:
+  // the migration step runs in Railway's pre-deploy phase, so by the time this
+  // endpoint is reachable the schema should already be applied. If the database
+  // is unreachable here, the process is up but cannot serve traffic — report it
+  // instead of returning a bare "ok". Never leaks credentials or schema details.
+  let database: { status: 'ok' | 'unreachable' };
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    database = { status: 'ok' };
+  } catch {
+    database = { status: 'unreachable' };
+  }
+
   res.status(200).json({
     status: 'ok',
     message: 'VANTA API is running',
     version: process.env.npm_package_version || '1.0.0',
     timestamp: new Date().toISOString(),
+    database,
     mediaStorage,
   });
 });
@@ -646,11 +661,13 @@ async function startServer() {
       throw new Error('DATABASE_URL is not set. Set it in .env or environment.');
     }
 
-    // Provision the PostgreSQL schema (production only, retried, Prisma
-    // Migrate only — never `db push`, never --accept-data-loss). railway.json
-    // runs `npx prisma migrate deploy` in its start command; this in-app step
-    // guarantees committed migrations are applied even if a deployment
-    // platform setting ever overrides that start command.
+    // Schema provisioning is a NO-OP by default: production migrations run
+    // ONCE per deployment in Railway's pre-deploy phase (railway.json ->
+    // deploy.preDeployCommand -> dist/deploy/migrate-deploy.js), before any
+    // replica starts, so replicas can never run migrations concurrently.
+    // provisionDatabaseSchema() only acts when the operator sets
+    // VANTA_PROVISION_SCHEMA_ON_START=true as a fallback for the case where a
+    // platform setting overrides the pre-deploy command.
     provisionDatabaseSchema();
 
     await prisma.$connect();

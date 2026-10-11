@@ -4,7 +4,9 @@
     "buildCommand": "npm install && npx prisma generate && npm run build"
   },
   "deploy": {
-    "startCommand": "(i=1; until npx prisma migrate deploy --schema prisma/schema.prisma; do i=$((i+1)); if [ $i -gt 10 ]; then echo 'prisma migrate deploy failed after retries - aborting start'; exit 1; fi; echo \"Database not ready, retrying prisma migrate deploy ($i/10)\"; sleep 5; done) && node dist/index.js",
+    "preDeployCommand": "node dist/deploy/migrate-deploy.js",
+    "preDeployTimeoutSeconds": 600,
+    "startCommand": "node dist/index.js",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
