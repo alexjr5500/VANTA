@@ -33,10 +33,11 @@ const mediaSrc = (value?: string | null) => resolveMediaUrl(value);
 /**
  * PostDetailPage
  * --------------
- * Premium, conversational post detail surface. The post is the visual focus
- * (compact ← / ⋮ navigation instead of a generic "Post" title), the author row
- * mirrors the feed card, and the conversation lives INLINE beneath the post so
- * the page reads as "entering the post" instead of "opening a record".
+ * A clean, full-width post detail surface modelled on the readability of X
+ * (Twitter): no nested cards, no dashboard chrome. The post flows directly
+ * from the compact sticky header into the author row, the post body and
+ * media, a lightweight engagement toolbar, a compact metadata line, and then
+ * straight into the conversation — one continuous scroll.
  *
  * All actions hit the real backend endpoints already used by Home/Profile:
  * like (`POST /api/feed/:id/like`), save (`POST|DELETE /api/feed/:id/save`),
@@ -67,7 +68,10 @@ export default function PostDetailPage({ params }: { params: { id: string } }) {
   const likeCount = Number(post?.likes ?? post?.likesCount ?? 0);
   const commentCount = Number(post?.comments ?? post?.commentsCount ?? 0);
   const shareCount = Number(post?.shares ?? post?.shareCount ?? 0);
-  const actionClass = 'flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.04] text-[#c8c8cc] transition hover:bg-white/[0.07] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40';
+  // Lightweight engagement-action base style: evenly distributed icon
+  // actions with restrained transitions — a toolbar, not four rectangular
+  // buttons. Active states use the VANTA gold accent.
+  const toolClass = (extra?: string) => `flex min-h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full text-[#8a8a8a] transition hover:bg-white/[0.05] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 active:scale-[0.97] ${extra ?? ''}`;
 useEffect(() => {
     let active = true;
     setLoading(true); setUnavailable(false);
@@ -169,11 +173,12 @@ useEffect(() => {
 
   const media = mediaSrc(post.mediaUrl);
   const isOwn = post.author.id === user?.id;
-return <main className="min-w-0 w-full text-white">
-    {/* Minimal navigation: ←                    ⋮ */}
+  return <main className="min-w-0 w-full text-white">
+    {/* Compact sticky header — back affordance, quiet title, ⋮ menu. */}
     <PageHeader
+      title="Post"
       back={() => { if (typeof window !== 'undefined' && window.history.length > 1) router.back(); else router.push('/home'); }}
-      sticky bleed className="mb-1 px-4"
+      sticky bleed className="px-4"
       actions={
         <button type="button" onClick={() => setMoreOpen(true)} aria-label="More post options" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#8a8a8a] transition hover:bg-white/[0.05] hover:text-white">
           <MoreHorizontal size={19} />
@@ -181,62 +186,67 @@ return <main className="min-w-0 w-full text-white">
       }
     />
 
-    <div className="mx-auto w-full min-w-0 max-w-[680px] px-3 pb-8">
-      <article className="w-full min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-[#101010]">
-        {/* Author */}
-        <header className="flex items-start gap-3 p-3">
+    <div className="mx-auto w-full min-w-0 max-w-[640px] px-4 pb-8">
+      {/* Original post — flows straight from the header, no card wrapper. */}
+      <article className="w-full min-w-0 pt-3">
+        {/* Author identity */}
+        <header className="flex w-full min-w-0 items-start gap-3">
           <Link href={`/profile/${post.author.username}`} className="grid shrink-0 place-items-center" aria-label={`View ${post.author.username}'s profile`}>
             <Avatar src={post.author.avatar} alt={post.author.username} size="md" />
           </Link>
           <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <Link href={`/profile/${post.author.username}`} className="flex min-w-0 items-center gap-1.5 truncate text-sm font-semibold text-[#f5f5f5] hover:text-white">
-                <span className="min-w-0 truncate">{post.author.fullName || post.author.username}</span>
-                {post.author.verified && post.author.verificationType && <VerificationBadge verified type={post.author.verificationType} size="sm" />}
+            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5">
+              <Link href={`/profile/${post.author.username}`} className="min-w-0 truncate text-[15px] font-semibold text-[#f5f5f5] hover:underline">
+                {post.author.fullName || post.author.username}
               </Link>
-              <span className="shrink-0 text-[11px] text-white/40">· {timeAgo(post.createdAt)}</span>
+              {post.author.verified && post.author.verificationType && <VerificationBadge verified type={post.author.verificationType} size="sm" />}
             </div>
-            <p className="truncate text-xs text-white/45">@{post.author.username}</p>
+            <p className="truncate text-[13px] text-[#8a8a8a]">@{post.author.username}</p>
           </div>
+          <span className="shrink-0 pt-0.5 text-[13px] text-[#8a8a8a]">{timeAgo(post.createdAt)}</span>
         </header>
 
-        {/* Post text */}
-        {post.content && <p className="whitespace-pre-wrap break-words px-4 pb-2 text-[15px] leading-6 text-white/85">{renderTextWithLinks(post.content, 'linkify')}</p>}
+        {/* Post body */}
+        {post.content && <p className="mt-3 whitespace-pre-wrap break-words text-[15px] leading-6 text-[#e8e8e8]">{renderTextWithLinks(post.content, 'linkify')}</p>}
         {Array.isArray(post.hashtags) && post.hashtags.length > 0 && (
-          <p className="px-4 pb-2 text-[13px] font-medium text-[#c9a227]">{post.hashtags.map(tag => `#${tag}`).join(' ')}</p>
+          <p className="mt-1.5 text-[13px] font-medium text-[#c9a227]">{post.hashtags.map(tag => `#${tag}`).join(' ')}</p>
         )}
 
-        {/* Media — part of the post, same PostMedia renderer as the feed */}
-        {media && <div className="bg-[#080808]"><PostMedia src={media} alt={post.author.username ? `Post by ${post.author.username}` : 'Post media'} autoplayOnView={false} preload="metadata" /></div>}
+        {/* Media — full content width, same PostMedia renderer as the feed */}
+        {media && <div className="mt-3 w-full overflow-hidden rounded-xl border border-white/[0.07] bg-[#080808]"><PostMedia src={media} alt={post.author.username ? `Post by ${post.author.username}` : 'Post media'} autoplayOnView={false} preload="metadata" /></div>}
 
-        {/* Views — actual backend count */}
-        {typeof post.views === 'number' && (
-          <div className="flex items-center gap-1.5 px-4 py-2.5 text-xs text-white/40"><Eye size={14} /><span className="tabular-nums">{formatCount(post.views)} views</span></div>
-        )}
-
-        {/* Engagement */}
-        <footer className="flex items-center gap-2 border-t border-white/10 p-2">
-          <button onClick={() => void toggleLike()} className={actionClass + (liked ? ' text-[#f2c75c]' : '')} aria-label={liked ? 'Unlike post' : 'Like post'} aria-pressed={liked}>
-            <Heart size={18} className={liked ? 'fill-current' : ''} />
-            <span>{formatCount(likeCount)}</span>
+        {/* Engagement toolbar — lightweight, evenly distributed icon actions
+            with the VANTA gold accent on active states. */}
+        <footer className="mt-2 flex w-full min-w-0 items-center justify-between gap-1 border-b border-white/[0.08] pb-2">
+          <button onClick={() => void toggleLike()} className={toolClass(liked ? 'text-[#f2c75c]' : '')} aria-label={liked ? 'Unlike post' : 'Like post'} aria-pressed={liked}>
+            <Heart size={20} className={liked ? 'fill-current' : ''} />
+            <span className="text-xs tabular-nums">{formatCount(likeCount)}</span>
           </button>
-          <button onClick={openComments} className={actionClass} aria-label="Open comments">
-            <MessageCircle size={18} />
-            <span>{formatCount(commentCount)}</span>
+          <button onClick={openComments} className={toolClass()} aria-label="Go to comments">
+            <MessageCircle size={20} />
+            <span className="text-xs tabular-nums">{formatCount(commentCount)}</span>
           </button>
-          <button onClick={() => setShareOpen(true)} className={actionClass} aria-label="Share post">
-            <Share2 size={18} />
-            <span>{formatCount(shareCount)}</span>
+          <button onClick={() => setShareOpen(true)} className={toolClass()} aria-label="Share post">
+            <Share2 size={20} />
+            <span className="text-xs tabular-nums">{formatCount(shareCount)}</span>
           </button>
-          <button onClick={() => void toggleSave()} className={actionClass + (savedState ? ' text-white' : '')} aria-label={savedState ? 'Remove from saved' : 'Save post'} aria-pressed={savedState}>
-            <Bookmark size={18} className={savedState ? 'fill-current' : ''} />
+          <button onClick={() => void toggleSave()} className={toolClass(savedState ? 'text-[#f2c75c]' : '')} aria-label={savedState ? 'Remove from saved' : 'Save post'} aria-pressed={savedState}>
+            <Bookmark size={20} className={savedState ? 'fill-current' : ''} />
+            <span className="sr-only">{savedState ? 'Saved' : 'Save'}</span>
           </button>
         </footer>
+
+        {/* View count + post metadata — compact, visually secondary. */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-white/[0.08] py-2.5 text-xs text-[#8a8a8a]">
+          {typeof post.views === 'number' && <span className="inline-flex items-center gap-1"><Eye size={13} /><span className="tabular-nums">{formatCount(post.views)} views</span></span>}
+          <span className="tabular-nums">{new Date(post.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+        </div>
       </article>
 
-      {/* Conversation — inline, beneath the post */}
-      <div ref={conversationRef} className="mt-3 w-full min-w-0 scroll-mt-16 overflow-hidden rounded-2xl border border-white/10 bg-[#101010]">
-        {token && (
+      {/* Comments flow naturally beneath the post — one continuous content
+          experience, no nested card. */}
+      <div ref={conversationRef} className="w-full min-w-0 scroll-mt-16 pt-1">
+        {token ? (
           <CommentPanel
             kind="post"
             postId={id}
@@ -248,6 +258,12 @@ return <main className="min-w-0 w-full text-white">
             onClose={() => undefined}
             onCountChange={count => setPost(current => current ? { ...current, commentsCount: count, comments: count } : current)}
           />
+        ) : (
+          <div className="px-1 py-12 text-center">
+            <div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-white/[0.04]"><MessageCircle size={20} className="text-white/25" /></div>
+            <p className="mt-3 text-sm font-medium text-white/60">Sign in to join the conversation.</p>
+            <button type="button" onClick={() => router.push('/login')} className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-[#f5f5f5] px-5 text-sm font-semibold text-black transition hover:bg-white">Sign in</button>
+          </div>
         )}
       </div>
     </div>
@@ -296,26 +312,24 @@ const timeAgo = (value?: string) => {
 
 function PostDetailSkeleton() {
   return (
-    <div className="mx-auto w-full min-w-0 max-w-[680px] px-3">
-      <div className="w-full rounded-2xl border border-white/10 bg-[#101010] p-4">
-        <div className="flex items-center gap-3">
-          <Skeleton variant="circular" width={40} height={40} />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="w-32" />
-            <Skeleton className="w-20" />
-          </div>
+    <div className="mx-auto w-full min-w-0 max-w-[640px] px-4">
+      <div className="flex items-start gap-3 pt-4">
+        <Skeleton variant="circular" width={44} height={44} />
+        <div className="flex-1 space-y-2 pt-1">
+          <Skeleton className="w-32" />
+          <Skeleton className="w-20" />
         </div>
-        <div className="mt-4 space-y-2">
-          <Skeleton />
-          <Skeleton className="w-3/4" />
-        </div>
-        <Skeleton variant="rectangular" height={240} className="mt-4" />
-        <div className="mt-4 flex gap-2">
-          <Skeleton variant="rectangular" height={44} className="flex-1" />
-          <Skeleton variant="rectangular" height={44} className="flex-1" />
-          <Skeleton variant="rectangular" height={44} className="flex-1" />
-          <Skeleton variant="rectangular" height={44} className="flex-1" />
-        </div>
+      </div>
+      <div className="mt-4 space-y-2">
+        <Skeleton />
+        <Skeleton className="w-3/4" />
+      </div>
+      <Skeleton variant="rectangular" height={240} className="mt-4 rounded-xl" />
+      <div className="mt-4 flex items-center justify-between border-b border-white/[0.08] pb-3">
+        <Skeleton className="w-14" />
+        <Skeleton className="w-14" />
+        <Skeleton className="w-14" />
+        <Skeleton className="w-14" />
       </div>
     </div>
   );
@@ -323,7 +337,7 @@ function PostDetailSkeleton() {
 
 function PostErrorState({ onRetry }: { onRetry: () => void }) {
   return (
-    <div className="mx-auto w-full min-w-0 max-w-[680px] px-3 py-16 text-center">
+    <div className="mx-auto w-full min-w-0 max-w-[640px] px-4 py-16 text-center">
       <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-white/[0.04]"><RefreshCw size={22} className="text-white/40" /></div>
       <h1 className="mt-4 text-lg font-semibold text-white">Couldn&apos;t load this post.</h1>
       <p className="mx-auto mt-2 max-w-xs text-sm leading-6 text-white/50">It may have been deleted or VANTA couldn&apos;t reach it. Try again in a moment.</p>

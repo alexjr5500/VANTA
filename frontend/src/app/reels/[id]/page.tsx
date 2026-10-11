@@ -1,23 +1,22 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bookmark, Clapperboard, Eye, Heart, Loader2, MessageCircle, MoreHorizontal, Share2, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Bookmark, Clapperboard, Eye, Heart, Loader2, MessageCircle, MoreHorizontal, Play, RefreshCw, Share2, Trash2, Volume2, VolumeX, X } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import type { VerificationType } from '@/types/verification';
-import PageHeader from '@/components/ui/PageHeader';
 import CommentPanel from '@/components/social/CommentPanel';
 import FeedPostMoreSheet from '@/components/social/FeedPostMoreSheet';
 import FeedPostShareSheet from '@/components/social/FeedPostShareSheet';
-import Skeleton from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
 import { renderTextWithLinks } from '@/lib/linkify';
+import { cn } from '@/lib/utils';
 
 type Creator = {
   id: string;
@@ -58,15 +57,18 @@ const timeAgo = (value?: string) => {
 /**
  * ReelDetailPage
  * --------------
- * Premium Reel detail surface — the "enter a Reel" view from a feed swipe or a
- * shared /reels/:id link. The Reel is the visual focus (compact ← / ⋮ navigation),
- * the creator row mirrors the feed, and the conversation lives INLINE beneath so
- * the page reads as "entering the Reel" instead of "opening a record".
+ * A dedicated, immersive Reel viewer — TikTok-style. The Reel owns the whole
+ * viewport: the video is presented full-height with its intrinsic aspect ratio
+ * (object-contain, never stretched), creator info and caption overlay the
+ * bottom-left with a contrast scrim, and the like/comment/share/save/more
+ * actions live in a lightweight vertical rail on the right. Comments open in
+ * a dedicated bottom sheet only when requested, so the video is never
+ * permanently covered.
  *
  * Every action hits the same real backend endpoints the Reels feed uses:
  * like/save (`POST /api/reels/:id/like|save`), report (`POST /api/compliance/reports`,
  * targetType VIDEO), view tracking (`POST /api/reels/:id/views`), deletion
- * (`DELETE /api/reels/:id`) and comments via the shared CommentPanel (inline
+ * (`DELETE /api/reels/:id`) and comments via the shared CommentPanel (sheet
  * `kind="reel"` mode). Sharing is client-side (copy / native / message) because
  * Reels have no server-side share counter.
  */
@@ -84,7 +86,20 @@ export default function ReelDetailPage({ params }: { params: { id: string } }) {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
-  const conversationRef = useRef<HTMLDivElement>(null);
+  // Immersive player state — play/pause, mute, buffering, progress, caption
+  // expansion, double-tap-like pulse and the comments bottom sheet.
+  const [muted, setMuted] = useState(true);
+  const [paused, setPaused] = useState(false);
+  const [videoLoading, setVideoLoading] = useState(true);
+  const [videoFailed, setVideoFailed] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [expandedCaption, setExpandedCaption] = useState(false);
+  const [likedPulse, setLikedPulse] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [signInPromptOpen, setSignInPromptOpen] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const tapTimerRef = useRef<number>();
+  const lastTapRef = useRef(0);
   const id = useMemo(() => decodeURIComponent(params.id).trim(), [params.id]);
 
   // Derived engagement state — declared before event handlers so the toggles
@@ -98,7 +113,6 @@ export default function ReelDetailPage({ params }: { params: { id: string } }) {
   // either so the page behaves identically from both entry points.
   const creator = reel?.creator ?? reel?.author;
   const isOwn = Boolean(creator && creator.id === user?.id);
-  const actionClass = 'flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.04] text-[#c8c8cc] transition hover:bg-white/[0.07] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40';
 
   useEffect(() => {
     let active = true;
@@ -172,8 +186,48 @@ export default function ReelDetailPage({ params }: { params: { id: string } }) {
     }
   };
 
+  // Immersive player behaviour — single tap toggles playback, double tap likes
+  // (mirroring the Reels feed). Timers are cleaned up on unmount.
+  useEffect(() => () => { if (tapTimerRef.current) window.clearTimeout(tapTimerRef.current); }, []);
+
+  const togglePlay = () => {
+    const element = videoRef.current;
+    if (!element) return;
+    if (element.paused) { setPaused(false); void element.play().catch(() => setPaused(true)); }
+    else { element.pause(); setPaused(true); }
+  };
+
+  const likeWithFeedback = () => {
+    if (!liked) void toggleLike();
+    setLikedPulse(true);
+    window.setTimeout(() => setLikedPulse(false), 520);
+  };
+
+  const handleVideoTap = () => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 280) {
+      if (tapTimerRef.current) window.clearTimeout(tapTimerRef.current);
+      likeWithFeedback();
+      lastTapRef.current = 0;
+      return;
+    }
+    lastTapRef.current = now;
+    tapTimerRef.current = window.setTimeout(togglePlay, 280);
+  };
+
+  const retryVideo = () => {
+    setVideoFailed(false);
+    setVideoLoading(true);
+    setProgress(0);
+    videoRef.current?.load();
+    void videoRef.current?.play().then(() => setPaused(false)).catch(() => setPaused(true));
+  };
+
+  // Comments open in a dedicated bottom sheet (the video is never permanently
+  // covered); signed-out viewers get a compact sign-in prompt instead.
   const openComments = () => {
-    conversationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (token) setCommentsOpen(true);
+    else setSignInPromptOpen(true);
   };
 
   const confirmDelete = async () => {
@@ -191,112 +245,159 @@ export default function ReelDetailPage({ params }: { params: { id: string } }) {
   };
 
   if (loading) {
-    return <main className="min-w-0 w-full text-white">
-      <PageHeader back={back} sticky bleed className="mb-1 px-4" title="Reel"
-        actions={<span className="grid h-10 w-10 place-items-center rounded-lg text-white/25"><MoreHorizontal size={19} /></span>} />
+    return <main className="relative h-[100dvh] w-full overflow-hidden bg-[#050505] text-white">
+      <ReelOverlayBack back={back} />
       <ReelDetailSkeleton />
     </main>;
   }
 
   if (unavailable || !reel || !creator) {
-    return <main className="min-w-0 w-full text-white">
-      <PageHeader back={back} sticky bleed className="mb-1 px-4" title="Reel" />
+    return <main className="relative h-[100dvh] w-full overflow-hidden bg-[#050505] text-white">
+      <ReelOverlayBack back={back} />
       <ReelErrorState onRetry={loadReel} />
     </main>;
   }
   const videoSrc = resolveMediaUrl(reel.videoUrl);
   const posterSrc = resolveMediaUrl(reel.thumbnailUrl);
+  const captionText = reel.description || reel.title || '';
 
-  return <main className="min-w-0 w-full text-white">
-    <PageHeader
-      back={back}
-      sticky bleed className="mb-1 px-4"
-      title="Reel"
-      actions={
-        <button type="button" onClick={() => setMoreOpen(true)} aria-label="More reel options" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#8a8a8a] transition hover:bg-white/[0.05] hover:text-white">
-          <MoreHorizontal size={19} />
-        </button>
-      }
-    />
+  return <main className="relative h-[100dvh] w-full overflow-hidden bg-black text-white">
+    {/* Immersive stage — edge-to-edge on mobile, centred on desktop. The video
+        keeps its intrinsic aspect ratio (object-contain, never stretched). */}
+    <div className="relative mx-auto h-full w-full max-w-[520px] overflow-hidden bg-black">
+      {/* Poster frame beneath the video while it loads or when it fails. */}
+      {posterSrc && (
+        <img
+          src={posterSrc}
+          alt=""
+          aria-hidden="true"
+          className={cn('absolute inset-0 h-full w-full object-contain transition-opacity duration-300', !videoLoading && !videoFailed && 'opacity-0')}
+        />
+      )}
+      <video
+        ref={videoRef}
+        src={videoSrc}
+        poster={posterSrc || undefined}
+        autoPlay
+        loop
+        playsInline
+        muted={muted}
+        preload="auto"
+        onClick={handleVideoTap}
+        onDoubleClick={likeWithFeedback}
+        onPlay={() => setPaused(false)}
+        onPause={() => setPaused(true)}
+        onLoadStart={() => { setVideoLoading(true); setVideoFailed(false); }}
+        onWaiting={() => setVideoLoading(true)}
+        onPlaying={() => { setVideoLoading(false); setVideoFailed(false); }}
+        onCanPlay={() => setVideoLoading(false)}
+        onTimeUpdate={event => { const element = event.currentTarget; setProgress(element.duration ? (element.currentTime / element.duration) * 100 : 0); }}
+        onError={() => { setVideoFailed(true); setVideoLoading(false); }}
+        className="absolute inset-0 h-full w-full object-contain"
+        aria-label={`Reel by ${creator.username}`}
+      />
 
-    <div className="mx-auto w-full min-w-0 max-w-[680px] px-3 pb-8">
-      <article className="w-full min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-[#101010]">
-        {/* Reel player */}
-        <div className="relative mx-auto w-full bg-black">
-          <video src={videoSrc} poster={posterSrc || undefined} controls autoPlay loop playsInline preload="metadata" className="max-h-[76dvh] w-full object-contain" aria-label={`Reel by ${creator.username}`} />
+      {/* Contrast scrim so overlay copy stays readable on bright frames. */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/70" />
+
+      {/* Top overlay — back, mute, more. */}
+      <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-2 px-3 pt-[calc(env(safe-area-inset-top)+8px)]">
+        <button type="button" onClick={back} aria-label="Go back" className="grid h-10 w-10 place-items-center rounded-full text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"><ArrowLeft size={21} /></button>
+        <div className="flex items-center gap-1">
+          <button type="button" onClick={() => setMuted(value => !value)} aria-label={muted ? 'Unmute reel' : 'Mute reel'} className="grid h-10 w-10 place-items-center rounded-full text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">{muted ? <VolumeX size={19} /> : <Volume2 size={19} />}</button>
+          <button type="button" onClick={() => setMoreOpen(true)} aria-label="More reel options" className="grid h-10 w-10 place-items-center rounded-full text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"><MoreHorizontal size={19} /></button>
         </div>
+      </div>
 
-        {/* Creator */}
-        <header className="flex items-start gap-3 p-3">
-          <Link href={`/profile/${creator.username}`} className="grid shrink-0 place-items-center" aria-label={`View ${creator.username}'s profile`}>
-            <Avatar src={creator.avatar} alt={creator.username} size="md" />
-          </Link>
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <Link href={`/profile/${creator.username}`} className="flex min-w-0 items-center gap-1.5 truncate text-sm font-semibold text-[#f5f5f5] hover:text-white">
-                <span className="min-w-0 truncate">{creator.fullName || creator.username}</span>
-                {creator.verified && creator.verificationType && <VerificationBadge verified type={creator.verificationType} size="sm" />}
-              </Link>
-              <span className="shrink-0 text-[11px] text-white/40">· {timeAgo(reel.createdAt)}</span>
-            </div>
-            <p className="truncate text-xs text-white/45">@{creator.username} · Reel</p>
+      {/* Buffering indicator. */}
+      {videoLoading && !videoFailed && (
+        <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center">
+          <Loader2 size={30} className="animate-spin text-white/80" />
+        </div>
+      )}
+
+      {/* Paused affordance. */}
+      {paused && !videoFailed && !videoLoading && (
+        <button type="button" onClick={togglePlay} aria-label="Play reel" className="absolute inset-0 z-10 m-auto grid h-14 w-14 place-items-center rounded-full bg-black/45 text-white backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+          <Play size={23} fill="white" />
+        </button>
+      )}
+
+      {/* Double-tap like pulse. */}
+      <AnimatePresence>
+        {likedPulse && (
+          <motion.div initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 1.15 }} className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
+            <Heart size={76} fill="white" className="drop-shadow-2xl text-white" />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Playback error — retry without leaving the viewer. */}
+      {videoFailed && (
+        <div className="absolute inset-0 z-20 grid place-items-center bg-black/85 px-6 text-center">
+          <div>
+            <Clapperboard size={30} className="mx-auto text-white/40" />
+            <p className="mt-3 text-sm font-medium text-white/75">This Reel couldn&apos;t be played.</p>
+            <button type="button" onClick={retryVideo} className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-lg bg-[#f5f5f5] px-4 text-sm font-semibold text-black transition hover:bg-white"><RefreshCw size={15} /> Try again</button>
           </div>
-        </header>
+        </div>
+      )}
 
-        {/* Reel text */}
-        {(reel.title || reel.description) && (
-          <div className="px-4 pb-2">
-            {reel.title && <h2 className="text-[15px] font-semibold text-[#f5f5f5]">{reel.title}</h2>}
-            {reel.description && <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-6 text-white/85">{renderTextWithLinks(reel.description, 'linkify')}</p>}
-          </div>
+      {/* Bottom-left overlay — creator, caption, compact metadata. */}
+      <div className="absolute inset-x-0 bottom-0 z-20 px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pr-20">
+        <Link href={`/profile/${creator.username}`} className="flex min-w-0 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60">
+          <Avatar src={creator.avatar} alt={creator.username} size="sm" />
+          <span className="min-w-0">
+            <span className="flex min-w-0 items-center gap-1 text-sm font-semibold text-white">
+              <span className="truncate">{creator.fullName || creator.username}</span>
+              {creator.verified && creator.verificationType && <VerificationBadge verified type={creator.verificationType} size="sm" />}
+            </span>
+            <span className="block truncate text-[11px] text-white/60">@{creator.username}</span>
+          </span>
+        </Link>
+        {captionText && (
+          <p className={cn('mt-2 max-w-[44ch] whitespace-pre-wrap break-words text-sm leading-5 text-white/90', !expandedCaption && 'line-clamp-2')}>{renderTextWithLinks(captionText, 'linkify')}</p>
         )}
+        {captionText.length > 110 && (
+          <button type="button" onClick={() => setExpandedCaption(value => !value)} className="mt-0.5 text-xs text-white/60 hover:text-white">{expandedCaption ? 'less' : 'more'}</button>
+        )}
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 text-xs text-white/60">
+          {typeof reel.views === 'number' && <span className="inline-flex items-center gap-1"><Eye size={12} /><span className="tabular-nums">{formatCount(reel.views)} views</span></span>}
+          {timeAgo(reel.createdAt) && <span>· {timeAgo(reel.createdAt)}</span>}
+        </div>
+      </div>
+      {/* Right action rail — lightweight icon actions, gold active states. */}
+      <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+20px)] right-2 z-20 flex flex-col items-center gap-3">
+        <ReelRailAction icon={<Heart className={liked ? 'fill-current' : ''} />} label={formatCount(likeCount)} ariaLabel={liked ? 'Unlike reel' : 'Like reel'} onClick={() => void toggleLike()} active={liked} />
+        <ReelRailAction icon={<MessageCircle />} label={formatCount(commentCount)} ariaLabel="Open comments" onClick={openComments} />
+        <ReelRailAction icon={<Share2 />} label="Share" ariaLabel="Share reel" onClick={() => setShareOpen(true)} />
+        <ReelRailAction icon={<Bookmark className={savedState ? 'fill-current' : ''} />} label={savedState ? 'Saved' : 'Save'} ariaLabel={savedState ? 'Remove from saved' : 'Save reel'} onClick={() => void toggleSave()} active={savedState} />
+        <ReelRailAction icon={<MoreHorizontal />} label="More" ariaLabel="More reel actions" onClick={() => setMoreOpen(true)} />
+      </div>
 
-        {/* Views — actual backend count */}
-        {typeof reel.views === 'number' && (
-          <div className="flex items-center gap-1.5 px-4 py-2.5 text-xs text-white/40"><Eye size={14} /><span className="tabular-nums">{formatCount(reel.views)} views</span></div>
-        )}
-
-        {/* Engagement */}
-        <footer className="flex items-center gap-2 border-t border-white/10 p-2">
-          <button onClick={() => void toggleLike()} className={actionClass + (liked ? ' text-[#f2c75c]' : '')} aria-label={liked ? 'Unlike reel' : 'Like reel'} aria-pressed={liked}>
-            <Heart size={18} className={liked ? 'fill-current' : ''} />
-            <span>{formatCount(likeCount)}</span>
-          </button>
-          <button onClick={openComments} className={actionClass} aria-label="Open comments">
-            <MessageCircle size={18} />
-            <span>{formatCount(commentCount)}</span>
-          </button>
-          <button onClick={() => setShareOpen(true)} className={actionClass} aria-label="Share reel">
-            <Share2 size={18} />
-          </button>
-          <button onClick={() => void toggleSave()} className={actionClass + (savedState ? ' text-white' : '')} aria-label={savedState ? 'Remove from saved' : 'Save reel'} aria-pressed={savedState}>
-            <Bookmark size={18} className={savedState ? 'fill-current' : ''} />
-          </button>
-        </footer>
-      </article>
-      {/* Conversation — inline, beneath the Reel */}
-      <div ref={conversationRef} className="mt-3 w-full min-w-0 scroll-mt-16 overflow-hidden rounded-2xl border border-white/10 bg-[#101010]">
-        {token && (
-          <CommentPanel
-            kind="reel"
-            postId={id}
-            postAuthor={creator}
-            initialCount={commentCount}
-            token={token}
-            currentUser={user}
-            inline
-            onClose={() => undefined}
-            onCountChange={count => setReel(current => current ? { ...current, commentsCount: count, comments: count } : current)}
-          />
-        )}
-        {!token && (
-          <div className="px-4 py-8 text-center">
-            <p className="text-sm text-white/55">Join VANTA to join the conversation.</p>
-            <Link href="/login" className="mt-3 inline-flex min-h-11 items-center rounded-xl bg-white px-5 text-sm font-bold text-black transition hover:bg-white/90">Sign in to comment</Link>
-          </div>
-        )}
+      {/* Playback progress. */}
+      <div className="absolute inset-x-0 bottom-0 z-30 h-0.5 bg-white/15">
+        <span className="block h-full bg-white transition-[width] duration-100" style={{ width: `${progress}%` }} />
       </div>
     </div>
+
+    {/* Comments — dedicated bottom sheet, opened on demand (the video is never
+        permanently covered); the sheet handles keyboard and safe areas. */}
+    <AnimatePresence>
+      {commentsOpen && token && (
+        <CommentPanel
+          kind="reel"
+          postId={id}
+          postAuthor={creator}
+          initialCount={commentCount}
+          token={token}
+          currentUser={user}
+          onClose={() => setCommentsOpen(false)}
+          onCountChange={count => setReel(current => current ? { ...current, commentsCount: count, comments: count } : current)}
+        />
+      )}
+      {signInPromptOpen && <ReelSignInSheet close={() => setSignInPromptOpen(false)} />}
+    </AnimatePresence>
 
     <AnimatePresence>
       {moreOpen && (
@@ -343,27 +444,19 @@ export default function ReelDetailPage({ params }: { params: { id: string } }) {
   </main>;
 }
 function ReelDetailSkeleton() {
+  // Lightweight pulse skeleton for the immersive viewer — no card chrome.
   return (
-    <div className="mx-auto w-full min-w-0 max-w-[680px] px-3">
-      <div className="w-full rounded-2xl border border-white/10 bg-[#101010] p-4">
+    <div className="absolute inset-0 grid place-items-center px-8">
+      <div className="w-full max-w-xs space-y-4">
         <div className="flex items-center gap-3">
-          <Skeleton variant="circular" width={40} height={40} />
+          <div className="h-10 w-10 animate-pulse rounded-full bg-white/10" />
           <div className="flex-1 space-y-2">
-            <Skeleton className="w-32" />
-            <Skeleton className="w-20" />
+            <div className="h-3 w-32 animate-pulse rounded bg-white/10" />
+            <div className="h-3 w-20 animate-pulse rounded bg-white/[0.07]" />
           </div>
         </div>
-        <Skeleton variant="rectangular" height={420} className="mt-4" />
-        <div className="mt-4 space-y-2">
-          <Skeleton className="w-1/2" />
-          <Skeleton className="w-3/4" />
-        </div>
-        <div className="mt-4 flex gap-2">
-          <Skeleton variant="rectangular" height={44} className="flex-1" />
-          <Skeleton variant="rectangular" height={44} className="flex-1" />
-          <Skeleton variant="rectangular" height={44} className="flex-1" />
-          <Skeleton variant="rectangular" height={44} className="flex-1" />
-        </div>
+        <div className="h-3 w-3/4 animate-pulse rounded bg-white/10" />
+        <div className="h-3 w-1/2 animate-pulse rounded bg-white/[0.07]" />
       </div>
     </div>
   );
@@ -371,15 +464,70 @@ function ReelDetailSkeleton() {
 
 function ReelErrorState({ onRetry }: { onRetry: () => void }) {
   return (
-    <div className="mx-auto w-full min-w-0 max-w-[680px] px-3 py-16 text-center">
-      <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-white/[0.04]"><Clapperboard size={22} className="text-white/40" /></div>
-      <h1 className="mt-4 text-lg font-semibold text-white">Couldn&apos;t load this Reel.</h1>
-      <p className="mx-auto mt-2 max-w-xs text-sm leading-6 text-white/50">It may have been deleted or VANTA couldn&apos;t reach it. Try again in a moment.</p>
-      <div className="mt-6 flex flex-wrap justify-center gap-2">
-        <button type="button" onClick={onRetry} className="rounded-lg bg-[#f5f5f5] px-5 py-3 text-sm font-semibold text-black transition hover:bg-white">Retry</button>
-        <Link href="/reels" className="rounded-lg border border-white/15 px-5 py-3 text-sm font-semibold text-white/75 transition hover:text-white">Back to Reels</Link>
+    <div className="absolute inset-0 grid place-items-center px-6 text-center">
+      <div>
+        <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-white/[0.04]"><Clapperboard size={22} className="text-white/40" /></div>
+        <h1 className="mt-4 text-lg font-semibold text-white">Couldn&apos;t load this Reel.</h1>
+        <p className="mx-auto mt-2 max-w-xs text-sm leading-6 text-white/50">It may have been deleted or VANTA couldn&apos;t reach it. Try again in a moment.</p>
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          <button type="button" onClick={onRetry} className="rounded-lg bg-[#f5f5f5] px-5 py-3 text-sm font-semibold text-black transition hover:bg-white">Retry</button>
+          <Link href="/reels" className="rounded-lg border border-white/15 px-5 py-3 text-sm font-semibold text-white/75 transition hover:text-white">Back to Reels</Link>
+        </div>
       </div>
     </div>
+  );
+}
+
+/** Floating back affordance used by the immersive loading / error states. */
+function ReelOverlayBack({ back }: { back: () => void }) {
+  return (
+    <div className="absolute inset-x-0 top-0 z-20 flex items-center px-3 pt-[calc(env(safe-area-inset-top)+8px)]">
+      <button type="button" onClick={back} aria-label="Go back" className="grid h-10 w-10 place-items-center rounded-full text-white transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"><ArrowLeft size={21} /></button>
+    </div>
+  );
+}
+
+/** Vertical action-rail button — lightweight icon + count, gold when active. */
+function ReelRailAction({ icon, label, ariaLabel, onClick, active }: { icon: ReactNode; label: string; ariaLabel: string; onClick: () => void; active?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={ariaLabel}
+      aria-pressed={active}
+      className={cn('flex flex-col items-center gap-1 text-[10px] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 active:scale-95', active ? 'text-[#f2c75c]' : 'text-white/85 hover:text-white')}
+    >
+      <span className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-[#161616]/80 backdrop-blur">{icon}</span>
+      <span className="tabular-nums">{label}</span>
+    </button>
+  );
+}
+
+/** Compact sign-in prompt for signed-out viewers tapping the comment action. */
+function ReelSignInSheet({ close }: { close: () => void }) {
+  return (
+    <>
+      <motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close} aria-label="Close sign-in prompt" className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm" />
+      <motion.section
+        role="dialog"
+        aria-modal="true"
+        aria-label="Sign in to comment"
+        initial={{ opacity: 0, y: 18 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 18 }}
+        className="fixed bottom-[var(--vanta-kb,0px)] left-0 right-0 z-50 mx-auto w-full max-w-md rounded-t-xl border border-white/[0.1] bg-[#161616] p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl"
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-semibold text-white">Join the conversation</h2>
+          <button type="button" onClick={close} aria-label="Close" className="grid h-9 w-9 place-items-center rounded-lg text-[#8a8a8a] hover:bg-white/[0.05] hover:text-white"><X size={18} /></button>
+        </div>
+        <p className="mb-4 text-sm text-white/55">Sign in to VANTA to like and reply to comments on this Reel.</p>
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" onClick={close} className="min-h-11 rounded-lg border border-white/10 px-4 text-sm text-[#c8c8cc] transition hover:bg-white/[0.05]">Not now</button>
+          <Link href="/login" className="inline-flex min-h-11 items-center rounded-lg bg-[#f5f5f5] px-5 text-sm font-semibold text-black transition hover:bg-white">Sign in</Link>
+        </div>
+      </motion.section>
+    </>
   );
 }
 

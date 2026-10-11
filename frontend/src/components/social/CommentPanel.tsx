@@ -181,9 +181,8 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
   if (isInline) {
     return (
       <section aria-label="Comments" className="w-full min-w-0">
-        <header className="flex shrink-0 items-center justify-between gap-3 border-t border-white/[.08] px-4 pt-4 sm:px-5">
+        <header className="flex shrink-0 items-center justify-between gap-3 px-1 pt-3">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/[0.05]"><MessageCircle size={15} className="text-[#c8c8cc]" /></span>
             <h2 id="comments-title" className="truncate text-sm font-bold text-[#f5f5f5]">Comments <span className="font-normal text-white/40">· {initialCount}</span></h2>
           </div>
           <span className="shrink-0 rounded-full border border-white/[0.08] bg-white/[0.04] p-0.5">
@@ -192,26 +191,28 @@ const [deleteConfirm, setDeleteConfirm] = useState<CommentItem | null>(null);
           </span>
         </header>
         {loading ? (
-          <div className="space-y-4 px-4 py-6 sm:px-5">{[1, 2, 3].map(item => <div key={item} className="flex animate-pulse gap-3"><div className="h-9 w-9 rounded-full bg-white/10" /><div className="h-14 flex-1 rounded-lg bg-white/[.05]" /></div>)}</div>
+          <div className="space-y-4 py-6">{[1, 2, 3].map(item => <div key={item} className="flex animate-pulse gap-3"><div className="h-9 w-9 rounded-full bg-white/10" /><div className="h-14 flex-1 rounded-lg bg-white/[.05]" /></div>)}</div>
         ) : loadError ? (
-          <div className="px-4 py-10 text-center sm:px-5">
+          <div className="py-10 text-center">
             <div className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-white/[0.04]"><MessageCircle size={18} className="text-white/25" /></div>
             <p className="mt-3 text-sm font-medium text-white/55">Comments could not load</p>
             <p className="mt-1 text-xs text-white/30">Check your connection and try again.</p>
             <button type="button" onClick={() => void load(true)} className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.05] px-4 text-xs font-medium text-white transition hover:bg-white/[0.1]"><RefreshCw size={14} /> Retry</button>
           </div>
         ) : comments.length ? (
-          <div className="px-4 sm:px-5">{comments.map(comment => <CommentRow key={comment.id} comment={comment} />)}</div>
+          <div>{comments.map(comment => <CommentRow key={comment.id} comment={comment} />)}</div>
         ) : (
-          <div className="px-4 py-10 text-center sm:px-5">
+          <div className="py-10 text-center">
             <div className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-white/[0.04]"><MessageCircle size={18} className="text-white/25" /></div>
-            <p className="mt-3 text-sm font-medium text-white/55">{search.trim() ? 'No matching comments' : 'Be the first to share your thoughts.'}</p>
+            <p className="mt-3 text-sm font-medium text-white/55">{search.trim() ? 'No matching comments' : 'No replies yet'}</p>
             <p className="mt-1 text-xs text-white/30">{search.trim() ? 'Try a different search or clear the search to see all comments.' : 'Start the conversation — your thoughts belong here.'}</p>
             {search.trim() && <button type="button" onClick={() => { setSearch(''); void load(true); }} className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-white/10 bg-white/[0.05] px-3.5 text-xs font-medium text-white transition hover:bg-white/[0.1]">Clear search</button>}
           </div>
         )}
         {loadingMore && <Loader2 className="mx-auto my-4 animate-spin text-white/50" />}
-        <form onSubmit={submit} className="relative shrink-0 px-4 pb-3 pt-2 sm:px-5">
+        {/* Inline composer — sticks above the mobile bottom navigation so it
+            stays reachable during long threads and never hides behind the nav. */}
+        <form onSubmit={submit} className={`relative shrink-0 px-1 pb-3 pt-2 ${isInline ? 'sticky bottom-[calc(64px+env(safe-area-inset-bottom))] z-20 border-t border-white/[0.06] bg-[var(--background)]/95 backdrop-blur-xl' : ''}`}>
           <div className="mb-2 flex items-center gap-2 text-[11px] text-white/50">
             {replyTo && <><span>Replying to @{replyTo.user.username}</span><button type="button" onClick={() => setReplyTo(null)} aria-label="Cancel reply"><X size={12} /></button></>}
             {editing && <><span>Editing comment</span><button type="button" onClick={() => { setEditing(null); setText(''); }} aria-label="Cancel edit"><X size={12} /></button></>}

@@ -282,6 +282,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // viewer: it must occupy exactly the viewport so the page never scrolls.
   const isStoryPage = pathname?.startsWith('/stories');
   const isReelsFeed = pathname === '/reels';
+  // A single-Reel page (/reels/:id) is an immersive viewing surface too: the
+  // Reel owns the viewport exactly like the Reels feed, so it receives no
+  // shell scroll container, no padding and no bottom navigation.
+  const isReelViewerPage = Boolean(pathname && /^\/reels\/.+/.test(pathname));
   // Admin and Creator Studio are desktop-style consoles that previously relied
   // on the shell padding; keep their classic low bottom inset so their layout
   // is byte-for-byte unchanged while they gain the standard scroll container.
@@ -314,7 +318,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     pathname === '/balance' ||
     pathname === '/live';
 
-  const isImmersiveSurface = isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isGoLivePage;
+  const isImmersiveSurface = isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage;
   const isScrollPage = !isImmersiveSurface;
 
   const handleLogout = useCallback(() => {
