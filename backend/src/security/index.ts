@@ -6,8 +6,8 @@
  */
 export { config } from './config';
 export { CryptoUtils } from './crypto';
-export { validateProductionSecrets, enforceSecretPolicy } from './startupValidation';
-import { enforceSecretPolicy } from './startupValidation';
+export { validateProductionSecrets, enforceSecretPolicy, validateRecoveryConfiguration, warnRecoveryConfiguration } from './startupValidation';
+import { enforceSecretPolicy, warnRecoveryConfiguration } from './startupValidation';
 export { SecurityValidator, validateRequest, ValidationRule } from './validation';
 export { Role, Permission, hasPermission, hasAllPermissions, hasAnyPermission, getPermissionsForRole, parseRole } from './rbac';
 export { rateLimiter } from './rateLimiter';
@@ -61,4 +61,7 @@ export async function initializeSecurity(): Promise<void> {
   if (bcryptRounds < 10) {
     console.warn('[SECURITY] BCRYPT_ROUNDS is too low. Set to at least 10 for production.');
   }
+
+  // Warn (non-fatal) when password-recovery delivery is not fully configured.
+  warnRecoveryConfiguration();
 }

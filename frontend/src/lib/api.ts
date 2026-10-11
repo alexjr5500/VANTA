@@ -39,6 +39,12 @@ export type ApiResponse<T = any> = {
   code?: number;
 };
 
+/** A password reset token verification response returned directly by the API. */
+export interface VerificationResponse {
+  valid: boolean;
+  message: string;
+}
+
 export class ApiError extends Error {
   constructor(
     public statusCode: number,

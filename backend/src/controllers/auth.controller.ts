@@ -495,13 +495,17 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
       return;
     }
     const normalized = email.trim().toLowerCase();
+    if (!SecurityValidator.isValidEmail(normalized)) {
+      res.status(400).json({ error: 'Invalid email format' });
+      return;
+    }
 
     await auditLog.log({ action: 'PASSWORD_RESET_REQUESTED', ipAddress: req.ip, metadata: { email: SecurityValidator.sanitizeText(normalized) } });
 
     // Real, server-side reset-token flow (rate limited at the route). The
     // response stays identical whether or not the account exists, so this
     // endpoint never discloses account existence.
-    await authService.forgotPassword(normalized);
+    await authService.forgotPassword(normalized, req.ip);
     res.status(200).json({ message: 'If an account exists with this email, a password reset link will be sent' });
   } catch (error) {
     res.status(200).json({ message: 'If an account exists with this email, a password reset link will be sent' });
@@ -526,10 +530,9 @@ export const verifyResetToken = async (req: Request, res: Response): Promise<voi
 };
 
 export const resetPassword = async (req: Request, res: Response): Promise<void> => {
-  // Previously this endpoint always returned "Password reset successfully"
-  // WITHOUT changing anything — a security control that did not exist. It now
-  // verifies the signed reset token, updates the hash and revokes every
-  // session for the account (see AuthService.resetPassword).
+  // Verifies the stored, hashed reset token, updates the hash and revokes
+  // every session for the account (see AuthService.resetPassword). The token
+  // itself establishes authorization — the client never supplies a userId.
   try {
     const { token, newPassword } = req.body;
     if (typeof token !== 'string' || !token) { res.status(400).json({ error: 'Token and new password are required' }); return; }
@@ -538,8 +541,7 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     const passValidation = SecurityValidator.isStrongPassword(newPassword);
     if (!passValidation.valid) { res.status(400).json({ error: passValidation.errors.join('. ') }); return; }
 
-    const result = await authService.resetPassword(token, newPassword);
-    await auditLog.log({ action: 'PASSWORD_RESET_COMPLETED', ipAddress: req.ip, severity: 'INFO' });
+    const result = await authService.resetPassword(token, newPassword, req.ip);
     res.status(200).json({ message: result.message });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Password reset failed' });

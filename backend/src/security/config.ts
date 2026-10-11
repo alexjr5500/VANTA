@@ -25,8 +25,16 @@ export const config = {
       expiresIn: process.env.EMAIL_VERIFICATION_EXPIRES_IN || '24h',
     },
     passwordReset: {
-      expiresIn: process.env.PASSWORD_RESET_EXPIRES_IN || '1h',
+      expiresIn: process.env.PASSWORD_RESET_EXPIRES_IN || '30m',
     },
+  },
+
+  /** Password recovery (Forgot-Password / Reset-Password) configuration */
+  passwordReset: {
+    // Entropy of the random opaque recovery token (>= 16, default 32 bytes).
+    tokenBytes: parseInt(process.env.PASSWORD_RESET_TOKEN_BYTES || '32', 10),
+    // Per-token attempt bound before the token is treated as invalid.
+    maxAttempts: parseInt(process.env.PASSWORD_RESET_MAX_ATTEMPTS || '10', 10),
   },
 
   /** Password Policy */

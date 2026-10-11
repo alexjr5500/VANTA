@@ -3,6 +3,11 @@ import jwt from "jsonwebtoken";
 import * as crypto from "crypto";
 import { prisma } from "../prisma";
 import { welcomeRewardService } from "./welcome-reward.service";
+import { CryptoUtils } from "../security/crypto";
+import { config } from "../security/config";
+import { auditLog } from "../security/auditLog";
+import { requireAppOrigin } from "../utils/app-origin";
+import { emailService } from "./email.service";
 
 const parseExpiryDuration = (value: string): number => {
   const trimmed = value.trim().toLowerCase();
@@ -501,69 +506,195 @@ export class AuthService {
 
   // ============ PASSWORD RESET ============
 
-  async forgotPassword(email: string) {
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      return { message: "Password reset link sent" };
+  /**
+   * Entropy of the random opaque recovery token (default 32 bytes = 256 bits),
+   * overridable via PASSWORD_RESET_TOKEN_BYTES. Never fewer than 16 bytes.
+   */
+  private resetTokenBytes(): number {
+    const configured = parseInt(process.env.PASSWORD_RESET_TOKEN_BYTES || '32', 10);
+    return Number.isNaN(configured) || configured < 16 ? 32 : configured;
+  }
+
+  private resetTokenTtlMs(): number {
+    return parseExpiryDuration(config.jwt.passwordReset.expiresIn);
+  }
+
+  /**
+   * Store ONLY a one-way SHA-256 hash of the recovery token. The raw token is
+   * never persisted, logged, or indexed anywhere.
+   */
+  private hashResetToken(rawToken: string): string {
+    return crypto.createHash('sha256').update(rawToken).digest('hex');
+  }
+
+  /**
+   * Build the recovery link from the TRUSTED, explicitly-configured application
+   * origin (APP_PUBLIC_URL / FRONTEND_URL) — never from the Host header.
+   */
+  private buildPasswordResetUrl(rawToken: string): string {
+    const origin = requireAppOrigin();
+    return `${origin}/reset-password?token=${encodeURIComponent(rawToken)}`;
+  }
+
+  private async cleanupExpiredResetTokensForUser(userId: string): Promise<void> {
+    await prisma.passwordResetToken.deleteMany({
+      where: { userId, OR: [{ expiresAt: { lt: new Date() } }, { usedAt: { not: null } }] },
+    });
+  }
+
+  /**
+   * Constant-ish delay applied on the missing-account path (and when a delivery
+   * cannot be attempted) so the network timing of a response cannot disclose
+   * whether an account exists. Rate limiting remains the primary defence.
+   */
+  private async simulateRecoveryLatency(): Promise<void> {
+    const ms = parseInt(process.env.PASSWORD_RESET_SIMULATED_LATENCY_MS || '250', 10);
+    if (!Number.isFinite(ms) || ms <= 0) return;
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async forgotPassword(email: string, ipAddress?: string) {
+    const normalized = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    if (!normalized) return { message: 'Password reset link sent' };
+
+    const user = await prisma.user.findUnique({ where: { email: normalized } });
+
+    if (!user || !user.email) {
+      await this.simulateRecoveryLatency();
+      return { message: 'Password reset link sent' };
     }
 
-    if (!process.env.JWT_SECRET) {
-      throw new Error("JWT_SECRET environment variable is not set");
-    }
-    const resetToken = jwt.sign(
-      { userId: user.id, type: 'password-reset' },
-      process.env.JWT_SECRET,
-      { expiresIn: '1h' }
-    );
+    // Clear expired/used tokens for this account before issuing a new one.
+    await this.cleanupExpiredResetTokensForUser(user.id);
 
-    // NOTE: the reset token is intentionally never logged. In production the
-    // delivery channel is an email/SMS integration. Development-only delivery
-    // (e.g. console printing) must go through an opt-in DEBUG_RESET_TOKEN flag
-    // that defaults to OFF so credentials are never written to logs.
-    if (process.env.DEBUG_RESET_TOKEN === 'true') {
-      console.warn(`[DEV] Password reset token for ${email}: ${resetToken}`);
+    const rawToken = CryptoUtils.generateSecureToken(this.resetTokenBytes());
+    const tokenHash = this.hashResetToken(rawToken);
+    const expiresAt = new Date(Date.now() + this.resetTokenTtlMs());
+    const resetUrl = this.buildPasswordResetUrl(rawToken);
+
+    let created: { id: string };
+    try {
+      // Superseding + creation are applied in ONE transaction: issuing a new
+      // token atomically invalidates (marks used) every other outstanding token
+      // for the account, so a previously-sent link can never be replayed after
+      // a newer request.
+      const results = await prisma.$transaction([
+        prisma.passwordResetToken.updateMany({
+          where: { userId: user.id, usedAt: null },
+          data: { usedAt: new Date() },
+        }),
+        prisma.passwordResetToken.create({
+          data: { userId: user.id, tokenHash, expiresAt, ipAddress: ipAddress || null },
+        }),
+      ]);
+      created = results[1];
+    } catch (error) {
+      console.error('[AUTH] Failed to persist password reset token:', error);
+      await this.simulateRecoveryLatency();
+      return { message: 'Password reset link sent' };
     }
 
-    return { message: "Password reset link sent" };
+    const expiresInMinutes = Math.max(1, Math.round(this.resetTokenTtlMs() / 60000));
+    const delivery = await emailService.sendPasswordResetEmail({
+      to: user.email,
+      resetUrl,
+      expiresInMinutes,
+    });
+
+    if (!delivery.delivered) {
+      // Never leave an undeliverable recovery token outstanding.
+      await prisma.passwordResetToken
+        .delete({ where: { id: created.id } })
+        .catch(() => undefined);
+      console.error('[AUTH] Password reset email delivery failed; recovery token invalidated. Reason:', delivery.reason);
+      await this.simulateRecoveryLatency();
+    }
+
+    return { message: 'Password reset link sent' };
   }
 
   async verifyPasswordResetToken(token: string): Promise<boolean> {
-    try {
-      if (!process.env.JWT_SECRET) {
-        throw new Error("JWT_SECRET environment variable is not set");
-      }
-      const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
-      return decoded.type === 'password-reset';
-    } catch {
-      return false;
-    }
+    if (typeof token !== 'string' || token.length < 24) return false;
+
+    const record = await prisma.passwordResetToken.findUnique({
+      where: { tokenHash: this.hashResetToken(token) },
+    });
+    if (!record) return false;
+    if (record.usedAt) return false;
+    if (record.expiresAt < new Date()) return false;
+    return true;
   }
 
-  async resetPassword(token: string, newPassword: string) {
-    try {
-      if (!process.env.JWT_SECRET) {
-        throw new Error("JWT_SECRET environment variable is not set");
-      }
-      const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
-
-      if (decoded.type !== 'password-reset') {
-        throw new Error("Invalid token type");
-      }
-
-      const salt = await bcrypt.genSalt(10);
-      const passwordHash = await bcrypt.hash(newPassword, salt);
-
-      const user = await prisma.user.update({
-        where: { id: decoded.userId },
-        data: { passwordHash },
-      });
-
-      await prisma.session.deleteMany({ where: { userId: user.id } });
-
-      return { message: "Password reset successfully" };
-    } catch (error) {
-      throw new Error("Invalid or expired token");
+  /**
+   * Complete a password reset. Consumes the token ATOMICALLY (the UPDATE ...
+   * WHERE usedAt IS NULL guarantees single-use even under concurrent
+   * submissions), updates the password hash with the application's bcrypt
+   * scheme, revokes every session, and only after the transaction commits
+   * sends the account-owner confirmation email.
+   */
+  async resetPassword(token: string, newPassword: string, ipAddress?: string) {
+    if (typeof token !== 'string' || token.length < 24) {
+      throw new Error('Invalid or expired token');
     }
+
+    const tokenHash = this.hashResetToken(token);
+    const record = await prisma.passwordResetToken.findUnique({ where: { tokenHash } });
+
+    if (!record) throw new Error('Invalid or expired token');
+    if (record.usedAt) throw new Error('Invalid or expired token');
+    if (record.expiresAt < new Date()) throw new Error('Invalid or expired token');
+
+    const maxAttempts = parseInt(process.env.PASSWORD_RESET_MAX_ATTEMPTS || '10', 10);
+    if (!Number.isNaN(maxAttempts) && record.attemptCount >= maxAttempts) {
+      throw new Error('Invalid or expired token');
+    }
+
+    const passwordHash = await CryptoUtils.hashPassword(newPassword);
+
+    await prisma.$transaction(async (tx) => {
+      // Atomic single-use consumption: only one concurrent submission can ever
+      // observe usedAt=null and win the update.
+      const consumed = await tx.passwordResetToken.updateMany({
+        where: { id: record.id, usedAt: null },
+        data: { usedAt: new Date(), attemptCount: { increment: 1 } },
+      });
+      if (consumed.count !== 1) {
+        throw new Error('Invalid or expired token');
+      }
+
+      await tx.user.update({ where: { id: record.userId }, data: { passwordHash } });
+
+      // Revoke every existing session (access AND refresh tokens): the auth
+      // middleware validates the access token against the Session row on every
+      // request, so deletion invalidates even the short-lived access JWTs.
+      await tx.session.deleteMany({ where: { userId: record.userId } });
+
+      // Clear the consumed + any superseded tokens for the account.
+      await tx.passwordResetToken.deleteMany({ where: { userId: record.userId, usedAt: { not: null } } });
+    });
+
+    // The password has COMMITTED at this point — only now notify the owner.
+    const user = await prisma.user.findUnique({
+      where: { id: record.userId },
+      select: { id: true, email: true },
+    });
+    if (user?.email) {
+      const delivery = await emailService
+        .sendPasswordChangedEmail({ to: user.email, reset: true })
+        .catch(() => ({ delivered: false as const, transport: 'none' as const, reason: 'send-failed' }));
+      if (!delivery.delivered) {
+        console.error('[AUTH] Password-change confirmation email delivery failed. Reason:', delivery.reason);
+      }
+    }
+
+    await auditLog.log({
+      userId: record.userId,
+      action: 'PASSWORD_RESET_COMPLETED',
+      ipAddress,
+      severity: 'INFO',
+    });
+
+    return { message: 'Password reset successfully' };
   }
 
   // ============ EMAIL VERIFICATION ============

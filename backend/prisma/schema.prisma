@@ -104,6 +104,7 @@ model User {
   notificationPrefs NotificationPreferences?
   securityLogs      SecurityLog[]
   sessions          Session[]
+  passwordResetTokens PasswordResetToken[]
   blockedUsers      BlockedUser[]            @relation("BlockedBy")
   blockedBy         BlockedUser[]            @relation("BlockedTarget")
   mutedUsers        MutedUser[]              @relation("MutedBy")
@@ -1127,6 +1128,28 @@ model PhoneOTP {
 
   @@index([phoneNumber, createdAt])
   @@index([expiresAt])
+}
+
+/// Short-lived, single-use password-recovery tokens for the Forgot-Password /
+/// Reset-Password flow. Stores ONLY a SHA-256 hash of the random token (never
+/// the raw token), is expiring (default 30 minutes), and is atomically consumed
+/// on successful password change. Issuing a new request invalidates all other
+/// outstanding tokens for the same account (superseding), so a leaked old link
+/// cannot be replayed after a newer request or a completed reset.
+model PasswordResetToken {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  usedAt       DateTime?
+  attemptCount Int       @default(0)
+  ipAddress    String?
+  createdAt    DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([usedAt])
 }
 
 model Session {

@@ -93,6 +93,9 @@
 .auth-strength.strength-2 i.on { background: var(--auth-silver); }
 .auth-strength.strength-3 i.on,.auth-strength.strength-4 i.on { background: var(--auth-gold); }
 .auth-strength-wrap > span { color: var(--auth-muted); font-size: 9px; }
+.auth-policy-hints { display: grid; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; }
+.auth-policy-hints li { display: flex; align-items: center; gap: 6px; color: var(--auth-muted); font-size: 10px; line-height: 1.4; transition: color .18s ease; }
+.auth-policy-hints li.met { color: #7fd0b6; }
 .auth-error { display: flex; align-items: flex-start; gap: 8px; margin: -2px 0 -3px; padding: 10px 12px; border: 1px solid rgba(190,91,91,.18); border-radius: 9px; color: #dfb0b0; background: rgba(128,45,45,.08); font-size: 11px; line-height: 1.45; }
 .auth-error svg { flex: 0 0 auto; margin-top: 1px; }
 .auth-submit {

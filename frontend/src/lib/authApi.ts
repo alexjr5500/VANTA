@@ -1,5 +1,5 @@
 import { apiPost, apiGet } from './apiClient';
-import type { ApiResponse } from './api';
+import type { ApiResponse, VerificationResponse } from './api';
 import type { VerificationType } from '@/types/verification';
 
 export interface AuthUser {
@@ -150,8 +150,8 @@ export const authGetSessions = async (token: string): Promise<ApiResponse> => {
 /**
  * Verify password reset token
  */
-export const authVerifyResetToken = async (token: string): Promise<ApiResponse> => {
-  return apiPost<ApiResponse>('/api/auth/verify-reset-token', { token });
+export const authVerifyResetToken = async (token: string): Promise<VerificationResponse> => {
+  return apiPost<VerificationResponse>('/api/auth/verify-reset-token', { token });
 };
 
 /**

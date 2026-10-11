@@ -1,12 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { API_BASE_URL } from '@/lib/api';
 import { useState, useEffect } from "react";
-import { Mail, ArrowLeft, ChevronRight, CheckCircle } from "lucide-react";
+import { Mail, ArrowLeft, CheckCircle } from "lucide-react";
 import { motion } from "framer-motion";
 import { ApiError } from "@/lib/api";
+import { authForgotPassword } from "@/lib/authApi";
 import VantaLogo from "@/components/ui/VantaLogo";
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Generic, privacy-preserving confirmation. This MUST NOT reveal whether the
+// supplied email belongs to a registered account — the backend returns the
+// same response either way, and the frontend mirrors it here.
+const GENERIC_CONFIRMATION =
+  "If an account exists with that email address, you'll receive instructions to reset your password.";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -19,19 +27,27 @@ export default function ForgotPassword() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setLoading(true);
 
+    const normalized = email.trim().toLowerCase();
+    if (!EMAIL_RE.test(normalized)) {
+      setError("Enter a valid email address.");
+      return;
+    }
+
+    setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || data.message || 'Failed to send reset email');
+      await authForgotPassword(normalized);
       setSent(true);
-    } catch (err: any) {
-      setError(err.message || "Something went wrong. Please try again.");
+    } catch (err: unknown) {
+      // Never surface whether the account exists. Only genuine client-side
+      // validation/network failures produce an error here.
+      if (err instanceof ApiError) {
+        setError(err.message || "Something went wrong. Please try again.");
+      } else if (err instanceof Error) {
+        setError(/network|fetch/i.test(err.message) ? "Check your connection and try again." : "Something went wrong. Please try again.");
+      } else {
+        setError("Something went wrong. Please try again.");
+      }
     } finally {
       setLoading(false);
     }
@@ -62,7 +78,7 @@ export default function ForgotPassword() {
                   </div>
                   <h1 className="text-2xl font-bold text-white mb-2">Check Your Email</h1>
                   <p className="text-sm text-white/40 mb-6">
-                    We've sent a password reset link to <strong className="text-white/60">{email}</strong>
+                    If an account exists with the address you provided, you will receive a password reset link.
                   </p>
                   <p className="text-xs text-white/30 mb-6">
                     Didn't receive the email? Check your spam folder or{" "}

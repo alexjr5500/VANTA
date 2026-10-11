@@ -7,6 +7,7 @@ import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../prisma';
 import { config } from './config';
 import { auditLog } from './auditLog';
+import { CryptoUtils } from './crypto';
 
 interface RateLimitConfig {
   windowMs: number;
@@ -146,6 +147,40 @@ class RateLimiter {
     windowMs: config.rateLimit.passwordReset.windowMs,
     max: config.rateLimit.passwordReset.max,
     message: 'Too many password reset attempts. Please try again later.',
+  });
+
+  /**
+   * Forgot-password requests, keyed per (normalized email + IP) so a single
+   * account cannot be spammed with recovery emails while still allowing the
+   * generic response to never disclose whether the account exists.
+   */
+  passwordResetRequest = this.createLimiter({
+    windowMs: config.rateLimit.passwordReset.windowMs,
+    max: config.rateLimit.passwordReset.max,
+    message: 'Too many password reset attempts. Please try again later.',
+    keyGenerator: (req) => {
+      const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      const raw = (req.body || {}) as any;
+      const email = typeof raw?.email === 'string' ? raw.email.trim().toLowerCase() : '';
+      return email ? `passwordReset:${email}:${ip}` : `passwordReset:ip:${ip}`;
+    },
+  });
+
+  /**
+   * Reset-token validation / reset attempts, keyed per IP + a short hash of
+   * the submitted token (the raw token is never used in a key or logged).
+   */
+  resetTokenCheck = this.createLimiter({
+    windowMs: parseInt(process.env.RATE_LIMIT_RESET_TOKEN_WINDOW || '900000', 10), // 15 min
+    max: parseInt(process.env.RATE_LIMIT_RESET_TOKEN_MAX || '10', 10),
+    message: 'Too many reset link checks. Please try again later.',
+    keyGenerator: (req) => {
+      const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      const raw = (req.body || {}) as any;
+      const token = typeof raw?.token === 'string' ? raw.token : '';
+      const short = token ? CryptoUtils.sha256(token).slice(0, 32) : '';
+      return short ? `resetTokenCheck:${short}:${ip}` : `resetTokenCheck:ip:${ip}`;
+    },
   });
 
   otp = this.createLimiter({

@@ -53,8 +53,8 @@ router.post('/login/2fa', rateLimiter.login2fa, completeLogin2FA);
 router.post('/refresh', rateLimiter.api, refreshToken);
 
 // Password reset
-router.post('/forgot-password', rateLimiter.passwordReset, forgotPassword);
-router.post('/verify-reset-token', verifyResetToken);
+router.post('/forgot-password', rateLimiter.passwordResetRequest, forgotPassword);
+router.post('/verify-reset-token', rateLimiter.resetTokenCheck, verifyResetToken);
 router.post('/reset-password', rateLimiter.passwordReset, resetPassword);
 
 // Email verification

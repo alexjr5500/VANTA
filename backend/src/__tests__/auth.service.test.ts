@@ -2,6 +2,7 @@ import { AuthService } from '../services/auth.service';
 import { prisma } from '../prisma';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { emailService } from '../services/email.service';
 import { describe, expect, test, jest, beforeAll, afterAll, beforeEach } from '@jest/globals';
 
 // Mock the prisma client
@@ -12,6 +13,7 @@ jest.mock('../prisma', () => ({
       findFirst: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     session: {
       create: jest.fn(),
@@ -32,6 +34,25 @@ jest.mock('../prisma', () => ({
     wallet: {
       create: jest.fn(),
     },
+    passwordResetToken: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      updateMany: jest.fn(),
+      delete: jest.fn(),
+      deleteMany: jest.fn(),
+    },
+    securityLog: {
+      findFirst: jest.fn(),
+      create: jest.fn(),
+    },
+    $transaction: jest.fn(),
+  },
+}));
+
+jest.mock('../services/email.service', () => ({
+  emailService: {
+    sendPasswordResetEmail: jest.fn(),
+    sendPasswordChangedEmail: jest.fn(),
   },
 }));
 
@@ -303,49 +324,176 @@ describe('AuthService', () => {
     });
   });
 
-  describe('forgotPassword', () => {
-    test('should generate reset token for existing user', async () => {
-      (prisma.user.findUnique as jest.Mock).mockResolvedValue(mockUser);
-      (jwt.sign as jest.Mock).mockReturnValue('reset_token');
-
-      const result = await authService.forgotPassword('test@example.com');
-      expect(result.message).toBe('Password reset link sent');
+  describe('forgotPassword (opaque DB-stored recovery tokens)', () => {
+    beforeEach(() => {
+      // Support the batch $transaction([...]) form used by forgotPassword: the
+      // mocked model methods are already invoked, so the array holds promises.
+      (prisma.$transaction as jest.Mock).mockImplementation(async (input: any) =>
+        Array.isArray(input) ? Promise.all(input) : input(prisma)
+      );
+      (prisma.passwordResetToken.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
+      (prisma.passwordResetToken.delete as jest.Mock).mockResolvedValue({ id: 'reset-1' });
+      (prisma.passwordResetToken.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+      (prisma.passwordResetToken.create as jest.Mock).mockImplementation(async ({ data }: any) => ({
+        id: 'reset-1',
+        ...data,
+      }));
+      (emailService.sendPasswordResetEmail as jest.Mock).mockResolvedValue({ delivered: true });
     });
 
-    test('should not reveal if user does not exist', async () => {
+    test('issues a SHA-256-hashed (never raw) token and delivers the recovery email', async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(mockUser);
+
+      const result = await authService.forgotPassword('Test@Example.com');
+      expect(result.message).toBe('Password reset link sent');
+
+      // Only a 64-char hex SHA-256 hash is persisted — never the raw token.
+      const createArgs = (prisma.passwordResetToken.create as jest.Mock).mock.calls[0][0];
+      expect(createArgs.data.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(createArgs.data.userId).toBe('user1');
+      expect(createArgs.data.expiresAt.getTime()).toBeGreaterThan(Date.now());
+
+      // Outstanding tokens were superseded in the same transaction.
+      expect(prisma.passwordResetToken.updateMany as jest.Mock).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: 'user1', usedAt: null } })
+      );
+
+      // The email received the raw token via the trusted-origin reset URL.
+      const emailArgs = (emailService.sendPasswordResetEmail as jest.Mock).mock.calls[0][0];
+      expect(emailArgs.to).toBe(mockUser.email);
+      expect(emailArgs.resetUrl).toContain('/reset-password?token=');
+    });
+
+    test('returns the same message and skips delivery for unknown accounts', async () => {
       (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
 
       const result = await authService.forgotPassword('nonexistent@example.com');
       expect(result.message).toBe('Password reset link sent');
+      expect(prisma.passwordResetToken.create as jest.Mock).not.toHaveBeenCalled();
+      expect(emailService.sendPasswordResetEmail as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    test('invalidates the issued token when email delivery fails', async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue(mockUser);
+      (emailService.sendPasswordResetEmail as jest.Mock).mockResolvedValue({
+        delivered: false,
+        transport: 'none',
+        reason: 'not-configured',
+      });
+
+      const result = await authService.forgotPassword('test@example.com');
+      // Still the generic response — delivery failure never discloses state.
+      expect(result.message).toBe('Password reset link sent');
+      // The undeliverable token was deleted so it cannot linger valid.
+      expect(prisma.passwordResetToken.delete as jest.Mock).toHaveBeenCalledWith({
+        where: { id: 'reset-1' },
+      });
     });
   });
 
-  describe('resetPassword', () => {
-    test('should reset password with valid token', async () => {
-      (jwt.verify as jest.Mock).mockReturnValue({ userId: 'user1', type: 'password-reset' });
+  describe('resetPassword (single-use opaque tokens)', () => {
+    const validRecord = {
+      id: 'reset-token-1',
+      userId: 'user1',
+      tokenHash: 'a'.repeat(64),
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      usedAt: null,
+      attemptCount: 0,
+      ipAddress: null,
+      createdAt: new Date(),
+    };
+
+    beforeEach(() => {
+      // Support the interactive $transaction(async (tx) => ...) form.
+      (prisma.$transaction as jest.Mock).mockImplementation(async (input: any) => {
+        if (typeof input === 'function') {
+          return input({
+            passwordResetToken: prisma.passwordResetToken,
+            user: prisma.user,
+            session: prisma.session,
+          });
+        }
+        return Array.isArray(input) ? Promise.all(input) : input;
+      });
+      (prisma.passwordResetToken.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      (prisma.passwordResetToken.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
       (prisma.user.update as jest.Mock).mockResolvedValue(mockUser);
       (prisma.session.deleteMany as jest.Mock).mockResolvedValue({ count: 1 });
-
-      const result = await authService.resetPassword('valid_token', 'newpassword123');
-      expect(result.message).toBe('Password reset successfully');
+      (bcrypt.hash as jest.Mock).mockResolvedValue('hashed_password');
+      (emailService.sendPasswordChangedEmail as jest.Mock).mockResolvedValue({ delivered: true });
     });
 
-    test('should throw error for invalid token type', async () => {
-      (jwt.verify as jest.Mock).mockReturnValue({ userId: 'user1', type: 'wrong-type' });
+    test('updates the password hash and revokes all sessions with a valid token', async () => {
+      (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue(validRecord);
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue({ id: 'user1', email: 'test@example.com' });
+
+      const result = await authService.resetPassword('a-valid-token-0123456789abcdef', 'NewStr0ng!Pass1');
+      expect(result.message).toBe('Password reset successfully');
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'user1' } })
+      );
+      expect(prisma.session.deleteMany).toHaveBeenCalledWith({ where: { userId: 'user1' } });
+      // Confirmation email is only sent AFTER the transaction committed.
+      expect(emailService.sendPasswordChangedEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: 'test@example.com', reset: true })
+      );
+    });
+
+    test('rejects unknown / garbage tokens without touching the account', async () => {
+      (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue(null);
 
       await expect(
-        authService.resetPassword('invalid_token', 'newpassword123')
+        authService.resetPassword('unknown-token-0123456789abcdef', 'NewStr0ng!Pass1')
       ).rejects.toThrow('Invalid or expired token');
+      expect(prisma.user.update as jest.Mock).not.toHaveBeenCalled();
+      expect(prisma.session.deleteMany as jest.Mock).not.toHaveBeenCalled();
     });
 
-    test('should throw error for expired token', async () => {
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new Error('jwt expired');
+    test('rejects previously used (consumed) tokens', async () => {
+      (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue({
+        ...validRecord,
+        usedAt: new Date(),
       });
 
       await expect(
-        authService.resetPassword('expired_token', 'newpassword123')
+        authService.resetPassword('used-token-0123456789abcdef', 'NewStr0ng!Pass1')
       ).rejects.toThrow('Invalid or expired token');
+      expect(prisma.user.update as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    test('rejects expired tokens', async () => {
+      (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue({
+        ...validRecord,
+        expiresAt: new Date(Date.now() - 1000),
+      });
+
+      await expect(
+        authService.resetPassword('expired-token-0123456789abcdef', 'NewStr0ng!Pass1')
+      ).rejects.toThrow('Invalid or expired token');
+      expect(prisma.user.update as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    test('rejects concurrent consumption when the token is already claimed (count=0)', async () => {
+      (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue(validRecord);
+      // Simulates a race: another request consumed the token first.
+      (prisma.passwordResetToken.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+
+      await expect(
+        authService.resetPassword('race-token-0123456789abcdef', 'NewStr0ng!Pass1')
+      ).rejects.toThrow('Invalid or expired token');
+      expect(prisma.user.update as jest.Mock).not.toHaveBeenCalled();
+      expect(prisma.session.deleteMany as jest.Mock).not.toHaveBeenCalled();
+    });
+
+    test('stores only a bcrypt hash of the new password (never plaintext)', async () => {
+      (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue(validRecord);
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue({ id: 'user1', email: 'test@example.com' });
+
+      await authService.resetPassword('hash-check-token-0123456789ab', 'NewStr0ng!Pass1');
+
+      const updateArgs = (prisma.user.update as jest.Mock).mock.calls[0][0];
+      expect(updateArgs.data.passwordHash).toBe('hashed_password');
+      expect(updateArgs.data.passwordHash).not.toBe('NewStr0ng!Pass1');
     });
   });
 
@@ -491,27 +639,59 @@ describe('AuthService', () => {
     });
   });
 
-  describe('verifyPasswordResetToken', () => {
-    test('should return true for valid password reset token', async () => {
-      (jwt.verify as jest.Mock).mockReturnValue({ type: 'password-reset' });
+  describe('verifyPasswordResetToken (opaque DB tokens)', () => {
+    const validRecord = {
+      id: 'reset-token-1',
+      userId: 'user1',
+      tokenHash: 'a'.repeat(64),
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      usedAt: null,
+      attemptCount: 0,
+      ipAddress: null,
+      createdAt: new Date(),
+    };
 
-      const result = await authService.verifyPasswordResetToken('valid_token');
+    test('returns true for a genuine, unexpired, unused token', async () => {
+      (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue(validRecord);
+
+      const result = await authService.verifyPasswordResetToken('a-genuine-token-0123456789abcdef');
       expect(result).toBe(true);
+      // The lookup must be by HASH, never by raw token.
+      const where = (prisma.passwordResetToken.findUnique as jest.Mock).mock.calls[0][0].where;
+      expect(where.tokenHash).toBeDefined();
+      expect(where.tokenHash).not.toBe('a-genuine-token-0123456789abcdef');
     });
 
-    test('should return false for invalid token', async () => {
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new Error('Invalid');
-      });
+    test('returns false for short/garbage tokens without a database lookup', async () => {
+      const result = await authService.verifyPasswordResetToken('short');
+      expect(result).toBe(false);
+      expect(prisma.passwordResetToken.findUnique as jest.Mock).not.toHaveBeenCalled();
+    });
 
-      const result = await authService.verifyPasswordResetToken('invalid');
+    test('returns false for an unknown token', async () => {
+      (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue(null);
+
+      const result = await authService.verifyPasswordResetToken('unknown-token-0123456789abcdef');
       expect(result).toBe(false);
     });
 
-    test('should return false for non-reset token type', async () => {
-      (jwt.verify as jest.Mock).mockReturnValue({ type: 'other' });
+    test('returns false for a consumed (used) token', async () => {
+      (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue({
+        ...validRecord,
+        usedAt: new Date(),
+      });
 
-      const result = await authService.verifyPasswordResetToken('valid_token');
+      const result = await authService.verifyPasswordResetToken('used-token-0123456789abcdef');
+      expect(result).toBe(false);
+    });
+
+    test('returns false for an expired token', async () => {
+      (prisma.passwordResetToken.findUnique as jest.Mock).mockResolvedValue({
+        ...validRecord,
+        expiresAt: new Date(Date.now() - 1000),
+      });
+
+      const result = await authService.verifyPasswordResetToken('expired-token-0123456789abcdef');
       expect(result).toBe(false);
     });
   });
