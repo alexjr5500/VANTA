@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { type MouseEvent as ReactMouseEvent } from 'react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
-import PostMedia from '@/components/social/PostMedia';
+import PostMedia, { PostMediaCarousel, type PostAttachment } from '@/components/social/PostMedia';
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { isVideoItem, detailPathFor } from '@/lib/feedIdentity';
@@ -57,11 +57,34 @@ const relativeTime = (value?: string) => {
 };
 const getAuthor = (item: Item) => item.author || item.user || item.creator || item.host || {};
 const mediaUrl = (item: Item) => resolveMediaUrl(item.media || item.mediaUrl || item.image || item.thumbnail || item.coverUrl || item.playbackUrl);
+
+/**
+ * Ordered media attachments for a post. VANTA multi-media posts return an
+ * `attachments` array; single-media posts keep working through `mediaUrl`, so
+ * both shapes collapse into one ordered list here.
+ */
+const postAttachments = (item: Item): PostAttachment[] => {
+  const raw = (item as any).attachments;
+  if (Array.isArray(raw) && raw.length > 0) {
+    const resolved = raw
+      .map((attachment: any) => ({
+        id: attachment?.id,
+        url: resolveMediaUrl(attachment?.url || attachment?.src || ''),
+        type: attachment?.type,
+        mimeType: attachment?.mimeType,
+      }))
+      .filter((attachment: PostAttachment) => Boolean(attachment.url));
+    if (resolved.length > 0) return resolved;
+  }
+  const single = mediaUrl(item);
+  return single ? [{ url: single }] : [];
+};
 export default function FeedPostCard({ item, currentUserId, onLike, onSave, onComment, onShare, onGift, onFollow, onMore }: FeedPostCardProps) {
   const router = useRouter();
   const creator = getAuthor(item);
   const isOwn = creator.id === currentUserId;
   const source = mediaUrl(item);
+  const attachments = postAttachments(item);
   const profilePath = creator.username ? `/profile/${creator.username}` : '/profile';
   const actionClass = 'flex min-h-10 items-center gap-1.5 rounded-lg px-2 text-[11px] text-[#8a8a8a] transition hover:bg-white/[.045] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40';
   const caption = item.content || item.description;
@@ -103,7 +126,19 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
         {item.hashtags && <p className="text-[11px] text-[#c9a227]">{Array.isArray(item.hashtags) ? item.hashtags.map((tag: string) => `#${tag}`).join(' ') : item.hashtags}</p>}
         {/* Media sits INSIDE the content column so it aligns with the caption,
             matching text posts exactly. No full-bleed, no negative margins. */}
-        {source && <div className="mt-0.5 overflow-hidden rounded-lg border border-white/[.07] bg-[#080808]"><PostMedia src={source} isVideo={isVideoItem(item)} alt={caption || `Post by ${creator.username || 'creator'}`} onDoubleClick={() => { if (!item.liked) onLike(item); }}/></div>}
+        {attachments.length > 0 && (
+          <div className="mt-0.5 overflow-hidden rounded-lg border border-white/[.07] bg-[#080808]">
+            {attachments.length > 1 ? (
+              <PostMediaCarousel
+                attachments={attachments}
+                alt={caption || `Post by ${creator.username || 'creator'}`}
+                onDoubleClick={() => { if (!item.liked) onLike(item); }}
+              />
+            ) : (
+              <PostMedia src={source} isVideo={isVideoItem(item)} alt={caption || `Post by ${creator.username || 'creator'}`} onDoubleClick={() => { if (!item.liked) onLike(item); }}/>
+            )}
+          </div>
+        )}
         <footer className="flex min-w-0 items-center justify-between gap-1 pt-0.5">
           <div className="flex min-w-0 items-center">
             <button type="button" onClick={() => onLike(item)} aria-label={item.liked ? 'Unlike post' : 'Like post'} aria-pressed={item.liked} className={cn(actionClass, item.liked && 'text-[#f2c75c]')}><Heart size={17} className={item.liked ? 'fill-current' : ''}/><span>{formatCount(item.likes)}</span></button>

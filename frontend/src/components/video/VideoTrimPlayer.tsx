@@ -85,7 +85,8 @@ export default function VideoTrimPlayer({
   };
 
   // Vertical videos keep a phone-like, height-capped column so the modal stays
-  // manageable while preserving the source's aspect ratio.
+  // manageable while preserving the source's aspect ratio. The portrait cap
+  // also keeps the timeline + action bar on screen at 360px widths.
   const maxWidth = aspect && aspect <= 1 ? 'min(100%, 300px)' : 'min(100%, 520px)';
 
   return (
@@ -93,52 +94,61 @@ export default function VideoTrimPlayer({
       <div
         ref={containerRef}
         className="relative w-full overflow-hidden rounded-2xl border border-white/[0.08] bg-black"
-        style={{
-          aspectRatio: aspect && aspect > 0 ? String(aspect) : undefined,
-          minHeight: aspect && aspect > 0 ? undefined : 200,
-        }}
-        onClick={togglePlay}
       >
-        <video
-          ref={videoRef}
-          src={src}
-          preload="auto"
-          playsInline
-          className="pointer-events-none absolute inset-0 h-full w-full object-contain"
-          onLoadedMetadata={() => {
-            const video = videoRef.current;
-            setDuration(video?.duration || 0);
-            onLoadedMetadata?.();
+        {/* Video stage: the aspect-ratio box belongs ONLY to the video so the
+            control bar below never steals frame height or distorts the
+            letterbox calculation. object-contain preserves the source ratio
+            for portrait, landscape and square without stretching. */}
+        <div
+          className="relative w-full overflow-hidden bg-black"
+          style={{
+            aspectRatio: aspect && aspect > 0 ? String(aspect) : '16 / 9',
+            minHeight: aspect && aspect > 0 ? undefined : 200,
+            maxHeight: '52dvh',
           }}
-          onError={onError}
-          onTimeUpdate={() => {
-            setCurrent(videoRef.current?.currentTime || 0);
-            onTimeUpdate?.();
-          }}
-          onPlay={() => {
-            setPlaying(true);
-            onPlay?.();
-          }}
-          onPause={() => {
-            setPlaying(false);
-            onPause?.();
-          }}
-          onEnded={() => {
-            setPlaying(false);
-            onEnded?.();
-          }}
-        />
+          onClick={togglePlay}
+        >
+          <video
+            ref={videoRef}
+            src={src}
+            preload="auto"
+            playsInline
+            className="pointer-events-none absolute inset-0 h-full w-full object-contain"
+            onLoadedMetadata={() => {
+              const video = videoRef.current;
+              setDuration(video?.duration || 0);
+              onLoadedMetadata?.();
+            }}
+            onError={onError}
+            onTimeUpdate={() => {
+              setCurrent(videoRef.current?.currentTime || 0);
+              onTimeUpdate?.();
+            }}
+            onPlay={() => {
+              setPlaying(true);
+              onPlay?.();
+            }}
+            onPause={() => {
+              setPlaying(false);
+              onPause?.();
+            }}
+            onEnded={() => {
+              setPlaying(false);
+              onEnded?.();
+            }}
+          />
 
-        {loading && (
-          <div className="pointer-events-none absolute inset-0 grid place-items-center">
-            <div className="flex flex-col items-center gap-2 text-white/40">
-              <Loader2 size={28} className="animate-spin" />
-              <span className="text-xs">Preparing preview…</span>
+          {loading && (
+            <div className="pointer-events-none absolute inset-0 grid place-items-center">
+              <div className="flex flex-col items-center gap-2 text-white/40">
+                <Loader2 size={28} className="animate-spin" />
+                <span className="text-xs">Preparing preview…</span>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {overlay}
+          {overlay}
+        </div>
 
         {!controlsHidden && (
           <div

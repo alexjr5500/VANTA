@@ -274,6 +274,17 @@ export default function VideoTrimEditor({
     setError('This video could not be read. It may be corrupted, damaged, or in an unsupported format.');
   }, []);
 
+  /** Human-readable source shape so users can tell at a glance that the
+      preview preserves their footage: Portrait / Landscape / Square. */
+  const sourceShape =
+    !videoAspect || !Number.isFinite(videoAspect)
+      ? null
+      : videoAspect < 0.95
+        ? 'Portrait source'
+        : videoAspect > 1.05
+          ? 'Landscape source'
+          : 'Square source';
+
   const handleReviewError = useCallback(() => {
     setError('The trimmed video could not be played. Please trim again.');
   }, []);
@@ -530,9 +541,15 @@ export default function VideoTrimEditor({
                   </span>
                   <span>{formatFileSize(activeFile.size)}</span>
                   {duration > 0 && <span>Duration {formatVideoTime(duration)}</span>}
+                  {sourceShape && (
+                    <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[10px] font-medium text-white/60">
+                      {sourceShape} · preview preserves full frame
+                    </span>
+                  )}
                 </div>
 
-                {/* Errors */}
+                {/* Errors with a visible Replace fallback so a corrupt /
+                    unsupported file never dead-ends the editor. */}
                 {error && (
                   <div className="mt-3 w-full text-left">
                     <div className="form-error flex items-center justify-between gap-3">
@@ -540,7 +557,7 @@ export default function VideoTrimEditor({
                       <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
-                        className="flex shrink-0 items-center gap-1 text-[11px] font-semibold text-[var(--vanta-gold-bright)] hover:underline"
+                        className="flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-3 text-[11px] font-semibold text-[var(--vanta-gold-bright)] hover:underline"
                       >
                         <RefreshCw size={11} /> Replace
                       </button>

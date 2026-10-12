@@ -67,26 +67,70 @@ export const createPost = async (req: AuthRequest, res: Response): Promise<void>
     const userId = req.user?.userId;
     if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
 
-    const { content, mediaUrl, mediaFileId } = req.body;
+    const { content, mediaUrl, mediaFileId, media } = req.body;
+
     if (!content || !content.trim()) {
       res.status(400).json({ error: "Content is required" });
       return;
     }
 
-    const post = await feedService.createPost(userId, content.trim(), mediaUrl);
-    if (typeof mediaFileId === "string") {
-      try {
-        await uploadService.linkFile(mediaFileId, userId, "Post", post.id, ["post-image", "post-video", "post-media", "generic"]);
-      } catch (error) {
-        await feedService.deletePost(post.id, userId);
-        throw error;
+    // Multi-attachment contract (additive + backward compatible).
+    //   media.fileIds / media.urls  -> ordered VANTA multi-media post
+    //   mediaFileId / mediaUrl      -> legacy single-attachment clients
+    // Everything selected in one composer is uploaded individually and linked
+    // to the SAME post, so a multi-media post really stores every attachment.
+    const mediaFileIds: string[] = Array.isArray(media?.fileIds)
+      ? media.fileIds.filter((value: unknown): value is string => typeof value === "string")
+      : [];
+    const mediaUrls: string[] = Array.isArray(media?.urls)
+      ? media.urls.filter((value: unknown): value is string => typeof value === "string")
+      : [];
+    if (!mediaFileIds.length && typeof mediaFileId === "string") mediaFileIds.push(mediaFileId);
+
+    // The primary URL keeps the legacy `media` field working for every existing
+    // consumer (home feed, profile, search, share previews…).
+    const primaryUrl =
+      mediaUrls[0] ?? (typeof mediaUrl === "string" ? mediaUrl : undefined);
+
+    const post = await feedService.createPost(userId, content.trim(), primaryUrl);
+
+    // Link EVERY selected upload to this post. UploadedFile rows already key on
+    // (recordType, recordId), so N attachments per post need no schema change.
+    const linked: string[] = [];
+    try {
+      for (const fileId of mediaFileIds) {
+        await uploadService.linkFile(fileId, userId, "Post", post.id, ["post-image", "post-video", "post-media", "generic"]);
+        linked.push(fileId);
       }
+    } catch (error) {
+      // Never leave a half-linked post behind: undo the links we made, delete
+      // the post, and surface the real reason to the client.
+      await Promise.all(
+        linked.map((fileId) =>
+          prismaUnlinkFile(fileId).catch(() => undefined)
+        )
+      );
+      await feedService.deletePost(post.id, userId);
+      throw error;
     }
-    res.status(201).json(post);
+
+    res.status(201).json({
+      ...post,
+      attachments: mediaUrls.map((url, index) => ({ url, fileId: mediaFileIds[index] })),
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
     res.status(400).json({ error: message });
   }
+};
+
+/** Detach an uploaded file without deleting the stored asset. */
+const prismaUnlinkFile = async (fileId: string) => {
+  const { prisma } = await import("../prisma");
+  return prisma.uploadedFile.update({
+    where: { id: fileId },
+    data: { recordType: null, recordId: null },
+  });
 };
 
 export const deletePost = async (req: AuthRequest, res: Response): Promise<void> => {

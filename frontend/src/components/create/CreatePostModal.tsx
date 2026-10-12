@@ -15,6 +15,8 @@ import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 
 const MAX_CHARS = 5000;
+/** VANTA posts accept up to 10 attachments (matches MediaUploader's default). */
+const MAX_POST_MEDIA = 10;
 
 interface CreatePostModalProps {
   open: boolean;
@@ -161,10 +163,21 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
           }, token ?? undefined);
         }
       } else {
+        // Publish EVERY selected attachment to the same post, in the order the
+        // user chose them. `mediaUrl`/`mediaFileId` are still sent as the
+        // primary attachment so older backend builds keep working unchanged.
+        const attached = media.filter((item) => item.uploadedId || item.uploadedUrl);
+        const mediaUrls = attached.map((item) => item.uploadedUrl).filter((url): url is string => Boolean(url));
+        const mediaFileIds = attached.map((item) => item.uploadedId).filter((id): id is string => Boolean(id));
+
         await apiPost('/api/feed', {
           content: content.trim(),
-          mediaUrl: media[0]?.uploadedUrl,
-          mediaFileId: media[0]?.uploadedId,
+          mediaUrl: mediaUrls[0],
+          mediaFileId: mediaFileIds[0],
+          media: {
+            urls: mediaUrls,
+            fileIds: mediaFileIds,
+          },
         }, token ?? undefined);
       }
 
@@ -404,7 +417,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                     <MediaUploader
                       ref={uploaderRef}
                       onMediaChange={setMedia}
-                      maxFiles={1}
+                      maxFiles={isStory ? 1 : MAX_POST_MEDIA}
                       storyMode={isStory}
                       openPickerOnMount={isStory && storyKind === 'media'}
                       hideDropZone
@@ -429,7 +442,14 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                 )}
 
                 {uploadSummary && (
-                  <p className={cn('text-xs font-medium', uploadSummary.tone)}>{uploadSummary.label}</p>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className={cn('text-xs font-medium', uploadSummary.tone)}>{uploadSummary.label}</p>
+                    {!isStory && media.length > 1 && (
+                      <span className="shrink-0 text-[11px] font-medium tabular-nums text-white/45">
+                        {media.length}/{MAX_POST_MEDIA} selected
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -458,7 +478,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                   <button
                     type="button"
                     onClick={() => { if (isStory) setStoryKind('media'); uploaderRef.current?.openPicker('image'); }}
-                    disabled={media.length >= 1}
+                    disabled={media.length >= (isStory ? 1 : MAX_POST_MEDIA)}
                     className="flex h-11 w-11 items-center justify-center rounded-full text-[#c8c8cc] transition hover:bg-white/[0.06] hover:text-white active:scale-95 disabled:pointer-events-none disabled:opacity-30"
                     aria-label="Add photo"
                     title="Photo"
@@ -468,7 +488,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                   <button
                     type="button"
                     onClick={() => { if (isStory) setStoryKind('media'); uploaderRef.current?.openPicker('video'); }}
-                    disabled={media.length >= 1}
+                    disabled={media.length >= (isStory ? 1 : MAX_POST_MEDIA)}
                     className="flex h-11 w-11 items-center justify-center rounded-full text-[#c8c8cc] transition hover:bg-white/[0.06] hover:text-white active:scale-95 disabled:pointer-events-none disabled:opacity-30"
                     aria-label="Add video"
                     title="Video"

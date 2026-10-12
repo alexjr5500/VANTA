@@ -84,7 +84,7 @@ export class FeedService {
       const nextCursor = posts.length > limit ? posts.pop()?.id : undefined;
 
       return {
-        items: posts.map(post => enrichItemAuthors({
+        items: (await this.withAttachments(posts)).map(post => enrichItemAuthors({
           ...post,
           isLiked: post.likes.length > 0,
           likes: undefined,
@@ -272,8 +272,12 @@ export class FeedService {
       const mixOrder = ['video', 'post', 'video', 'post', 'video', 'video', 'post', 'video'];
       
       const videoQueue = [...trendingVideos];
-      const followedPostQueue = followedPosts.map(p => ({ ...this.formatPost(p, userId), following: p.authorId !== userId }));
-      const trendingPostQueue = trendingPosts.filter((p: any) => !followedPostQueue.some((fp: any) => fp.id === p.id)).map(p => ({ ...this.formatPost(p, userId), following: false }));
+      // Resolve every attachment for both post sets in one round-trip so
+      // multi-media posts render their full carousel in the home feed too.
+      const homePosts = await this.withAttachments([...followedPosts, ...trendingPosts]);
+      const followedById = new Map(homePosts.map((p: any) => [p.id, p]));
+      const followedPostQueue = followedPosts.map(p => ({ ...this.formatPost(followedById.get(p.id) ?? p, userId), following: p.authorId !== userId }));
+      const trendingPostQueue = trendingPosts.filter((p: any) => !followedPostQueue.some((fp: any) => fp.id === p.id)).map(p => ({ ...this.formatPost(followedById.get(p.id) ?? p, userId), following: false }));
 
       // Interleave followed posts and videos first
       for (const type of mixOrder) {
@@ -392,12 +396,79 @@ export class FeedService {
     }, CACHE_TTL.SHORT);
   }
 
+  /**
+   * Resolve the ORDERED media attachments of one or more posts.
+   *
+   * VANTA multi-media posts store every selected file as its own UploadedFile
+   * row keyed by (recordType='Post', recordId=post.id) — the same generic
+   * linking table already used by stories, reels and messages, so no schema
+   * change was needed. `mediaUrl` remains the primary (first) attachment for
+   * the many existing single-media consumers, while `attachments` carries the
+   * full ordered set.
+   */
+  private async withAttachments(posts: any[]) {
+    if (!Array.isArray(posts) || posts.length === 0) return posts;
+    try {
+      const { prisma } = await import("../prisma");
+      const ids = posts.map((post) => post.id).filter(Boolean);
+      if (ids.length === 0) return posts;
+
+      const files = await prisma.uploadedFile.findMany({
+        where: { recordType: "Post", recordId: { in: ids }, deletedAt: null },
+        select: {
+          id: true,
+          recordId: true,
+          url: true,
+          mimeType: true,
+          fileType: true,
+          category: true,
+          createdAt: true,
+        },
+      });
+
+      // Preserve each post's own upload order (oldest first = selection order).
+      const byPost = new Map<string, any[]>();
+      for (const file of files) {
+        const list = byPost.get(file.recordId) ?? [];
+        list.push(file);
+        byPost.set(file.recordId, list);
+      }
+
+      return posts.map((post) => {
+        const list = (byPost.get(post.id) ?? []).sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        const attachments = list.map((file) => ({
+          id: file.id,
+          url: file.url,
+          type: file.fileType,
+          mimeType: file.mimeType,
+        }));
+        if (attachments.length > 0) {
+          // Keep the legacy primary field consistent with the attachment list.
+          return { ...post, mediaUrl: attachments[0].url, attachments };
+        }
+        // Single-media legacy posts keep their stored mediaUrl.
+        return post.mediaUrl ? { ...post, attachments: [{ url: post.mediaUrl }] } : post;
+      });
+    } catch {
+      // Attachment resolution is an enhancement — never fail the feed because
+      // of it; consumers fall back to the legacy `mediaUrl`.
+      return posts;
+    }
+  }
+
   private formatPost(post: any, userId: string) {
     return {
       id: post.id,
       type: post.mediaUrl ? (post.mediaUrl.includes('.mp4') || post.mediaUrl.includes('.webm') ? 'video' : 'post') : 'post',
       content: post.content,
       media: post.mediaUrl,
+      // Full ordered media set for multi-attachment posts. Single-media posts
+      // still expose exactly one entry, so old clients see no behaviour change.
+      attachments: Array.isArray(post.attachments) && post.attachments.length > 0
+        ? post.attachments
+        : post.mediaUrl ? [{ url: post.mediaUrl }] : [],
       author: {
         id: post.author?.id || post.authorId,
         username: post.author?.username,

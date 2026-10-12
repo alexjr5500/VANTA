@@ -16,6 +16,27 @@ const ACCEPTED_VIDEO_TYPES = ['video/mp4', 'video/webm'];
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB (matches backend)
 const MAX_IMAGE_SIZE = 15 * 1024 * 1024; // 15MB
 
+const IMAGE_EXT_RE = /\.(jpe?g|png|gif|webp|avif)$/i;
+const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v)$/i;
+
+/**
+ * Classify a picked file by its real MIME type, falling back to the extension
+ * only when the platform reports a missing or generic type (several Android
+ * providers return "" or "application/octet-stream"). Never trusts the
+ * extension when a trustworthy MIME type is already present.
+ */
+function resolveMediaKind(file: File): 'image' | 'video' | 'unknown' {
+  const mime = (file.type || '').toLowerCase();
+  if (ACCEPTED_IMAGE_TYPES.includes(file.type)) return 'image';
+  if (ACCEPTED_VIDEO_TYPES.includes(file.type)) return 'video';
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  const name = file.name || '';
+  if (IMAGE_EXT_RE.test(name)) return 'image';
+  if (VIDEO_EXT_RE.test(name)) return 'video';
+  return 'unknown';
+}
+
 export interface MediaFile {
   id: string;
   file: File;
@@ -84,9 +105,12 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
   }, []);
 
   const validateFile = (file: File): string | null => {
-    if (ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    // Trust the browser MIME type first; only fall back to the extension when a
+    // platform reports an empty/incorrect type (some Android providers do).
+    const kind = resolveMediaKind(file);
+    if (kind === 'image') {
       if (file.size > MAX_IMAGE_SIZE) return `Image exceeds ${MAX_IMAGE_SIZE / 1024 / 1024}MB limit`;
-    } else if (ACCEPTED_VIDEO_TYPES.includes(file.type)) {
+    } else if (kind === 'video') {
       if (file.size > MAX_FILE_SIZE) return `Video exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit`;
     } else {
       return 'Unsupported file type. Please upload images or videos.';
@@ -153,7 +177,7 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
     for (let i = 0; i < files.length; i++) {
       if (existingCount + newFiles.length >= maxFiles) break;
       const file = files[i];
-      const type = ACCEPTED_IMAGE_TYPES.includes(file.type) ? 'image' : 'video';
+      const type = resolveMediaKind(file) === 'image' ? 'image' : 'video';
 
       if (type === 'video') {
         const error = validateFile(file);
@@ -436,10 +460,11 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
                   <img
                     src={resolveMediaUrl(media.url)}
                     alt={media.name}
+                    loading="lazy"
                     className={cn(
                       storyMode || featuredPreview
                         ? 'max-h-[340px] w-full object-contain'
-                        : 'h-full w-full object-cover'
+                        : 'h-full w-full object-contain'
                     )}
                   />
                 ) : (
@@ -448,10 +473,11 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
                     className={cn(
                       storyMode || featuredPreview
                         ? 'max-h-[340px] w-full object-contain'
-                        : 'h-full w-full object-cover'
+                        : 'h-full w-full object-contain'
                     )}
                     muted
                     playsInline
+                    preload="metadata"
                   />
                 )}
 
