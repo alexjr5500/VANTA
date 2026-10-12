@@ -1,166 +1,61 @@
-'use client';
+﻿'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { getDashboardStats, getInfrastructure } from '@/lib/adminApi';
-import Button from '@/components/ui/Button';
 import { cn } from '@/lib/utils';
 import {
   Users, UserPlus, ShieldCheck, Radio, Flag,
-  FileText, DollarSign, RefreshCw, ArrowUpRight,
-  Clock, AlertTriangle, ChevronRight, BarChart3, Wallet,
-  Gift, Server, BadgeCheck, Crown, Activity,
+  FileText, DollarSign, RefreshCw, ChevronRight,
+  Wallet, Gift, Server, BadgeCheck, Crown, Activity,
+  AlertTriangle,
 } from 'lucide-react';
+import MetricTile from '@/components/console/MetricTile';
+import ConsolePanel from '@/components/console/Panel';
+import StatusBadge, { statusToneFor } from '@/components/console/StatusBadge';
+import TrendChart from '@/components/console/TrendChart';
+import {
+  ConsoleErrorState, ConsoleEmptyState, SkeletonRows,
+} from '@/components/console/States';
+import {
+  fmtNumber, fmtCompact, fmtCompactCurrency, timeAgo,
+} from '@/components/console/format';
 
 // ============================================================================
-// Helpers — presentation only, every number comes from the real admin API.
+// ADMIN COMMAND CENTER - OVERVIEW
+// ----------------------------------------------------------------------------
+// Every figure below is read live from GET /api/admin/stats plus the real
+// GET /api/admin/infrastructure service-health snapshot. Nothing is invented:
+// a metric with no backend source is not rendered, and each period is labelled
+// explicitly so cumulative totals are never mistaken for activity counts.
 // ============================================================================
 
-const fmt = (n: number): string => {
-  if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1) + 'B';
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-  return n.toLocaleString('en-US');
+type GrowthKey = '7d' | '30d' | '90d' | '12m';
+
+const GROWTH_LABEL: Record<GrowthKey, string> = {
+  '7d': 'last 7 days',
+  '30d': 'last 30 days',
+  '90d': 'last 90 days',
+  '12m': 'last 12 months',
 };
 
-const fmtCurrency = (n: number): string => {
-  if (n >= 1_000_000) return '$' + (n / 1_000_000).toFixed(2) + 'M';
-  if (n >= 1_000) return '$' + (n / 1_000).toFixed(2) + 'K';
-  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const QUICK_ACTIONS = [
+  { href: '/admin/users', label: 'User management', desc: 'Roles, status, verification', icon: Users },
+  { href: '/admin/compliance', label: 'Moderation queue', desc: 'Reports awaiting review', icon: Flag },
+  { href: '/admin/finance', label: 'Finance ledger', desc: 'Transactions and payouts', icon: Wallet },
+  { href: '/admin/verification', label: 'Verification', desc: 'Badge requests and approvals', icon: BadgeCheck },
+  { href: '/admin/gifts', label: 'Gift catalog', desc: 'Pricing and availability', icon: Gift },
+  { href: '/admin/infrastructure', label: 'System health', desc: 'Service diagnostics', icon: Server },
+];
+
+const roleTone = (role: string | undefined) => {
+  const r = String(role || '').toUpperCase();
+  if (['SUPER_ADMIN', 'CEO', 'FINANCE_MANAGER'].includes(r)) return 'gold' as const;
+  if (['MODERATOR', 'SUPPORT_AGENT', 'CONTENT_REVIEWER'].includes(r)) return 'info' as const;
+  return 'neutral' as const;
 };
 
-const timeAgo = (iso: string): string => {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString();
-};
-
-const statusBadge = (status: string) => {
-  const map: Record<string, string> = {
-    ACTIVE: 'bg-emerald-500/15 text-emerald-400',
-    SUSPENDED: 'bg-yellow-500/15 text-yellow-400',
-    BANNED: 'bg-red-500/15 text-red-400',
-    DEACTIVATED: 'bg-gray-500/15 text-gray-400',
-  };
-  return map[status] || 'bg-gray-500/15 text-gray-400';
-};
-
-// ============================================================================
-// KPI Card — premium glass card with an icon tile + contextual hint
-// ============================================================================
-
-interface Kpi {
-  label: string;
-  value: string;
-  icon: any;
-  tile: string;
-  hint?: string;
-}
-
-function KpiCard({ kpi }: { kpi: Kpi }) {
-  const Icon = kpi.icon;
-  return (
-    <div className="group relative overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4 transition-colors hover:border-white/[0.12] hover:bg-white/[0.03]">
-      <div className="mb-3">
-        <div className={cn('grid h-10 w-10 place-items-center rounded-xl transition-transform duration-200 group-hover:scale-105', kpi.tile)}>
-          <Icon size={17} className="text-white" />
-        </div>
-      </div>
-      <p className="text-2xl font-bold tracking-tight text-white tabular-nums">{kpi.value}</p>
-      <p className="mt-1 text-[11px] text-white/40">{kpi.label}</p>
-      {kpi.hint && <p className="mt-0.5 text-[10px] text-white/25">{kpi.hint}</p>}
-    </div>
-  );
-}
-// ============================================================================
-// Growth chart (real users-per-bucket)
-// ============================================================================
-
-function GrowthChart({ data }: { data: { label: string; count: number }[] }) {
-  const W = 760;
-  const H = 220;
-  const pad = 28;
-  const max = Math.max(1, ...data.map((d) => d.count));
-  const bw = Math.max(2, (W - pad * 2) / Math.max(1, data.length) - 3);
-  const showEvery = Math.max(1, Math.ceil(data.length / 14));
-
-  return (
-    <div className="overflow-x-auto">
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-52 w-full" role="img" aria-label="User growth chart">
-        <defs>
-          <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#c9a227" />
-            <stop offset="100%" stopColor="#7a5c12" />
-          </linearGradient>
-        </defs>
-        {[0.25, 0.5, 0.75, 1].map((t) => (
-          <line key={t} x1={pad} x2={W - pad} y1={H - pad - (H - pad * 2) * t} y2={H - pad - (H - pad * 2) * t} stroke="rgba(255,255,255,0.06)" strokeWidth={1} />
-        ))}
-        {data.map((d, i) => {
-          const h = Math.max(2, ((H - pad * 2) * d.count) / max);
-          const x = pad + i * ((W - pad * 2) / data.length) + 1.5;
-          const y = H - pad - h;
-          return (
-            <g key={i}>
-              <rect x={x} y={y} width={bw} height={h} rx={2} fill={d.count > 0 ? 'url(#growthGrad)' : 'rgba(255,255,255,0.1)'}>
-                <title>{`${d.label}: ${d.count.toLocaleString()}`}</title>
-              </rect>
-              {i % showEvery === 0 && (
-                <text x={x} y={H - pad + 14} fontSize={9} fill="#666" textAnchor="middle">
-                  {d.label.length > 7 ? d.label.slice(5) : d.label}
-                </text>
-              )}
-            </g>
-          );
-        })}
-      </svg>
-    </div>
-  );
-}
-
-// ============================================================================
-// Meter row — scales a real metric against its group maximum
-// ============================================================================
-
-function MeterRow({ label, value, max, color, format }: { label: string; value: number; max: number; color: string; format: (n: number) => string }) {
-  const pct = max > 0 ? Math.max(2, Math.min(100, (value / max) * 100)) : 0;
-  return (
-    <div>
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-[11px] text-white/50">{label}</span>
-        <span className="text-xs font-semibold text-white tabular-nums">{format(value)}</span>
-      </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
-        <div className={cn('h-full rounded-full transition-all duration-500', color)} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// Loading skeleton
-// ============================================================================
-
-function Skeleton() {
-  return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      {Array.from({ length: 8 }).map((_, i) => (
-        <div key={i} className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-          <div className="h-10 w-10 rounded-xl bg-white/[0.06] animate-pulse mb-3" />
-          <div className="h-7 w-16 rounded bg-white/[0.06] animate-pulse mb-2" />
-          <div className="h-3 w-24 rounded bg-white/[0.05] animate-pulse" />
-        </div>
-      ))}
-    </div>
-  );
-}
 export default function AdminPage() {
   const { token } = useAuth();
   const [stats, setStats] = useState<any>(null);
@@ -168,7 +63,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [growthKey, setGrowthKey] = useState<'7d' | '30d' | '90d' | '12m'>('30d');
+  const [growthKey, setGrowthKey] = useState<GrowthKey>('30d');
 
   const fetchData = useCallback(async () => {
     if (!token) return;
@@ -183,7 +78,7 @@ export default function AdminPage() {
       setStats(data);
       setInfra(infraData);
     } catch (err: any) {
-      setError(err?.message || 'Failed to load dashboard. Please try again.');
+      setError(err?.message || 'Failed to load the platform overview.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -192,258 +87,368 @@ export default function AdminPage() {
 
   useEffect(() => { void fetchData(); }, [fetchData]);
 
-  const growth = stats?.userGrowth?.[growthKey] ?? [];
-  const s = stats || {};
+  const growth = useMemo(() => {
+    const raw = stats?.userGrowth?.[growthKey];
+    return Array.isArray(raw)
+      ? raw.map((g: any) => ({ label: String(g.date || g.month || ''), value: Number(g.count) || 0 }))
+      : [];
+  }, [stats, growthKey]);
+
+  const services = Array.isArray(infra?.services) ? infra.services : [];
+  const s: any = stats || {};
 
   if (loading && !stats) {
     return (
-      <div className="space-y-6">
-        <div className="flex flex-col gap-2">
-          <div className="h-7 w-44 rounded-lg bg-white/[0.06] animate-pulse" />
-          <div className="h-4 w-72 rounded bg-white/[0.05] animate-pulse" />
+      <div className="space-y-6" aria-busy="true">
+        <div className="space-y-2">
+          <div className="h-6 w-52 animate-pulse rounded bg-white/[0.06]" />
+          <div className="h-3.5 w-80 animate-pulse rounded bg-white/[0.04]" />
         </div>
-        <Skeleton />
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="h-64 rounded-2xl border border-white/[0.06] bg-white/[0.02] animate-pulse" />
-          <div className="h-64 rounded-2xl border border-white/[0.06] bg-white/[0.02] animate-pulse" />
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 lg:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => <div key={i} className="h-16 animate-pulse rounded bg-white/[0.04]" />)}
         </div>
+        <div className="vc-panel"><SkeletonRows rows={6} /></div>
       </div>
     );
   }
 
   if (error && !stats) {
-    return (
-      <div className="space-y-6">
-        <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-10 text-center">
-          <AlertTriangle size={40} className="mx-auto mb-3 text-red-400" />
-          <h3 className="text-base font-bold text-white">Dashboard failed to load</h3>
-          <p className="mx-auto mt-1 max-w-md text-sm text-white/40">{error}</p>
-          <Button variant="primary" size="sm" className="mt-5" icon={<RefreshCw size={14} />} onClick={() => void fetchData()}>
-            Retry
-          </Button>
-        </div>
-      </div>
-    );
+    return <ConsoleErrorState title="Platform overview unavailable" message={error} onRetry={() => void fetchData()} />;
   }
-const growthLabel = { '7d': 'Last 7 days', '30d': 'Last 30 days', '90d': 'Last 90 days', '12m': 'Last 12 months' };
 
-  const monetizationMax = Math.max(1, s.revenue || 0, s.totalGiftVolume || 0, s.badgePurchases || 0, s.coinPurchases || 0);
-
-  const quickActions = [
-    { href: '/admin/users', label: 'Manage Users', desc: 'Roles, bans & verification', icon: Users, tile: 'bg-sky-500/15 text-sky-300' },
-    { href: '/admin/compliance', label: 'Review Reports', desc: 'Moderation queue', icon: Flag, tile: 'bg-red-500/15 text-red-300' },
-    { href: '/admin/finance', label: 'View Transactions', desc: 'Wallet ledger', icon: Wallet, tile: 'bg-emerald-500/15 text-emerald-300' },
-    { href: '/admin/verification', label: 'Manage Verification', desc: 'Badges & purchases', icon: BadgeCheck, tile: 'bg-[#c9a227]/15 text-[#d9a83f]' },
-    { href: '/admin/gifts', label: 'Manage Gifts', desc: 'Catalog & pricing', icon: Gift, tile: 'bg-violet-500/15 text-violet-300' },
-    { href: '/admin/infrastructure', label: 'System Health', desc: 'Services & diagnostics', icon: Server, tile: 'bg-cyan-500/15 text-cyan-300' },
-  ];
-
-  const services = infra?.services ?? null;
+  const pendingReports = Number(s.pendingReports || 0);
+  const rawVerificationCount = s.pendingVerificationRequests ?? s.pendingVerifications;
+  const pendingVerifications = Number(rawVerificationCount ?? NaN);
+  const pendingWithdrawals = Number(s.pendingWithdrawals || 0);
+  const economyMax = Math.max(1, s.revenue || 0, s.totalGiftVolume || 0, s.coinPurchases || 0, s.badgePurchases || 0);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="mb-1 flex items-center gap-2">
-            <BarChart3 size={14} className="text-[#c9a227]" />
-            <span className="text-[10px] uppercase tracking-[0.2em] text-white/30 font-semibold">VANTA Platform</span>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">Dashboard</h1>
-          <p className="mt-1 text-sm text-white/40">Live platform overview — all figures are computed from the production database.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 text-[11px] text-white/40">
-            <Clock size={12} /> {new Date().toLocaleString()}
-          </span>
-          <Button variant="ghost" size="sm" icon={<RefreshCw size={14} />} loading={refreshing} onClick={() => void fetchData()}>
-            Refresh
-          </Button>
-        </div>
+    <div className="space-y-8 pb-10">
+      {/* ---- Operational indicators: one open metric band, not card grids ---- */}
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-console-text-3">Operational indicators</h2>
+        <button
+          type="button"
+          onClick={() => void fetchData()}
+          disabled={refreshing}
+          aria-busy={refreshing || undefined}
+          className="vc-focus inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-[var(--vc-radius)] border border-console-border px-2.5 text-[11px] font-semibold text-console-text-2 transition-colors hover:bg-white/[0.04] hover:text-console-text disabled:opacity-60"
+        >
+          <RefreshCw size={12} className={refreshing ? 'animate-spin' : undefined} aria-hidden />
+          {refreshing ? 'Refreshing' : 'Refresh'}
+        </button>
       </div>
 
-      {/* Primary KPIs */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiCard kpi={{ label: 'Total Users', value: fmt(s.totalUsers || 0), icon: Users, tile: 'bg-[#c9a227]/15 text-[#d9a83f]', hint: `${fmt(s.newUsersThisMonth || 0)} joined this month` }} />
-        <KpiCard kpi={{ label: 'Active Today', value: fmt(s.activeUsersToday || 0), icon: Activity, tile: 'bg-emerald-500/15 text-emerald-400', hint: `${fmt(s.activeUsersThisWeek || 0)} this week · ${fmt(s.onlineUsers || 0)} online now` }} />
-        <KpiCard kpi={{ label: 'Revenue', value: fmtCurrency(s.revenue || 0), icon: DollarSign, tile: 'bg-emerald-500/15 text-emerald-400', hint: 'Completed purchase orders' }} />
-        <KpiCard kpi={{ label: 'Active Streams', value: fmt(s.activeStreams || 0), icon: Radio, tile: 'bg-red-500/15 text-red-300', hint: `${fmt(s.totalStreams || 0)} all-time streams` }} />
-      </div>
+      <section aria-label="Operational indicators">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 lg:grid-cols-4">
+          <MetricTile
+            label="Registered users"
+            value={fmtCompact(s.totalUsers)}
+            icon={<Users size={13} />}
+            accent
+            hint={`${fmtCompact(s.newUsersThisMonth)} joined in the last 30 days`}
+          />
+          <MetricTile
+            label="Active today"
+            value={fmtCompact(s.activeUsersToday)}
+            icon={<Activity size={13} />}
+            hint={`${fmtCompact(s.activeUsersThisWeek)} this week, ${fmtCompact(s.onlineUsers)} online now`}
+          />
+          <MetricTile
+            label="Purchase revenue"
+            value={fmtCompactCurrency(s.revenue)}
+            icon={<DollarSign size={13} />}
+            hint="Completed purchase orders"
+          />
+          <MetricTile
+            label="Active streams"
+            value={fmtCompact(s.activeStreams)}
+            icon={<Radio size={13} />}
+            hint={`${fmtCompact(s.totalStreams)} streams all-time`}
+          />
+        </div>
+        <p className="mt-3 max-w-2xl text-[11px] leading-relaxed text-console-text-3">
+          Cumulative and period figures are computed directly from the production database by the
+          admin stats service. Registered users is a lifetime count, not an activity count.
+        </p>
+      </section>
 
-      {/* Secondary metrics */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiCard kpi={{ label: 'New Users Today', value: fmt(s.newUsersToday || 0), icon: UserPlus, tile: 'bg-sky-500/15 text-sky-400', hint: `${fmt(s.newUsersThisYear || 0)} this year` }} />
-        <KpiCard kpi={{ label: 'Verified Users', value: fmt(s.verifiedUsers || 0), icon: ShieldCheck, tile: 'bg-sky-500/15 text-sky-400', hint: 'Legacy flag + active badges' }} />
-        <KpiCard kpi={{ label: 'Transactions', value: fmt(s.totalTransactions || 0), icon: ArrowUpRight, tile: 'bg-white/[0.06] text-white/70', hint: `Coins bought: ${fmt(s.coinPurchases || 0)}` }} />
-        <KpiCard kpi={{ label: 'Badge Purchases', value: fmt(s.badgePurchases || 0), icon: Crown, tile: 'bg-amber-500/15 text-amber-300', hint: `${fmt(s.pendingWithdrawals || 0)} pending withdrawals` }} />
-      </div>
-{/* Growth + Monetization */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* User growth */}
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4 lg:col-span-2">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-bold text-white">User Growth</h3>
-              <p className="mt-0.5 text-[11px] text-white/40">New users joined · {growthLabel[growthKey]} · {fmt(s.newUsersThisMonth || 0)} this month</p>
-            </div>
-            <div className="flex items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.03] p-1">
+      {/* ------------------------ Growth trend + economy ---------------------- */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <ConsolePanel
+          className="lg:col-span-2"
+          title="User growth"
+          description={`New accounts per period, ${GROWTH_LABEL[growthKey]}`}
+          actions={
+            <div className="flex items-center gap-0.5 rounded-[var(--vc-radius)] border border-console-border bg-console-bg2 p-0.5" role="group" aria-label="Growth period">
               {(['7d', '30d', '90d', '12m'] as const).map((k) => (
-                <button key={k} onClick={() => setGrowthKey(k)} className={cn('px-3 py-1.5 text-[11px] font-medium rounded-full transition-colors', growthKey === k ? 'bg-[#c9a227] text-black' : 'text-white/40 hover:text-white')}>
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setGrowthKey(k)}
+                  aria-pressed={growthKey === k}
+                  className={cn(
+                    'vc-focus rounded-[calc(var(--vc-radius)-2px)] px-2.5 py-1 text-[11px] font-semibold transition-colors',
+                    growthKey === k ? 'bg-console-gold text-console-gold-fg' : 'text-console-text-3 hover:text-console-text-2',
+                  )}
+                >
                   {k === '12m' ? '12 mo' : k}
                 </button>
               ))}
             </div>
-          </div>
+          }
+          bodyClassName="px-4 pb-5 pt-4 sm:px-5"
+        >
           {growth.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <BarChart3 size={36} className="mb-3 text-white/10" />
-              <p className="text-sm text-white/40">No new-user data available for this period.</p>
-            </div>
+            <ConsoleEmptyState
+              icon={<Users size={19} />}
+              title="No signups in this period"
+              description="The reporting backend returned no new-account buckets for the selected range."
+            />
           ) : (
-            <GrowthChart data={growth.map((g: any) => ({ label: g.date || g.month, count: g.count }))} />
+            <TrendChart
+              data={growth}
+              variant="bar"
+              height={200}
+              formatValue={fmtCompact}
+              ariaLabel={`New user accounts per period over the ${GROWTH_LABEL[growthKey]}`}
+            />
           )}
-        </div>
+        </ConsolePanel>
 
-        {/* Revenue & economy */}
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-          <h3 className="mb-1 text-sm font-bold text-white">Economy</h3>
-          <p className="mb-4 text-[11px] text-white/40">Real monetization activity across the platform</p>
-          <div className="space-y-4">
-            <MeterRow label="Purchase revenue" value={s.revenue || 0} max={monetizationMax} color="bg-emerald-400" format={fmtCurrency} />
-            <MeterRow label="Gift volume (coins)" value={s.totalGiftVolume || 0} max={monetizationMax} color="bg-[#c9a227]" format={fmt} />
-            <MeterRow label="Coin purchases" value={s.coinPurchases || 0} max={monetizationMax} color="bg-sky-400" format={fmt} />
-            <MeterRow label="Badge purchases" value={s.badgePurchases || 0} max={monetizationMax} color="bg-violet-400" format={fmt} />
-            <MeterRow label="Coins in circulation" value={s.totalCoinsInCirculation || 0} max={Math.max(1, s.totalCoinsInCirculation || 0)} color="bg-amber-400" format={fmt} />
-          </div>
-          <Link href="/admin/finance" className="mt-5 inline-flex items-center gap-1 text-[11px] font-medium text-[#c9a227]">
-            Open payments ledger <ChevronRight size={12} />
+        <ConsolePanel title="Economy" description="Real monetization activity" bodyClassName="px-4 py-4 sm:px-5">
+          <dl className="space-y-4">
+            {[
+              { label: 'Purchase revenue', value: s.revenue, tone: 'bg-console-success' },
+              { label: 'Gift volume (coins)', value: s.totalGiftVolume, tone: 'bg-console-gold' },
+              { label: 'Coin purchases', value: s.coinPurchases, tone: 'bg-console-info' },
+              { label: 'Badge purchases', value: s.badgePurchases, tone: 'bg-console-warning' },
+            ].map((row) => (
+              <div key={row.label}>
+                <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                  <dt className="text-xs text-console-text-3">{row.label}</dt>
+                  <dd className="text-xs font-semibold tabular-nums text-console-text">{fmtNumber(row.value)}</dd>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+                  <div
+                    className={cn('h-full rounded-full', row.tone)}
+                    style={{ width: `${Math.max(2, Math.min(100, (Number(row.value || 0) / economyMax) * 100))}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </dl>
+          <Link href="/admin/finance" className="vc-focus mt-5 inline-flex items-center gap-1 rounded text-xs font-semibold text-console-gold hover:text-console-gold-hover">
+            Open finance ledger <ChevronRight size={13} aria-hidden />
           </Link>
-        </div>
+        </ConsolePanel>
       </div>
 
-      {/* Content + engagement */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-          <div className="mb-2 flex items-center gap-2 text-white/40"><FileText size={14} /></div>
-          <p className="text-xl font-bold text-white tabular-nums">{fmt(s.totalContent || 0)}</p>
-          <p className="mt-0.5 text-[11px] text-white/40">Total content items</p>
-        </div>
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-          <div className="mb-2 flex items-center gap-2 text-white/40"><Users size={14} /></div>
-          <p className="text-xl font-bold text-white tabular-nums">{fmt(s.totalComments || 0)}</p>
-          <p className="mt-0.5 text-[11px] text-white/40">Comments</p>
-        </div>
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-          <div className="mb-2 flex items-center gap-2 text-white/40"><Gift size={14} /></div>
-          <p className="text-xl font-bold text-white tabular-nums">{fmt(s.totalStreams || 0)}</p>
-          <p className="mt-0.5 text-[11px] text-white/40">All-time streams</p>
-        </div>
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-          <div className="mb-2 flex items-center gap-2 text-white/40"><Crown size={14} /></div>
-          <p className="text-xl font-bold text-white tabular-nums">{fmt(s.pendingReports || 0)}</p>
-          <p className="mt-0.5 text-[11px] text-white/40">Pending reports</p>
-        </div>
-      </div>
-{/* Quick actions */}
-      <section>
-        <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/30">Quick Actions</h3>
-        <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-6">
-          {quickActions.map((qa) => {
-            const Icon = qa.icon;
+      {/* ------------------ Queues requiring attention ----------------------- */}
+      <section aria-label="Queues requiring attention">
+        <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-console-text-3">Requires attention</h2>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {[
+            { label: 'Pending reports', value: pendingReports, known: true, href: '/admin/compliance', icon: Flag, desc: 'Open moderation reports' },
+            { label: 'Verification requests', value: pendingVerifications, known: Number.isFinite(pendingVerifications), href: '/admin/verification', icon: BadgeCheck, desc: 'Awaiting badge review' },
+            { label: 'Pending withdrawals', value: pendingWithdrawals, known: true, href: '/admin/finance', icon: Wallet, desc: 'Payouts awaiting review' },
+          ].map((q) => {
+            const Icon = q.icon;
+            const hasWork = q.known && q.value > 0;
             return (
               <Link
-                key={qa.href}
-                href={qa.href}
-                className="group flex flex-col gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 transition-all hover:border-white/[0.14] hover:bg-white/[0.04]"
+                key={q.label}
+                href={q.href}
+                className="vc-focus vc-panel group flex items-center gap-3.5 px-4 py-3.5 transition-colors hover:border-console-border-strong hover:bg-white/[0.02]"
               >
-                <span className={cn('grid h-9 w-9 place-items-center rounded-xl transition-transform group-hover:scale-105', qa.tile)}>
-                  <Icon size={16} />
+                <span className={cn(
+                  'grid h-9 w-9 shrink-0 place-items-center rounded-[var(--vc-radius)]',
+                  hasWork ? 'bg-console-warning-soft text-console-warning' : 'bg-white/[0.04] text-console-text-3',
+                )}>
+                  <Icon size={16} aria-hidden />
                 </span>
-                <span>
-                  <span className="block truncate text-xs font-semibold text-white">{qa.label}</span>
-                  <span className="mt-0.5 block truncate text-[10px] text-white/35">{qa.desc}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-2xl font-semibold leading-none tabular-nums text-console-text">
+                    {q.known ? fmtNumber(q.value) : 'Unavailable'}
+                  </span>
+                  <span className="mt-1.5 block truncate text-xs font-medium text-console-text-2">{q.label}</span>
+                  <span className="block truncate text-[11px] text-console-text-3">
+                    {q.known ? q.desc : 'Not reported by the stats endpoint'}
+                  </span>
                 </span>
+                <ChevronRight size={15} className="shrink-0 text-console-text-3 transition-transform group-hover:translate-x-0.5" aria-hidden />
               </Link>
+            );
+          })}
+        </div>
+        {!Number.isFinite(pendingVerifications) ? (
+          <p className="mt-2 max-w-2xl text-[11px] leading-relaxed text-console-text-3">
+            The stats endpoint does not report an open verification-request count, so it is shown as
+            unavailable rather than as zero. Open the Verification workspace for the live queue.
+          </p>
+        ) : null}
+      </section>
+
+      {/* ------------------------ Platform totals ---------------------------- */}
+      <section aria-label="Platform totals">
+        <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-console-text-3">Platform totals</h2>
+        <div className="vc-panel grid grid-cols-2 divide-x divide-y divide-console-border sm:grid-cols-3 lg:grid-cols-6 lg:divide-y-0">
+          {[
+            { label: 'Content items', value: s.totalContent, icon: FileText },
+            { label: 'Comments', value: s.totalComments, icon: Users },
+            { label: 'Verified users', value: s.verifiedUsers, icon: ShieldCheck },
+            { label: 'New today', value: s.newUsersToday, icon: UserPlus },
+            { label: 'Gifts sent', value: s.totalGiftsSent, icon: Gift },
+            { label: 'Suspended', value: s.suspendedUsers, icon: Crown },
+          ].map((m) => {
+            const Icon = m.icon;
+            const known = m.value !== undefined && m.value !== null && Number.isFinite(Number(m.value));
+            return (
+              <div key={m.label} className="min-w-0 px-4 py-3.5">
+                <div className="flex items-center gap-1.5 text-console-text-3">
+                  <Icon size={12} className="shrink-0" aria-hidden />
+                  <p className="truncate text-[11px] font-medium uppercase tracking-wider">{m.label}</p>
+                </div>
+                <p className="mt-1 truncate text-lg font-semibold tabular-nums text-console-text">
+                  {known ? fmtCompact(m.value) : 'Unavailable'}
+                </p>
+                {known ? null : <p className="text-[10px] text-console-text-3">not reported</p>}
+              </div>
             );
           })}
         </div>
       </section>
 
-      {/* System status (real infrastructure data — never fabricated) */}
-      {services && Array.isArray(services) && services.length > 0 && (
-        <section className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <h3 className="flex items-center gap-2 text-sm font-bold text-white"><Server size={15} className="text-white/40" /> System Status</h3>
-            <Link href="/admin/infrastructure" className="flex items-center gap-1 text-[11px] text-[#c9a227]">Details <ChevronRight size={12} /></Link>
-          </div>
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
-            {services.slice(0, 10).map((svc: any) => (
-              <div key={svc.name} className="flex items-center gap-2.5 rounded-xl border border-white/[0.05] bg-white/[0.02] px-3 py-2.5">
-                <span className={cn(
-                  'h-2 w-2 shrink-0 rounded-full',
-                  svc.status === 'healthy' ? 'bg-emerald-400' : svc.status === 'degraded' ? 'bg-amber-400' : 'bg-red-400',
-                )} />
-                <span className="min-w-0">
-                  <span className="block truncate text-xs font-medium text-white/80">{svc.name}</span>
-                  <span className="block text-[10px] text-white/35 capitalize">{svc.status || 'unknown'}</span>
+      {/* ------------------------ Admin workspaces --------------------------- */}
+      <section aria-label="Admin workspaces">
+        <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-console-text-3">Workspaces</h2>
+        <nav className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {QUICK_ACTIONS.map((qa) => {
+            const Icon = qa.icon;
+            return (
+              <Link
+                key={qa.href}
+                href={qa.href}
+                className="vc-focus vc-panel group flex flex-col gap-2.5 p-3.5 transition-colors hover:border-console-border-strong hover:bg-white/[0.02]"
+              >
+                <span className="grid h-9 w-9 place-items-center rounded-[var(--vc-radius)] border border-console-border bg-console-bg2 text-console-text-3 transition-colors group-hover:text-console-gold">
+                  <Icon size={16} aria-hidden />
                 </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-semibold text-console-text">{qa.label}</span>
+                  <span className="mt-0.5 block truncate text-[11px] text-console-text-3">{qa.desc}</span>
+                </span>
+              </Link>
+            );
+          })}
+        </nav>
+      </section>
+
+      {/* ------------------------ Service health ----------------------------- */}
+      {services.length > 0 ? (
+        <section aria-label="Service health">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-console-text-3">Service health</h2>
+            <Link href="/admin/infrastructure" className="vc-focus inline-flex items-center gap-1 rounded text-[11px] font-semibold text-console-gold hover:text-console-gold-hover">
+              Diagnostics <ChevronRight size={12} aria-hidden />
+            </Link>
+          </div>
+          <div className="vc-panel grid grid-cols-2 gap-x-4 gap-y-1 px-4 py-3 sm:grid-cols-3 lg:grid-cols-5">
+            {services.slice(0, 10).map((svc: any) => (
+              <div key={svc.name} className="flex min-w-0 items-center gap-2.5 py-1.5">
+                <StatusBadge tone={statusToneFor(svc.status)} label={String(svc.status || 'unknown')} pulse={svc.status === 'degraded'} />
+                <span className="min-w-0 truncate text-xs text-console-text-2" title={svc.name}>{svc.name}</span>
               </div>
             ))}
           </div>
         </section>
+      ) : (
+        <ConsoleEmptyState
+          icon={<Server size={19} />}
+          title="Service health unavailable"
+          description="The infrastructure diagnostics endpoint did not return service data for this session, so live-stream and payment health cannot be confirmed from this page."
+          action={
+            <Link href="/admin/infrastructure" className="vc-focus inline-flex min-h-9 items-center rounded-[var(--vc-radius)] border border-console-border-strong px-4 text-xs font-semibold text-console-text-2 hover:bg-white/[0.04]">
+              Open diagnostics
+            </Link>
+          }
+        />
       )}
 
-      {/* Recent activity */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {s.recentUsers?.length ? (
-          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white">Recent Signups</h3>
-              <Link href="/admin/users" className="flex items-center gap-1 text-[11px] text-[#c9a227]">View all<ChevronRight size={12} /></Link>
-            </div>
-            <ul className="space-y-2">
-              {s.recentUsers.slice(0, 6).map((u: any) => (
-                <li key={u.id} className="flex items-center gap-3 rounded-xl bg-white/[0.03] px-3 py-2">
-                  <div className="grid h-8 w-8 place-items-center shrink-0 rounded-full bg-white/10 text-[11px] font-bold text-white">
-                    {(u.username || '?')[0]?.toUpperCase()}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-medium text-white">@{u.username}{u.fullName ? ` · ${u.fullName}` : ''}</p>
-                    <p className="text-[10px] text-white/35">{timeAgo(u.createdAt)}</p>
-                  </div>
-                  <span className={cn('text-[9px] px-2 py-0.5 rounded-full', statusBadge(u.status || 'ACTIVE'))}>{u.status || 'ACTIVE'}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
-        {s.recentReports?.length ? (
-          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white">Recent Reports</h3>
-              <Link href="/admin/compliance" className="flex items-center gap-1 text-[11px] text-[#c9a227]">Review<ChevronRight size={12} /></Link>
-            </div>
-            <ul className="space-y-2">
-              {s.recentReports.slice(0, 6).map((r: any) => (
-                <li key={r.id} className="flex items-start gap-3 rounded-xl bg-white/[0.03] px-3 py-2">
-                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-red-500/10 text-red-400"><Flag size={13} /></span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-medium text-white">{r.reason || 'Report'}</p>
-                    <p className="truncate text-[10px] text-white/35">@{r.reporter?.username || 'unknown'} → @{r.target?.username || 'unknown'} · {timeAgo(r.createdAt)}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
-        {!s.recentUsers?.length && !s.recentReports?.length && (
-          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-6 text-center lg:col-span-2">
-            <p className="text-sm text-white/40">No recent activity yet.</p>
-          </div>
+      {/* ------------------------- Recent signups ---------------------------- */}
+      <ConsolePanel
+        title="Recent signups"
+        description="Newest accounts on the platform"
+        bodyClassName="p-0"
+        actions={
+          <Link href="/admin/users" className="vc-focus inline-flex items-center gap-1 rounded text-xs font-semibold text-console-gold hover:text-console-gold-hover">
+            View all <ChevronRight size={13} aria-hidden />
+          </Link>
+        }
+      >
+        {!Array.isArray(s.recentUsers) || s.recentUsers.length === 0 ? (
+          <ConsoleEmptyState icon={<Users size={19} />} title="No recent signups" description="The stats payload did not include any recent accounts." />
+        ) : (
+          <ul className="divide-y divide-console-border">
+            {s.recentUsers.slice(0, 6).map((u: any) => (
+              <li key={u.id}>
+                <Link href={`/admin/users?search=${encodeURIComponent(u.username || '')}`} className="vc-focus flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.02] sm:px-5">
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-console-border bg-console-bg2 text-[11px] font-semibold text-console-text-2">
+                    {(u.username || '?').charAt(0).toUpperCase()}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-medium text-console-text">@{u.username}</span>
+                    <span className="block truncate text-[11px] text-console-text-3">
+                      {u.fullName ? `${u.fullName}, ` : ''}{timeAgo(u.createdAt)}
+                    </span>
+                  </span>
+                  <StatusBadge tone={roleTone(u.role)} label={String(u.role || 'USER')} />
+                </Link>
+              </li>
+            ))}
+          </ul>
         )}
-      </div>
+      </ConsolePanel>
+
+      {/* ------------------------- Recent reports ---------------------------- */}
+      <ConsolePanel
+        title="Recent reports"
+        description="Latest submitted moderation reports"
+        bodyClassName="p-0"
+        actions={
+          <Link href="/admin/compliance" className="vc-focus inline-flex items-center gap-1 rounded text-xs font-semibold text-console-gold hover:text-console-gold-hover">
+            Open queue <ChevronRight size={13} aria-hidden />
+          </Link>
+        }
+      >
+        {!Array.isArray(s.recentReports) || s.recentReports.length === 0 ? (
+          <ConsoleEmptyState
+            icon={<Flag size={19} />}
+            title="No recent reports"
+            description={pendingReports > 0 ? `${fmtNumber(pendingReports)} reports are pending. Open the moderation queue to review them.` : 'Nothing has been reported recently.'}
+            action={pendingReports > 0 ? (
+              <Link href="/admin/compliance" className="vc-focus inline-flex min-h-9 items-center rounded-[var(--vc-radius)] bg-console-gold px-4 text-xs font-semibold text-console-gold-fg hover:bg-console-gold-hover">
+                Review reports
+              </Link>
+            ) : undefined}
+          />
+        ) : (
+          <ul className="divide-y divide-console-border">
+            {s.recentReports.slice(0, 6).map((r: any) => (
+              <li key={r.id} className="flex items-center gap-3 px-4 py-3 sm:px-5">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[var(--vc-radius)] border border-console-border bg-console-bg2 text-console-warning">
+                  <AlertTriangle size={14} aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-medium text-console-text">{r.reason || r.category || 'Report'}</span>
+                  <span className="block truncate text-[11px] text-console-text-3">{timeAgo(r.createdAt)}</span>
+                </span>
+                <StatusBadge tone={statusToneFor(r.status)} label={String(r.status || 'PENDING')} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </ConsolePanel>
     </div>
   );
 }

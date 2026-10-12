@@ -1,480 +1,273 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useContentCreation } from '@/components/create/ContentCreationContext';
-import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import { apiGet } from '@/lib/apiClient';
-import { cn } from '@/lib/utils';
+import { GO_LIVE_ROUTE } from '@/lib/goLiveEntry';
+import type { CreatorStats, CreatorContentItem } from '@/lib/creatorStudio';
+import MetricTile from '@/components/console/MetricTile';
+import ConsolePanel from '@/components/console/Panel';
+import { ConsoleErrorState, SkeletonRows } from '@/components/console/States';
+import { fmtCompact, fmtCurrency, timeAgo } from '@/components/console/format';
 import {
-  BarChart3,
-  TrendingUp,
-  Users,
-  Eye,
-  Heart,
-  MessageCircle,
-  Share2,
-  Bookmark,
-  Gift,
-  Sparkles,
-  Loader2,
-  FileText,
-  Video,
-  Radio,
-  Coins,
-  ChevronRight,
-  BadgeCheck,
-  Wallet,
-  Plus,
-  CircleDollarSign,
+  Eye, Heart, Users, Radio, Gift, Coins,
+  Video, FileText, ArrowUpRight, Plus,
+  TrendingUp, Wallet, ChevronRight,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
-// Types mirror the REAL payloads returned by the backend creator endpoints.
-// Every field here maps to data aggregated from existing VANTA tables; there
-// are no invented metrics or client-side financial calculations.
+// CREATOR OVERVIEW — the studio home screen.
+//
+// Data comes exclusively from the real /api/creator/stats and
+// /api/creator/content endpoints. There are no invented metrics: unavailable
+// values render honestly (skeleton while loading, error state on failure,
+// empty state when the creator has no content yet). Every figure is a lifetime
+// aggregate produced by the backend — no client-side period maths and no
+// fabricated percentage changes.
 // ---------------------------------------------------------------------------
-interface CreatorStats {
-  username: string;
-  fullName: string | null;
-  avatar: string | null;
-  verified: boolean;
-  role: string;
-  totalFollowers: number;
-  totalFollowing: number;
-  totalPosts: number;
-  totalReels: number;
-  totalLiveSessions: number;
-  totalViews: number;
-  totalLikes: number;
-  totalComments: number;
-  totalShares: number;
-  totalSaves: number;
-  giftsReceived: number;
-  coins: number;
-  earnings: number;
-  earningsBalance: number;
-}
 
-interface CreatorContentItem {
-  id: string;
-  type: 'post' | 'reel';
-  title: string;
-  mediaUrl: string | null;
-  views: number;
-  likes: number;
-  comments: number;
-  saves: number;
-  shares: number;
-  createdAt: string;
-}
+const greeting = () => {
+  const h = new Date().getHours();
+  if (h < 5) return 'Good night';
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+};
 
-const tabs = [
-  { id: 'overview', label: 'Overview', icon: BarChart3 },
-  { id: 'content', label: 'Content', icon: FileText },
-  { id: 'analytics', label: 'Analytics', icon: TrendingUp },
-  { id: 'live', label: 'Live', icon: Radio },
-  { id: 'earnings', label: 'Earnings', icon: Coins },
+const QUICK_ACTIONS = [
+  { href: GO_LIVE_ROUTE, label: 'Go Live', desc: 'Start a live session', icon: Radio },
+  { href: '/creator/content', label: 'Content Manager', desc: 'Review published content', icon: FileText },
+  { href: '/creator/analytics', label: 'Analytics', desc: 'Explore your performance', icon: TrendingUp },
+  { href: '/creator/earnings', label: 'Earnings', desc: 'Balance, gifts and transactions', icon: Wallet },
 ];
-
-// Compact number formatting (e.g. 159.2K) — presentation only, no derived data.
-function formatCompact(value: number): string {
-  if (!Number.isFinite(value)) return '0';
-  if (Math.abs(value) < 1000) return String(value);
-  return Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-}
-
-// Mobile-first metric card. Sits in a responsive 2-up grid on phones.
-function MetricCard({
-  icon: Icon,
-  label,
-  value,
-  accent = 'text-white/70',
-}: {
-  icon: any;
-  label: string;
-  value: string;
-  accent?: string;
-}) {
-  return (
-    <div className="card-premium p-4 min-w-0">
-      <div className="w-9 h-9 rounded-xl bg-white/[0.05] border border-white/[0.06] flex items-center justify-center mb-3">
-        <Icon size={16} className={accent} />
-      </div>
-      <p className="text-xl font-bold text-white truncate">{value}</p>
-      <p className="text-[11px] text-white/40 mt-1 truncate">{label}</p>
-    </div>
-  );
-}
 
 export default function CreatorStudioPage() {
   const { token, user } = useAuth();
   const router = useRouter();
-  const { openPostModal, openStoryModal } = useContentCreation();
-  const [activeTab, setActiveTab] = useState('overview');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { openPostModal } = useContentCreation();
   const [stats, setStats] = useState<CreatorStats | null>(null);
   const [content, setContent] = useState<CreatorContentItem[]>([]);
-  const [accessDenied, setAccessDenied] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
-    if (!token) return;
+    if (!token) { setLoading(false); return; }
     setLoading(true);
     setError(null);
-    setAccessDenied(false);
     try {
-      // Server decides access. A normal user who navigates to /creator is
-      // rejected here rather than being trusted by the client.
-      const access = await apiGet<{ allowed: boolean }>('/api/creator/access', token).catch(() => null);
-      if (access && access.allowed === false) {
-        setAccessDenied(true);
-        setLoading(false);
-        return;
-      }
-
       const [statsRes, contentRes] = await Promise.all([
         apiGet<{ stats: CreatorStats }>('/api/creator/stats', token),
-        apiGet<{ content: CreatorContentItem[] }>('/api/creator/content', token).catch(() => ({ content: [] })),
+        apiGet<{ content: CreatorContentItem[] }>('/api/creator/content?limit=5', token, { skipCache: true }).catch(() => ({ content: [] })),
       ]);
       setStats(statsRes?.stats ?? null);
       setContent(Array.isArray(contentRes?.content) ? contentRes.content : []);
     } catch (err: any) {
-      setError(err?.message || 'Failed to load Creator Studio');
+      setError(err?.message || 'Failed to load your studio overview.');
     } finally {
       setLoading(false);
     }
   }, [token]);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  // Prefer the authoritative /me verified flag; fall back to the stats payload.
+  useEffect(() => { void fetchData(); }, [fetchData]);
 
   if (loading) {
     return (
-      <div className="w-full space-y-4">
-        <div className="skeleton h-10 w-40 rounded-xl" />
-        <div className="grid grid-cols-2 gap-3">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="skeleton h-28 rounded-2xl" />
-          ))}
+      <div className="space-y-8 pb-10" aria-busy="true">
+        <div className="space-y-2">
+          <div className="h-3 w-24 animate-pulse rounded bg-white/[0.06]" />
+          <div className="h-7 w-56 animate-pulse rounded bg-white/[0.06]" />
+          <div className="h-3.5 w-72 animate-pulse rounded bg-white/[0.04]" />
         </div>
-        <div className="skeleton h-48 rounded-2xl" />
-      </div>
-    );
-  }
-
-  if (accessDenied) {
-    return (
-      <div className="w-full py-12 flex flex-col items-center text-center">
-        <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mb-4">
-          <Sparkles size={22} className="text-[#d6a83f]" />
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 sm:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => <div key={i} className="h-20 animate-pulse rounded bg-white/[0.04]" />)}
         </div>
-        <h2 className="text-base font-semibold text-white/80 mb-1">Creator Studio is locked</h2>
-        <p className="text-sm text-white/40 max-w-xs">
-          Your account doesn&apos;t have creator access yet. Verified creators and members can open the Studio.
-        </p>
+        <div className="vc-panel">
+          <div className="border-b border-console-border px-5 py-3">
+            <div className="h-3.5 w-32 animate-pulse rounded bg-white/[0.05]" />
+          </div>
+          <SkeletonRows rows={3} />
+        </div>
       </div>
     );
   }
 
   if (error) {
-    return (
-      <div className="w-full py-12 flex flex-col items-center text-center">
-        <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mb-4">
-          <Loader2 size={22} className="text-red-400" />
-        </div>
-        <h2 className="text-base font-medium text-white/70 mb-1">Couldn&apos;t load Creator Studio</h2>
-        <p className="text-sm text-white/40 mb-5">{error}</p>
-        <button onClick={fetchData} className="btn-primary text-sm">
-          Try again
-        </button>
-      </div>
-    );
+    return <ConsoleErrorState title="Couldn't load your overview" message={error} onRetry={() => void fetchData()} />;
   }
 
+  const displayName = stats?.fullName || stats?.username || user?.username || 'Creator';
+  const recent = content.slice(0, 4);
+
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="w-full pb-[calc(env(safe-area-inset-bottom,0px)+72px)] space-y-5"
-    >
-      {/* Horizontally scrollable tab bar (no horizontal page overflow) */}
-      <div className="flex items-center gap-1 bg-white/[0.04] rounded-xl p-1 overflow-x-auto scrollbar-hide -mx-1 px-1">
-        {tabs.map((tab) => {
-          const isActive = activeTab === tab.id;
-          const Icon = tab.icon;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                'flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium transition-all whitespace-nowrap shrink-0',
-                isActive
-                  ? 'bg-gradient-to-r from-[#d6a83f] to-[#c8c8cc] text-black shadow-sm'
-                  : 'text-white/50 hover:text-white'
-              )}
-            >
-              <Icon size={13} />
-              {tab.label}
-            </button>
-          );
-        })}
+    <div className="space-y-8 pb-10">
+      {/* Header: personalized greeting + the two actions creators actually need */}
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-console-text-3">{greeting()}</p>
+          <h2 className="mt-1 flex items-center gap-2 text-2xl font-semibold tracking-tight text-console-text">
+            <span className="truncate">{displayName}</span>
+            {stats?.verified ? <VerificationBadge /> : null}
+          </h2>
+          <p className="mt-1 text-sm text-console-text-3">
+            {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => openPostModal()}
+            className="vc-focus inline-flex min-h-10 items-center gap-1.5 rounded-[var(--vc-radius)] border border-console-border-strong px-4 text-sm font-semibold text-console-text-2 transition-colors hover:bg-white/[0.04] hover:text-console-text"
+          >
+            <Plus size={16} aria-hidden /> Create
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push(GO_LIVE_ROUTE)}
+            className="vc-focus inline-flex min-h-10 items-center gap-2 rounded-[var(--vc-radius)] bg-console-gold px-5 text-sm font-semibold text-console-gold-fg transition-colors hover:bg-console-gold-hover"
+          >
+            <Radio size={16} aria-hidden /> Go Live
+          </button>
+        </div>
       </div>
 
-      {/* OVERVIEW */}
-      {activeTab === 'overview' && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-5"
+      {/* Performance overview — an open metric band, not a grid of identical cards */}
+      {stats ? (
+        <section aria-label="Performance overview">
+          <div className="grid grid-cols-2 gap-x-6 gap-y-6 sm:grid-cols-4">
+            <MetricTile label="Followers" value={fmtCompact(stats.totalFollowers)} icon={<Users size={13} />} hint={`${fmtCompact(stats.totalFollowing)} following`} />
+            <MetricTile label="Total views" value={fmtCompact(stats.totalViews)} icon={<Eye size={13} />} hint={`${fmtCompact(stats.totalPosts)} posts · ${fmtCompact(stats.totalReels)} reels`} accent />
+            <MetricTile label="Likes" value={fmtCompact(stats.totalLikes)} icon={<Heart size={13} />} hint={`${fmtCompact(stats.totalComments)} comments · ${fmtCompact(stats.totalShares)} shares`} />
+            <MetricTile label="Gifts received" value={fmtCompact(stats.giftsReceived)} icon={<Gift size={13} />} hint={`${fmtCompact(stats.coins)} coins balance`} />
+          </div>
+          <p className="mt-3 text-[11px] text-console-text-3">
+            Lifetime totals aggregated from your published content, live sessions and wallet.
+          </p>
+        </section>
+      ) : null}
+
+      {/* Main split: recent content + contextual side panel */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <ConsolePanel
+          className="lg:col-span-2"
+          title="Recent content"
+          description="Your latest published posts and reels"
+          bodyClassName="p-0"
+          actions={
+            <Link href="/creator/content" className="vc-focus inline-flex items-center gap-1 rounded text-xs font-semibold text-console-gold hover:text-console-gold-hover">
+              View all <ChevronRight size={13} aria-hidden />
+            </Link>
+          }
         >
-{/* ── Profile summary ─────────────────────────────────────────── */}
-          <section className="card-premium relative overflow-hidden p-5">
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#d6a83f]/40 to-transparent" aria-hidden />
-            <div className="flex items-center gap-4">
-              <Avatar
-                src={stats?.avatar || user?.avatar || user?.avatarUrl || null}
-                alt={stats?.username || user?.username || 'Creator'}
-                size="xl"
-                fallback={stats?.username?.charAt(0) || user?.username?.charAt(0) || 'C'}
-                wrapperClassName="shrink-0"
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="truncate text-lg font-bold text-white">{stats?.fullName || user?.fullName || user?.username}</h1>
-                  {stats?.verified && <VerificationBadge type={user?.verificationType || 'GOLD'} size="sm" />}
-                </div>
-                <p className="truncate text-sm text-white/40">@{stats?.username || user?.username}</p>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] font-medium uppercase tracking-wide">
-                  <span className="rounded-full bg-[var(--active-soft)] px-2.5 py-0.5 text-[var(--active-bright)]">Creator Studio</span>
-                  <span className="rounded-full bg-white/[0.05] px-2.5 py-0.5 text-white/40">
-                    {stats?.verified ? 'Verified creator' : 'Creator'}
-                  </span>
-                </div>
-              </div>
-              <Link
-                href={`/profile/${stats?.username || user?.username || ''}`}
-                className="hidden shrink-0 items-center gap-1 rounded-xl border border-white/[0.08] px-3 py-2 text-xs font-semibold text-white/60 transition-colors hover:bg-white/[0.04] hover:text-white md:inline-flex"
-              >
-                View profile <ChevronRight size={13} />
-              </Link>
-            </div>
-          </section>
-
-          {/* ── Quick actions (all real, existing VANTA flows) ───────────── */}
-          <section>
-            <h2 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/30">Quick actions</h2>
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+          {recent.length === 0 ? (
+            <div className="px-5 py-10 text-center">
+              <FileText size={22} className="mx-auto mb-3 text-console-text-3" aria-hidden />
+              <p className="text-sm font-medium text-console-text-2">No content yet</p>
+              <p className="mx-auto mt-1 max-w-xs text-xs text-console-text-3">
+                Posts you publish will appear here with their real performance.
+              </p>
               <button
-                onClick={() => router.push('/live/go-live')}
-                className="group flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 text-left transition-all hover:border-red-400/30 hover:bg-red-500/[0.04]"
+                type="button"
+                onClick={() => openPostModal()}
+                className="vc-focus mt-4 inline-flex min-h-9 items-center gap-1.5 rounded-[var(--vc-radius)] bg-console-gold px-4 text-xs font-semibold text-console-gold-fg hover:bg-console-gold-hover"
               >
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-red-500/15 text-red-400"><Radio size={16} /></span>
-                <span className="min-w-0">
-                  <span className="block truncate text-xs font-semibold text-white">Go Live</span>
-                  <span className="block text-[10px] text-white/35">Start a livestream</span>
-                </span>
+                <Plus size={13} aria-hidden /> Create your first post
               </button>
-              <button
-                onClick={openPostModal}
-                className="group flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 text-left transition-all hover:border-sky-400/30 hover:bg-sky-500/[0.04]"
-              >
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-sky-500/15 text-sky-300"><Plus size={16} /></span>
-                <span className="min-w-0">
-                  <span className="block truncate text-xs font-semibold text-white">Create Post</span>
-                  <span className="block text-[10px] text-white/35">Share with your audience</span>
-                </span>
-              </button>
-              <button
-                onClick={() => router.push('/creator/verification')}
-                className="group flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 text-left transition-all hover:border-[var(--active-border)] hover:bg-[var(--active-soft)]/30"
-              >
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--active-soft)] text-[var(--active)]"><BadgeCheck size={16} /></span>
-                <span className="min-w-0">
-                  <span className="block truncate text-xs font-semibold text-white">Verification</span>
-                  <span className="block text-[10px] text-white/35">Manage your badge</span>
-                </span>
-              </button>
-<button
-                onClick={() => router.push('/creator/analytics')}
-                className="group flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 text-left transition-all hover:border-emerald-400/30 hover:bg-emerald-500/[0.04]"
-              >
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300"><BarChart3 size={16} /></span>
-                <span className="min-w-0">
-                  <span className="block truncate text-xs font-semibold text-white">Analytics</span>
-                  <span className="block text-[10px] text-white/35">Track performance</span>
-                </span>
-              </button>
-              <button
-                onClick={() => router.push('/creator/monetization')}
-                className="group flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 text-left transition-all hover:border-amber-400/30 hover:bg-amber-500/[0.04]"
-              >
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-500/15 text-amber-300"><Wallet size={16} /></span>
-                <span className="min-w-0">
-                  <span className="block truncate text-xs font-semibold text-white">Monetization</span>
-                  <span className="block text-[10px] text-white/35">Gifts, coins &amp; earnings</span>
-                </span>
-              </button>
-              <button
-                onClick={openStoryModal}
-                className="group flex items-center gap-2.5 rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5 text-left transition-all hover:border-purple-400/30 hover:bg-purple-500/[0.04]"
-              >
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-purple-500/15 text-purple-300"><CircleDollarSign size={16} /></span>
-                <span className="min-w-0">
-                  <span className="block truncate text-xs font-semibold text-white">Story</span>
-                  <span className="block text-[10px] text-white/35">Share a moment</span>
-                </span>
-              </button>
-            </div>
-          </section>
-          <div className="grid grid-cols-2 gap-3">
-            <MetricCard icon={Eye} label="Total views" value={formatCompact(stats?.totalViews ?? 0)} accent="text-[#c8c8cc]" />
-            <MetricCard icon={Users} label="Followers" value={formatCompact(stats?.totalFollowers ?? 0)} accent="text-[#c8c8cc]" />
-            <MetricCard icon={Heart} label="Likes" value={formatCompact(stats?.totalLikes ?? 0)} accent="text-rose-300" />
-            <MetricCard icon={Gift} label="Gifts received" value={formatCompact(stats?.giftsReceived ?? 0)} accent="text-[#d6a83f]" />
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <MetricCard icon={FileText} label="Posts" value={formatCompact(stats?.totalPosts ?? 0)} />
-            <MetricCard icon={Video} label="Reels" value={formatCompact(stats?.totalReels ?? 0)} />
-            <MetricCard icon={Radio} label="Live" value={formatCompact(stats?.totalLiveSessions ?? 0)} />
-          </div>
-
-          {/* Recent content preview from real posts */}
-          <section className="card-premium p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
-                <FileText size={15} className="text-[#d6a83f]" />
-                Recent content
-              </h2>
-              {content.length > 0 && (
-                <button onClick={() => setActiveTab('content')} className="flex items-center gap-0.5 text-[11px] text-white/40 hover:text-white/70 transition">
-                  View all <ChevronRight size={11} />
-                </button>
-              )}
-            </div>
-            {content.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <FileText size={22} className="text-white/10 mb-2" />
-                <p className="text-sm text-white/30">No content yet</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {content.slice(0, 5).map((item) => (
-                  <div key={item.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/[0.03] transition">
-                    <div className="w-9 h-9 shrink-0 rounded-lg bg-white/[0.05] flex items-center justify-center">
-                      {item.type === 'reel' ? <Video size={15} className="text-white/40" /> : <FileText size={15} className="text-white/40" />}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white truncate">{item.title}</p>
-                      <p className="text-[11px] text-white/35">
-                        {formatCompact(item.views)} views · {formatCompact(item.likes)} likes
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        </motion.div>
-      )}
-
-      {/* CONTENT */}
-      {activeTab === 'content' && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
-          {content.length === 0 ? (
-            <div className="card-premium py-14 flex flex-col items-center text-center">
-              <FileText size={30} className="text-white/10 mb-3" />
-              <h3 className="text-white/50 font-medium text-sm mb-1">No content yet</h3>
-              <p className="text-white/25 text-xs max-w-[15rem]">Your posts and reels will appear here with their performance.</p>
             </div>
           ) : (
-            content.map((item) => (
-              <div key={item.id} className="card-premium p-4">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 shrink-0 rounded-xl bg-white/[0.05] flex items-center justify-center">
-                    {item.type === 'reel' ? <Video size={16} className="text-white/40" /> : <FileText size={16} className="text-white/40" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-white truncate">{item.title}</p>
-                    <p className="text-[11px] text-white/30 mt-0.5">{new Date(item.createdAt).toLocaleDateString()}</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-4 gap-2 mt-3 text-center">
-                  <div className="rounded-lg bg-white/[0.03] py-2">
-                    <p className="text-sm font-semibold text-white">{formatCompact(item.views)}</p>
-                    <p className="text-[9px] text-white/35 mt-0.5">Views</p>
-                  </div>
-                  <div className="rounded-lg bg-white/[0.03] py-2">
-                    <p className="text-sm font-semibold text-white">{formatCompact(item.likes)}</p>
-                    <p className="text-[9px] text-white/35 mt-0.5">Likes</p>
-                  </div>
-                  <div className="rounded-lg bg-white/[0.03] py-2">
-                    <p className="text-sm font-semibold text-white">{formatCompact(item.comments)}</p>
-                    <p className="text-[9px] text-white/35 mt-0.5">Comments</p>
-                  </div>
-                  <div className="rounded-lg bg-white/[0.03] py-2">
-                    <p className="text-sm font-semibold text-white">{formatCompact(item.saves)}</p>
-                    <p className="text-[9px] text-white/35 mt-0.5">Saves</p>
-                  </div>
-                </div>
-              </div>
-            ))
+            <ul className="divide-y divide-console-border">
+              {recent.map((item) => (
+                <li key={item.id}>
+                  <Link
+                    href={`/post/${item.id}`}
+                    className="vc-focus flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.02] sm:px-5"
+                  >
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--vc-radius)] border border-console-border bg-console-bg2 text-console-text-3">
+                      {item.type === 'reel' ? <Video size={15} aria-hidden /> : <FileText size={15} aria-hidden />}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-console-text">{item.title}</p>
+                      <p className="mt-0.5 flex items-center gap-2 text-[11px] text-console-text-3">
+                        <span className="uppercase">{item.type}</span>
+                        <span aria-hidden>·</span>
+                        <span>{timeAgo(item.createdAt)}</span>
+                      </p>
+                    </div>
+                    <div className="hidden shrink-0 items-center gap-4 text-right sm:flex">
+                      <span className="text-xs text-console-text-3">
+                        <span className="font-semibold text-console-text-2">{fmtCompact(item.views)}</span> views
+                      </span>
+                      <span className="text-xs text-console-text-3">
+                        <span className="font-semibold text-console-text-2">{fmtCompact(item.likes)}</span> likes
+                      </span>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1 sm:hidden">
+                      <Eye size={12} className="text-console-text-3" aria-hidden />
+                      <span className="text-xs text-console-text-2">{fmtCompact(item.views)}</span>
+                    </div>
+                    <ArrowUpRight size={14} className="shrink-0 text-console-text-3" aria-hidden />
+                  </Link>
+                </li>
+              ))}
+            </ul>
           )}
-        </motion.div>
-      )}
+        </ConsolePanel>
 
-      {/* ANALYTICS — aggregated engagement from real content */}
-      {activeTab === 'analytics' && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <MetricCard icon={Eye} label="Views" value={formatCompact(stats?.totalViews ?? 0)} accent="text-[#c8c8cc]" />
-            <MetricCard icon={Heart} label="Likes" value={formatCompact(stats?.totalLikes ?? 0)} accent="text-rose-300" />
-            <MetricCard icon={MessageCircle} label="Comments" value={formatCompact(stats?.totalComments ?? 0)} accent="text-sky-300" />
-            <MetricCard icon={Share2} label="Shares" value={formatCompact(stats?.totalShares ?? 0)} accent="text-emerald-300" />
-            <MetricCard icon={Bookmark} label="Saves" value={formatCompact(stats?.totalSaves ?? 0)} accent="text-amber-300" />
-            <MetricCard icon={Users} label="Following" value={formatCompact(stats?.totalFollowing ?? 0)} />
-          </div>
-        </motion.div>
-      )}
 
-      {/* LIVE */}
-      {activeTab === 'live' && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <MetricCard icon={Radio} label="Live sessions" value={formatCompact(stats?.totalLiveSessions ?? 0)} accent="text-rose-300" />
-            <MetricCard icon={Gift} label="Gifts received" value={formatCompact(stats?.giftsReceived ?? 0)} accent="text-[#d6a83f]" />
-          </div>
-          <p className="text-[11px] text-white/30 px-1">
-            Live session counts reflect the streams you&apos;ve hosted on VANTA.
-          </p>
-        </motion.div>
-      )}
+        <div className="space-y-6">
+          <ConsolePanel title="Quick actions" bodyClassName="p-2">
+            <nav aria-label="Quick actions">
+              {QUICK_ACTIONS.map((a) => {
+                const Icon = a.icon;
+                return (
+                  <Link
+                    key={a.href}
+                    href={a.href}
+                    className="vc-focus group flex min-h-[52px] items-center gap-3 rounded-[var(--vc-radius)] px-3 transition-colors hover:bg-white/[0.03]"
+                  >
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-console-border bg-console-bg2 text-console-text-3 transition-colors group-hover:text-console-gold">
+                      <Icon size={14} aria-hidden />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-medium text-console-text">{a.label}</span>
+                      <span className="block truncate text-[11px] text-console-text-3">{a.desc}</span>
+                    </span>
+                    <ChevronRight size={14} className="shrink-0 text-console-text-3" aria-hidden />
+                  </Link>
+                );
+              })}
+            </nav>
+          </ConsolePanel>
 
-      {/* EARNINGS — reuses the existing wallet/earnings system, no client math */}
-      {activeTab === 'earnings' && (
-        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
-          <div className="card-premium p-5">
-            <p className="text-[11px] text-white/40 uppercase tracking-wider mb-1">Creator earnings</p>
-            <p className="text-3xl font-bold text-white">{formatCompact(stats?.earnings ?? 0)}</p>
-            <p className="text-[11px] text-white/35 mt-1">Available earnings balance: {formatCompact(stats?.earningsBalance ?? 0)}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <MetricCard icon={Coins} label="Coins" value={formatCompact(stats?.coins ?? 0)} accent="text-[#d6a83f]" />
-            <MetricCard icon={Gift} label="Gifts received" value={formatCompact(stats?.giftsReceived ?? 0)} accent="text-[#d6a83f]" />
-          </div>
-          <p className="text-[11px] text-white/30 px-1">
-            Balances come from your VANTA wallet. Manage withdrawals from the Balance screen.
-          </p>
-        </motion.div>
-      )}
-    </motion.div>
+          {stats ? (
+            <ConsolePanel title="Live &amp; wallet snapshot" bodyClassName="px-5 py-4">
+              <dl className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="flex items-center gap-2 text-xs text-console-text-3"><Radio size={13} aria-hidden /> Live sessions</dt>
+                  <dd className="text-sm font-semibold tabular-nums text-console-text">{fmtCompact(stats.totalLiveSessions)}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="flex items-center gap-2 text-xs text-console-text-3"><Coins size={13} aria-hidden /> Coin balance</dt>
+                  <dd className="text-sm font-semibold tabular-nums text-console-text">{fmtCompact(stats.coins)}</dd>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="flex items-center gap-2 text-xs text-console-text-3"><Wallet size={13} aria-hidden /> Earnings balance</dt>
+                  <dd className="text-sm font-semibold tabular-nums text-console-gold">{fmtCurrency(stats.earningsBalance)}</dd>
+                </div>
+              </dl>
+              <Link
+                href="/creator/earnings"
+                className="vc-focus mt-4 inline-flex min-h-9 items-center gap-1.5 rounded-[var(--vc-radius)] border border-console-border px-3.5 text-xs font-semibold text-console-text-2 transition-colors hover:bg-white/[0.04] hover:text-console-text"
+              >
+                Monetization center <ArrowUpRight size={13} aria-hidden />
+              </Link>
+            </ConsolePanel>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }

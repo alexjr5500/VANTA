@@ -7,12 +7,20 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Home, FileText, Radio, DollarSign, Crown, Users, BarChart3,
   MessageCircle, Wallet, Gift, Bell, Shield, BadgeCheck,
-  X, LogOut
+  X, LogOut, Menu, BellRing,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import PageHeader from '@/components/ui/PageHeader';
 import { checkStudioAccess } from '@/lib/verificationApi';
-import type { VerificationStatus } from '@/lib/verificationApi';
+import { cn } from '@/lib/utils';
+
+// ---------------------------------------------------------------------------
+// VANTA CREATOR STUDIO SHELL
+// A dedicated professional workspace: persistent desktop sidebar (the app
+// maps `lg` -> 701px), compact drawer + top bar on phones. Navigation only
+// links to routes that exist — every destination is a real page. Access is
+// gated by the existing checkStudioAccess entitlement check, preserved
+// verbatim from the previous layout (including degraded mode on API failure).
+// ---------------------------------------------------------------------------
 
 interface NavItem {
   href: string;
@@ -26,21 +34,15 @@ interface NavSection {
 }
 
 const navSections: NavSection[] = [
+  { label: 'Overview', items: [{ href: '/creator', label: 'Overview', icon: Home }] },
+  { label: 'Content', items: [{ href: '/creator/content', label: 'Content Manager', icon: FileText }] },
+  { label: 'Insights', items: [{ href: '/creator/analytics', label: 'Analytics', icon: BarChart3 }] },
+  { label: 'Live', items: [{ href: '/creator/live', label: 'Live Studio', icon: Radio }] },
   {
-    label: 'Overview',
+    label: 'Monetization',
     items: [
-      { href: '/creator', label: 'Home', icon: Home },
-      { href: '/creator/analytics', label: 'Analytics', icon: BarChart3 },
-      { href: '/creator/content', label: 'Content Manager', icon: FileText },
-    ],
-  },
-  {
-    label: 'Creator Tools',
-    items: [
-      { href: '/creator/verification', label: 'Verification', icon: BadgeCheck },
-      { href: '/creator/live', label: 'Live Studio', icon: Radio },
-      { href: '/creator/monetization', label: 'Monetization', icon: Wallet },
       { href: '/creator/earnings', label: 'Earnings', icon: DollarSign },
+      { href: '/creator/monetization', label: 'Monetization', icon: Wallet },
       { href: '/creator/rewards', label: 'Follower Rewards', icon: Gift },
       { href: '/creator/subscriptions', label: 'Subscriptions', icon: Crown },
     ],
@@ -48,13 +50,14 @@ const navSections: NavSection[] = [
   {
     label: 'Audience',
     items: [
-      { href: '/creator/community', label: 'Audience', icon: Users },
+      { href: '/creator/community', label: 'Community', icon: Users },
       { href: '/creator/inbox', label: 'Inbox', icon: MessageCircle },
     ],
   },
   {
     label: 'Account',
     items: [
+      { href: '/creator/verification', label: 'Verification', icon: BadgeCheck },
       { href: '/creator/notifications', label: 'Notifications', icon: Bell },
       { href: '/creator/security', label: 'Security', icon: Shield },
     ],
@@ -62,8 +65,7 @@ const navSections: NavSection[] = [
 ];
 
 // Route-derived title so every /creator/* page shares ONE canonical studio
-// header rendered by this layout, instead of each page stacking its own bar
-// directly beneath it (the double-header defect).
+// header rendered by this layout.
 const STUDIO_TITLES: Record<string, string> = {
   ...Object.fromEntries(
     navSections.flatMap((section) => section.items.map((item) => [item.href, item.label])),
@@ -72,68 +74,108 @@ const STUDIO_TITLES: Record<string, string> = {
   '/creator/upgrade': 'Upgrade',
 };
 
+const isNavActive = (pathname: string, href: string) =>
+  href === '/creator' ? pathname === '/creator' : pathname === href || pathname.startsWith(href + '/');
+
+function StudioNav({
+  sections, pathname, onNavigate,
+}: {
+  sections: NavSection[];
+  pathname: string;
+  onNavigate?: () => void;
+}) {
+  return (
+    <>
+      {sections.map((section) => (
+        <section key={section.label} className="mb-5">
+          <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-console-text-3">
+            {section.label}
+          </p>
+          {section.items.map((item) => {
+            const Icon = item.icon;
+            const active = isNavActive(pathname, item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={onNavigate}
+                aria-current={active ? 'page' : undefined}
+                className={cn(
+                  'vc-focus group relative mb-0.5 flex min-h-9 items-center gap-3 rounded-[var(--vc-radius)] px-3 text-[13px] transition-colors',
+                  active
+                    ? 'bg-console-gold-soft font-semibold text-console-text'
+                    : 'text-console-text-2 hover:bg-white/[0.04] hover:text-console-text',
+                )}
+              >
+                {active && (
+                  <span className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-console-gold" aria-hidden />
+                )}
+                <Icon size={16} className={active ? 'text-console-gold' : 'text-console-text-3 group-hover:text-console-text-2'} aria-hidden />
+                <span className="truncate">{item.label}</span>
+              </Link>
+            );
+          })}
+        </section>
+      ))}
+    </>
+  );
+}
+
+
 export default function CreatorLayout({ children }: { children: React.ReactNode }) {
   const { user, token, isLoading, logout } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [verificationStatus, setVerificationStatus] = useState<VerificationStatus | null>(null);
-  const [checkingAccess, setCheckingAccess] = useState(true);
 
   useEffect(() => { setDrawerOpen(false); }, [pathname]);
 
   // Check creator studio access on every route change
   useEffect(() => {
     if (!token || !pathname) {
-      setCheckingAccess(false);
       return;
     }
-    
+
     // Skip access check for the upgrade page itself
     if (pathname === '/creator/upgrade') {
-      setCheckingAccess(false);
       return;
     }
 
     const verifyAccess = async () => {
-      setCheckingAccess(true);
       try {
         const access = await checkStudioAccess(token);
-        setVerificationStatus(access.status);
         if (!access.allowed) {
           router.push('/creator/upgrade');
         }
       } catch {
-        // If API fails, allow access (degraded mode)
-        setCheckingAccess(false);
-      } finally {
-        setCheckingAccess(false);
+        // If API fails, allow access (degraded mode) — unchanged behavior.
       }
     };
 
     verifyAccess();
   }, [token, pathname, router]);
 
-  const isCreator = user?.role === 'creator' || user?.role === 'admin' || user?.role === 'moderator';
-
   // Show a loading state while auth is being restored
   // This prevents showing the login prompt on page refresh
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[var(--background)]">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-[#151517]0/60" />
+      <div className="flex min-h-dvh items-center justify-center bg-console-bg">
+        <div className="h-10 w-10 animate-spin rounded-full border-2 border-console-border border-t-console-gold" role="status" aria-label="Restoring session" />
       </div>
     );
   }
 
   if (!token) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[var(--background)]">
-        <div className="glass rounded-[28px] p-12 text-center max-w-md mx-4">
-          <Radio size={48} className="text-[#d6a83f] mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-white">Creator Studio</h2>
-          <p className="text-sm text-gray-400 mt-2">Sign in to access your creator dashboard.</p>
-          <button onClick={() => router.push('/login')} className="mt-6 px-6 py-2.5 rounded-full bg-gradient-to-r from-[#d6a83f] to-[#c8c8cc] text-white text-sm font-semibold hover:brightness-110 transition-all">
+      <div className="flex min-h-dvh items-center justify-center bg-console-bg px-4">
+        <div className="vc-panel w-full max-w-sm p-8 text-center">
+          <Radio size={34} className="mx-auto mb-4 text-console-gold" aria-hidden />
+          <h1 className="text-lg font-semibold text-console-text">Creator Studio</h1>
+          <p className="mt-1.5 text-sm text-console-text-3">Sign in to access your creator workspace.</p>
+          <button
+            onClick={() => router.push('/login')}
+            className="vc-focus mt-6 inline-flex min-h-10 items-center rounded-[var(--vc-radius)] bg-console-gold px-6 text-sm font-semibold text-console-gold-fg transition-colors hover:bg-console-gold-hover"
+          >
             Sign In
           </button>
         </div>
@@ -141,53 +183,104 @@ export default function CreatorLayout({ children }: { children: React.ReactNode 
     );
   }
 
+  const title = STUDIO_TITLES[pathname || ''] || 'Creator Studio';
+
+
   return (
-    <div className="min-h-dvh w-full max-w-none bg-[var(--background)] text-[var(--text-primary)]">
+    <div className="min-h-dvh w-full bg-console-bg text-console-text">
+      {/* Mobile drawer navigation */}
       <AnimatePresence>
         {drawerOpen && (
           <>
-            <motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} aria-label="Close studio navigation" className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm" onClick={() => setDrawerOpen(false)} />
-            <motion.aside initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }} transition={{ type: 'spring', damping: 28, stiffness: 240 }} className="fixed bottom-0 left-0 top-0 z-50 flex w-[min(300px,calc(100vw-32px))] flex-col border-r border-white/[.08] bg-[#0d0d0f]">
-              <div className="flex h-16 items-center justify-between border-b border-white/[.08] px-4"><Link href="/creator" className="flex items-center gap-2.5"><img src="/branding/vanta-logo.png" alt="VANTA" className="h-7 w-auto" width={480} height={120} /><span className="text-sm font-bold text-[#c9a227]">Studio</span></Link><button onClick={() => setDrawerOpen(false)} className="grid h-10 w-10 place-items-center text-[#b8b8b8]" aria-label="Close navigation"><X size={19} /></button></div>
-              <nav className="flex-1 overflow-y-auto px-3 py-3">{navSections.map(section => <section key={section.label} className="mb-5"><p className="mb-2 px-3 text-[10px] font-semibold uppercase text-[#777]">{section.label}</p>{section.items.map(item => { const Icon = item.icon; const active = pathname === item.href; return <Link key={item.href} href={item.href} className={`mb-1 flex min-h-11 items-center gap-3 rounded-md px-3 text-sm ${active ? 'border border-[#c9a227]/30 bg-[#151517] text-white' : 'text-[#b8b8b8]'}`}><Icon size={18} /><span>{item.label}</span></Link>; })}</section>)}</nav>
-              <button onClick={logout} className="flex min-h-14 items-center gap-3 border-t border-white/[.08] px-6 text-sm text-[#b8b8b8]"><LogOut size={18} />Logout</button>
+            <motion.button
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              aria-label="Close studio navigation"
+              className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm"
+              onClick={() => setDrawerOpen(false)}
+            />
+            <motion.aside
+              initial={{ x: '-100%' }} animate={{ x: 0 }} exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 28, stiffness: 240 }}
+              className="fixed bottom-0 left-0 top-0 z-50 flex w-[min(300px,calc(100vw-32px))] flex-col border-r border-console-border bg-console-bg2"
+            >
+              <div className="flex h-14 shrink-0 items-center justify-between border-b border-console-border px-4">
+                <Link href="/creator" className="flex items-center gap-2.5 vc-focus rounded">
+                  <img src="/branding/vanta-logo.png" alt="VANTA" className="h-6 w-auto" width={480} height={120} />
+                  <span className="text-xs font-bold uppercase tracking-[0.2em] text-console-gold">Studio</span>
+                </Link>
+                <button onClick={() => setDrawerOpen(false)} className="vc-focus grid h-10 w-10 place-items-center rounded-[var(--vc-radius)] text-console-text-2 hover:bg-white/[0.05]" aria-label="Close navigation">
+                  <X size={19} aria-hidden />
+                </button>
+              </div>
+              <nav className="flex-1 overflow-y-auto overscroll-contain px-3 py-3" aria-label="Creator Studio">
+                <StudioNav sections={navSections} pathname={pathname} onNavigate={() => setDrawerOpen(false)} />
+              </nav>
+              <button
+                onClick={logout}
+                className="vc-focus flex min-h-12 shrink-0 items-center gap-3 border-t border-console-border px-6 text-sm text-console-text-2 transition-colors hover:text-console-danger"
+              >
+                <LogOut size={16} aria-hidden /> Logout
+              </button>
             </motion.aside>
           </>
         )}
       </AnimatePresence>
-      {/* Single canonical VANTA studio header (compact utility pattern).
-          The menu toggle opens the studio drawer; title follows the route.
-          The outer bar is `fixed inset-x-0` so the header surface reaches BOTH
-          screen edges on every device (viewport-wide), independent of the
-          centered studio frame below. The inner row is constrained to the
-          studio max-width so the menu/title/actions keep exactly the same
-          alignment as the page content. z-30 keeps it above scrolling content
-          but below the drawer backdrop (z-40) and drawer (z-50). */}
-      <header className="fixed inset-x-0 top-0 z-30 border-b border-white/[0.08] bg-[#080808]/90 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
-        <div className="mx-auto w-full max-w-6xl px-4">
-          <PageHeader
-            onMenu={() => setDrawerOpen(true)}
-            title={STUDIO_TITLES[pathname || ''] || 'Creator Studio'}
-            actions={
-              <button
-                type="button"
-                className="relative grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#8A8A8A] transition hover:bg-white/[0.06] hover:text-white"
-                aria-label="Studio notifications"
-              >
-                <Bell size={18} />
-                <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[#c9a227]" aria-hidden />
-              </button>
-            }
-            className="h-14 !border-b-0"
-          />
+
+      {/* Desktop persistent sidebar */}
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[var(--vc-sidebar-w)] flex-col border-r border-console-border bg-console-bg2 lg:flex">
+        <div className="flex h-14 shrink-0 items-center justify-between border-b border-console-border px-4">
+          <Link href="/creator" className="flex items-center gap-2.5 vc-focus rounded">
+            <img src="/branding/vanta-logo.png" alt="VANTA" className="h-6 w-auto" width={480} height={120} />
+            <span className="text-xs font-bold uppercase tracking-[0.2em] text-console-gold">Studio</span>
+          </Link>
+        </div>
+        <nav className="flex-1 overflow-y-auto overscroll-contain px-3 py-4" aria-label="Creator Studio">
+          <StudioNav sections={navSections} pathname={pathname} />
+        </nav>
+        <div className="shrink-0 border-t border-console-border px-4 py-3">
+          <p className="truncate text-xs font-medium text-console-text-2" title={user?.email}>
+            {user?.fullName || user?.username}
+          </p>
+          <p className="truncate text-[11px] text-console-text-3">{user?.email}</p>
+          <button
+            onClick={logout}
+            className="vc-focus mt-2 flex min-h-9 items-center gap-2 rounded-[var(--vc-radius)] text-xs text-console-text-2 transition-colors hover:text-console-danger"
+          >
+            <LogOut size={14} aria-hidden /> Logout
+          </button>
+        </div>
+      </aside>
+
+      {/* Compact top bar (full-bleed, starts after the desktop sidebar) */}
+      <header className="fixed inset-x-0 top-0 z-30 border-b border-console-border bg-console-bg2/95 pt-[env(safe-area-inset-top)] backdrop-blur-xl lg:left-[var(--vc-sidebar-w)]">
+        <div className="flex h-14 items-center gap-2 px-4">
+          <button
+            onClick={() => setDrawerOpen(true)}
+            className="vc-focus grid h-9 w-9 shrink-0 place-items-center rounded-[var(--vc-radius)] text-console-text-2 transition-colors hover:bg-white/[0.05] hover:text-console-text lg:hidden"
+            aria-label="Open studio navigation"
+          >
+            <Menu size={19} aria-hidden />
+          </button>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-sm font-semibold text-console-text">{title}</h1>
+          </div>
+          <Link
+            href="/creator/notifications"
+            className="vc-focus grid h-9 w-9 shrink-0 place-items-center rounded-[var(--vc-radius)] text-console-text-2 transition-colors hover:bg-white/[0.05] hover:text-console-text"
+            aria-label="Studio notifications"
+            title="Notifications"
+          >
+            <BellRing size={17} aria-hidden />
+          </Link>
         </div>
       </header>
 
       {/* Content starts below the fixed viewport header (its full height,
-          including the safe-area inset, is reserved as top padding) so nothing
-          scrolls underneath or disappears behind it. */}
-      <div className="flex min-h-screen flex-col">
-        <main className="min-w-0 flex-1 overflow-x-hidden px-4 pb-4 pt-[calc(env(safe-area-inset-top)+3.5rem)]">{children}</main>
+          including the safe-area inset, is reserved as top padding). */}
+      <div className="flex min-h-dvh flex-col lg:pl-[var(--vc-sidebar-w)]">
+        <main className="min-w-0 flex-1 overflow-x-hidden px-4 pb-10 pt-[calc(env(safe-area-inset-top)+3.5rem)]">
+          <div className="mx-auto w-full max-w-[var(--vc-content-max)]">{children}</div>
+        </main>
       </div>
     </div>
   );

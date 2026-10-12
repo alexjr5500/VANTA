@@ -1,72 +1,45 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { motion } from 'framer-motion';
 import Link from 'next/link';
-import { TrendingUp, Eye, Heart, MessageCircle, Share2, Bookmark, Users, AlertCircle, RefreshCw } from 'lucide-react';
+import {
+  TrendingUp, Eye, Heart, MessageCircle, Share2, Bookmark, Users,
+  Radio, Video, FileText, ChevronRight,
+} from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
+import type { CreatorStats, CreatorContentItem } from '@/lib/creatorStudio';
+import MetricTile from '@/components/console/MetricTile';
+import ConsolePanel from '@/components/console/Panel';
+import { ConsoleErrorState, ConsoleEmptyState } from '@/components/console/States';
+import { fmtCompact } from '@/components/console/format';
 
 // ============================================================================
-// CREATOR ANALYTICS — real aggregated metrics from /api/creator/stats
+// CREATOR ANALYTICS — real aggregated metrics from /api/creator/stats plus
+// content-level performance from /api/creator/content. The backend exposes
+// only cumulative (lifetime) totals for creators — no per-day time series —
+// so this workspace presents totals and content comparisons and NEVER draws
+// invented trend lines or fabricated date ranges.
 // ============================================================================
-
-interface CreatorStats {
-  username: string;
-  fullName: string | null;
-  avatar: string | null;
-  verified: boolean;
-  role: string;
-  totalFollowers: number;
-  totalFollowing: number;
-  totalPosts: number;
-  totalReels: number;
-  totalLiveSessions: number;
-  totalViews: number;
-  totalLikes: number;
-  totalComments: number;
-  totalShares: number;
-  totalSaves: number;
-  giftsReceived: number;
-  coins: number;
-  earnings: number;
-  earningsBalance: number;
-}
-
-function formatCompact(value: number): string {
-  if (!Number.isFinite(value)) return '0';
-  if (Math.abs(value) < 1000) return String(value);
-  return Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-}
-
-function StatTile({ icon: Icon, label, value, accent = 'text-white/60' }: { icon: any; label: string; value: string; accent?: string }) {
-  return (
-    <div className="card-premium min-w-0 p-4">
-      <div className="mb-3 grid h-9 w-9 place-items-center rounded-xl border border-white/[0.06] bg-white/[0.05]">
-        <Icon size={15} className={accent} />
-      </div>
-      <p className="truncate text-xl font-bold text-white">{value}</p>
-      <p className="mt-1 truncate text-[11px] text-white/40">{label}</p>
-    </div>
-  );
-}
 
 export default function AnalyticsPage() {
   const { token } = useAuth();
   const [stats, setStats] = useState<CreatorStats | null>(null);
+  const [content, setContent] = useState<CreatorContentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
-    if (!token) {
-      setLoading(false);
-      return;
-    }
+    if (!token) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {
-      const res = await apiGet<{ stats: CreatorStats }>('/api/creator/stats', token);
-      setStats(res?.stats ?? null);
+      const [statsRes, contentRes] = await Promise.all([
+        apiGet<{ stats: CreatorStats }>('/api/creator/stats', token),
+        apiGet<{ content: CreatorContentItem[] }>('/api/creator/content?limit=50', token, { skipCache: true }).catch(() => ({ content: [] })),
+      ]);
+      setStats(statsRes?.stats ?? null);
+      setContent(Array.isArray(contentRes?.content) ? contentRes.content : []);
     } catch (err: any) {
       setError(err?.message || 'Failed to load analytics.');
     } finally {
@@ -78,93 +51,130 @@ export default function AnalyticsPage() {
 
   if (loading) {
     return (
-      <div className="w-full space-y-3">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {[1, 2, 3, 4, 5, 6].map((i) => <div key={i} className="skeleton h-28 rounded-2xl" />)}
+      <div className="space-y-6 pb-8" aria-busy="true">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 sm:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => <div key={i} className="h-16 animate-pulse rounded bg-white/[0.04]" />)}
         </div>
-        <div className="skeleton h-64 rounded-2xl" />
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 sm:grid-cols-3 lg:grid-cols-6">
+          {[1, 2, 3, 4, 5, 6].map((i) => <div key={i} className="h-14 animate-pulse rounded bg-white/[0.04]" />)}
+        </div>
+        <div className="vc-panel h-64 animate-pulse" />
       </div>
     );
   }
 
   if (error) {
+    return <ConsoleErrorState title="Couldn't load analytics" message={error} onRetry={() => void fetchData()} />;
+  }
+
+  if (!stats) {
     return (
-      <div className="flex w-full flex-col items-center py-14 text-center">
-        <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl border border-red-500/20 bg-red-500/10">
-          <AlertCircle size={22} className="text-red-400" />
-        </div>
-        <h2 className="text-base font-semibold text-white/80">Couldn&apos;t load analytics</h2>
-        <p className="mt-1 mb-5 max-w-sm text-sm text-white/40">{error}</p>
-        <button onClick={() => void fetchData()} className="btn-primary text-sm"><RefreshCw size={14} className="mr-1.5 inline" /> Try again</button>
-      </div>
+      <ConsoleEmptyState
+        title="Analytics unavailable"
+        description="We couldn't retrieve your creator statistics. Try again in a moment."
+        action={
+          <button type="button" onClick={() => void fetchData()} className="vc-focus min-h-9 rounded-[var(--vc-radius)] border border-console-border-strong px-4 text-xs font-semibold text-console-text-2 hover:bg-white/[0.04]">
+            Try again
+          </button>
+        }
+      />
     );
   }
 
-  const s = stats || ({} as CreatorStats);
-  const totalContent = (s.totalPosts || 0) + (s.totalReels || 0);
-  const engagement = s.totalFollowers > 0 ? Math.round(((s.totalViews + s.totalLikes + s.totalComments) / s.totalFollowers) * 100) / 100 : 0;
-  const hasAnyData = (s.totalViews || 0) > 0 || (s.totalLikes || 0) > 0 || (s.totalFollowers || 0) > 0 || totalContent > 0;
-return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full space-y-5 pb-8">
-      {/* Performance overview */}
-      <section className="rounded-3xl border border-white/[0.06] bg-white/[0.02] p-5">
-        <div className="mb-4 flex items-center gap-2">
-          <TrendingUp size={15} className="text-[var(--active)]" />
-          <h2 className="text-sm font-bold text-white">Performance overview</h2>
-          <span className="ml-auto rounded-full border border-white/[0.06] bg-white/[0.03] px-2.5 py-1 text-[10px] text-white/40">All time</span>
+  const hasAnyData = stats.totalViews > 0 || stats.totalLikes > 0 || stats.totalFollowers > 0;
+
+  // Content performance: top items by views (real per-item metrics).
+  const topContent = [...content].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 8);
+  const maxViews = Math.max(1, ...topContent.map((c) => c.views || 0));
+
+  return (
+    <div className="space-y-8 pb-10">
+      {/* Primary performance band */}
+      <section aria-label="Primary performance">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 sm:grid-cols-4">
+          <MetricTile label="Followers" value={fmtCompact(stats.totalFollowers)} icon={<Users size={13} />} hint={`${fmtCompact(stats.totalFollowing)} following`} accent />
+          <MetricTile label="Total views" value={fmtCompact(stats.totalViews)} icon={<Eye size={13} />} hint="All published content" />
+          <MetricTile label="Content published" value={fmtCompact(stats.totalPosts + stats.totalReels)} icon={<FileText size={13} />} hint={`${fmtCompact(stats.totalPosts)} posts · ${fmtCompact(stats.totalReels)} reels`} />
+          <MetricTile label="Live sessions" value={fmtCompact(stats.totalLiveSessions)} icon={<Radio size={13} />} hint={`${fmtCompact(stats.giftsReceived)} gifts received`} />
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-            <p className="text-[11px] text-white/40">Total views</p>
-            <p className="mt-1 text-3xl font-bold tracking-tight text-white">{formatCompact(s.totalViews || 0)}</p>
-            <p className="mt-1 flex items-center gap-1 text-[11px] text-emerald-400"><Eye size={12} /> from your published content</p>
-          </div>
-          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-            <p className="text-[11px] text-white/40">Audience</p>
-            <p className="mt-1 text-3xl font-bold tracking-tight text-white">{formatCompact(s.totalFollowers || 0)}</p>
-            <p className="mt-1 flex items-center gap-1 text-[11px] text-white/35"><Users size={12} /> followers</p>
-          </div>
-          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4">
-            <p className="text-[11px] text-white/40">Engagement rate</p>
-            <p className="mt-1 text-3xl font-bold tracking-tight text-white">{hasAnyData ? `${engagement}×` : '—'}</p>
-            <p className="mt-1 flex items-center gap-1 text-[11px] text-white/35"><Heart size={12} /> views + likes vs followers</p>
-          </div>
+        <p className="mt-3 text-[11px] text-console-text-3">
+          Cumulative lifetime totals from the VANTA creator stats service. Time-range filters are not
+          available yet — the backend does not expose per-period creator series.
+        </p>
+      </section>
+
+      {/* Supporting engagement metrics */}
+      <section aria-label="Engagement metrics">
+        <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-console-text-3">Engagement</h3>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 sm:grid-cols-3 lg:grid-cols-6">
+          <MetricTile label="Likes" value={fmtCompact(stats.totalLikes)} icon={<Heart size={13} />} />
+          <MetricTile label="Comments" value={fmtCompact(stats.totalComments)} icon={<MessageCircle size={13} />} />
+          <MetricTile label="Shares" value={fmtCompact(stats.totalShares)} icon={<Share2 size={13} />} />
+          <MetricTile label="Saves" value={fmtCompact(stats.totalSaves)} icon={<Bookmark size={13} />} />
+          <MetricTile label="Following" value={fmtCompact(stats.totalFollowing)} icon={<Users size={13} />} />
+          <MetricTile label="Reels" value={fmtCompact(stats.totalReels)} icon={<Video size={13} />} />
         </div>
       </section>
 
-      {/* Engagement metrics */}
-      <section>
-        <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/30">Engagement</h3>
-        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-          <StatTile icon={Eye} label="Views" value={formatCompact(s.totalViews ?? 0)} accent="text-white/60" />
-          <StatTile icon={Heart} label="Likes" value={formatCompact(s.totalLikes ?? 0)} accent="text-rose-300" />
-          <StatTile icon={MessageCircle} label="Comments" value={formatCompact(s.totalComments ?? 0)} accent="text-sky-300" />
-          <StatTile icon={Share2} label="Shares" value={formatCompact(s.totalShares ?? 0)} accent="text-emerald-300" />
-          <StatTile icon={Bookmark} label="Saves" value={formatCompact(s.totalSaves ?? 0)} accent="text-amber-300" />
-          <StatTile icon={Users} label="Following" value={formatCompact(s.totalFollowing ?? 0)} />
-        </div>
-      </section>
-
-      {/* Content metrics */}
-      <section>
-        <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/30">Content</h3>
-        <div className="grid grid-cols-3 gap-2.5">
-          <StatTile icon={TrendingUp} label="Posts" value={formatCompact(s.totalPosts ?? 0)} accent="text-white/60" />
-          <StatTile icon={Bookmark} label="Reels" value={formatCompact(s.totalReels ?? 0)} accent="text-violet-300" />
-          <StatTile icon={Share2} label="Live sessions" value={formatCompact(s.totalLiveSessions ?? 0)} accent="text-red-300" />
-        </div>
-      </section>
+      {/* Content comparison — real per-item performance */}
+      <ConsolePanel
+        title="Content performance"
+        description="Your top published content by views"
+        actions={
+          <Link href="/creator/content" className="vc-focus inline-flex items-center gap-1 rounded text-xs font-semibold text-console-gold hover:text-console-gold-hover">
+            Manage content <ChevronRight size={13} aria-hidden />
+          </Link>
+        }
+        bodyClassName="p-0"
+      >
+        {topContent.length === 0 ? (
+          <ConsoleEmptyState
+            icon={<TrendingUp size={19} />}
+            title="No content performance yet"
+            description="Publish posts and reels to start comparing how your content performs."
+          />
+        ) : (
+          <ul className="divide-y divide-console-border">
+            {topContent.map((item, idx) => {
+              const pct = maxViews > 0 ? Math.max(2, Math.round(((item.views || 0) / maxViews) * 100)) : 0;
+              return (
+                <li key={item.id}>
+                  <Link href={`/post/${item.id}`} className="vc-focus block px-4 py-3 transition-colors hover:bg-white/[0.02] sm:px-5">
+                    <div className="flex items-center gap-3">
+                      <span className="w-5 shrink-0 text-center text-[11px] font-semibold text-console-text-3">{idx + 1}</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-console-text">{item.title}</p>
+                        <p className="mt-0.5 text-[11px] text-console-text-3">
+                          {item.type === 'reel' ? 'Reel' : 'Post'} · {fmtCompact(item.likes)} likes · {fmtCompact(item.comments)} comments
+                        </p>
+                      </div>
+                      <span className="shrink-0 text-sm font-semibold tabular-nums text-console-text">{fmtCompact(item.views)}</span>
+                      <span className="hidden shrink-0 text-[11px] text-console-text-3 sm:inline">views</span>
+                    </div>
+                    <div className="mt-2 ml-8 h-1 overflow-hidden rounded-full bg-white/[0.05]" aria-hidden>
+                      <div className="h-full rounded-full bg-console-gold/70" style={{ width: `${pct}%` }} />
+                    </div>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </ConsolePanel>
 
       {!hasAnyData && (
-        <section className="rounded-3xl border border-white/[0.06] bg-white/[0.02] p-8 text-center">
-          <TrendingUp size={30} className="mx-auto mb-3 text-white/15" />
-          <p className="text-sm text-white/50">No analytics yet</p>
-          <p className="mx-auto mt-1 max-w-xs text-xs leading-relaxed text-white/30">Publish content and go live to start building your performance data. Metrics update as your posts earn views and engagement.</p>
-          <Link href="/creator/content" className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-[var(--active)] px-4 py-2 text-xs font-semibold text-black hover:opacity-90">
-            View content <span aria-hidden>→</span>
-          </Link>
-        </section>
+        <ConsoleEmptyState
+          icon={<TrendingUp size={19} />}
+          title="No analytics yet"
+          description="Publish content and go live to start building your performance data. Metrics update as your posts earn views and engagement."
+          action={
+            <Link href="/creator/content" className="vc-focus inline-flex min-h-9 items-center rounded-[var(--vc-radius)] bg-console-gold px-4 text-xs font-semibold text-console-gold-fg hover:bg-console-gold-hover">
+              View content
+            </Link>
+          }
+        />
       )}
-    </motion.div>
+    </div>
   );
 }
+

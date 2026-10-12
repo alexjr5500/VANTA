@@ -2288,6 +2288,135 @@ html.light .text-gray-400,
 html.light .text-gray-500 { color: var(--text-muted); }
 html.light .text-gray-300 { color: var(--text-secondary); }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   VANTA CONSOLE — Creator Studio & Admin Command Center token layer
+   ---------------------------------------------------------------------------
+   Scoped semantic tokens for the two professional surfaces. They sit on top of
+   the consumer design system (never modifying it) and give both consoles one
+   consistent, token-driven vocabulary: near-black canvas, graphite surfaces,
+   hairline borders, restrained VANTA gold for the single most important
+   action / selection per context, and distinct status colors.
+   All values are declared once here and consumed through the `console-*`
+   Tailwind aliases (see tailwind.config.ts) or `var(--vc-*)` directly.
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --vc-bg: #09090b;             /* console canvas */
+  --vc-bg-secondary: #101114;   /* sidebar / chrome */
+  --vc-surface: #16171b;        /* panels, cards, tables */
+  --vc-surface-2: #1d1f24;      /* elevated / hover surface */
+  --vc-surface-3: #24262c;      /* active surface */
+  --vc-border: #292b31;         /* hairline borders, dividers */
+  --vc-border-strong: #35383f;  /* input borders, emphasized edges */
+  --vc-text: #f5f5f5;           /* primary text */
+  --vc-text-2: #a5a7ae;         /* secondary text */
+  --vc-text-3: #777b85;         /* muted text, table meta */
+  --vc-gold: #d6b15e;           /* accent — primary actions, key values */
+  --vc-gold-hover: #e6c675;
+  --vc-gold-deep: #a98a3e;
+  --vc-gold-fg: #14110a;        /* text/icon on gold fills */
+  --vc-gold-soft: rgba(214, 177, 94, 0.12);
+  --vc-gold-border: rgba(214, 177, 94, 0.38);
+  --vc-success: #43b581;
+  --vc-warning: #e6b450;
+  --vc-danger: #e35d6a;
+  --vc-info: #6da8f5;
+  --vc-success-soft: rgba(67, 181, 129, 0.13);
+  --vc-warning-soft: rgba(230, 180, 80, 0.13);
+  --vc-danger-soft: rgba(227, 93, 106, 0.13);
+  --vc-info-soft: rgba(109, 168, 245, 0.13);
+  --vc-focus: #e6c675;          /* focus ring — high-contrast gold */
+  --vc-radius-sm: 6px;
+  --vc-radius: 10px;
+  --vc-radius-lg: 14px;
+  --vc-sidebar-w: 248px;
+  --vc-header-h: 56px;
+  --vc-content-max: 1240px;
+  /* Chart series — single-hue gold ramp so charts never read as decoration */
+  --vc-chart-line: #d6b15e;
+  --vc-chart-fill: rgba(214, 177, 94, 0.10);
+  --vc-chart-grid: rgba(255, 255, 255, 0.06);
+}
+
+/* Console primitives — shared surfaces used by both products */
+.vc-panel {
+  background: var(--vc-surface);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-lg);
+}
+.vc-divider { border-color: var(--vc-border); }
+
+/* Compact form controls used across console filters and dialogs */
+.vc-input,
+.vc-select {
+  min-height: 38px;
+  background: var(--vc-bg-secondary);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius);
+  color: var(--vc-text);
+  font-size: 13px;
+  padding: 0 12px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.vc-input::placeholder { color: var(--vc-text-3); }
+.vc-input:focus,
+.vc-select:focus {
+  border-color: var(--vc-gold-border);
+  box-shadow: 0 0 0 3px rgba(214, 177, 94, 0.14);
+}
+.vc-select option { background: #16171b; color: var(--vc-text); }
+
+/* Visible, consistent keyboard focus for every console control */
+.vc-focus:focus-visible {
+  outline: 2px solid var(--vc-focus);
+  outline-offset: 2px;
+}
+.vc-focus-ring:focus-visible {
+  outline: 2px solid var(--vc-focus);
+  outline-offset: 2px;
+}
+
+/* Dense, readable console tables (desktop). Mobile uses record lists instead. */
+.vc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.vc-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--vc-surface);
+  color: var(--vc-text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--vc-border);
+  white-space: nowrap;
+}
+.vc-table tbody td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--vc-border);
+  color: var(--vc-text-2);
+  vertical-align: middle;
+}
+.vc-table tbody tr:last-child td { border-bottom: 0; }
+.vc-table tbody tr { transition: background 0.12s ease; }
+.vc-table tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+
+/* Respect reduced-motion everywhere in the console */
+@media (prefers-reduced-motion: reduce) {
+  .vc-panel, .vc-input, .vc-select, .vc-table tbody tr { transition: none; }
+  .vc-chart-anim { animation: none !important; }
+}
+
+/* Light theme: consoles stay dark by design (operational surfaces), so the
+   token values above are intentionally NOT rewired by the light theme. */
+
 /* Selection semantics — gold icons/accents on selected rows stay gold */
 html.light .text-\[\#c9a227\],
 html.light .text-\[\#dfbd55\],
