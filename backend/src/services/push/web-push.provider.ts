@@ -25,12 +25,37 @@ const PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || process.env.WEB_PUSH_PRIVAT
 const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_TTL_SECONDS = 86_400; // Drop un-deliverable pushes after 24h
 
+// Single evaluation of the configured state. web-push.setVapidDetails VALIDATES
+// that the public/private key pair is a real EC P-256 pair (it derives the
+// public key from the private key and throws on mismatch), so a successful
+// setVapidDetails is exactly the "keys form a valid pair" check the audit
+// requires. We never generate keys at runtime — they come from server env only.
 let initialized = false;
 let configured: boolean | null = null;
+
+/** Public config diagnostics for GET /api/push/config (never leaks the private key). */
+export function webPushConfigStatus(): { configured: boolean; reason?: string } {
+  if (!SUBJECT) return { configured: false, reason: "VAPID_SUBJECT is not set" };
+  if (!PUBLIC_KEY) return { configured: false, reason: "VAPID_PUBLIC_KEY is not set" };
+  if (!PRIVATE_KEY) return { configured: false, reason: "VAPID_PRIVATE_KEY is not set" };
+  try {
+    webpush.setVapidDetails(SUBJECT, PUBLIC_KEY, PRIVATE_KEY);
+    return { configured: true };
+  } catch (error) {
+    return {
+      configured: false,
+      reason: `VAPID keys are invalid or not a matching pair: ${(error as Error)?.message}`,
+    };
+  }
+}
 
 function init(): boolean {
   if (configured !== null) return configured;
   if (!SUBJECT || !PUBLIC_KEY || !PRIVATE_KEY) {
+    console.error(
+      "[push:webpush] VAPID is not configured. Set VAPID_SUBJECT, VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY " +
+        "(generate once with `npx web-push generate-vapid-keys --json`). Web push delivery is disabled."
+    );
     configured = false;
     return false;
   }

@@ -688,9 +688,9 @@ const creator = current.group.user || {};
 {/* Story actions — owner sees engagement stats; viewers see Like → Comment → Reshare */}
       <div className="absolute bottom-0 right-0 z-10 flex flex-col items-center gap-3 p-3 pb-[max(1.15rem,env(safe-area-inset-bottom))]">
         {isOwner ? (
-          <div className="flex flex-col items-center gap-4 rounded-2xl bg-black/35 px-2.5 py-3 backdrop-blur">
+          <div className="flex flex-col items-center gap-2.5 rounded-2xl bg-black/35 px-2.5 py-3 backdrop-blur">
             <div className="flex flex-col items-center gap-1 text-white/85" title="Likes">
-              <Heart size={19} strokeWidth={2} className={current.story.likeCount ? 'fill-current text-[#3b82f6]' : 'text-white/70'} />
+              <Heart size={19} strokeWidth={2} className={current.story.likeCount ? 'fill-current text-[#d6a83f]' : 'text-white/70'} />
               <span className="text-[11px] font-semibold tabular-nums">{compact(current.story.likeCount || 0)}</span>
             </div>
             <div className="flex flex-col items-center gap-1 text-white/85" title="Reshares">
@@ -703,35 +703,61 @@ const creator = current.group.user || {};
             </button>
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-2.5">
+          <div className="flex flex-col items-center gap-4">
+            {/* Icon-only actions — no text labels, no boxes. Gold Like when active.
+                Adequate touch targets (h-11 w-11) with accessible names + tooltips. */}
             <button
               type="button"
               onClick={() => void toggleLike()}
               aria-label={current.story.likedByMe ? 'Unlike story' : 'Like story'}
               aria-pressed={Boolean(current.story.likedByMe)}
-              className="flex w-16 flex-col items-center gap-1 rounded-2xl bg-black/45 px-2 py-2 text-white backdrop-blur transition active:scale-95"
+              title={current.story.likedByMe ? 'Unlike' : 'Like'}
+              className="grid h-11 w-11 place-items-center text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] transition active:scale-90 hover:text-white"
             >
-              <Heart size={19} strokeWidth={2} className={current.story.likedByMe ? 'fill-current text-[#3b82f6]' : ''} />
-              <span className="text-[10px] font-medium text-white/70">Like</span>
+              <Heart size={24} strokeWidth={2} className={current.story.likedByMe ? 'fill-current text-[#d6a83f]' : 'text-white'} />
+            </button>
+            <button
+              type="button"
+              onClick={() => void openComments()}
+              aria-label="View or add comments"
+              title="Comment"
+              className="grid h-11 w-11 place-items-center text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] transition active:scale-90 hover:text-white"
+            >
+              <MessageCircle size={23} strokeWidth={2} />
             </button>
             <button
               type="button"
               onClick={() => { pauseStory('reply'); setReplyOpen(true); }}
               aria-label="Reply to story — sends the owner a private message"
-              className="flex w-16 flex-col items-center gap-1 rounded-2xl bg-black/45 px-2 py-2 text-white backdrop-blur transition active:scale-95"
+              title="Reply"
+              className="grid h-11 w-11 place-items-center text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] transition active:scale-90 hover:text-white"
             >
-              <Send size={19} strokeWidth={2} />
-              <span className="text-[10px] font-medium text-white/70">Reply</span>
+              <Send size={23} strokeWidth={2} />
             </button>
             <button
               type="button"
               onClick={() => { pauseStory('reshare'); setReshareOpen(true); }}
               aria-label="Reshare story to your Status"
-              className="flex w-16 flex-col items-center gap-1 rounded-2xl bg-black/45 px-2 py-2 text-white backdrop-blur transition active:scale-95"
+              title="Reshare"
+              className="grid h-11 w-11 place-items-center text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] transition active:scale-90 hover:text-white"
             >
-              <Repeat size={19} strokeWidth={2} />
-              <span className="text-[10px] font-medium text-white/70">Reshare</span>
+              <Repeat size={23} strokeWidth={2} />
             </button>
+            {/* Engagement counts displayed separately from the icon-only buttons. */}
+            <div className="flex flex-col items-center gap-1 pt-1 text-white/85">
+              <span className="flex items-center gap-1 text-[11px] font-semibold tabular-nums" title="Likes">
+                <Heart size={12} strokeWidth={2.4} className={current.story.likeCount ? 'fill-current text-[#d6a83f]' : 'text-white/70'} aria-hidden="true" />
+                {compact(current.story.likeCount || 0)}
+              </span>
+              <span className="flex items-center gap-1 text-[11px] font-semibold tabular-nums" title="Reshares">
+                <Repeat size={12} strokeWidth={2.4} className="text-white/70" aria-hidden="true" />
+                {compact(current.story.reshareCount || 0)}
+              </span>
+              <span className="flex items-center gap-1 text-[11px] font-semibold tabular-nums" title="Comments">
+                <MessageCircle size={12} strokeWidth={2.4} className="text-white/70" aria-hidden="true" />
+                {compact(current.story.commentCount || 0)}
+              </span>
+            </div>
           </div>
         )}
       </div>
@@ -821,13 +847,13 @@ const creator = current.group.user || {};
                 placeholder="Add a caption…"
                 aria-label="Reshare caption"
                 maxLength={500}
-                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none focus:border-[#3b82f6]/60"
+                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-white outline-none focus:border-[#d6a83f]/60"
               />
               <button
                 type="submit"
                 disabled={reshareSending}
                 aria-label="Post reshare"
-                className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#3b82f6] text-white transition hover:bg-[#2563eb] disabled:opacity-40"
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#d6a83f] text-black transition hover:bg-[#f2c75c] disabled:opacity-40"
               >
                 {reshareSending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
               </button>
@@ -872,27 +898,37 @@ const creator = current.group.user || {};
                 <p className="py-10 text-center text-sm text-[#c8c8cc]/50">No comments yet — be the first.</p>
               )}
             </div>
-            <form
-              onSubmit={event => { event.preventDefault(); void sendComment(); }}
-              className="flex items-center gap-2 border-t border-white/[0.06] px-4 py-3"
-            >
-              <input
-                value={commentText}
-                onChange={event => setCommentText(event.target.value)}
-                placeholder="Add a comment…"
-                aria-label="Add a comment"
-                maxLength={1000}
-                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/25 px-4 py-2.5 text-sm text-white outline-none focus:border-[#3b82f6]/60"
-              />
-              <button
-                type="submit"
-                disabled={!commentText.trim() || commentSending}
-                aria-label="Post comment"
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#3b82f6] text-white transition hover:bg-[#2563eb] disabled:opacity-40"
+            {/* Owner cannot comment on their own story — the composer is hidden
+                entirely (the backend also rejects self-comments via API). Viewers
+                always see the composer. */}
+            {!isOwner && (
+              <form
+                onSubmit={event => { event.preventDefault(); void sendComment(); }}
+                className="flex items-center gap-2 border-t border-white/[0.06] px-4 py-3"
               >
-                {commentSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-              </button>
-            </form>
+                <input
+                  value={commentText}
+                  onChange={event => setCommentText(event.target.value)}
+                  placeholder="Add a comment…"
+                  aria-label="Add a comment"
+                  maxLength={1000}
+                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/25 px-4 py-2.5 text-sm text-white outline-none focus:border-[#d6a83f]/60"
+                />
+                <button
+                  type="submit"
+                  disabled={!commentText.trim() || commentSending}
+                  aria-label="Post comment"
+                  className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#d6a83f] text-black transition hover:bg-[#f2c75c] disabled:opacity-40"
+                >
+                  {commentSending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                </button>
+              </form>
+            )}
+            {isOwner && (
+              <p className="border-t border-white/[0.06] px-4 py-3 text-center text-xs text-white/40">
+                You can’t comment on your own story.
+              </p>
+            )}
           </section>
         </>
       )}

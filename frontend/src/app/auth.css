@@ -126,6 +126,7 @@
 .auth-submit-content svg { flex: 0 0 auto; }
 .auth-switch { display: grid; width: 100%; justify-items: center; gap: 7px; margin-top: 30px; padding-top: 25px; border-top: 1px solid rgba(255,255,255,.07); color: #85858a; font-size: 11px; }
 .auth-switch .auth-link { font-size: 12px; }
+.auth-form-hint { margin: 0; color: var(--auth-silver); font-size: 12px; line-height: 1.6; text-align: center; }
 .auth-legal { display: flex; width: 100%; align-items: center; justify-content: center; gap: 10px; margin-top: 28px; color: #55555a; font-size: 9px; }
 .auth-legal a { color: inherit; text-decoration: none; }
 .auth-legal i { width: 2px; height: 2px; border-radius: 50%; background: currentColor; }

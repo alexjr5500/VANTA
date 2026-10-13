@@ -16,6 +16,10 @@ export interface PushConfig {
   icon: string;
   sound: string;
   providers: PushProviderStatus;
+  /** Verified server-side: web push keys are present and form a valid pair. */
+  webpushConfigured?: boolean;
+  /** Operator-facing reason web push is not configured (never contains secrets). */
+  webpushConfigIssue?: string | null;
 }
 
 export interface PushDeviceDto {

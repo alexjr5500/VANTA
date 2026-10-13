@@ -2025,13 +2025,26 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     <div className={cn('flex w-fit min-w-0 items-start gap-2.5', msg.isOwn ? 'flex-row-reverse' : 'flex-row')}>
                       {showSenderIdentity && (
                         <div className="shrink-0">
-                          <Avatar src={msg.sender.avatar} alt={senderName} size="sm" />
+                          <button
+                            type="button"
+                            onClick={() => msg.sender.username && router.push(`/profile/${encodeURIComponent(msg.sender.username)}`)}
+                            aria-label={`View ${senderName}'s profile`}
+                            className="rounded-full transition active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+                          >
+                            <Avatar src={msg.sender.avatar} alt={senderName} size="sm" />
+                          </button>
                         </div>
                       )}
                       <div className="w-fit max-w-[78%] min-w-0">
                         {showSenderIdentity && (
                           <div className={cn('flex max-w-[min(100%,420px)] items-center gap-2', msg.isOwn && 'justify-end')}>
-                            <span className="truncate text-[11px] font-medium text-[#c8c8cc]">{senderName}</span>
+                            <button
+                              type="button"
+                              onClick={() => msg.sender.username && router.push(`/profile/${encodeURIComponent(msg.sender.username)}`)}
+                              className="truncate text-[11px] font-medium text-[#c8c8cc] transition hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+                            >
+                              {senderName}
+                            </button>
                             {!msg.isOwn && ['OWNER', 'ADMIN', 'MODERATOR'].includes(senderRole || '') && <span className="text-[8px] font-bold uppercase text-[#d6a83f]">{senderRole === 'OWNER' ? 'Owner' : senderRole === 'MODERATOR' ? 'Moderator' : 'Admin'}</span>}
                           </div>
                         )}

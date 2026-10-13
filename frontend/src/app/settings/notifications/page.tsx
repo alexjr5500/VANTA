@@ -16,6 +16,7 @@ import {
   Mail,
   MessageSquare,
   Radio,
+  RefreshCw,
   UserPlus,
 } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
@@ -130,23 +131,33 @@ export default function NotificationSettingsPage() {
     push.status === 'unsupported' || !push.supported
       ? "OS notifications aren't supported in this browser. Open VANTA on a phone or computer that supports Web Push (Chrome/Android, Safari 16.4+, Edge/Firefox)."
       : push.status === 'unconfigured'
-        ? 'Push is not yet configured on the server. Ask the administrator to set the VAPID push keys.'
-        : push.status === 'permission-denied'
-          ? 'Notifications are blocked in your browser settings. Enable them (site settings → Notifications), then tap to retry.'
-          : push.status === 'permission-pending'
-            ? 'Tap to allow notifications even when VANTA is fully closed — this is what makes incoming calls and messages reach you.'
-            : push.status === 'enabled'
-              ? 'This device receives notifications even when VANTA is closed or locked.'
-              : 'Push status unknown — tap to re-check.';
+        ? "Push notifications aren't set up on the VANTA server yet. Your browser and app are working — this just needs the server's push keys configured once."
+        : push.status === 'network-error'
+          ? "We couldn't reach the VANTA server to check notifications. Check your connection and try again."
+          : push.status === 'permission-denied'
+            ? 'Notifications are blocked in your browser settings. Enable them (site settings → Notifications), then tap to retry.'
+            : push.status === 'permission-pending'
+              ? 'Tap to allow notifications even when VANTA is fully closed — this is what makes incoming calls and messages reach you.'
+              : push.status === 'enabled'
+                ? 'This device receives notifications even when VANTA is closed or locked.'
+                : 'Push status unknown — tap to re-check.';
   const enableDevicePush = () => {
     void push.enablePush().then((result) => {
       if (result.ok) {
         toast.success('Push enabled', 'This device will notify you when the app is closed.');
       } else if (push.permission === 'denied') {
         toast.error('Notifications blocked', 'Allow notifications for VANTA in your browser settings, then try again.');
+      } else if (result.reason === 'network-error') {
+        toast.error('Connection issue', "We couldn't reach the server. Check your connection and try again.");
       }
     });
   };
+  const retryDevicePush = () => {
+    void push.refresh().then((result) => {
+      if (result.ok) toast.success('Push enabled', 'This device will notify you when the app is closed.');
+    });
+  };
+  const showPushRetry = push.status === 'network-error' || push.status === 'permission-denied';
 
   return (
     <div className="space-y-8 pb-24">
@@ -200,11 +211,23 @@ export default function NotificationSettingsPage() {
               title="This device"
               description={pushDescription}
               checked={pushOnThisDevice}
+              disabled={push.status === 'unconfigured' || push.status === 'unsupported'}
               onChange={(enabled) => {
                 if (enabled) enableDevicePush();
                 else void push.disablePush();
               }}
             />
+            {showPushRetry && (
+              <div className="px-4 pb-3">
+                <button
+                  type="button"
+                  onClick={retryDevicePush}
+                  className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-white/[0.12] px-3 text-xs font-medium text-white transition hover:bg-white/[0.05]"
+                >
+                  <RefreshCw size={13} aria-hidden="true" /> Try again
+                </button>
+              </div>
+            )}
             <ToggleRow
               icon={Mail}
               title="Email Notifications"

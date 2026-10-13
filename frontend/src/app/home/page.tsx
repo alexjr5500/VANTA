@@ -31,6 +31,7 @@ import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { cleanId, isVideoItem, actionEndpointFor, detailPathFor } from '@/lib/feedIdentity';
 import { useContentCreation } from '@/components/create/ContentCreationContext';
+import PullToRefresh from '@/components/ui/PullToRefresh';
 
 type Item = Record<string, any>;
 type FeedTab = 'forYou' | 'following' | 'latest' | 'reels';
@@ -95,6 +96,9 @@ export default function HomePage() {
   const [trending, setTrending] = useState<Item[]>([]);
   const [suggested, setSuggested] = useState<Item[]>([]);
   const [storyRefreshKey, setStoryRefreshKey] = useState(0);
+  // Per-session feed seed. A stable seed keeps pagination consistent within a
+  // visit; a refresh generates a NEW seed so the discovery content reorders.
+  const [feedSeed, setFeedSeed] = useState(() => Math.random().toString(36).slice(2, 10));
   const [cursor, setCursor] = useState<string>();
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -112,13 +116,16 @@ export default function HomePage() {
   const [giftError, setGiftError] = useState('');
   const sentinel = useRef<HTMLDivElement>(null);
 
-  const fetchFeed = useCallback(async (reset = true, requestedCursor?: string) => {
+  const fetchFeed = useCallback(async (reset = true, requestedCursor?: string, nextSeed?: string) => {
     if (!token) return;
     reset ? setLoading(true) : setLoadingMore(true);
     setError('');
     try {
       const query = new URLSearchParams({ limit: '12' });
       if (requestedCursor) query.set('cursor', requestedCursor);
+      // Only the mixed home feed is seed-rotated; the Following tab is chronological.
+      const seedToUse = nextSeed ?? feedSeed;
+      if (tab !== 'following') query.set('seed', seedToUse);
       const endpoint = tab === 'following' ? '/api/feed/following' : '/api/feed/home';
       const data = await apiGet<any>(`${endpoint}?${query}`, token, { skipCache: reset });
       const next = unwrap(data);
@@ -127,7 +134,18 @@ export default function HomePage() {
       setHasMore(Boolean(data?.nextCursor));
     } catch { setError("Couldn't load your feed."); }
     finally { setLoading(false); setLoadingMore(false); }
-  }, [token, tab]);
+  }, [token, tab, feedSeed]);
+
+  // Explicit refresh: start a NEW feed session (new seed) so the discovery
+  // content reorders, and refresh the story tray too.
+  const refreshFeed = useCallback(async () => {
+    const nextSeed = Math.random().toString(36).slice(2, 10);
+    setFeedSeed(nextSeed);
+    setCursor(undefined);
+    setHasMore(true);
+    setStoryRefreshKey(key => key + 1);
+    await fetchFeed(true, undefined, nextSeed);
+  }, [fetchFeed]);
 
   useEffect(() => { setCursor(undefined); setHasMore(true); void fetchFeed(true); }, [fetchFeed]);
   useEffect(() => { const on = () => setOnline(true); const off = () => setOnline(false); setOnline(navigator.onLine); addEventListener('online', on); addEventListener('offline', off); return () => { removeEventListener('online', on); removeEventListener('offline', off); }; }, []);
@@ -227,10 +245,10 @@ export default function HomePage() {
 
   return <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-[#050505] text-white">
     <header className="relative z-30 flex h-14 shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[#080808]/90 px-4 backdrop-blur-xl"><VantaLogo size={34} variant="monochrome" /><span className="text-base font-bold tracking-[.14em] text-white">VANTA</span><div className="ml-auto flex min-w-0 items-center gap-1"><button type="button" onClick={() => router.push('/discover')} aria-label="Search VANTA" className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><Search size={18}/></button><button type="button" onClick={() => router.push('/notifications')} aria-label="Open notifications" className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><Bell size={18}/>{notificationUnread > 0 && <HeaderBadge value={notificationUnread}/>}</button><button type="button" onClick={() => router.push('/chat')} aria-label="Open chat" className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><MessageCircle size={18}/>{chatUnread > 0 && <HeaderBadge value={chatUnread}/>}</button><button type="button" onClick={() => router.push('/profile')} aria-label="Open your profile" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"><Avatar src={user?.avatar} alt="Your profile" size="sm" /></button></div></header>
-    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-hide [-webkit-overflow-scrolling:touch]">
+    <PullToRefresh onRefresh={refreshFeed}>
     <div className="mx-auto w-full max-w-2xl px-3 pb-24 pt-4">
       <main className="min-w-0">
-        <div className="mb-5 hidden items-center justify-between "><div><p className="text-xs font-semibold uppercase tracking-[.18em] text-[#666]">Home</p><h1 className="mt-1 text-xl font-semibold text-[#f5f5f5]">What&apos;s happening on VANTA</h1></div><button type="button" onClick={() => void fetchFeed(true)} aria-label="Refresh feed" className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/[.08] text-[#8a8a8a] transition hover:bg-white/[.05] hover:text-white"><RefreshCw size={16}/></button></div>
+        <div className="mb-5 hidden items-center justify-between "><div><p className="text-xs font-semibold uppercase tracking-[.18em] text-[#666]">Home</p><h1 className="mt-1 text-xl font-semibold text-[#f5f5f5]">What&apos;s happening on VANTA</h1></div><button type="button" onClick={() => void refreshFeed()} aria-label="Refresh feed" className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/[.08] text-[#8a8a8a] transition hover:bg-white/[.05] hover:text-white"><RefreshCw size={16}/></button></div>
         <StoryTray onCreate={openStoryModal} refreshKey={storyRefreshKey} className="mb-3" />
         <LiveStrip streams={live} openStream={stream => router.push(`/live/${cleanId(stream)}`)} openAll={() => router.push('/live')}/>
         <div className="mb-3 flex items-center gap-1 overflow-x-auto border-b border-white/[.08] scrollbar-hide" role="tablist" aria-label="Feed filters">{([['forYou', 'For you'], ['following', 'Following'], ['latest', 'Latest'], ['reels', 'Reels']] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={cn('relative min-h-12 shrink-0 px-4 text-sm font-medium text-[#666] transition hover:text-[#b8b8b8]', tab === id && 'text-white after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-[#c9a227]')}>{label}</button>)}</div>
@@ -239,7 +257,7 @@ export default function HomePage() {
         {loading && !items.length ? <FeedSkeleton/> : error && !items.length ? <ErrorState retry={() => fetchFeed(true)}/> : !visible.length ? <EmptyFeed discover={() => router.push('/discover')}/> : <div className="divide-y divide-white/[.06]">{visible.map(item => <FeedPostCard key={item.id} item={item} currentUserId={user?.id} onLike={() => optimistic(item, 'like')} onSave={() => optimistic(item, 'save')} onComment={setCommentsFor} onShare={setShareFor} onGift={openGift} onFollow={follow} onMore={setMoreFor}/>)}<div ref={sentinel} className="flex justify-center py-6">{loadingMore && <Loader2 className="animate-spin text-[#666]"/>}{!hasMore && <span className="text-xs text-[#666]">You&apos;re all caught up.</span>}</div></div>}
       </main>
       </div>
-    </div>
+    </PullToRefresh>
     <AnimatePresence>{commentsFor && token && <CommentPanel kind={isVideoItem(commentsFor) ? 'reel' : 'post'} postId={cleanId(commentsFor)} postAuthor={getAuthor(commentsFor)} initialCount={commentsFor.comments || 0} token={token} currentUser={user} onClose={() => setCommentsFor(undefined)} onCountChange={count => setItems(previous => previous.map(item => item.id === commentsFor.id ? { ...item, comments: count } : item))}/>} {giftFor && token && <GiftPickerBoundary onClose={() => setGiftFor(undefined)}><GiftPicker gifts={gifts} balance={balance} recipient={getAuthor(giftFor)} token={token} streamId={giftFor.type === 'live' ? cleanId(giftFor) : undefined} loading={giftLoading} loadError={giftError} onRetry={() => void loadGiftData()} onClose={() => setGiftFor(undefined)} onSent={(remaining, _amount, gift) => { setBalance(remaining); toast.success('Gift sent', `You sent ${gift.name} to ${getAuthor(giftFor).fullName || getAuthor(giftFor).username}`); }}/></GiftPickerBoundary>} {shareFor && <FeedPostShareSheet close={() => setShareFor(undefined)} share={share}/>} {moreFor && <FeedPostMoreSheet item={moreFor} isOwn={getAuthor(moreFor).id === user?.id} close={() => setMoreFor(undefined)} openProfile={() => { const creator = getAuthor(moreFor); setMoreFor(undefined); router.push(creator.username ? `/profile/${creator.username}` : '/profile'); }} save={() => { void optimistic(moreFor, 'save'); setMoreFor(undefined); }} remove={() => requestDelete(moreFor)} />}{deletePostFor && <DeleteConfirmation item={deletePostFor} onCancel={() => setDeletePostFor(undefined)} onConfirm={() => void confirmDeletePost()} />}</AnimatePresence>
   </div>;
 }

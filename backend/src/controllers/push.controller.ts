@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { pushNotificationService } from "../services/push/push-notification.service";
-import { webPushProvider } from "../services/push/web-push.provider";
+import { webPushConfigStatus } from "../services/push/web-push.provider";
 import { fcmProvider } from "../services/push/fcm.provider";
 
 // ============================================================================
@@ -107,6 +107,7 @@ export const unregisterByToken = async (req: Request, res: Response): Promise<vo
  */
 export const getPushConfig = async (_req: Request, res: Response): Promise<void> => {
   const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || process.env.WEB_PUSH_PUBLIC_KEY || "";
+  const webpush = webPushConfigStatus();
   res.status(200).json({
     success: true,
     config: {
@@ -115,9 +116,15 @@ export const getPushConfig = async (_req: Request, res: Response): Promise<void>
       icon: "/branding/vanta-icon-192.png",
       sound: "/sounds/vanta-ringtone.mp3",
       providers: {
-        webpush: webPushProvider.isConfigured(),
+        webpush: webpush.configured,
         fcm: fcmProvider.isConfigured(),
       },
+      // Explicit, verified server-configuration state. The frontend uses this to
+      // show the "server not configured" notice ONLY when the keys are genuinely
+      // absent/invalid — never for a transient network error or permission denial.
+      // `reason` is an operator-facing message and never contains secrets.
+      webpushConfigured: webpush.configured,
+      webpushConfigIssue: webpush.configured ? null : webpush.reason || "Web push is not configured on the server.",
     },
   });
 };

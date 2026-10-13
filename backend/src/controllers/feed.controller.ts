@@ -30,7 +30,12 @@ export const getHomeFeed = async (req: AuthRequest, res: Response): Promise<void
 
     const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
     const limit = parseLimit(req.query.limit, 15);
-    const feed = await feedService.getHomeFeed(userId, cursor, limit);
+    // Per-session feed seed (client-generated on refresh). A new seed produces a
+    // fresh, varied ordering of eligible discovery content; a stable seed keeps
+    // pagination consistent within the session. Bounded to a safe length.
+    const rawSeed = typeof req.query.seed === "string" ? req.query.seed : undefined;
+    const seed = rawSeed && /^[a-zA-Z0-9_-]{1,64}$/.test(rawSeed) ? rawSeed : undefined;
+    const feed = await feedService.getHomeFeed(userId, cursor, limit, seed);
     res.status(200).json(feed);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";

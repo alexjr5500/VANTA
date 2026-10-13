@@ -322,6 +322,13 @@ export class StoryService {
     if (text.length > 1000) throw new Error("Comment is too long");
     const story = await this.requireActiveStory(storyId);
 
+    // A user may NEVER comment on their own story. Enforced server-side (not
+    // just hidden in the UI) so a direct API request cannot create a self
+    // comment. Commenting on OTHER users' stories is unaffected.
+    if (story.userId === userId) {
+      throw new Error("You cannot comment on your own story");
+    }
+
     return prisma.storyComment.create({
       data: { storyId: story.id, userId, content: text },
       include: {

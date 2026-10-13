@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { CalendarDays, Gift, Link2, MapPin, MessageCircle, Pencil, Share2, UserCheck, UserPlus } from 'lucide-react';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import Avatar from '@/components/ui/Avatar';
+import ImageViewer from '@/components/ui/ImageViewer';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import type { ProfileData } from './profileTypes';
 import { finite, formatCount, joinedDate, safeWebsite } from './profileTypes';
@@ -30,19 +32,39 @@ export default function ProfileHeader({ profile, own, onFollow, onMessage, onGif
   };
 
   const displayName = profile.fullName || profile.displayName || profile.username;
+  // Reusable image viewer state — one viewer serves both the avatar and the
+  // cover so behaviour (close, aspect ratio, scroll-lock) is identical.
+  const [viewer, setViewer] = useState<{ src: string; alt: string } | null>(null);
 
   return <header className="profile-header">
-    <div className={`profile-cover ${cover ? 'has-image' : 'cover-fallback'}`} style={cover ? { backgroundImage: `url("${cover.replace(/"/g, '%22')}")` } : undefined}>
+    {/* Cover photo — clicking opens it in the shared image viewer. The viewer
+        is a plain button so it never navigates or opens the profile editor. */}
+    <button
+      type="button"
+      onClick={() => cover && setViewer({ src: cover, alt: `${displayName}'s cover photo` })}
+      aria-label={cover ? `View ${displayName}'s cover photo` : undefined}
+      disabled={!cover}
+      className={`profile-cover ${cover ? 'has-image cursor-zoom-in' : 'cover-fallback'}`}
+      style={cover ? { backgroundImage: `url("${cover.replace(/"/g, '%22')}")` } : undefined}
+    >
       {!cover && <><span className="cover-rule" aria-hidden="true" /><span className="cover-monogram" aria-hidden="true">V</span></>}
       <span className="cover-brand" aria-hidden="true">VANTA / PROFILE</span>
-    </div>
+    </button>
 
     <div className="profile-overview">
       {/* The avatar sits on the cover's bottom-left edge, and the compact
           action buttons straddle the cover/profile boundary on the right so
           the header stays tight (no tall separate action row). */}
       <div className="profile-avatar">
-        <Avatar src={avatar} alt={`${displayName}'s profile photo`} size="xl" fallback={displayName} />
+        <button
+          type="button"
+          onClick={(event) => { event.stopPropagation(); if (avatar) setViewer({ src: avatar, alt: `${displayName}'s profile picture` }); }}
+          aria-label={avatar ? `View ${displayName}'s profile picture` : undefined}
+          disabled={!avatar}
+          className="block cursor-zoom-in rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:cursor-default"
+        >
+          <Avatar src={avatar} alt={`${displayName}'s profile photo`} size="xl" fallback={displayName} />
+        </button>
       </div>
 
       <div className="profile-actions">
@@ -86,5 +108,7 @@ export default function ProfileHeader({ profile, own, onFollow, onMessage, onGif
         <div><strong>{formatCount(stats.likes)}</strong><span>Likes</span></div>
       </div>
     </div>
+
+    <ImageViewer src={viewer?.src ?? null} alt={viewer?.alt} onClose={() => setViewer(null)} />
   </header>;
 }

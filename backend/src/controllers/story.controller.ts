@@ -272,6 +272,10 @@ export const addStoryComment = async (req: AuthRequest, res: Response): Promise<
     res.status(201).json(comment);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
+    if (message === "You cannot comment on your own story") {
+      res.status(403).json({ error: message });
+      return;
+    }
     res.status(message.startsWith("Story") ? 404 : 400).json({ error: message });
   }
 };

@@ -31,6 +31,7 @@ export type PushStatus =
   | 'permission-denied'
   | 'granted'
   | 'enabled'
+  | 'network-error'
   | 'error';
 
 interface PushContextValue {
@@ -38,6 +39,10 @@ interface PushContextValue {
   status: PushStatus;
   permission: PushPermissionState;
   deviceId: string | null;
+  /** Operator-facing reason the server said web push is not configured (no secrets). */
+  configIssue: string | null;
+  /** Re-check server configuration + subscription state. */
+  refresh: () => Promise<{ ok: boolean; reason?: string }>;
   enablePush: () => Promise<{ ok: boolean; reason?: string }>;
   disablePush: () => Promise<void>;
 }
@@ -50,6 +55,7 @@ export function PushProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<PushStatus>('unsupported');
   const [permission, setPermission] = useState<PushPermissionState>('default');
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [configIssue, setConfigIssue] = useState<string | null>(null);
 
   const refreshing = useRef(false);
   const lastTokenRef = useRef<string | null>(null);
@@ -67,11 +73,24 @@ export function PushProvider({ children }: { children: ReactNode }) {
     if (refreshing.current) return { ok: false, reason: 'in-flight' };
     refreshing.current = true;
     try {
-      const config = await fetchPushConfig();
+      let config;
+      try {
+        config = await fetchPushConfig();
+      } catch {
+        // A transient network/server error reaching /api/push/config is NOT a
+        // server misconfiguration — surface it distinctly so the UI never tells
+        // the user to "ask the administrator" for a momentary failure.
+        setConfigIssue(null);
+        setStatus('network-error');
+        return { ok: false, reason: 'network-error' };
+      }
       if (!config || !config.vapidPublicKey) {
+        // The server EXPLICITLY reported web push as not configured (verified).
+        setConfigIssue(config?.webpushConfigIssue || 'Push is not yet configured on the server.');
         setStatus('unconfigured');
         return { ok: false, reason: 'not-configured' };
       }
+      setConfigIssue(null);
 
       await registerServiceWorker();
       const currentPermission = await getPermissionState().catch(() => 'default' as PushPermissionState);
@@ -156,6 +175,8 @@ export function PushProvider({ children }: { children: ReactNode }) {
     status,
     permission,
     deviceId,
+    configIssue,
+    refresh: enablePush,
     enablePush,
     disablePush,
   };

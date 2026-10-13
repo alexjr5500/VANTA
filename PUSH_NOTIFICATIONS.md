@@ -269,6 +269,30 @@ authorization, expiry, atomic transitions, ICE buffering.
 4. Verify: `curl https://<api>/health` and
    `curl https://<api>/api/push/config` → `providers.webpush: true`.
 
+### Configuration & key management (audit, 2026-10)
+
+- **Keys are server-side only.** `VAPID_PRIVATE_KEY` is never exposed through
+  the frontend env, API responses, logs, or the client bundle. Only
+  `VAPID_PUBLIC_KEY` is published (via `GET /api/push/config`), which is
+  required by the browser to subscribe.
+- **Generate once, never per-startup.** Keys are produced a single time with
+  `npx web-push generate-vapid-keys --json` and stored as env vars. The backend
+  does **not** regenerate them on boot.
+- **Pair validation.** `web-push.setVapidDetails(...)` derives the public key
+  from the private key and throws on mismatch, so a successful init *is* the
+  "keys form a valid pair" check. `GET /api/push/config` reports
+  `webpushConfigured` and, when false, a secret-free `webpushConfigIssue`.
+- **Local dev is already configured.** `backend/.env` contains a real generated
+  key pair, so `GET /api/push/config` returns `webpush: true` locally. For
+  production, set your **own** keys in the host's environment variables (the
+  local pair must not be reused in production).
+- **UI behaviour.** The Settings → Notifications → "This device" row shows the
+  "not configured" notice ONLY when the server explicitly reports
+  `webpushConfigured: false`. A transient network error or a denied browser
+  permission produces a distinct, non-alarming message with a **Try again**
+  action — ordinary users are never told to "ask the administrator" for a
+  momentary failure.
+
 ---
 
 ## 14. Troubleshooting

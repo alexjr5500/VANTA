@@ -15,11 +15,18 @@
 .profile-header { position: relative; }
 .profile-cover {
   position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
   height: clamp(148px, 43vw, 188px);
   overflow: hidden;
   background-color: var(--profile-raised);
   background-position: center;
   background-size: cover;
+  text-align: left;
+  -webkit-appearance: none;
+  appearance: none;
 }
 .profile-cover::after {
   content: "";
@@ -84,7 +91,10 @@
   background: var(--profile-surface);
   box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
 }
+.profile-avatar > button,
 .profile-avatar > div,
+.profile-avatar > button > div,
+.profile-avatar > button > div > div,
 .profile-avatar > div > div { width: 100% !important; height: 100% !important; }
 .profile-identity { max-width: 440px; margin: 0; padding: 10px 4px 0; text-align: left; }
 .name-line { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
