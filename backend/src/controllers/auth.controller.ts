@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { AuthenticatedRequest, CryptoUtils, SecurityValidator, sessionManager, twoFactorAuth, auditLog, botProtection, GDPRCompliance, config } from '../security';
+import { accountStatusError, signAppealToken } from '../security/accountStatus';
 import { prisma } from '../prisma';
 import { authService } from '../services/auth.service';
 
@@ -150,20 +151,39 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
     if (process.env.NODE_ENV === 'development') console.info('[Auth] Password verified', { userId: user.id });
 
-    if (user.status !== 'ACTIVE') {
-      const accountErrors: Record<string, { status: number; error: string }> = {
-        SUSPENDED: { status: 403, error: 'Account suspended' },
-        BANNED: { status: 403, error: 'Account banned' },
-        DEACTIVATED: { status: 403, error: 'Account deactivated' },
-        LOCKED: { status: 423, error: 'Account locked' },
-      };
-      const accountError = accountErrors[user.status] || { status: 403, error: 'Account restricted' };
-      await auditLog.log({ userId: user.id, action: 'LOGIN_BLOCKED_STATUS', ipAddress: req.ip, userAgent: req.headers['user-agent'], metadata: { status: user.status }, severity: 'WARNING' });
-      res.status(accountError.status).json({ error: accountError.error });
+    if (user.status === 'BANNED') {
+      // Credentials are valid, but a banned account must NEVER receive an
+      // application session. Issue a short-lived, narrowly-scoped appeal
+      // token instead so the banned screen can still accept an appeal.
+      await auditLog.log({ userId: user.id, action: 'LOGIN_BLOCKED_STATUS', ipAddress: req.ip, userAgent: req.headers['user-agent'], metadata: { status: user.status, code: 'ACCOUNT_BANNED' }, severity: 'WARNING' });
+      res.status(403).json({
+        error: 'Account banned',
+        code: 'ACCOUNT_BANNED',
+        accountStatus: 'BANNED',
+        username: user.username,
+        appealToken: signAppealToken(user.id),
+      });
       return;
     }
 
-    if (config.auth.requireEmailVerification && !user.emailVerified) {
+    if (user.status !== 'ACTIVE' && user.status !== 'SUSPENDED') {
+      // DEACTIVATED / LOCKED / unknown states keep the historic behaviour:
+      // valid credentials, but no session is established.
+      const accountError = accountStatusError(user.status);
+      await auditLog.log({ userId: user.id, action: 'LOGIN_BLOCKED_STATUS', ipAddress: req.ip, userAgent: req.headers['user-agent'], metadata: { status: user.status, code: accountError.code }, severity: 'WARNING' });
+      res.status(accountError.status).json({ error: accountError.error, code: accountError.code, accountStatus: user.status });
+      return;
+    }
+
+    // SUSPENDED accounts authenticate successfully and receive a restricted
+    // session: the auth middleware only lets them reach the suspended screen,
+    // appeal endpoints and sign-out. The response carries `status` so the
+    // client routes them to /account/suspended instead of the app shell.
+    if (user.status === 'SUSPENDED') {
+      await auditLog.log({ userId: user.id, action: 'LOGIN_SUSPENDED_SESSION', ipAddress: req.ip, userAgent: req.headers['user-agent'], metadata: { status: user.status }, severity: 'WARNING' });
+    }
+
+    if (user.status === 'ACTIVE' && config.auth.requireEmailVerification && !user.emailVerified) {
       res.status(403).json({ error: 'Email not verified' });
       return;
     }
@@ -236,7 +256,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       refreshToken: tokenPair.refreshToken,
       expiresIn: tokenPair.expiresIn,
       suspicious: isSuspicious,
-      user: { id: user.id, email: user.email, username: user.username, fullName: user.fullName, role: user.role },
+      accountStatus: user.status,
+      user: { id: user.id, email: user.email, username: user.username, fullName: user.fullName, role: user.role, status: user.status },
     });
   } catch (error) {
     console.error('[Auth] Login processing failed', error instanceof Error ? error.message : error);
@@ -267,8 +288,25 @@ export const completeLogin2FA = async (req: Request, res: Response): Promise<voi
       select: { id: true, email: true, username: true, fullName: true, role: true, status: true, twoFactorEnabled: true },
     });
 
-    if (!user || user.status !== 'ACTIVE') {
+    if (!user) {
       res.status(401).json({ error: 'This account cannot sign in' });
+      return;
+    }
+    if (user.status === 'BANNED') {
+      // A banned account never completes a login — hand back a narrowly
+      // scoped appeal token so the banned screen can still accept an appeal.
+      res.status(403).json({
+        error: 'Account banned',
+        code: 'ACCOUNT_BANNED',
+        accountStatus: 'BANNED',
+        username: user.username,
+        appealToken: signAppealToken(user.id),
+      });
+      return;
+    }
+    if (user.status !== 'ACTIVE' && user.status !== 'SUSPENDED') {
+      const accountError = accountStatusError(user.status);
+      res.status(accountError.status).json({ error: accountError.error, code: accountError.code, accountStatus: user.status });
       return;
     }
     if (!user.twoFactorEnabled) {
@@ -301,7 +339,8 @@ export const completeLogin2FA = async (req: Request, res: Response): Promise<voi
       refreshToken: finalPair.refreshToken,
       expiresIn: finalPair.expiresIn,
       twoFactorVerified: true,
-      user: { id: user.id, email: user.email, username: user.username, fullName: user.fullName, role: user.role },
+      accountStatus: user.status,
+      user: { id: user.id, email: user.email, username: user.username, fullName: user.fullName, role: user.role, status: user.status },
     });
   } catch (error) {
     console.error('[Auth] 2FA login completion failed', error instanceof Error ? error.message : error);
@@ -391,6 +430,15 @@ export const getMe = async (req: AuthenticatedRequest, res: Response): Promise<v
         createdAt: user.createdAt,
         settings: user.userSettings,
         notifications: user.notificationPrefs,
+        // Account moderation state — only ever returned to the authenticated
+        // owner so the suspended/banned screens can render reason and dates
+        // the account holder is permitted to see.
+        status: user.status,
+        suspendedAt: user.suspendedAt,
+        suspendedReason: user.suspendedReason,
+        suspendedUntil: user.suspendedUntil,
+        bannedAt: user.bannedAt,
+        bannedReason: user.bannedReason,
       },
     });
   } catch (error) {

@@ -32,6 +32,7 @@ import liveRoutes from './routes/live.routes';
 import giftRoutes from './routes/gift.routes';
 import followerRewardsRoutes from './routes/follower-rewards.routes';
 import adminRoutes from './routes/admin.routes';
+import appealRoutes from './routes/appeal.routes';
 import monetizationRoutes from './routes/monetization.routes';
 import storyRoutes from './routes/story.routes';
 import feedRoutes from './routes/feed.routes';
@@ -454,6 +455,7 @@ app.use('/api/gifts', giftRoutes);
 // Gold Verified Follower Rewards (creator campaigns + follower claims).
 app.use('/api/follower-rewards', followerRewardsRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/appeals', appealRoutes);
 app.use('/api/monetization', monetizationRoutes);
 app.use('/api/stories', storyRoutes);
 app.use('/api/feed', feedRoutes);
@@ -740,6 +742,24 @@ async function startServer() {
     void expireDueRewards();
     const expireRewardsTimer = setInterval(expireDueRewards, 15 * 60 * 1000);
     if (expireRewardsTimer.unref) expireRewardsTimer.unref();
+
+    // Verification badge expiry: flip overdue ACTIVE badges to EXPIRED so
+    // persisted state matches the read-time enforcement that already gates
+    // every public badge render. Runs at startup and hourly afterwards.
+    const sweepVerificationBadges = async (): Promise<void> => {
+      try {
+        const { verificationService } = await import('./services/verification.service');
+        const expired = await verificationService.sweepExpiredBadges();
+        if (expired > 0) {
+          console.log(`[Verification] Expired ${expired} overdue verification badge(s).`);
+        }
+      } catch (sweepError) {
+        console.warn('[Verification] Badge expiry sweep skipped:', sweepError);
+      }
+    };
+    void sweepVerificationBadges();
+    const verificationSweepTimer = setInterval(sweepVerificationBadges, 60 * 60 * 1000);
+    if (verificationSweepTimer.unref) verificationSweepTimer.unref();
 
     // CEO/Admin initial allocation: grants the canonical CEO account exactly
     // 1,000,000 VANTA Coins ONCE through the real wallet/ledger system. The

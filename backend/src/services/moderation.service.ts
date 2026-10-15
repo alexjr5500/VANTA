@@ -58,7 +58,15 @@ export class ModerationService {
   async banUser(userId: string, reason: string = "User violation") {
     const user = await prisma.user.update({
       where: { id: userId },
-      data: { status: "BANNED" },
+      data: {
+        status: "BANNED",
+        bannedAt: new Date(),
+        bannedReason: reason || "User violation",
+        // A ban supersedes any suspension record on the account.
+        suspendedAt: null,
+        suspendedReason: null,
+        suspendedUntil: null,
+      },
     });
 
     // Create notification log
@@ -77,22 +85,36 @@ export class ModerationService {
   async unbanUser(userId: string) {
     const user = await prisma.user.update({
       where: { id: userId },
-      data: { status: "ACTIVE" },
+      data: {
+        status: "ACTIVE",
+        bannedAt: null,
+        bannedReason: null,
+      },
     });
 
     return user;
   }
 
   /**
-   * Suspend a user account. A suspended account is blocked from authenticating
-   * (the auth middleware returns 403 for status !== 'ACTIVE') and from every
-   * authenticated API action, so this is an effective, persisted moderation
-   * action — not a UI-only toggle.
+   * Suspend a user account. A suspended account can still authenticate, but
+   * the auth middleware only exposes a read-only allowlist (suspended screen,
+   * appeal endpoints, sign-out) — every restricted mutation is rejected
+   * server-side with 403 ACCOUNT_SUSPENDED, so this is an effective, persisted
+   * moderation action — not a UI-only toggle.
    */
-  async suspendUser(userId: string, reason: string = "Account suspended") {
+  async suspendUser(
+    userId: string,
+    reason: string = "Account suspended",
+    options: { until?: Date | null } = {}
+  ) {
     const user = await prisma.user.update({
       where: { id: userId },
-      data: { status: "SUSPENDED" },
+      data: {
+        status: "SUSPENDED",
+        suspendedAt: new Date(),
+        suspendedReason: reason || "Account suspended",
+        suspendedUntil: options.until ?? null,
+      },
     });
 
     await prisma.notification.create({
@@ -108,14 +130,21 @@ export class ModerationService {
   }
 
   /**
-   * Restore an account to an ACTIVE state (used after a suspension is lifted or
-   * an incorrect restriction is reversed). Only meaningful for restricted
-   * accounts — an ACTIVE account is left untouched.
+   * Restore an account to an ACTIVE state (used after a suspension is lifted,
+   * a ban is lifted, or an incorrect restriction is reversed). Only meaningful
+   * for restricted accounts — an ACTIVE account is left untouched.
    */
   async restoreUser(userId: string) {
     const user = await prisma.user.update({
       where: { id: userId },
-      data: { status: "ACTIVE" },
+      data: {
+        status: "ACTIVE",
+        suspendedAt: null,
+        suspendedReason: null,
+        suspendedUntil: null,
+        bannedAt: null,
+        bannedReason: null,
+      },
     });
 
     await prisma.notification.create({

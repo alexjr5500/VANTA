@@ -9,6 +9,7 @@ import { config } from './config';
 import { auditLog } from './auditLog';
 import { Role, Permission, hasPermission, parseRole } from './rbac';
 import { botProtection } from './botProtection';
+import { accountStatusError, isSuspendedAllowedRequest } from './accountStatus';
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -18,6 +19,8 @@ export interface AuthenticatedRequest extends Request {
     deviceFingerprint?: string;
   };
   token?: string;
+  /** Set when a SUSPENDED account exercised its restricted read-only allowlist. */
+  accountRestricted?: 'SUSPENDED';
 }
 
 /**
@@ -77,24 +80,50 @@ export async function authenticate(req: AuthenticatedRequest, res: Response, nex
     }
 
     if (user.status !== 'ACTIVE') {
-      const statusMessages: Record<string, string> = {
-        'SUSPENDED': 'Account suspended',
-        'BANNED': 'Account banned',
-        'DEACTIVATED': 'Account deactivated',
-        'LOCKED': 'Account locked due to suspicious activity',
-      };
-      
+      // A SUSPENDED account keeps a tightly-scoped read-only allowlist so the
+      // dedicated suspended screen, appeal flow and sign-out keep working.
+      // Everything else is denied here, server-side — a suspended user can
+      // never bypass restrictions by calling APIs directly.
+      if (
+        user.status === 'SUSPENDED' &&
+        isSuspendedAllowedRequest(req.method || 'GET', req.originalUrl || req.url || req.path)
+      ) {
+        await prisma.session.update({
+          where: { id: session.id },
+          data: { lastActiveAt: new Date() },
+        });
+        req.user = {
+          userId: decoded.userId,
+          role: parseRole(user.role),
+          sessionId: session.id,
+          deviceFingerprint: (req as any).deviceFingerprint,
+        };
+        req.token = token;
+        req.accountRestricted = 'SUSPENDED';
+        next();
+        return;
+      }
+
+      const statusError = accountStatusError(user.status);
+
       await auditLog.log({
         userId: user.id,
         action: 'BLOCKED_REQUEST',
         ipAddress: req.ip,
         userAgent: req.headers['user-agent'],
-        metadata: { reason: `Account status: ${user.status}` },
+        metadata: {
+          reason: `Account status: ${user.status}`,
+          code: statusError.code,
+          path: req.originalUrl || req.path,
+          method: req.method,
+        },
         severity: 'WARNING',
       });
 
-      res.status(403).json({
-        error: statusMessages[user.status] || 'Account restricted',
+      res.status(statusError.status).json({
+        error: statusError.error,
+        code: statusError.code,
+        accountStatus: user.status,
       });
       return;
     }

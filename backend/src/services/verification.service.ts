@@ -2,6 +2,65 @@ import { prisma } from '../prisma';
 import { v4 as uuidv4 } from 'uuid';
 import { verificationPaymentService } from './verification-payment.service';
 
+// ============================================================================
+// ADMIN VERIFICATION PLANS
+// ----------------------------------------------------------------------------
+// The four (and only four) verification plans VANTA administrators can assign.
+// Durations are fixed product decisions — never invented at runtime. Expiry is
+// computed with calendar-month/year arithmetic on the server so a 1-month plan
+// is exactly one calendar month from assignment (never a flat 30 days).
+// ============================================================================
+export type VerificationPlanKey =
+  | 'BLUE_1_MONTH'
+  | 'BLUE_3_MONTHS'
+  | 'BLUE_6_MONTHS'
+  | 'GOLD_1_YEAR';
+
+export interface VerificationPlanDefinition {
+  key: VerificationPlanKey;
+  badgeType: 'BLUE' | 'GOLD';
+  label: string;
+  durationLabel: string;
+  /** Calendar months added to the assignment timestamp. */
+  durationMonths: number;
+}
+
+export const VERIFICATION_PLANS: Record<VerificationPlanKey, VerificationPlanDefinition> = {
+  BLUE_1_MONTH: { key: 'BLUE_1_MONTH', badgeType: 'BLUE', label: 'Blue Verified', durationLabel: '1 Month', durationMonths: 1 },
+  BLUE_3_MONTHS: { key: 'BLUE_3_MONTHS', badgeType: 'BLUE', label: 'Blue Verified', durationLabel: '3 Months', durationMonths: 3 },
+  BLUE_6_MONTHS: { key: 'BLUE_6_MONTHS', badgeType: 'BLUE', label: 'Blue Verified', durationLabel: '6 Months', durationMonths: 6 },
+  GOLD_1_YEAR: { key: 'GOLD_1_YEAR', badgeType: 'GOLD', label: 'Gold Verified', durationLabel: '1 Year', durationMonths: 12 },
+};
+
+export const VERIFICATION_PLAN_KEYS = Object.keys(VERIFICATION_PLANS) as VerificationPlanKey[];
+
+export function isVerificationPlanKey(value: unknown): value is VerificationPlanKey {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(VERIFICATION_PLANS, value);
+}
+
+/**
+ * Calendar-aware month addition (server-side single source of truth).
+ * Jan 31 + 1 month -> Feb 28/29 (clamped to the target month's last day);
+ * never assumes every month has 30 days.
+ */
+export function addCalendarMonths(date: Date, months: number): Date {
+  const result = new Date(date.getTime());
+  const targetMonth = result.getMonth() + months;
+  const day = result.getDate();
+  result.setDate(1);
+  result.setMonth(targetMonth);
+  // Clamp to the last day of the target month (handles Jan 31 -> Feb 28/29).
+  const lastDayOfTargetMonth = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
+  result.setDate(Math.min(day, lastDayOfTargetMonth));
+  return result;
+}
+
+/** Absolute expiry timestamp for a plan assigned at `from` (defaults to now). */
+export function computePlanExpiry(planKey: VerificationPlanKey, from: Date = new Date()): Date {
+  return addCalendarMonths(from, VERIFICATION_PLANS[planKey].durationMonths);
+}
+
+
 export interface VerificationStatus {
   hasBlueBadge: boolean;
   hasGoldBadge: boolean;
@@ -619,6 +678,168 @@ export class VerificationService {
    */
   async adminRevokeBadge(userId: string, adminId: string, reason?: string): Promise<any> {
     return this.revokeBadge(userId, adminId, reason || 'Revoked by admin');
+  }
+
+  // ==========================================================================
+  // ADMIN PLAN-BASED VERIFICATION MANAGEMENT
+  // ==========================================================================
+
+  /** Current verification state for the admin manage-verification modal. */
+  async getVerificationState(userId: string) {
+    const [user, badge] = await Promise.all([
+      prisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true, fullName: true, avatar: true, verified: true } }),
+      prisma.verificationBadge.findUnique({ where: { userId } }),
+    ]);
+    if (!user) throw new Error('User not found');
+
+    const now = Date.now();
+    const active = Boolean(badge) && badge!.status === 'ACTIVE' &&
+      (!badge!.expiresAt || new Date(badge!.expiresAt).getTime() > now);
+
+    return {
+      userId: user.id,
+      username: user.username,
+      fullName: user.fullName,
+      avatar: user.avatar,
+      isVerified: Boolean(user.verified) || active,
+      badge: badge
+        ? {
+            badgeType: badge.badgeType,
+            status: badge.status,
+            grantedAt: badge.grantedAt.toISOString(),
+            expiresAt: badge.expiresAt ? badge.expiresAt.toISOString() : null,
+            revokedAt: badge.revokedAt ? badge.revokedAt.toISOString() : null,
+            revokeReason: badge.revokeReason,
+          }
+        : null,
+      active,
+      activePlan: active ? this.matchPlanForBadge(badge!) : null,
+      plans: Object.values(VERIFICATION_PLANS),
+    };
+  }
+
+  /** Best-effort match of an existing badge row to one of the four plans. */
+  private matchPlanForBadge(badge: { badgeType: string; grantedAt: Date; expiresAt: Date | null }): VerificationPlanKey | null {
+    if (!badge.expiresAt) return null;
+    const months = Math.round(
+      (new Date(badge.expiresAt).getTime() - new Date(badge.grantedAt).getTime()) / (30.44 * 24 * 60 * 60 * 1000)
+    );
+    return (
+      VERIFICATION_PLAN_KEYS.find((key) => {
+        const plan = VERIFICATION_PLANS[key];
+        return plan.badgeType === badge.badgeType && Math.abs(plan.durationMonths - months) <= 1;
+      }) || null
+    );
+  }
+
+  /**
+   * Assign one of the four verification plans to a user.
+   * Validates the plan, persists badge type, assignment timestamp and the
+   * computed calendar expiry, flips the public `verified` flag, and records
+   * every assignment/reassignment in verification history (the audit log is
+   * written by the admin controller alongside this call).
+   */
+  async assignVerificationPlan(userId: string, planKey: VerificationPlanKey, adminId: string) {
+    if (!isVerificationPlanKey(planKey)) throw new Error('Unknown verification plan');
+    const plan = VERIFICATION_PLANS[planKey];
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, verified: true } });
+    if (!user) throw new Error('User not found');
+
+    const grantedAt = new Date();
+    const expiresAt = computePlanExpiry(planKey, grantedAt);
+
+    const badge = await this.grantBadge(userId, plan.badgeType, adminId, expiresAt);
+
+    // grantBadge only writes history on first creation — record every plan
+    // assignment/reassignment so a plan change can never be lost.
+    await prisma.verificationHistory.create({
+      data: {
+        userId,
+        action: `PLAN_ASSIGNED_${planKey}`,
+        performedBy: adminId,
+        details: JSON.stringify({
+          planKey,
+          badgeType: plan.badgeType,
+          durationMonths: plan.durationMonths,
+          grantedAt: grantedAt.toISOString(),
+          expiresAt: expiresAt.toISOString(),
+        }),
+      },
+    });
+
+    // The public badge flag must reflect the new assignment immediately.
+    await prisma.user.update({ where: { id: userId }, data: { verified: true } });
+
+    return {
+      planKey,
+      badgeType: plan.badgeType,
+      grantedAt: grantedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      badge,
+      isVerified: true,
+    };
+  }
+
+  /**
+   * Remove a user's verification badge. Revokes the badge row (if any),
+   * clears the public verified flag, and records the removal. Never touches
+   * account status or any other account data.
+   */
+  async removeVerification(userId: string, adminId: string, reason?: string) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, verified: true, verificationBadge: true },
+    });
+    if (!user) throw new Error('User not found');
+    if (!user.verified && !user.verificationBadge) throw new Error('This user has no verification badge to remove');
+
+    if (user.verificationBadge && user.verificationBadge.status === 'ACTIVE') {
+      await this.revokeBadge(userId, adminId, reason || 'Removed by admin');
+    }
+
+    await prisma.user.update({ where: { id: userId }, data: { verified: false } });
+
+    await prisma.verificationHistory.create({
+      data: {
+        userId,
+        action: 'VERIFICATION_REMOVED',
+        performedBy: adminId,
+        details: JSON.stringify({ reason: reason || null, removedAt: new Date().toISOString() }),
+      },
+    });
+
+    const badge = await prisma.verificationBadge.findUnique({ where: { userId } });
+    return { isVerified: false, badge };
+  }
+
+  /**
+   * Expire overdue ACTIVE badge rows (startup + interval sweep). Read-time
+   * checks (`isBadgeRowActive` / `enrichPublicUser`) already prevent an
+   * expired badge from displaying; this sweep keeps the persisted state
+   * consistent for admin listings and analytics.
+   */
+  async sweepExpiredBadges(): Promise<number> {
+    const now = new Date();
+    const overdue = await prisma.verificationBadge.findMany({
+      where: { status: 'ACTIVE', expiresAt: { not: null, lte: now } },
+      select: { id: true, userId: true },
+    });
+    if (overdue.length === 0) return 0;
+
+    await prisma.verificationBadge.updateMany({
+      where: { id: { in: overdue.map((b) => b.id) } },
+      data: { status: 'EXPIRED', updatedAt: now },
+    });
+
+    // The legacy verified flag must not keep an expired badge alive for
+    // clients that only read `user.verified`.
+    await prisma.user.updateMany({
+      where: { id: { in: overdue.map((b) => b.userId) }, verified: true },
+      data: { verified: false },
+    });
+
+    return overdue.length;
   }
 
   /**

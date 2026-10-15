@@ -21,6 +21,13 @@ export interface AuthUser {
   coins?: number;
   earnings?: number;
   twoFactorEnabled?: boolean;
+  // Account moderation + notice metadata (returned to the authenticated owner).
+  status?: string;
+  suspendedAt?: string | null;
+  suspendedReason?: string | null;
+  suspendedUntil?: string | null;
+  bannedAt?: string | null;
+  bannedReason?: string | null;
 }
 
 export interface AuthResponse extends ApiResponse {
@@ -28,6 +35,13 @@ export interface AuthResponse extends ApiResponse {
   refreshToken?: string;
   user?: AuthUser;
   expiresIn?: number;
+  // Account status after login (ACTIVE / SUSPENDED); suspended users receive a
+  // restricted session and the client routes them to /account/suspended.
+  accountStatus?: string;
+  // Short-lived, narrowly-scoped appeal token for banned accounts. No session
+  // is established; the banned screen uses this token only for appeal
+  // submission + status. Present only on 403 ACCOUNT_BANNED responses.
+  appealToken?: string;
   // A login held for two-factor verification returns these instead of a token.
   requiresTwoFactor?: boolean;
   userId?: string;

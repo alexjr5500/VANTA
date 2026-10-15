@@ -3,6 +3,9 @@ import { prisma } from '../prisma';
 import { moderationService, walletService, userService, adminService, adService, coinPaymentService, verificationService, liveService } from '../services';
 import { AuthenticatedRequest, auditLog } from '../security';
 import { BADGE_USER_SELECT, isBadgeRowActive } from '../services/public-verification';
+import { normalizeAdminUserSearch, buildVerifiedFilters } from '../services/admin-user-search';
+import { isVerificationPlanKey, VERIFICATION_PLAN_KEYS } from '../services/verification.service';
+import { appealService, AppealError } from '../services/appeal.service';
 import { followerRewardService, FollowerRewardError } from '../services/follower-reward.service';
 
 // ============================================================================
@@ -62,61 +65,135 @@ export const getUserManagement = async (req: AuthenticatedRequest, res: Response
     const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 25, 1), 100);
     const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
     const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-    const search = req.query.search as string;
+    const search = normalizeAdminUserSearch(req.query.search as string);
     const status = req.query.status as string;
     const role = req.query.role as string;
     const verified = req.query.verified as string;
 
-    const where: any = {};
-    if (search) {
-      where.OR = [
-        { username: { contains: search } },
-        { email: { contains: search } },
-        { fullName: { contains: search } },
-      ];
-    }
-    if (status && status !== 'ALL') where.status = status;
-    if (role && role !== 'ALL') where.role = role;
-    if (verified === 'true') where.verified = true;
-    if (verified === 'false') where.verified = false;
+    // Shared non-search filters. Kept in an AND array so the search clauses
+    // below can add their own AND/OR groups without clobbering them.
+    const filters: any[] = [];
+    if (status && status !== 'ALL') filters.push({ status });
+    if (role && role !== 'ALL') filters.push({ role });
+    if (verified && verified !== 'ALL') filters.push(...buildVerifiedFilters(verified));
 
     const skip = offset > 0 ? offset : (page - 1) * limit;
 
-    const [users, total] = await Promise.all([
-      prisma.user.findMany({
-        where,
-        select: {
-          id: true,
-          username: true,
-          email: true,
-          fullName: true,
-          avatar: true,
-          role: true,
-          status: true,
-          verified: true,
-          premium: true,
-          coins: true,
-          earnings: true,
-          lastLoginAt: true,
-          createdAt: true,
-        },
-        take: limit,
-        skip,
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.user.count({ where }),
-    ]);
+    const userSelect = {
+      id: true,
+      username: true,
+      email: true,
+      fullName: true,
+      avatar: true,
+      role: true,
+      status: true,
+      verified: true,
+      premium: true,
+      coins: true,
+      earnings: true,
+      lastLoginAt: true,
+      createdAt: true,
+      suspendedAt: true,
+      suspendedReason: true,
+      suspendedUntil: true,
+      bannedAt: true,
+      bannedReason: true,
+      verificationBadge: BADGE_USER_SELECT.verificationBadge,
+    };
 
-    res.status(200).json({
-      users: users.map((u) => ({
+    const serializeRow = (u: any) => {
+      const badge = u.verificationBadge;
+      const badgeActive = isBadgeRowActive(badge);
+      return {
         ...u,
+        verificationBadge: undefined,
         lastLoginAt: u.lastLoginAt ? u.lastLoginAt.toISOString() : null,
         createdAt: u.createdAt.toISOString(),
-      })),
+        suspendedAt: u.suspendedAt ? u.suspendedAt.toISOString() : null,
+        suspendedUntil: u.suspendedUntil ? u.suspendedUntil.toISOString() : null,
+        bannedAt: u.bannedAt ? u.bannedAt.toISOString() : null,
+        verificationType: badgeActive ? badge.badgeType : (u.verified && !badge ? 'GOLD' : null),
+        verificationActive: badgeActive || Boolean(u.verified && !badge),
+        verificationExpiresAt: badgeActive && badge.expiresAt ? badge.expiresAt.toISOString() : null,
+      };
+    };
+
+    let rows: any[] = [];
+    let total = 0;
+
+    if (!search) {
+      const [users, count] = await Promise.all([
+        prisma.user.findMany({
+          where: { AND: filters },
+          select: userSelect,
+          take: limit,
+          skip,
+          orderBy: { createdAt: 'desc' },
+        }),
+        prisma.user.count({ where: { AND: filters } }),
+      ]);
+      rows = users;
+      total = count;
+    } else {
+      // Two-phase ranking: EXACT username matches (case-insensitive) always
+      // page in before partial username / email / display-name matches, so
+      // searching `alex` puts the account named exactly `alex` first and
+      // `@alex` behaves identically (the prefix is stripped up-front).
+      const exactWhere = { AND: [...filters, { username: { equals: search, mode: 'insensitive' as const } }] };
+      const partialWhere = {
+        AND: [
+          ...filters,
+          { NOT: { username: { equals: search, mode: 'insensitive' as const } } },
+          {
+            OR: [
+              { username: { contains: search, mode: 'insensitive' as const } },
+              { email: { contains: search, mode: 'insensitive' as const } },
+              { fullName: { contains: search, mode: 'insensitive' as const } },
+              { profile: { is: { fullName: { contains: search, mode: 'insensitive' as const } } } },
+            ],
+          },
+        ],
+      };
+
+      const [exactCount, partialCount] = await Promise.all([
+        prisma.user.count({ where: exactWhere }),
+        prisma.user.count({ where: partialWhere }),
+      ]);
+      total = exactCount + partialCount;
+
+      // Windowed merge: consume exact matches first, then partials, while
+      // preserving stable pagination across the combined ordering.
+      const exactStart = skip;
+      const exactRows = exactStart < exactCount
+        ? await prisma.user.findMany({
+            where: exactWhere,
+            select: userSelect,
+            skip: exactStart,
+            take: Math.min(limit, exactCount - exactStart),
+            orderBy: { createdAt: 'desc' },
+          })
+        : [];
+      const remaining = limit - exactRows.length;
+      const partialOffset = Math.max(0, skip - exactCount);
+      const partialRows = remaining > 0 && partialOffset < partialCount
+        ? await prisma.user.findMany({
+            where: partialWhere,
+            select: userSelect,
+            skip: partialOffset,
+            take: remaining,
+            orderBy: { createdAt: 'desc' },
+          })
+        : [];
+      rows = [...exactRows, ...partialRows];
+    }
+
+    res.status(200).json({
+      users: rows.map(serializeRow),
       total,
       page,
       pageSize: limit,
       pages: Math.max(1, Math.ceil(total / limit)),
+      search,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
@@ -691,6 +768,11 @@ export const banUser = async (req: AuthenticatedRequest, res: Response): Promise
       return;
     }
 
+    if (userId === req.user?.userId) {
+      res.status(403).json({ error: 'You cannot change your own account moderation status' });
+      return;
+    }
+
     const user = await moderationService.banUser(userId, reason);
     await auditLog.log({
       userId: req.user?.userId,
@@ -747,6 +829,12 @@ export const verifyUser = async (req: AuthenticatedRequest, res: Response): Prom
       return;
     }
 
+    // Users cannot assign themselves verification badges.
+    if (userId === req.user?.userId) {
+      res.status(403).json({ error: 'You cannot change your own verification status' });
+      return;
+    }
+
     const user = await moderationService.verifyUser(userId);
     await auditLog.log({
       userId: req.user?.userId,
@@ -768,12 +856,21 @@ export const verifyUser = async (req: AuthenticatedRequest, res: Response): Prom
 
 export const suspendUser = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { userId, reason } = req.body;
+    const { userId, reason, until } = req.body;
     if (!userId) {
       res.status(400).json({ error: 'userId is required' });
       return;
     }
-    const user = await moderationService.suspendUser(userId, reason || undefined);
+    if (userId === req.user?.userId) {
+      res.status(403).json({ error: 'You cannot change your own account moderation status' });
+      return;
+    }
+    const untilDate = typeof until === 'string' && until.trim() ? new Date(until) : null;
+    if (untilDate && Number.isNaN(untilDate.getTime())) {
+      res.status(400).json({ error: 'Invalid suspension expiry date' });
+      return;
+    }
+    const user = await moderationService.suspendUser(userId, reason || undefined, { until: untilDate });
     await auditLog.log({
       userId: req.user?.userId,
       action: 'USER_SUSPENDED',
@@ -809,6 +906,193 @@ export const restoreUser = async (req: AuthenticatedRequest, res: Response): Pro
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });
+  }
+};
+
+// ============================================================================
+// VERIFICATION PLAN MANAGEMENT (admin-only)
+// ----------------------------------------------------------------------------
+// Assign one of the four verification plans (Blue 1/3/6 months, Gold 1 year),
+// inspect current state, or remove a badge. Verification changes are recorded
+// in verification history and the admin audit log; they never touch account
+// moderation status.
+// ============================================================================
+
+export const getVerificationState = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = (req.params.userId as string) || (req.query.userId as string);
+    if (!userId) {
+      res.status(400).json({ error: 'userId is required' });
+      return;
+    }
+    const state = await verificationService.getVerificationState(userId);
+    res.status(200).json(state);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const assignVerification = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { userId, plan } = req.body;
+    if (!userId) {
+      res.status(400).json({ error: 'userId is required' });
+      return;
+    }
+    if (!isVerificationPlanKey(plan)) {
+      res.status(400).json({
+        error: `Unknown verification plan. Must be one of: ${VERIFICATION_PLAN_KEYS.join(', ')}`,
+      });
+      return;
+    }
+    // Users cannot assign themselves verification badges.
+    if (userId === req.user?.userId) {
+      res.status(403).json({ error: 'You cannot change your own verification status' });
+      return;
+    }
+    const adminId = req.user?.userId as string;
+    const result = await verificationService.assignVerificationPlan(userId, plan, adminId);
+    await auditLog.log({
+      userId: adminId,
+      action: 'VERIFICATION_PLAN_ASSIGNED',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: {
+        resource: 'User',
+        resourceId: userId,
+        targetId: userId,
+        plan,
+        badgeType: result.badgeType,
+        expiresAt: result.expiresAt,
+      },
+      severity: 'WARNING',
+    });
+    res.status(200).json({
+      message: `Verification assigned (${result.badgeType}, expires ${result.expiresAt})`,
+      ...result,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const removeVerification = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { userId, reason } = req.body;
+    if (!userId) {
+      res.status(400).json({ error: 'userId is required' });
+      return;
+    }
+    if (userId === req.user?.userId) {
+      res.status(403).json({ error: 'You cannot change your own verification status' });
+      return;
+    }
+    const adminId = req.user?.userId as string;
+    const result = await verificationService.removeVerification(userId, adminId, reason);
+    await auditLog.log({
+      userId: adminId,
+      action: 'VERIFICATION_REMOVED',
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: { resource: 'User', resourceId: userId, targetId: userId, reason: reason || null },
+      severity: 'WARNING',
+    });
+    res.status(200).json({ message: 'Verification badge removed', ...result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+// APPEALS_ADMIN_MARKER
+
+// ============================================================================
+// APPEAL REVIEW (admin-only)
+// ----------------------------------------------------------------------------
+// Read pending appeals (searchable by username/display name) and record
+// review decisions. Approval restores the account only when the admin
+// explicitly requests it; rejection never changes account status. All service
+// errors carry their own HTTP status + machine-readable code.
+// ============================================================================
+
+const sendAppealAdminError = (res: Response, error: unknown): void => {
+  if (error instanceof AppealError) {
+    res.status(error.statusCode).json({ error: error.message, code: error.code });
+    return;
+  }
+  const message = error instanceof Error ? error.message : 'Internal server error';
+  res.status(400).json({ error: message });
+};
+
+export const getAppeals = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const result = await appealService.listAppeals({
+      status: req.query.status as string,
+      search: req.query.search as string,
+      page: parseInt(req.query.page as string) || 1,
+      limit: parseInt(req.query.limit as string) || 25,
+    });
+    res.status(200).json(result);
+  } catch (error) {
+    sendAppealAdminError(res, error);
+  }
+};
+
+export const getAppealsForUser = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = (req.params.userId as string) || (req.query.userId as string);
+    if (!userId) {
+      res.status(400).json({ error: 'userId is required' });
+      return;
+    }
+    const appeals = await appealService.listAppealsForUser(userId);
+    res.status(200).json({ appeals });
+  } catch (error) {
+    sendAppealAdminError(res, error);
+  }
+};
+
+export const reviewAppealStatus = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { appealId } = req.params;
+    if (!appealId) {
+      res.status(400).json({ error: 'appealId is required' });
+      return;
+    }
+    const appeal = await appealService.markUnderReview(appealId, req.user?.userId as string);
+    res.status(200).json({ appeal, message: 'Appeal is now under review.' });
+  } catch (error) {
+    sendAppealAdminError(res, error);
+  }
+};
+
+export const decideAppeal = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { appealId } = req.params;
+    const { decision, note, restoreAccount } = req.body || {};
+    if (!appealId) {
+      res.status(400).json({ error: 'appealId is required' });
+      return;
+    }
+    if (decision !== 'APPROVED' && decision !== 'REJECTED') {
+      res.status(400).json({ error: 'Decision must be APPROVED or REJECTED.' });
+      return;
+    }
+    const appeal = await appealService.decideAppeal(appealId, req.user?.userId as string, {
+      value: decision,
+      note,
+      restoreAccount: restoreAccount === true,
+    });
+    res.status(200).json({
+      appeal,
+      message: decision === 'APPROVED'
+        ? (appeal.accountRestored ? 'Appeal approved. The account was restored.' : 'Appeal approved. The account stays restricted.')
+        : 'Appeal rejected. The account stays restricted.',
+    });
+  } catch (error) {
+    sendAppealAdminError(res, error);
   }
 };
 
@@ -1269,43 +1553,61 @@ export const getAllWithdrawals = async (req: AuthenticatedRequest, res: Response
 
 export const searchUsers = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const query = req.query.q as string;
+    const rawQuery = req.query.q as string;
+    const query = normalizeAdminUserSearch(rawQuery);
     if (!query) { res.status(400).json({ error: 'Search query is required' }); return; }
 
-    const users = await prisma.user.findMany({
-      where: {
-        OR: [
-          { username: { contains: query } },
-          { email: { contains: query } },
-          { fullName: { contains: query } },
-        ],
-      },
-      select: {
-        id: true,
-        username: true,
-        email: true,
-        fullName: true,
-        role: true,
-        status: true,
-        verified: true,
-        coins: true,
-        earnings: true,
-        createdAt: true,
-        wallet: {
-          select: {
-            coinBalance: true,
-            isFrozen: true,
-            totalCoinsPurchased: true,
-            totalCoinsSent: true,
-            totalGiftsSent: true,
-            totalGiftsReceived: true,
-          },
+    const select = {
+      id: true,
+      username: true,
+      email: true,
+      fullName: true,
+      role: true,
+      status: true,
+      verified: true,
+      coins: true,
+      earnings: true,
+      createdAt: true,
+      wallet: {
+        select: {
+          coinBalance: true,
+          isFrozen: true,
+          totalCoinsPurchased: true,
+          totalCoinsSent: true,
+          totalGiftsSent: true,
+          totalGiftsReceived: true,
         },
       },
-      take: 20,
-    });
+    };
 
-    res.status(200).json(users);
+    // Exact username matches (case-insensitive) rank ahead of partial matches.
+    const exactWhere = { username: { equals: query, mode: 'insensitive' as const } };
+    const partialWhere = {
+      NOT: { username: { equals: query, mode: 'insensitive' as const } },
+      OR: [
+        { username: { contains: query, mode: 'insensitive' as const } },
+        { email: { contains: query, mode: 'insensitive' as const } },
+        { fullName: { contains: query, mode: 'insensitive' as const } },
+      ],
+    };
+
+    const LIMIT = 20;
+    const exact = await prisma.user.findMany({
+      where: exactWhere,
+      select,
+      take: LIMIT,
+      orderBy: { createdAt: 'desc' },
+    });
+    const partial = exact.length < LIMIT
+      ? await prisma.user.findMany({
+          where: partialWhere,
+          select,
+          take: LIMIT - exact.length,
+          orderBy: { createdAt: 'desc' },
+        })
+      : [];
+
+    res.status(200).json({ users: [...exact, ...partial], search: query });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });

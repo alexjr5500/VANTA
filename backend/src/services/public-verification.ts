@@ -33,21 +33,27 @@ export function isBadgeRowActive(badge?: { status?: string | null; expiresAt?: D
  */
 export function enrichPublicUser<T extends BadgeAwareUser | null | undefined>(user: T): T {
   if (!user) return user;
-  const badgeActive = isBadgeRowActive(user.verificationBadge);
-  const serverVerified = Boolean(user.verified);
+  const badgeRow = user.verificationBadge ?? null;
+  const badgeActive = isBadgeRowActive(badgeRow);
+  // When a badge row exists it is the source of truth for verification state.
+  // The legacy `verified` boolean must not keep an expired or revoked badge
+  // visible — read-time expiry enforcement means a stale frontend or a
+  // not-yet-run sweep can never display an invalid badge.
+  const serverVerified = Boolean(user.verified) && (!badgeRow || badgeActive);
+  const verified = serverVerified || badgeActive;
 
   const enriched: BadgeAwareUser = {
     ...user,
-    verified: serverVerified || badgeActive,
-    // Explicit tier: a paid badge wins; otherwise the legacy server-verified
+    verified,
+    // Explicit tier: an active badge wins; otherwise the legacy server-verified
     // identity keeps the Gold badge that the whole app already displays.
     verificationType: badgeActive
       ? user.verificationBadge.badgeType === 'BLUE'
         ? 'BLUE'
         : 'GOLD'
-      : serverVerified
+      : verified
         ? 'GOLD'
-        : user.verificationBadge?.badgeType || null,
+        : null,
   };
   if ('verificationBadge' in enriched) delete enriched.verificationBadge;
   return enriched as T;

@@ -59,7 +59,19 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     catch (reason: any) {
       if (requestId !== profileRequest.current || reason?.statusCode === 499) return;
       const status = errorStatus(reason);
-      setError(status === 404 ? 'not-found' : status === 401 || status === 403 ? 'unauthorized' : reason?.message || 'This profile could not be loaded.');
+      // Restricted accounts carry their own machine-readable code - they must
+      // never collapse into the generic private-profile state.
+      const code = String(reason?.data?.code || reason?.code || '');
+      const kind = status === 404
+        ? 'not-found'
+        : code === 'ACCOUNT_SUSPENDED'
+          ? 'account-suspended'
+          : code === 'ACCOUNT_BANNED'
+            ? 'account-banned'
+            : status === 401 || status === 403
+              ? 'unauthorized'
+              : reason?.message || 'This profile could not be loaded.';
+      setError(kind);
     }
     finally { if (requestId === profileRequest.current) setLoading(false); }
   }, [authLoading, normalized, own, refreshToken, router, token]);
@@ -202,12 +214,14 @@ function ContentError({ message, retry }: { message: string; retry: () => void }
 
 function ProfileFailure({ kind, retry }: { kind: string; retry: () => void }) {
   const notFound = kind === 'not-found';
+  const suspended = kind === 'account-suspended';
+  const banned = kind === 'account-banned';
   const unauthorized = kind === 'unauthorized';
   return <main className="profile-page"><div className="profile-state full-page" role="alert">
-    <span className="profile-state-code">{notFound ? '404' : unauthorized ? 'PRIVATE' : 'PROFILE ERROR'}</span>
+    <span className="profile-state-code">{notFound ? '404' : suspended ? 'SUSPENDED' : banned ? 'BANNED' : unauthorized ? 'PRIVATE' : 'PROFILE ERROR'}</span>
     <Info size={28} />
     <h1>{notFound ? 'Profile not found' : unauthorized ? 'This profile is unavailable' : 'Couldn\'t load this profile'}</h1>
-    <p>{notFound ? 'The account may have been removed or the username has changed.' : unauthorized ? 'Sign in with an account that has permission to view this profile.' : kind}</p>
+    <p>{notFound ? 'The account may have been removed or the username has changed.' : suspended ? 'This account has been suspended by VANTA moderation. Its profile is unavailable while the suspension is active.' : banned ? 'This account has been banned from VANTA. Its profile is unavailable.' : unauthorized ? 'Sign in with an account that has permission to view this profile.' : kind}</p>
     {!notFound && <button className="profile-button" onClick={retry}><RefreshCw size={15} />Try again</button>}
   </div></main>;
 }

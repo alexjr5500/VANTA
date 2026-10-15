@@ -193,7 +193,10 @@ export class SessionManager {
       throw new Error('Refresh token expired');
     }
 
-    if (session.user.status !== 'ACTIVE') {
+    // A SUSPENDED account may refresh its restricted session (the suspended
+    // screen and appeal flow keep working across token expiry); every other
+    // non-ACTIVE status keeps the fail-closed behaviour.
+    if (session.user.status !== 'ACTIVE' && session.user.status !== 'SUSPENDED') {
       throw new Error('Account restricted');
     }
 

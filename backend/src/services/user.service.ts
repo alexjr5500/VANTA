@@ -2,6 +2,24 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '../prisma';
 import { emitSocialEvent } from './social-events.service';
 import { notificationService } from './notification.service';
+import { AppError } from '../utils/api-error';
+
+/**
+ * Reject public-profile reads for restricted accounts. The account OWNER
+ * always passes (their own suspended/banned view is handled by the dedicated
+ * screens); every other viewer receives a typed 403 carrying a
+ * machine-readable code so the UI renders the suspended/banned state instead
+ * of the generic "private profile" message.
+ */
+export function assertProfileAccessible(user: { id: string; status?: string | null }, viewerId?: string): void {
+  if (!user || viewerId === user.id) return;
+  if (user.status === 'SUSPENDED') {
+    throw new AppError(403, 'ACCOUNT_SUSPENDED', 'This account has been suspended by VANTA moderation.');
+  }
+  if (user.status === 'BANNED') {
+    throw new AppError(403, 'ACCOUNT_BANNED', 'This account has been banned from VANTA.');
+  }
+}
 
 const ensureValidUrl = (value?: string) => {
   if (!value) return;
@@ -246,6 +264,11 @@ export class UserService {
     if (!user) {
       throw new Error('Profile not found');
     }
+
+    // A suspended or banned account no longer exposes a public profile. The
+    // dedicated suspended/banned screens carry the proper message — the
+    // generic "private profile" state must never be shown for these accounts.
+    assertProfileAccessible(user, currentUserId);
 
     // Private accounts are only readable by the owner and the accounts the
     // owner follows. Enforced here (service layer) so an alternate client can
@@ -505,6 +528,7 @@ export class UserService {
     if (!user) {
       throw new Error('Profile not found');
     }
+    assertProfileAccessible(user, viewerId);
     if (!(await this.canViewProfile(user.id, viewerId))) {
       throw new Error('This profile is private');
     }
@@ -516,6 +540,7 @@ export class UserService {
     if (!user) {
       throw new Error('Profile not found');
     }
+    assertProfileAccessible(user, viewerId);
     if (!(await this.canViewProfile(user.id, viewerId))) {
       throw new Error('This profile is private');
     }
@@ -1454,9 +1479,10 @@ export class UserService {
     };
   }
 
-  async getPublicUserReelsByUsername(username: string, cursor?: string, limit: number = 12) {
+  async getPublicUserReelsByUsername(username: string, cursor?: string, limit: number = 12, viewerId?: string) {
     const user = await prisma.user.findUnique({ where: { username } });
     if (!user) throw new Error('Profile not found');
+    assertProfileAccessible(user, viewerId);
     return this.getUserReels(user.id, cursor, limit);
   }
 
@@ -1489,9 +1515,10 @@ export class UserService {
     return { items: streams, nextCursor };
   }
 
-  async getPublicUserLivestreamsByUsername(username: string, cursor?: string, limit: number = 10) {
+  async getPublicUserLivestreamsByUsername(username: string, cursor?: string, limit: number = 10, viewerId?: string) {
     const user = await prisma.user.findUnique({ where: { username } });
     if (!user) throw new Error('Profile not found');
+    assertProfileAccessible(user, viewerId);
     return this.getUserLivestreams(user.id, cursor, limit);
   }
 

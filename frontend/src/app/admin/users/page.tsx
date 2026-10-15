@@ -1,17 +1,18 @@
 ﻿'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import {
-  getUsers, suspendUser, banUser, restoreUser, verifyUser, deleteUser,
-  type UserRecord, type UserPage,
+  getUsers, suspendUser, banUser, restoreUser, unbanUser, deleteUser,
+  type UserRecord, type UserPage, type AdminVerificationPlan, type AdminVerificationState,
+  type AppealRecord,
 } from '@/lib/adminApi';
 import {
   Users, Search, Shield, Ban, RotateCcw, Loader2,
   ChevronLeft, ChevronRight, RefreshCw, Trash2, ShieldCheck,
-  UserX, Clock,
+  UserX, Clock, BadgeCheck, History, X, ExternalLink,
 } from 'lucide-react';
 import ConsolePanel from '@/components/console/Panel';
 import StatusBadge, { statusToneFor } from '@/components/console/StatusBadge';
@@ -24,9 +25,9 @@ import { fmtNumber, fmtDate, timeAgo } from '@/components/console/format';
 // ============================================================================
 // ADMIN - USER MANAGEMENT
 // ----------------------------------------------------------------------------
-// Reads GET /api/admin/users/manage (paginated, filterable) and performs the
+// Reads GET /api/admin/users/manage (server-side search, paginated, filterable) and performs the
 // real, role-protected moderation actions the backend already exposes
-// (suspend / ban / restore / verify / delete). Every consequential action is
+// (suspend / ban / lift ban / restore / delete) plus selective
 // confirmed first, and the result message reflects the confirmed backend
 // response - nothing is optimistically reported as successful.
 // ============================================================================

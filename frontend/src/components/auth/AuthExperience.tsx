@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import { authLogin, authRegister, authComplete2FALogin } from '@/lib/authApi';
 import { apiGet } from '@/lib/apiClient';
 import { ApiError } from '@/lib/api';
+import { storeAppealContext } from '@/lib/appealApi';
 import {
   oauthAuthorizeEndpoint,
   oauthCompleteRegistration,
@@ -36,6 +37,17 @@ function message(error: unknown) {
   if (/network|fetch|failed to fetch/i.test(text)) return 'Check your connection and try again.';
   if (/invalid email or password|invalid credentials/i.test(text)) return 'Incorrect email/username or password.';
   return text || 'Something went wrong. Please try again.';
+}
+
+/**
+ * True when a login attempt was rejected because the account is banned with
+ * valid credentials — the response carries the appeal token the banned
+ * screen needs. Stale/nearby states (wrong password, suspended) never match.
+ */
+function isBannedLoginError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  const data = (error as ApiError).data || {};
+  return error.statusCode === 403 && data?.code === 'ACCOUNT_BANNED' && typeof data?.appealToken === 'string';
 }
 
 function GoogleIcon() {
@@ -196,8 +208,26 @@ useEffect(() => { if (!isLoading && token) router.replace(destination); }, [isLo
         return;
       }
       if (!response.user || !response.token) throw new Error('Invalid authentication response');
-      await login(response.user, response.token, response.refreshToken); router.replace(destination);
-    } catch (caughtError) { setError(message(caughtError)); } finally { setBusy(false); }
+      await login(response.user, response.token, response.refreshToken);
+      // A suspended account signs in successfully into a restricted session —
+      // take it to the dedicated suspended screen, not the normal app shell.
+      if (!register && (response.user.status === 'SUSPENDED' || (response as any).accountStatus === 'SUSPENDED')) {
+        router.replace('/account/suspended');
+        return;
+      }
+      router.replace(destination);
+    } catch (caughtError) {
+      // A banned account never receives a session. Valid credentials come
+      // back as 403 ACCOUNT_BANNED with a narrow appeal token — hand it to
+      // the dedicated banned screen so an appeal can still be submitted.
+      if (isBannedLoginError(caughtError)) {
+        const data = (caughtError as ApiError)?.data || {};
+        storeAppealContext(String(data.appealToken || ''), String(data.username || identifier.trim()));
+        router.replace('/account/banned');
+        return;
+      }
+      setError(message(caughtError));
+    } finally { setBusy(false); }
   };
 
   const submit2FA = async (event: FormEvent) => {
@@ -212,8 +242,18 @@ useEffect(() => { if (!isLoading && token) router.replace(destination); }, [isLo
       const response = await authComplete2FALogin(twoFactorUserId, twoFactorCode.trim());
       if (!response.user || !response.token) throw new Error('Invalid authentication response');
       await login(response.user, response.token, response.refreshToken);
+      if (response.user.status === 'SUSPENDED' || (response as any).accountStatus === 'SUSPENDED') {
+        router.replace('/account/suspended');
+        return;
+      }
       router.replace(destination);
     } catch (caughtError) {
+      if (isBannedLoginError(caughtError)) {
+        const data = (caughtError as ApiError)?.data || {};
+        storeAppealContext(String(data.appealToken || ''), String(data.username || ''));
+        router.replace('/account/banned');
+        return;
+      }
       setTwoFactorError(message(caughtError));
     } finally {
       setTwoFactorBusy(false);

@@ -67,6 +67,15 @@ import {
   getFollowerRewardCampaign,
   getFollowerRewardClaims,
   getFollowerRewardTransactions,
+  // Verification plan management
+  getVerificationState,
+  assignVerification,
+  removeVerification,
+  // Appeal review
+  getAppeals,
+  getAppealsForUser,
+  reviewAppealStatus,
+  decideAppeal,
 } from '../controllers/admin.controller';
 import { authenticate, requireRole, Role } from '../security';
 import { giftService, GiftCatalogInput } from '../services/gift.service';
@@ -188,6 +197,20 @@ router.post('/users/unban', unbanUser);
 router.post('/users/verify', verifyUser);
 router.post('/users/suspend', suspendUser);
 router.post('/users/restore', restoreUser);
+
+// Verification plan management (admin-only). Verification badges and account
+// moderation are separate concerns: these endpoints never change user.status.
+router.get('/users/verification/:userId', getVerificationState);
+router.get('/users/verification', getVerificationState);
+router.post('/users/verification', assignVerification);
+router.post('/users/verification/remove', removeVerification);
+
+// Appeal review (admin-only). Decisions persist to the database; approval
+// restores an account only when the admin explicitly requests it.
+router.get('/appeals', getAppeals);
+router.get('/appeals/user/:userId', getAppealsForUser);
+router.post('/appeals/:appealId/under-review', reviewAppealStatus);
+router.post('/appeals/:appealId/decision', decideAppeal);
 
 // Withdrawals
 router.get('/withdrawals', getWithdrawals);

@@ -3,6 +3,23 @@ import { AuthRequest } from '../middleware/auth.middleware';
 import { getParamString } from '../utils/params';
 import { uploadService, userService, matchService } from '../services';
 import { emitSocialEvent } from '../services/social-events.service';
+import { AppError } from '../utils/api-error';
+
+/**
+ * Shared error mapping for the public-profile endpoints. Typed AppError
+ * instances (notably the 403 ACCOUNT_SUSPENDED / ACCOUNT_BANNED guards) keep
+ * their exact status + machine-readable code so clients can render the
+ * dedicated suspended/banned screens instead of the generic "private" state.
+ */
+const sendPublicProfileError = (res: Response, error: unknown): void => {
+  if (error instanceof AppError) {
+    res.status(error.statusCode).json({ error: error.message, code: error.code });
+    return;
+  }
+  const message = error instanceof Error ? error.message : 'Internal server error';
+  const status = message.toLowerCase().includes('private') ? 403 : 404;
+  res.status(status).json({ error: message });
+};
 
 const parseLimit = (value: unknown, defaultLimit = 12) => {
   const parsed = typeof value === 'string' ? parseInt(value, 10) : NaN;
@@ -206,9 +223,7 @@ export const getPublicProfile = async (req: Request, res: Response): Promise<voi
     const profile = await userService.getPublicProfileByUsername(username, userId);
     res.status(200).json(profile);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    const status = message.toLowerCase().includes('private') ? 403 : 404;
-    res.status(status).json({ error: message });
+    sendPublicProfileError(res, error);
   }
 };
 
@@ -223,9 +238,7 @@ export const getPublicProfilePosts = async (req: Request, res: Response): Promis
     const posts = await userService.getPublicUserPostsByUsername(username, viewerId, cursor, limit);
     res.status(200).json(posts);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    const status = message.toLowerCase().includes('private') ? 403 : 404;
-    res.status(status).json({ error: message });
+    sendPublicProfileError(res, error);
   }
 };
 
@@ -238,9 +251,7 @@ export const getPublicProfileMedia = async (req: Request, res: Response): Promis
     const media = await userService.getPublicUserMediaByUsername(username, cursor, limit, viewerId);
     res.status(200).json(media);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    const status = message.toLowerCase().includes('private') ? 403 : 404;
-    res.status(status).json({ error: message });
+    sendPublicProfileError(res, error);
   }
 };
 
@@ -491,11 +502,11 @@ export const getPublicProfileReels = async (req: Request, res: Response): Promis
     const username = getParamString(req.params.username);
     const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const limit = parseLimit(req.query.limit, 12);
-    const reels = await userService.getPublicUserReelsByUsername(username, cursor, limit);
+    const viewerId = (req as AuthRequest).user?.userId;
+    const reels = await userService.getPublicUserReelsByUsername(username, cursor, limit, viewerId);
     res.status(200).json(reels);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(404).json({ error: message });
+    sendPublicProfileError(res, error);
   }
 };
 
@@ -521,10 +532,10 @@ export const getPublicProfileLivestreams = async (req: Request, res: Response): 
     const username = getParamString(req.params.username);
     const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const limit = parseLimit(req.query.limit, 10);
-    const streams = await userService.getPublicUserLivestreamsByUsername(username, cursor, limit);
+    const viewerId = (req as AuthRequest).user?.userId;
+    const streams = await userService.getPublicUserLivestreamsByUsername(username, cursor, limit, viewerId);
     res.status(200).json(streams);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(404).json({ error: message });
+    sendPublicProfileError(res, error);
   }
 };

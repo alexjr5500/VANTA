@@ -401,18 +401,29 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     if (isLoading) return;
 
+    const accountRoute = pathname.startsWith('/account/');
+    const accountStatus = user?.status || null;
+
+    // A suspended session is valid but restricted: keep the user on the
+    // dedicated suspended screen and out of the normal app shell (including
+    // the login page, which would otherwise bounce them to /reels).
+    if (accountStatus === 'SUSPENDED' && !accountRoute) {
+      router.push('/account/suspended');
+      return;
+    }
+
     const publicRoutes = ['/login', '/register', '/forgot-password', '/'];
     const isPublicRoute = publicRoutes.includes(pathname);
 
     // A refresh token represents a recoverable persisted session. Do not turn
     // a temporary API/dev-server outage into a logout while recovery retries.
     if (!token && !refreshToken && !isPublicRoute) {
-      router.push('/login');
-    } else if (token && isPublicRoute) {
+      if (!accountRoute) router.push('/login');
+    } else if (token && isPublicRoute && accountStatus !== 'SUSPENDED') {
       // After login/signup/password reset or root landing entry, always land on the Reels feed
       router.push('/reels');
     }
-  }, [isLoading, token, refreshToken, pathname, router]);
+  }, [isLoading, token, refreshToken, pathname, router, user]);
 
   return (
     <AuthContext.Provider

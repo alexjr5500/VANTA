@@ -68,8 +68,8 @@ export const getUsers = (token: string, params?: {
   return apiGet<UserPage>(`/api/admin/users/manage?${query}`, token);
 };
 
-export const suspendUser = (token: string, userId: string, reason?: string): Promise<any> => {
-  return apiPost<any>('/api/admin/users/suspend', { userId, reason: reason || 'Suspended by admin' }, token);
+export const suspendUser = (token: string, userId: string, reason?: string, until?: string): Promise<any> => {
+  return apiPost<any>('/api/admin/users/suspend', { userId, reason: reason || 'Suspended by admin', until: until || undefined }, token);
 };
 
 export const banUser = (token: string, userId: string, reason?: string): Promise<any> => {
@@ -84,8 +84,120 @@ export const verifyUser = (token: string, userId: string): Promise<any> => {
   return apiPost<any>('/api/admin/users/verify', { userId }, token);
 };
 
+export const unbanUser = (token: string, userId: string): Promise<any> => {
+  return apiPost<any>('/api/admin/users/unban', { userId }, token);
+};
+
 export const deleteUser = (token: string, userId: string): Promise<any> => {
   return apiDelete<any>(`/api/admin/users/${userId}`, token);
+};
+
+export interface AdminVerificationPlan {
+  key: string;
+  badgeType: 'BLUE' | 'GOLD';
+  label: string;
+  durationLabel: string;
+  durationMonths: number;
+}
+
+export interface AdminVerificationState {
+  userId: string;
+  username: string;
+  fullName?: string | null;
+  avatar?: string | null;
+  isVerified: boolean;
+  active: boolean;
+  activePlan: string | null;
+  plans: AdminVerificationPlan[];
+  badge: {
+    badgeType: 'BLUE' | 'GOLD';
+    status: string;
+    grantedAt: string;
+    expiresAt: string | null;
+    revokedAt: string | null;
+    revokeReason?: string | null;
+  } | null;
+}
+
+export const getVerificationState = (token: string, userId: string): Promise<AdminVerificationState> => {
+  return apiGet<AdminVerificationState>(`/api/admin/users/verification/${encodeURIComponent(userId)}`, token);
+};
+
+export const assignVerification = (token: string, userId: string, plan: string): Promise<any> => {
+  return apiPost<any>('/api/admin/users/verification', { userId, plan }, token);
+};
+
+export const removeVerification = (token: string, userId: string, reason?: string): Promise<any> => {
+  return apiPost<any>('/api/admin/users/verification/remove', { userId, reason: reason || undefined }, token);
+};
+
+// ============================================================================
+// APPEAL REVIEW
+// ============================================================================
+
+export interface AppealRecord {
+  id: string;
+  accountStatus: 'SUSPENDED' | 'BANNED';
+  category: string;
+  explanation: string;
+  supportingInfo?: string | null;
+  status: 'PENDING' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED';
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  decisionNote?: string | null;
+  accountRestored?: boolean | null;
+  createdAt: string;
+  updatedAt: string;
+  user?: {
+    id: string;
+    username: string;
+    fullName?: string | null;
+    avatar?: string | null;
+    status: string;
+    suspendedAt?: string | null;
+    suspendedReason?: string | null;
+    bannedAt?: string | null;
+    bannedReason?: string | null;
+  };
+}
+
+export interface AppealPage {
+  appeals: AppealRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pages: number;
+}
+
+export const getAppeals = (token: string, params?: {
+  status?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}): Promise<AppealPage> => {
+  const query = new URLSearchParams((params || {}) as any).toString();
+  return apiGet<AppealPage>(`/api/admin/appeals?${query}`, token);
+};
+
+export const getAppealsForUser = (token: string, userId: string): Promise<{ appeals: AppealRecord[] }> => {
+  return apiGet<{ appeals: AppealRecord[] }>(`/api/admin/appeals/user/${encodeURIComponent(userId)}`, token);
+};
+
+export const markAppealUnderReview = (token: string, appealId: string): Promise<any> => {
+  return apiPost<any>(`/api/admin/appeals/${encodeURIComponent(appealId)}/under-review`, {}, token);
+};
+
+export const decideAppeal = (
+  token: string,
+  appealId: string,
+  decision: 'APPROVED' | 'REJECTED',
+  options?: { note?: string; restoreAccount?: boolean },
+): Promise<any> => {
+  return apiPost<any>(`/api/admin/appeals/${encodeURIComponent(appealId)}/decision`, {
+    decision,
+    note: options?.note,
+    restoreAccount: options?.restoreAccount === true,
+  }, token);
 };
 
 // ============================================================================
@@ -138,8 +250,8 @@ export interface UserRecord {
   id: string;
   username: string;
   email: string;
-  fullName?: string;
-  avatar?: string;
+  fullName?: string | null;
+  avatar?: string | null;
   role: string;
   status: string;
   verified: boolean;
@@ -148,6 +260,17 @@ export interface UserRecord {
   earnings: number;
   lastLoginAt: string | null;
   createdAt: string;
+  // Account moderation metadata (present on /users/manage rows).
+  suspendedAt?: string | null;
+  suspendedReason?: string | null;
+  suspendedUntil?: string | null;
+  bannedAt?: string | null;
+  bannedReason?: string | null;
+  // Verification plan metadata. verificationType is 'BLUE' | 'GOLD' when an
+  // active badge (or legacy verified flag) is present, otherwise null.
+  verificationType?: 'BLUE' | 'GOLD' | null;
+  verificationActive?: boolean;
+  verificationExpiresAt?: string | null;
 }
 export interface AuditLog {
   id: string;
