@@ -36,6 +36,7 @@ import {
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
 import { useAuth } from '@/context/AuthContext';
 import { useContentPrefs } from '@/lib/useContentPrefs';
+import PullToRefresh from '@/components/ui/PullToRefresh';
 import { useContentCreation } from '@/components/create/ContentCreationContext';
 import { useToast } from '@/components/ui/Toast';
 import Avatar from '@/components/ui/Avatar';
@@ -142,9 +143,9 @@ export default function ReelsPage() {
   // listeners must attach only once the scroll viewport actually exists.
   const hasReels = reels.length > 0;
 
-  const load = useCallback(async (start = 0, append = false) => {
+  const load = useCallback(async (start = 0, append = false, background = false) => {
     const requestId = ++loadRequest.current;
-    if (!append) { setLoading(true); setLoadError(false); }
+    if (!append && !background) { setLoading(true); setLoadError(false); }
     try {
       const seed = encodeURIComponent(feedSeedRef.current);
       const result = await apiGet<{ items?: Reel[]; nextStart?: number | null; seed?: string } | Reel[]>(
@@ -170,11 +171,26 @@ export default function ReelsPage() {
       setNextStart(Array.isArray(result) ? null : (result?.nextStart ?? null));
       if (!append) { setActive(0); setPaused(false); }
     } catch (reason: any) {
-      if (requestId === loadRequest.current && reason?.statusCode !== 499) setLoadError(true);
+      if (requestId !== loadRequest.current) return;
+      // A pull-to-refresh failure surfaces through the gesture (retry hint)
+      // instead of replacing the whole Reels screen with an error state.
+      if (background) {
+        if (reason?.statusCode !== 499) throw reason;
+      } else if (reason?.statusCode !== 499) {
+        setLoadError(true);
+      }
     } finally {
-      if (requestId === loadRequest.current) setLoading(false);
+      if (requestId === loadRequest.current && !background) setLoading(false);
     }
   }, [feed, token]);
+
+  // Pull-to-refresh: rotate the session seed so the request brings in a fresh
+  // shuffle of Reels, and reload WITHOUT the full-screen loading state so the
+  // active Reel and its playback keep working until new items actually arrive.
+  const refreshReels = useCallback(async () => {
+    feedSeedRef.current = `sess-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    await load(0, false, true);
+  }, [load]);
 
   useEffect(() => {
     // Each feed tab gets its own stable but distinct session seed so the random
@@ -553,7 +569,12 @@ export default function ReelsPage() {
         <span className="absolute right-4 hidden text-[10px] uppercase text-white/35 ">{active + 1} / {reels.length}</span>
       </header>
 
-      <main ref={reelsViewport} className="h-full snap-y snap-mandatory overflow-y-auto overscroll-contain touch-pan-y [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="VANTA Reels feed">
+      <PullToRefresh
+        scrollRef={reelsViewport}
+        onRefresh={refreshReels}
+        ariaLabel="VANTA Reels feed"
+        className="h-full snap-y snap-mandatory touch-pan-y [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         {reels.map((reel, index) => (
           <ReelCard
             key={reel.id}
@@ -578,7 +599,7 @@ export default function ReelsPage() {
             onCreator={() => router.push(`/profile/${reel.author.username}`)}
           />
         ))}
-      </main>
+      </PullToRefresh>
 
       <nav className="fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-30 grid h-[calc(64px+env(safe-area-inset-bottom))] grid-cols-5 border-t border-white/[.08] bg-[#080808]/92 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl " aria-label="Mobile navigation">
         {nav.map(item => item.create ? (

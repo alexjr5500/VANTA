@@ -21,6 +21,7 @@ import {
 
 const LOCAL_DEFAULTS = {
   autoplay: true,
+  homeAutoplay: false,
   lowerData: false,
   quality: 'auto' as string,
   hideSensitive: true,
@@ -59,8 +60,15 @@ export default function ContentMediaSettingsPage() {
       >
         <ToggleRow
           icon={Play}
-          title="Autoplay"
-          description="Play videos automatically in your feed."
+          title="Video Autoplay"
+          description="Automatically play videos while browsing your feed."
+          checked={prefs.homeAutoplay}
+          onChange={(v) => toggle('homeAutoplay', v)}
+        />
+        <ToggleRow
+          icon={Video}
+          title="Reels autoplay"
+          description="Play Reels automatically as you watch."
           checked={prefs.autoplay}
           onChange={(v) => toggle('autoplay', v)}
         />

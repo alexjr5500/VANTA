@@ -10,6 +10,7 @@ import PostMedia, { PostMediaCarousel, type PostAttachment } from '@/components/
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { isVideoItem, detailPathFor } from '@/lib/feedIdentity';
+import { useContentPrefs } from '@/lib/useContentPrefs';
 import { renderTextWithLinks } from '@/lib/linkify';
 
 /**
@@ -81,6 +82,11 @@ const postAttachments = (item: Item): PostAttachment[] => {
 };
 export default function FeedPostCard({ item, currentUserId, onLike, onSave, onComment, onShare, onGift, onFollow, onMore }: FeedPostCardProps) {
   const router = useRouter();
+  const { prefs: contentPrefs, hydrated: contentPrefsHydrated } = useContentPrefs();
+  // Feed video autoplay follows the persisted Video Autoplay preference.
+  // Before localStorage hydrates it stays OFF, so default-off users never
+  // see a video start on first paint.
+  const feedAutoplayOn = contentPrefsHydrated ? contentPrefs.homeAutoplay : false;
   const creator = getAuthor(item);
   const isOwn = creator.id === currentUserId;
   const source = mediaUrl(item);
@@ -133,9 +139,10 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
                 attachments={attachments}
                 alt={caption || `Post by ${creator.username || 'creator'}`}
                 onDoubleClick={() => { if (!item.liked) onLike(item); }}
+                autoplayOnView={feedAutoplayOn}
               />
             ) : (
-              <PostMedia src={source} isVideo={isVideoItem(item)} alt={caption || `Post by ${creator.username || 'creator'}`} onDoubleClick={() => { if (!item.liked) onLike(item); }}/>
+              <PostMedia src={source} isVideo={isVideoItem(item)} alt={caption || `Post by ${creator.username || 'creator'}`} autoplayOnView={feedAutoplayOn} onDoubleClick={() => { if (!item.liked) onLike(item); }}/>
             )}
           </div>
         )}

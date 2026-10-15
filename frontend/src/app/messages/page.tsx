@@ -14,6 +14,7 @@ import {
   Mic, Square, Phone, Video, Play,
 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
+import PullToRefresh from '@/components/ui/PullToRefresh';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import { useToast } from '@/components/ui/Toast';
 import { createSocket } from '@/lib/socketClient';
@@ -505,9 +506,13 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     pushChatView('media');
   }, [pushChatView]);
 
-  const fetchConversations = useCallback(async () => {
+  const fetchConversations = useCallback(async (refresh?: unknown) => {
+    // Pull-to-refresh passes an explicit `true`; legacy callers (e.g. the
+    // error screen's onClick handler) pass other values and keep the default
+    // full-page flow.
+    const background = refresh === true;
     if (!token) return;
-    setError(null);
+    if (!background) setError(null);
     try {
       const data = await apiGet<any>('/api/messages', token);
       const convList = Array.isArray(data) ? data : data?.conversations ?? data?.data ?? [];
@@ -544,9 +549,12 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       setConversations(normalizedConversations);
       setConversationCursor(data?.nextCursor ?? null);
     } catch (err: any) {
+      // A pull-to-refresh failure must not replace the whole chat screen:
+      // rethrow so the gesture can show its retry hint instead.
+      if (background) throw err;
       setError(err.message || 'Failed to load conversations');
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, [token]);
 
@@ -1815,7 +1823,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         </div>
 
         {/* Conversation List */}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-hide [-webkit-overflow-scrolling:touch]">
+        <PullToRefresh onRefresh={() => fetchConversations(true)}>
           {filteredConversations.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
               <MessageCircle size={28} className="text-white/10 mb-3" />
@@ -1892,7 +1900,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             ))
           )}
           {conversationCursor && <div className="flex justify-center py-3"><button onClick={loadMoreConversations} className="rounded-full bg-white/[0.04] px-3 py-1 text-[10px] text-white/40">Load more</button></div>}
-        </div>
+        </PullToRefresh>
       </div>
 
       {/* Chat Window */}

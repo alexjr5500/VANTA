@@ -11,6 +11,8 @@ export const CONTENT_PREFS_KEY = 'vanta_content_extras';
 
 export interface ContentPrefs {
   autoplay: boolean;
+  /** Homepage feed video autoplay — OFF by default for new users. */
+  homeAutoplay: boolean;
   lowerData: boolean;
   quality: string;
   hideSensitive: boolean;
@@ -18,6 +20,7 @@ export interface ContentPrefs {
 
 export const CONTENT_PREFS_DEFAULTS: ContentPrefs = {
   autoplay: true,
+  homeAutoplay: false,
   lowerData: false,
   quality: 'auto',
   hideSensitive: true,

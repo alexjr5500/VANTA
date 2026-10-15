@@ -208,10 +208,12 @@ export function PostMediaCarousel({
   attachments,
   alt,
   onDoubleClick,
+  autoplayOnView,
 }: {
   attachments: PostAttachment[];
   alt: string;
   onDoubleClick?: () => void;
+  autoplayOnView?: boolean;
 }) {
   const [index, setIndex] = useState(0);
   const count = attachments.length;
@@ -230,6 +232,7 @@ export function PostMediaCarousel({
         src={only.url}
         isVideo={isVideoAttachment(only)}
         alt={alt}
+        autoplayOnView={autoplayOnView}
         onDoubleClick={onDoubleClick}
       />
     );
@@ -245,6 +248,7 @@ export function PostMediaCarousel({
         src={active.url}
         isVideo={isVideoAttachment(active)}
         alt={alt}
+        autoplayOnView={autoplayOnView}
         onDoubleClick={onDoubleClick}
       />
 

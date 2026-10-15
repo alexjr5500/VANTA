@@ -19,6 +19,7 @@ import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/utils';
 import { openAppMenu } from '@/lib/openAppMenu';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
+import PullToRefresh from '@/components/ui/PullToRefresh';
 
 type Item = Record<string, any>;
 type Category = 'forYou' | 'trending' | 'creators' | 'reels' | 'live' | 'communities';
@@ -78,10 +79,14 @@ export default function DiscoverPage() {
   const [commentsFor, setCommentsFor] = useState<Item>();
   const [shareFor, setShareFor] = useState<Item>();
 
-  const loadDiscover = useCallback(async (append = false, nextCursor?: string) => {
+  const loadDiscover = useCallback(async (append = false, nextCursor?: string, background = false) => {
     if (!token) return;
-    append ? setLoadingMore(true) : setLoading(true);
-    if (!append) setError('');
+    // Background refreshes (pull-to-refresh) skip the page-level loading and
+    // error states so the current layout and scroll position stay intact.
+    if (!background) {
+      append ? setLoadingMore(true) : setLoading(true);
+      if (!append) setError('');
+    }
     const exploreQuery = new URLSearchParams({ limit: '12' });
     if (nextCursor) exploreQuery.set('cursor', nextCursor);
     try {
@@ -106,9 +111,22 @@ export default function DiscoverPage() {
       setPosts(unwrap(value(0))); setCursor(value(0)?.nextCursor);
       setTrending(unwrap(value(1))); setCreators(unwrap(value(2)));
       setReels(unwrap(value(3))); setLive(unwrap(value(4))); setCommunities(unwrap(value(5)));
-    } catch { setError("Couldn't load Discover."); }
-    finally { setLoading(false); setLoadingMore(false); }
+    } catch (reason) {
+      // A pull-to-refresh failure surfaces through the gesture (retry hint)
+      // instead of replacing the page with an error state.
+      if (background) throw reason;
+      setError("Couldn't load Discover.");
+    } finally {
+      if (!background) { setLoading(false); setLoadingMore(false); }
+    }
   }, [token]);
+
+  // Pull-to-refresh: re-request every discovery source with the cache bypassed
+  // while keeping the current layout, data, and scroll position on screen.
+  const refreshDiscover = useCallback(
+    () => loadDiscover(false, undefined, true),
+    [loadDiscover]
+  );
 
   useEffect(() => { void loadDiscover(); }, [loadDiscover]);
   useEffect(() => { const timer = setTimeout(() => setDebouncedQuery(query.trim()), 350); return () => clearTimeout(timer); }, [query]);
@@ -182,7 +200,7 @@ export default function DiscoverPage() {
 
   return <div className="flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-[#050505] text-[#f5f5f5]">
     <header className="relative z-30 flex h-14 shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[#080808]/90 px-4 backdrop-blur-xl"><button type="button" onClick={openAppMenu} aria-label="Open menu" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><Menu size={20}/></button><div className="ml-auto flex min-w-0 items-center gap-1"><button type="button" onClick={() => { searchRef.current?.focus(); scrollPageTop(pageScrollRef.current); }} aria-label="Search VANTA" className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><Search size={18}/></button><button type="button" onClick={() => router.push('/notifications')} aria-label="Open notifications" className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><Bell size={18}/>{notificationUnread > 0 && <Badge value={notificationUnread}/>}</button><button type="button" onClick={() => router.push('/chat')} aria-label="Open chat" className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><MessageCircle size={18}/>{chatUnread > 0 && <Badge value={chatUnread}/>}</button><button type="button" onClick={() => router.push('/profile')} aria-label="Open your profile" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"><Avatar src={user?.avatar} alt="Your profile" size="sm" /></button></div></header>
-    <div ref={pageScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-hide [-webkit-overflow-scrolling:touch]">
+    <PullToRefresh scrollRef={pageScrollRef} onRefresh={refreshDiscover}>
     <div className="mx-auto w-full min-w-0 max-w-3xl space-y-5 px-3 pb-24 pt-3">
       <main className="min-w-0">
         <section className="mb-6 flex items-center justify-between gap-4" aria-label="Discover"><p className="min-w-0 text-[11px] font-semibold uppercase tracking-[.2em] text-[#666]">There&apos;s always something new</p><button type="button" onClick={() => void loadDiscover()} aria-label="Refresh Discover" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/[.08] text-[#8a8a8a] transition hover:bg-white/[.05] hover:text-white"><RefreshCw size={16}/></button></section>
@@ -210,7 +228,7 @@ export default function DiscoverPage() {
         </div>}
       </main>
       </div>
-    </div>
+    </PullToRefresh>
     <AnimatePresence>{commentsFor && token && <CommentPanel postId={cleanId(commentsFor)} postAuthor={creatorOf(commentsFor)} initialCount={Number(commentsFor.comments || commentsFor._count?.comments || 0)} token={token} currentUser={user} onClose={() => setCommentsFor(undefined)} onCountChange={value => setPosts(rows => rows.map(item => item.id === commentsFor.id ? { ...item, comments: value } : item))}/>} {shareFor && <ShareSheet close={() => setShareFor(undefined)} share={share}/>}</AnimatePresence>
   </div>;
 }
