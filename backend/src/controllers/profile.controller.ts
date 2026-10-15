@@ -11,13 +11,35 @@ import { AppError } from '../utils/api-error';
  * their exact status + machine-readable code so clients can render the
  * dedicated suspended/banned screens instead of the generic "private" state.
  */
-const sendPublicProfileError = (res: Response, error: unknown): void => {
+/**
+ * Classify an incoming error so infrastructure/Prisma failures (e.g. P2022 -
+ * "column User.suspendedAt does not exist") are never reported as "profile not
+ * found", which would make existing users look nonexistent just because a query
+ * failed. Genuine not-found and privacy-restricted cases keep their 404/403.
+ */
+function classifyProfileError(error: unknown): { status: number; message: string } {
   if (error instanceof AppError) {
-    res.status(error.statusCode).json({ error: error.message, code: error.code });
-    return;
+    return { status: error.statusCode, message: error.message };
   }
   const message = error instanceof Error ? error.message : 'Internal server error';
-  const status = message.toLowerCase().includes('private') ? 403 : 404;
+  const isPrismaError =
+    error instanceof Error &&
+    'code' in error &&
+    typeof (error as { code?: unknown }).code === 'string' &&
+    String((error as { code?: unknown }).code).startsWith('P');
+
+  // Prisma / database infrastructure failures are surfaced as 500, never 404.
+  if (isPrismaError || (!/not found/i.test(message) && !/private/i.test(message))) {
+    return { status: 500, message: 'Failed to load profile' };
+  }
+  return {
+    status: message.toLowerCase().includes('private') ? 403 : 404,
+    message,
+  };
+}
+
+const sendPublicProfileError = (res: Response, error: unknown): void => {
+  const { status, message } = classifyProfileError(error);
   res.status(status).json({ error: message });
 };
 
@@ -37,8 +59,8 @@ export const getProfile = async (req: AuthRequest, res: Response): Promise<void>
     const profile = await userService.getUserProfile(userId);
     res.status(200).json(profile);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    res.status(404).json({ error: message });
+    const { status, message } = classifyProfileError(error);
+    res.status(status).json({ error: message });
   }
 };
 
