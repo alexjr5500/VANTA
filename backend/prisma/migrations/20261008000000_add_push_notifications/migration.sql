@@ -56,6 +56,10 @@ CREATE TABLE IF NOT EXISTS "PushDelivery" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "eventId" TEXT NOT NULL,
+    -- REQUIRED by the `PushDelivery` model in schema.prisma; it was missing
+    -- from the original CREATE TABLE (prisma migrate diff flagged it), which
+    -- left a committed migration divergent from the schema.
+    "type" TEXT NOT NULL,
     "deviceId" TEXT,
     "platform" TEXT NOT NULL,
     "provider" TEXT NOT NULL,
@@ -98,6 +102,15 @@ CREATE TABLE IF NOT EXISTS "CallSession" (
     "endedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    -- REQUIRED by the index created below and by the `CallSession` model in
+    -- schema.prisma (`expiresAt DateTime`). It was missing from the original
+    -- CREATE TABLE, so this migration failed with
+    --   P3018 /42703 "column \"expiresAt\" does not exist"
+    -- as soon as it ran against a database where CallSession did not already
+    -- exist, which blocked every later migration (including
+    -- 20261014000000_account_moderation_appeals) and produced the production
+    -- P2022 "User.suspendedAt does not exist" outage. See MIGRATION_RUNBOOK.md.
+    "expiresAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "CallSession_pkey" PRIMARY KEY ("id")
 );

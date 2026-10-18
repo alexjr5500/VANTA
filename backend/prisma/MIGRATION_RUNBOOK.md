@@ -9,6 +9,98 @@ runbook drops, truncates, deletes, or reseeds anything. There is no
 
 ---
 
+## 0. Incident 2026-10-18 - `P2022: The column User.suspendedAt does not exist`
+
+**Status: fixed in code and regression-tested. Production is NOT fixed until the
+steps below run and the health check passes.**
+
+**Symptom.** The backend binds :8080, then every authenticated request dies with
+`P2022 - The column User.suspendedAt does not exist in the current database.`
+
+**Root cause - reproduced end-to-end against a clean PostgreSQL 18:**
+
+1. `20261008000000_add_push_notifications` created `"CallSession"` **without** its
+   `expiresAt` column, then ran
+   `CREATE INDEX "CallSession_status_expiresAt_idx" ON "CallSession"("status","expiresAt")`
+   -> PostgreSQL `42703 column "expiresAt" does not exist`.
+2. Prisma applies each migration in a transaction, so that migration is recorded as
+   **failed** (`finished_at IS NULL`) and **nothing after it is ever applied**:
+   `20261009000000_add_password_reset_tokens` and
+   `20261014000000_account_moderation_appeals` (the one that adds
+   `User.suspendedAt/suspendedReason/suspendedUntil/bannedAt/bannedReason` and
+   `AccountAppeal`) never ran.
+3. `prisma migrate deploy` refuses to go past a failed migration
+   (`P3009 - ... migration ... failed`), so the gap could never heal on its own.
+4. The deployed Prisma client reads the columns from `schema.prisma` -> **P2022**.
+
+The same file also omitted `PushDelivery."type"`, so the committed chain diverged
+from `schema.prisma` even on databases where it did apply.
+
+**What this release changes (all additive, nothing dropped or rewritten):**
+
+| File | Change |
+|---|---|
+| `prisma/migrations/20261008000000_add_push_notifications/migration.sql` | added the missing `CallSession."expiresAt"` and `PushDelivery."type"` columns to their `CREATE TABLE` statements. Safe: the original statement could never have completed anywhere `CallSession` did not already exist, and no later migration depends on the old shape. |
+| `prisma/migrations/20261018000000_reconcile_post_baseline_drift/migration.sql` | **NEW** idempotent reconciliation: re-creates every post-baseline object when it is missing - `User.suspended*/banned*`, `AccountAppeal`, `PushDevice`, `PushDelivery`, `CallSession`, `PasswordResetToken`, `TransferOtpChallenge`, `WalletReconciliationLog`, `PhoneOTP`, `CoinTransfer.requestId` + their indexes/FKs. A complete no-op on a healthy database. |
+| `src/__tests__/migrations.safety.test.ts` | static regression tests: no UTF-8 BOM, no destructive SQL, **indexes may only reference columns the same file creates**, and the reconciliation stays idempotent. |
+
+**Recovery steps - run in this order:**
+
+```bash
+cd backend
+
+# 0. BACKUP FIRST (section 2). Do not proceed without a restore-tested backup.
+
+# 1. READ-ONLY diagnosis (section 3, scripted):
+#    prints each migration's history state, every missing object, and the fix.
+railway run --service carefree-luck node scripts/preflight-schema-check.cjs
+npx prisma migrate status --schema prisma/schema.prisma
+
+# 2. ONLY if the output contains
+#      P3009 / "The `20261008000000_add_push_notifications` migration ... failed"
+#    re-record that FAILED migration so deploy can proceed. --rolled-back (never
+#    --applied) is the correct verb: its SQL never succeeded.
+npx prisma migrate resolve --rolled-back 20261008000000_add_push_notifications --schema prisma/schema.prisma
+
+# 3. Deploy this commit. Railway's preDeploy (backend/railway.json) runs
+#    `node dist/deploy/migrate-deploy.js` == `prisma migrate deploy` BEFORE any
+#    replica starts, which applies:
+#      20261008000000 (fixed) -> 20261009 -> 20261014 -> 20261018 (reconcile)
+git add backend/prisma/migrations backend/prisma/MIGRATION_RUNBOOK.md \
+        backend/scripts/preflight-schema-check.cjs backend/src/__tests__
+git commit -m "fix(db): repair broken push migration; add idempotent post-baseline reconcile"
+git push origin main          # Railway auto-deploys, or: railway up --service carefree-luck
+
+# 4. VERIFY - all four must pass before anyone says production is healthy:
+railway logs --service carefree-luck     # [MIGRATE] Database migration step completed successfully.
+npx prisma migrate status --schema prisma/schema.prisma   # Database schema is up to date!
+node scripts/preflight-schema-check.cjs                  # === RESULT: IN_SYNC ===
+curl -s https://<backend-url>/health                      # "database":{"status":"ok"}
+```
+
+```sql
+-- 5. Data must be byte-for-byte intact: counts compared with section 2 notes.
+SELECT COUNT(*) AS users               FROM "User";
+SELECT COUNT(*) AS wallets             FROM "Wallet";
+SELECT COUNT(*) AS posts               FROM "Post";
+SELECT COUNT(*) AS messages            FROM "Message";
+SELECT COUNT(*) AS completed_transfers FROM "CoinTransfer" WHERE status = 'COMPLETED';
+SELECT COUNT(*) AS wallet_txs          FROM "WalletTransaction";
+SELECT "username", "coins" FROM "User" ORDER BY "createdAt" LIMIT 5;   -- spot check
+```
+
+**Why this cannot lose data:** the reconciliation is only
+`CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` / column adds inside
+`DO $$ ... IF NOT EXISTS` guards. There is no `DROP`, `TRUNCATE`, `DELETE`,
+`UPDATE`, no `NOT NULL` change and no type change, so no existing row is touched
+or rewritten. It was verified against three simulated production states (healthy,
+"objects missing but recorded as applied", "failed migration row"): the final
+`prisma migrate diff` was an empty script and seeded users / wallets / messages /
+posts / transfers kept their original counts and balances.
+---
+
+---
+
 ## 1. What actually went wrong
 
 | Symptom | Real cause |
@@ -173,7 +265,8 @@ curl -s https://<backend-url>/health      # expect: "database":{"status":"ok"}
 | Log says | Meaning | Do |
 |---|---|---|
 | `failed permanently (HISTORY_MISSING)` | Section 4 was not completed. | Run section 3 then 4. This is **not** retryable; redeploying will not help. |
-| `failed permanently (MIGRATION_FAILED)` | A migration errored, or history drifted. | Section 7. |
+| `failed permanently (MIGRATION_FAILED)` | A migration errored, or history drifted. | Section 7. For the 2026-10-18 outage the cause was `P3009 ... 20261008000000_add_push_notifications ... failed`: `migrate resolve --rolled-back 20261008000000_add_push_notifications`, then deploy (section 0). |
+| `P3018 /42703 column "expiresAt" does not exist` | The CallSession index bug from section 0 is back in a migration file. | This release fixes it; `src/__tests__/migrations.safety.test.ts` fails on the same defect. Do not patch production by hand - fix the file and redeploy. |
 | `still unreachable after N attempts` | Transient: DB down / wrong `DATABASE_URL` / private networking. | Check PostgreSQL service health and `DATABASE_URL`. Retrying is legitimate here. |
 
 ---
@@ -203,9 +296,11 @@ Escalate to a senior engineer before proceeding if the picture is unclear.
 - `prisma migrate reset` - **destroys all data.**
 - `prisma db push` (especially `--accept-data-loss`) - bypasses history and can
   silently alter/drop schema. It is what caused this incident.
-- Marking **all five** migrations applied - four of them are not in production
-  yet; their tables/columns would silently never be created, and every feature
-  depending on them would fail at runtime.
+- Marking **pending** migrations as applied with `migrate resolve --applied`.
+  Recording a migration that has not run means its tables/columns silently never
+  exist and every feature depending on them fails at runtime with P2022 - that is
+  exactly how outages hide. `--applied` is for the **baseline only** (section 4);
+  a migration that genuinely **failed** takes `--rolled-back` (section 0).
 - Running migrations from the app start command with multiple replicas -
   concurrent migrations. The pre-deploy phase exists to prevent this.
 
@@ -217,5 +312,12 @@ Escalate to a senior engineer before proceeding if the picture is unclear.
 2. `npx prisma migrate dev --name <change>` (generates the SQL).
 3. Review the generated SQL. Keep it additive; never edit an already-applied
    migration (that triggers `was modified after it was applied` / P3018).
-4. Commit the new migration folder.
-5. Push. The pre-deploy step applies it once, before replicas start.
+   *The one justified exception, used for `20261008000000_add_push_notifications`
+   in section 0: a migration whose SQL never completed anywhere (it failed at
+   first contact with every database) has no successful execution to invalidate.*
+4. Run `npx jest src/__tests__/migrations.safety.test.ts` - it rejects BOMs,
+   destructive SQL, and indexes over columns the file does not create.
+5. Commit the new migration folder.
+6. Push. The pre-deploy step applies it once, before replicas start.
+7. `prisma migrate status` + `scripts/preflight-schema-check.cjs` must both be
+   clean before the release is declared good.

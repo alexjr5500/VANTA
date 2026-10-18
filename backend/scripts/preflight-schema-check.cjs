@@ -62,7 +62,16 @@ const EXPECTED = [
   { migration: '20261006000000_transfer_otp_challenges', tables: ['TransferOtpChallenge'], columns: [{ table: 'CoinTransfer', column: 'requestId' }] },
   { migration: '20261006000001_wallet_reconciliation', tables: ['WalletReconciliationLog'], columns: [] },
   { migration: '20261006000002_phone_otp_table', tables: ['PhoneOTP'], columns: [] },
-  { migration: '20261008000000_add_push_notifications', tables: ['PushDevice', 'PushDelivery', 'CallSession'], columns: [] },
+  {
+    migration: '20261008000000_add_push_notifications',
+    tables: ['PushDevice', 'PushDelivery', 'CallSession'],
+    // Column shape checks, not just table existence: the original file created
+    // CallSession without `expiresAt` and PushDelivery without `type`.
+    columns: [
+      { table: 'CallSession', column: 'expiresAt' },
+      { table: 'PushDelivery', column: 'type' },
+    ],
+  },
   { migration: '20261009000000_add_password_reset_tokens', tables: ['PasswordResetToken'], columns: [] },
   {
     migration: '20261014000000_account_moderation_appeals',
@@ -76,6 +85,14 @@ const EXPECTED = [
     ],
   },
 ];
+
+/**
+ * The idempotent reconciliation migration added for the 2026-10-18 P2022
+ * outage. When history says a post-baseline migration was applied but its
+ * objects are missing, deploying this release repairs the drift without
+ * editing `_prisma_migrations`. See prisma/MIGRATION_RUNBOOK.md section 0.
+ */
+const RECONCILE_MIGRATION = '20261018000000_reconcile_post_baseline_drift';
 
 async function main() {
   const { url, src } = resolveDatabaseUrl();
@@ -132,6 +149,13 @@ async function main() {
     // 3) Cross-check: recorded-as-applied but object missing = classic drift -
     console.log('--- DRIFT ANALYSIS ---');
     let drift = false;
+    // A row that started but never finished blocks `migrate deploy` (P3009).
+    const failedRows = hist.rows.filter((r) => !r.finished_at && !r.rolled_back_at);
+    for (const r of failedRows) {
+      drift = true;
+      console.log('FAILED_HISTORY ' + r.migration_name + '  (blocks migrate deploy: P3009)');
+      console.log('  -> FIX: npx prisma migrate resolve --rolled-back ' + r.migration_name);
+    }
     for (const group of EXPECTED) {
       const groupMissing = missing.filter((m) => m.startsWith(group.migration + ':'));
       if (groupMissing.length === 0) continue;
@@ -144,8 +168,13 @@ async function main() {
       console.log(group.migration + ': objects MISSING but history says ' + state);
       if (state === 'NOT_RECORDED') {
         console.log('  -> FIX: npx prisma migrate deploy   (applies the pending migration)');
-      } else {
+      } else if (state === 'RECORDED_NOT_FINISHED') {
         console.log('  -> FIX: npx prisma migrate resolve --rolled-back ' + group.migration + ' && npx prisma migrate deploy');
+      } else {
+        // History claims it ran but the objects are absent (history edited, or a
+        // restore rolled the schema back). Do NOT touch history: deploying this
+        // release runs the idempotent reconciler, which re-creates them.
+        console.log('  -> FIX: deploy this release; ' + RECONCILE_MIGRATION + ' re-creates these objects idempotently.');
       }
     }
 
