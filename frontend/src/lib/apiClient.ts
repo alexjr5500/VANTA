@@ -206,9 +206,22 @@ const makeRequestInternal = async <T>(
           if (options.token && error.statusCode === 401) handleSessionExpiry(error, options.token);
           throw error;
         }
+
+        // Deterministic server failures — a structured 500 raised from a caught
+        // exception (e.g. a Prisma schema/DB error) — can never succeed on an
+        // immediate retry. Retrying them 3x only delays the real message and,
+        // under concurrent load, amplifies a backend outage into connection
+        // failures that the UI then misreports as "Check your connection".
+        // Only gateway/time-out style 5xx are transient and worth retrying.
+        const isTransientServerError =
+          error.statusCode === 502 || error.statusCode === 503 || error.statusCode === 504;
+        if (!isTransientServerError) {
+          // Preserve the server's original message + structured body for the UI.
+          throw error;
+        }
       }
 
-      // Retry on network errors or 5xx with exponential backoff
+      // Retry on network errors or transient gateway/time-out 5xx with backoff
       if (retryCount < MAX_RETRIES) {
         const delay = RETRY_DELAY * Math.pow(RETRY_BACKOFF, retryCount);
         if (process.env.NODE_ENV === 'development') {

@@ -442,6 +442,11 @@ export const getMe = async (req: AuthenticatedRequest, res: Response): Promise<v
       },
     });
   } catch (error) {
+    // Surface DB/schema failures (e.g. Prisma P2022 missing-column) in the
+    // server logs. Without this the error is swallowed silently and a schema
+    // outage is invisible to operators; the client still receives a generic
+    // message and no sensitive error detail is exposed.
+    console.error('[Auth] getMe failed', error instanceof Error ? error.message : error);
     res.status(400).json({ error: 'Failed to fetch user' });
   }
 };
