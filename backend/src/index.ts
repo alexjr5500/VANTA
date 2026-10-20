@@ -44,6 +44,7 @@ import channelRoutes from './routes/channel.routes';
 import groupRoutes from './routes/group.routes';
 import complianceRoutes from './routes/compliance.routes';
 import verificationRoutes from './routes/verification.routes';
+import homesRoutes from './routes/homes.routes';
 import creatorRoutes from './routes/creator.routes';
 import adRoutes from './routes/ad.routes';
 import rtcRoutes from './routes/rtc.routes';
@@ -469,6 +470,9 @@ app.use('/api/compliance', complianceRoutes);
 
 // Verification & Creator Membership routes
 app.use('/api/verification', verificationRoutes);
+
+// VANTA Homes — property rental marketplace (public + authenticated + admin)
+app.use('/api/homes', rateLimiter.api, homesRoutes);
 
 // Creator Studio routes (real aggregated metrics for the authenticated creator)
 app.use('/api/creator', creatorRoutes);

@@ -194,3 +194,146 @@ export const fetchLeaderboard = (period?: string, type?: string, limit?: number)
   apiGet<any>(`/api/monetization/leaderboard?period=${period || 'WEEKLY'}&type=${type || 'TOP_SPENDER'}&limit=${limit || 20}`);
 export const fetchTopSupporters = (creatorId: string, limit?: number) =>
   apiGet<any>(`/api/monetization/top-supporters/${creatorId}${limit ? `?limit=${limit}` : ''}`);
+
+// ==========================================
+// VANTA HOMES - Property rental marketplace
+// ==========================================
+// `useAuth()` exposes `token: string | null`, while apiClient accepts
+// `string | undefined`. Normalize once so every Homes call compiles.
+const authToken = (token?: string | null): string | undefined => token ?? undefined;
+export const fetchHomes = (params: {
+  cursor?: string;
+  limit?: number;
+  city?: string;
+  area?: string;
+  propertyType?: string;
+  minRent?: string;
+  maxRent?: string;
+  bedrooms?: string;
+  bathrooms?: string;
+  furnished?: string;
+  search?: string;
+  sort?: string;
+}) => {
+  const qs = new URLSearchParams();
+  if (params.cursor) qs.set('cursor', params.cursor);
+  if (params.limit) qs.set('limit', String(params.limit));
+  if (params.city) qs.set('city', params.city);
+  if (params.area) qs.set('area', params.area);
+  if (params.propertyType) qs.set('propertyType', params.propertyType);
+  if (params.minRent) qs.set('minRent', params.minRent);
+  if (params.maxRent) qs.set('maxRent', params.maxRent);
+  if (params.bedrooms) qs.set('bedrooms', params.bedrooms);
+  if (params.bathrooms) qs.set('bathrooms', params.bathrooms);
+  if (params.furnished !== undefined) qs.set('furnished', params.furnished);
+  if (params.search) qs.set('search', params.search);
+  if (params.sort) qs.set('sort', params.sort);
+  return apiGet<any>(`/api/homes?${qs.toString()}`);
+};
+
+export const fetchHome = (id: string, token?: string | null) =>
+  // Optional auth: the backend derives viewerId from the Authorization header
+  // (optionallyAuthenticateJWT -> req.user.userId). That is what powers
+  // `isSaved` and lets owners preview their own non-published listings.
+  apiGet<any>(`/api/homes/${id}`, authToken(token));
+
+export const fetchHomePropertyTypes = () => apiGet<any>('/api/homes/property-types');
+export const fetchHomeRentPeriods = () => apiGet<any>('/api/homes/rent-periods');
+export const fetchHomeContactOptions = (id: string) =>
+  apiGet<any>(`/api/homes/${id}/contact-options`);
+
+export const createHomeListing = (data: any, token?: string | null) =>
+  apiPost<any>('/api/homes', data, authToken(token));
+export const updateHomeListing = (id: string, data: any, token?: string | null) =>
+  apiPut<any>(`/api/homes/${id}`, data, authToken(token));
+export const submitHomeListingForReview = (id: string, token?: string | null) =>
+  apiPost<any>(`/api/homes/${id}/submit-for-review`, {}, authToken(token));
+export const archiveHomeListing = (id: string, token?: string | null) =>
+  apiDelete<any>(`/api/homes/${id}`, authToken(token));
+export const setHomeListingAvailability = (id: string, status: string, token?: string | null) =>
+  apiPost<any>(`/api/homes/${id}/availability`, { status }, authToken(token));
+
+export const fetchMyHomes = (params?: { cursor?: string; limit?: number; status?: string }, token?: string | null) => {
+  const qs = new URLSearchParams();
+  if (params?.cursor) qs.set('cursor', params.cursor);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  if (params?.status) qs.set('status', params.status);
+  return apiGet<any>(`/api/homes/mine${qs.toString() ? `?${qs.toString()}` : ''}`, authToken(token));
+};
+
+export const uploadHomePhotos = (listingId: string, formData: FormData, token?: string | null) =>
+  apiUpload<any>(`/api/homes/${listingId}/media/photos`, formData, authToken(token));
+export const uploadHomeVideos = (listingId: string, formData: FormData, token?: string | null) =>
+  apiUpload<any>(`/api/homes/${listingId}/media/videos`, formData, authToken(token));
+export const updateHomeMedia = (listingId: string, mediaId: string, data: any, token?: string | null) =>
+  apiPut<any>(`/api/homes/${listingId}/media/${mediaId}`, data, authToken(token));
+export const deleteHomeMedia = (listingId: string, mediaId: string, token?: string | null) =>
+  apiDelete<any>(`/api/homes/${listingId}/media/${mediaId}`, authToken(token));
+
+export const toggleSaveHome = (listingId: string, token?: string | null) =>
+  apiPost<any>(`/api/homes/${listingId}/save`, {}, authToken(token));
+export const fetchSavedHomes = (params?: { cursor?: string; limit?: number }, token?: string | null) => {
+  const qs = new URLSearchParams();
+  if (params?.cursor) qs.set('cursor', params.cursor);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  return apiGet<any>(`/api/homes/saved${qs.toString() ? `?${qs.toString()}` : ''}`, authToken(token));
+};
+
+export const contactHomeListing = (listingId: string, message?: string, token?: string | null) =>
+  apiPost<any>(`/api/homes/${listingId}/contact`, { message }, authToken(token));
+export const fetchHomeEnquiries = (listingId: string, params?: { cursor?: string; limit?: number }, token?: string | null) => {
+  const qs = new URLSearchParams();
+  if (params?.cursor) qs.set('cursor', params.cursor);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  return apiGet<any>(`/api/homes/${listingId}/enquiries${qs.toString() ? `?${qs.toString()}` : ''}`, authToken(token));
+};
+
+export const submitHomeVerification = (data: any, token?: string | null) =>
+  apiPost<any>('/api/homes/verification', data, authToken(token));
+export const fetchMyHomeVerification = (token?: string | null) =>
+  apiGet<any>('/api/homes/verification', authToken(token));
+
+export const createHomeReport = (data: any) => apiPost<any>('/api/homes/reports', data);
+
+// ==========================================
+// VANTA HOMES - Admin
+// ==========================================
+export const fetchAdminHomes = (params?: any) => {
+  const qs = new URLSearchParams();
+  if (params?.cursor) qs.set('cursor', params.cursor);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  if (params?.status) qs.set('status', params.status);
+  if (params?.propertyType) qs.set('propertyType', params.propertyType);
+  if (params?.city) qs.set('city', params.city);
+  if (params?.owner) qs.set('owner', params.owner);
+  if (params?.search) qs.set('search', params.search);
+  return apiGet<any>(`/api/homes/admin${qs.toString() ? `?${qs.toString()}` : ''}`);
+};
+export const fetchAdminHomeVerifications = (params?: any) => {
+  const qs = new URLSearchParams();
+  if (params?.cursor) qs.set('cursor', params.cursor);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  if (params?.type) qs.set('type', params.type);
+  if (params?.status) qs.set('status', params.status);
+  return apiGet<any>(`/api/homes/admin/verifications${qs.toString() ? `?${qs.toString()}` : ''}`);
+};
+export const decideHomeVerification = (id: string, data: any) =>
+  apiPost<any>(`/api/homes/admin/verifications/${id}/decide`, data);
+export const fetchAdminHomeReports = (params?: any) => {
+  const qs = new URLSearchParams();
+  if (params?.cursor) qs.set('cursor', params.cursor);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  if (params?.status) qs.set('status', params.status);
+  return apiGet<any>(`/api/homes/admin/reports${qs.toString() ? `?${qs.toString()}` : ''}`);
+};
+export const resolveHomeReport = (id: string, data: any) =>
+  apiPost<any>(`/api/homes/admin/reports/${id}/resolve`, data);
+export const fetchAdminHomeAuditLogs = (params?: any) => {
+  const qs = new URLSearchParams();
+  if (params?.cursor) qs.set('cursor', params.cursor);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  if (params?.listingId) qs.set('listingId', params.listingId);
+  if (params?.actorId) qs.set('actorId', params.actorId);
+  if (params?.action) qs.set('action', params.action);
+  return apiGet<any>(`/api/homes/admin/audit${qs.toString() ? `?${qs.toString()}` : ''}`);
+};

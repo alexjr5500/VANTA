@@ -50,6 +50,7 @@ export { metricsCollector, apiLatencyTracker, dbPerformanceTracker, cachePerform
 export { circuitBreakerRegistry } from "./circuit-breaker.service";
 export { jobQueue, JOB_TYPES } from "./queue.service";
 export { imageOptimizer } from "./image-optimizer.service";
+export { homesService } from "./homes.service";
 export { videoOptimizer, VIDEO_QUALITIES } from "./video-optimizer.service";
 export { mobileOptimizer } from "./mobile-optimizer.service";
 

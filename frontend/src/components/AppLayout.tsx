@@ -67,6 +67,7 @@ const mainNavItems = [
   { href: '/bookmarks', icon: Bookmark, label: 'Bookmarks' },
   { href: '/creator', icon: Sparkles, label: 'Creator Studio' },
   { href: '/gifts', icon: Gift, label: 'Gifts' },
+  { href: '/homes', icon: Home, label: 'Homes' },
   { href: '/settings', icon: Settings, label: 'Settings' },
 ];
 

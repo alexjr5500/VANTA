@@ -180,6 +180,15 @@ model User {
   callSessionsAsCaller CallSession[] @relation("CallSessionCaller")
   callSessionsAsCallee CallSession[] @relation("CallSessionCallee")
 
+  // VANTA Homes
+  homeListings          PropertyListing[]        @relation("ListingOwner")
+  savedProperties       SavedProperty[]
+  sentPropertyEnquiries PropertyEnquiry[]        @relation("EnquiryEnquirer")
+  receivedEnquiries     PropertyEnquiry[]        @relation("EnquiryOwner")
+  propertyVerifications PropertyVerification[]
+  propertyReports       PropertyReport[]         @relation("ReportReporter")
+  propertyAuditLogs     PropertyAuditLog[]       @relation("AuditLogActor")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -240,6 +249,9 @@ model UploadedFile {
   deletedAt    DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+
+  // VANTA Homes: media attached to property listings (reverse of PropertyMedia.uploadedFile)
+  propertyMedia PropertyMedia[]
 
   @@index([userId, category])
   @@index([userId, createdAt])
@@ -794,8 +806,10 @@ model Conversation {
   commentsEnabled Boolean       @default(false)
   participants    Participant[]
   messages        Message[]
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  // VANTA Homes: enquiry conversations linked to property listings
+  propertyEnquiries PropertyEnquiry[]
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   @@index([updatedAt])
   @@index([type, updatedAt])
@@ -3259,4 +3273,188 @@ model CallSession {
   @@index([callerId, status])
   @@index([conversationId, createdAt])
   @@index([status, expiresAt])
+}
+
+// ============================================================================
+// VANTA HOMES — Property rental marketplace
+// ============================================================================
+// Purely additive: new tables only, no existing tables/columns modified.
+// Every listing integrates with the existing VANTA user identity (User.id).
+
+/// PropertyListing: a house or apartment offered for rent.
+/// Lifecycle: DRAFT -> PENDING_REVIEW -> PUBLISHED | REJECTED.
+/// Published listings may be PAUSED, RESERVED, RENTED or ARCHIVED by the owner/admin.
+model PropertyListing {
+  id                 String   @id @default(cuid())
+  ownerId            String
+  owner              User     @relation("ListingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  title              String
+  description        String
+  propertyType       String // APARTMENT | STUDIO | FLAT | DETACHED_HOUSE | SEMI_DETACHED_HOUSE | DUPLEX | ROOM_SHARED | OTHER
+  rentAmount         Float
+  rentPeriod         String // WEEKLY | MONTHLY | YEARLY
+  currency           String   @default("NGN")
+  country            String
+  state              String?
+  city               String
+  area               String?
+  // Street address is collected for verification/moderation but is NOT exposed
+  // publicly by default; only area/neighbourhood is shown on the public page.
+  streetAddress      String?
+  bedrooms           Int
+  bathrooms          Int
+  furnished          Boolean  @default(false)
+  amenities          String?  // JSON array of amenity keys
+  availabilityStatus String   @default("DRAFT") // DRAFT | PENDING_REVIEW | PUBLISHED | PAUSED | RESERVED | RENTED | REJECTED | ARCHIVED
+  depositAmount      Float?
+  additionalFees     String?  // JSON array of disclosed fees (label, amount, currency)
+  moveInInfo         String?
+  // Contact preferences (Step C). VANTA messaging is always on. WhatsApp/phone
+  // are optional and only exposed publicly when the owner explicitly publishes them.
+  contactVantaMessaging  Boolean  @default(true)
+  contactWhatsApp        String?  // published only when contactWhatsAppPublished is true
+  contactWhatsAppPublished Boolean @default(false)
+  contactPhone           String?  // published only when contactPhonePublished is true
+  contactPhonePublished  Boolean @default(false)
+  // Owner verification/authorization status snapshot denormalised for fast
+  // public reads. Derived from PropertyVerification; never trusted from client.
+  ownerVerificationStatus String @default("UNVERIFIED") // UNVERIFIED | PENDING_REVIEW | VERIFIED | REJECTED | EXPIRED
+  ownerVerificationType   String? // LANDLORD | AGENT
+  publishedAt        DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  media        PropertyMedia[]
+  saves        SavedProperty[]
+  enquiries    PropertyEnquiry[]
+  reports      PropertyReport[]
+  auditLogs    PropertyAuditLog[] @relation("AuditLogListing")
+
+  @@index([ownerId])
+  @@index([availabilityStatus])
+  @@index([availabilityStatus, createdAt])
+  @@index([propertyType])
+  @@index([city])
+  @@index([rentAmount])
+  @@index([currency])
+  @@index([createdAt])
+}
+
+/// PropertyMedia: one photograph or video attached to a listing.
+// Reuses the existing UploadedFile record (storage, validation, soft-delete,
+// virus scan) and adds listing-specific ordering + cover-photo semantics.
+model PropertyMedia {
+  id            String   @id @default(cuid())
+  listingId     String
+  listing       PropertyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  // FK to the existing UploadedFile record that holds the actual stored file.
+  uploadedFileId String  @unique
+  uploadedFile  UploadedFile @relation(fields: [uploadedFileId], references: [id], onDelete: Cascade)
+  type          String   @default("PHOTO") // PHOTO | VIDEO
+  order         Int      @default(0)
+  isCover       Boolean  @default(false)
+  thumbnailUrl  String?  // generated thumbnail / video poster
+  duration      Int?     // video duration in seconds
+  createdAt     DateTime @default(now())
+
+  @@index([listingId, order])
+  @@index([listingId, isCover])
+}
+
+/// SavedProperty: a tenant's saved / favourited listing.
+model SavedProperty {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listingId String
+  listing   PropertyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, listingId])
+  @@index([userId])
+  @@index([listingId])
+}
+
+/// PropertyEnquiry: associates a tenant's contact with a listing and the
+/// existing Conversation/Message records (no duplicated message content).
+model PropertyEnquiry {
+  id            String   @id @default(cuid())
+  listingId     String
+  listing       PropertyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  enquirerId    String
+  enquirer      User     @relation("EnquiryEnquirer", fields: [enquirerId], references: [id], onDelete: Cascade)
+  ownerId       String
+  owner         User     @relation("EnquiryOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  conversationId String  @unique
+  conversation  Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  status        String   @default("OPEN") // OPEN | RESOLVED | CLOSED
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([listingId])
+  @@index([enquirerId])
+  @@index([ownerId])
+  @@index([conversationId])
+}
+
+/// PropertyVerification: landlord / real-estate-agent verification application.
+/// Identity & ownership documents are stored privately (uploadedFile category
+/// `verification`) and are NEVER returned by public APIs.
+model PropertyVerification {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type             String   // LANDLORD | AGENT
+  status           String   @default("UNVERIFIED") // UNVERIFIED | PENDING_REVIEW | VERIFIED | REJECTED | EXPIRED
+  agencyName       String?  // agents only
+  agencyLicense    String?  // agents only
+  // JSON array of private UploadedFile ids (identity / ownership / authorization docs).
+  proofDocumentIds String?
+  reviewNotes      String?  // internal moderator notes — never public
+  reviewedBy       String?
+  reviewedAt       DateTime?
+  expiresAt        DateTime? // verification requiring renewal
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId])
+  @@index([type, status])
+}
+
+/// PropertyReport: a report filed against a suspicious listing.
+model PropertyReport {
+  id          String   @id @default(cuid())
+  reporterId  String
+  reporter    User     @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  listingId   String
+  listing     PropertyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  type        String // SCAM | FAKE_PROPERTY | UNAUTHORIZED_LISTING | MISLEADING_MEDIA | INCORRECT_PRICE | DUPLICATE_LISTING | ALREADY_RENTED | INAPPROPRIATE | OTHER
+  reason      String
+  description String?
+  status      String   @default("PENDING") // PENDING | REVIEWING | RESOLVED | DISMISSED
+  resolvedBy  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([listingId])
+  @@index([reporterId])
+  @@index([status, createdAt])
+  @@unique([reporterId, listingId])
+}
+
+/// PropertyAuditLog: moderation audit trail for listing and verification actions.
+model PropertyAuditLog {
+  id        String   @id @default(cuid())
+  listingId String?
+  actorId   String?
+  listing   PropertyListing? @relation("AuditLogListing", fields: [listingId], references: [id], onDelete: SetNull)
+  actor     User?            @relation("AuditLogActor", fields: [actorId], references: [id], onDelete: SetNull)
+  action    String
+  details   String?  // JSON
+  createdAt DateTime @default(now())
+
+  @@index([listingId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
 }
