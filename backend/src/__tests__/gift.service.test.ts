@@ -129,15 +129,38 @@ describe('GiftService', () => {
       await expect(giftService.sendGift('user1', 'user1', 'gift1')).rejects.toThrow('Cannot send a gift to yourself');
     });
 
-    test('should replay an idempotent request without charging again', async () => {
-      (prisma.gift.findUnique as jest.Mock).mockResolvedValue(mockGift);
-      (prisma.giftTransaction.findUnique as jest.Mock).mockResolvedValue({ ...mockTransaction, requestId: 'gift_request_123456', quantity: 1 });
+    test('should replay an idempotent request without charging again after the gift is archived', async () => {
+      (prisma.giftTransaction.findUnique as jest.Mock).mockResolvedValue({
+        ...mockTransaction, requestId: 'gift_request_123456', quantity: 1,
+        streamId: null, message: null, isAnon: false,
+      });
+      (prisma.gift.findUnique as jest.Mock).mockResolvedValue({ ...mockGift, isActive: false });
       const { walletService } = jest.requireMock('../services/wallet.service');
       walletService.ensureWallet.mockResolvedValue({ id: 'wallet1', isFrozen: false, coinBalance: 90, lockedCoins: 0 });
 
       const result = await giftService.sendGift('user1', 'user2', 'gift1', undefined, { requestId: 'gift_request_123456' });
 
       expect(result).toEqual(expect.objectContaining({ replayed: true, remainingBalance: 90 }));
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    test('should reject reuse of an idempotency key with a different quantity or stream', async () => {
+      (prisma.giftTransaction.findUnique as jest.Mock).mockResolvedValue({
+        ...mockTransaction, requestId: 'gift_request_123456', quantity: 2,
+        streamId: 'stream-original', message: null, isAnon: false,
+      });
+
+      await expect(giftService.sendGift('user1', 'user2', 'gift1', 'stream-other', {
+        requestId: 'gift_request_123456', quantity: 1,
+      })).rejects.toThrow('Gift request key is already in use');
+      expect(prisma.gift.findUnique).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    test('should reject invalid quantities instead of silently clamping them', async () => {
+      await expect(giftService.sendGift('user1', 'user2', 'gift1', undefined, { quantity: 100 }))
+        .rejects.toThrow('quantity must be an integer between 1 and 99');
+      expect(prisma.gift.findUnique).not.toHaveBeenCalled();
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });

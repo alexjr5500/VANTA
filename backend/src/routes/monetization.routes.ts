@@ -94,12 +94,14 @@ router.post('/gifts/send', authenticateJWT, async (req: AuthRequest, res: Respon
   try {
     const senderId = req.user!.userId;
     const { receiverId, giftId, streamId, quantity, message, isAnon, requestId } = req.body;
-    if (!receiverId || !giftId) return res.status(400).json({ error: 'receiverId and giftId required' });
+    if (typeof receiverId !== 'string' || !receiverId.trim() || typeof giftId !== 'string' || !giftId.trim()) return res.status(400).json({ error: 'receiverId and giftId required' });
+    if (streamId !== undefined && (typeof streamId !== 'string' || !streamId.trim())) return res.status(400).json({ error: 'streamId must be a non-empty string when provided' });
+    if (isAnon !== undefined && typeof isAnon !== 'boolean') return res.status(400).json({ error: 'isAnon must be a boolean' });
     if (quantity !== undefined && (!Number.isInteger(quantity) || quantity < 1 || quantity > 99)) return res.status(400).json({ error: 'quantity must be an integer between 1 and 99' });
     if (message !== undefined && typeof message !== 'string') return res.status(400).json({ error: 'message must be a string' });
     if (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{16,80}$/.test(requestId)) return res.status(400).json({ error: 'A valid requestId is required' });
 
-    const result = await giftService.sendGift(senderId, receiverId, giftId, streamId, { quantity, message, isAnon: Boolean(isAnon), requestId });
+    const result = await giftService.sendGift(senderId, receiverId, giftId, streamId, { quantity, message, isAnon: isAnon === true, requestId });
     res.status(201).json(result);
   } catch (error: any) {
     res.status(400).json({ error: error.message });
