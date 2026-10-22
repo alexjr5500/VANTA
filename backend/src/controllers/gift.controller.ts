@@ -22,8 +22,16 @@ export const sendGift = async (req: AuthRequest, res: Response): Promise<void> =
       return;
     }
 
-    if (!receiverId || !giftId) {
+    if (typeof receiverId !== 'string' || !receiverId.trim() || typeof giftId !== 'string' || !giftId.trim()) {
       res.status(400).json({ error: 'receiverId and giftId are required' });
+      return;
+    }
+    if (streamId !== undefined && (typeof streamId !== 'string' || !streamId.trim())) {
+      res.status(400).json({ error: 'streamId must be a non-empty string when provided' });
+      return;
+    }
+    if (isAnon !== undefined && typeof isAnon !== 'boolean') {
+      res.status(400).json({ error: 'isAnon must be a boolean' });
       return;
     }
 
@@ -40,7 +48,7 @@ export const sendGift = async (req: AuthRequest, res: Response): Promise<void> =
       return;
     }
 
-    const transaction = await giftService.sendGift(senderId, receiverId, giftId, streamId, { quantity, message, isAnon: Boolean(isAnon), requestId });
+    const transaction = await giftService.sendGift(senderId, receiverId, giftId, streamId, { quantity, message, isAnon: isAnon === true, requestId });
     res.status(201).json({
       message: 'Gift sent successfully',
       transaction,

@@ -61,7 +61,13 @@ export function handleGiftSocket(io: Server) {
       isSuper?: boolean;
     }) => {
       try {
+        if (!data || typeof data !== 'object') throw new Error('Invalid gift request');
         const { receiverId, giftId, streamId, isAnon, isSuper, requestId } = data;
+        if (typeof receiverId !== 'string' || !receiverId.trim() || typeof giftId !== 'string' || !giftId.trim() || typeof streamId !== 'string' || !streamId.trim()) {
+          throw new Error('receiverId, giftId and streamId are required');
+        }
+        if (isAnon !== undefined && typeof isAnon !== 'boolean') throw new Error('isAnon must be a boolean');
+        if (isSuper !== undefined && typeof isSuper !== 'boolean') throw new Error('isSuper must be a boolean');
         if (typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{16,80}$/.test(requestId)) throw new Error('A valid requestId is required');
         // Same per-user gift throttle as the live namespace: wallet transactions
         // are expensive and must not be scriptable at arbitrary rate.
@@ -71,8 +77,8 @@ export function handleGiftSocket(io: Server) {
           return;
         }
         const result = await giftService.sendGift(userId, receiverId, giftId, streamId, {
-          isAnon: Boolean(isAnon),
-          isSuper: Boolean(isSuper),
+          isAnon: isAnon === true,
+          isSuper: isSuper === true,
           requestId,
         });
         const { transaction, gift } = result;
