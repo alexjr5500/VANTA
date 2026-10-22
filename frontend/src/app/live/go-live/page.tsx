@@ -1690,6 +1690,11 @@ export default function GoLivePage() {
                     onToggle={() => updateAllowGuests(!allowGuests)}
                     active={allowGuests}
                   />
+                  <button type="button" onClick={() => setSheet('guest-settings')} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-left text-sm transition hover:bg-white/[0.07]">
+                    <span className="grid h-9 w-9 place-items-center rounded-full bg-[#D6A83F]/10 text-[#F2C75C]"><Users size={16} /></span>
+                    <span className="flex-1"><span className="block font-semibold">Guest settings</span><span className="block text-[10px] text-white/40">Stage capacity and guest requests</span></span>
+                    <ChevronRight size={15} className="text-white/40" />
+                  </button>
 
                   {/* Chat moderation — only meaningful while the stream is live */}
                   {isLiveRoom && (
