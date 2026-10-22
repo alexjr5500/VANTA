@@ -1,9 +1,9 @@
 import { fetchHomes, fetchHomePropertyTypes, fetchHomeRentPeriods } from '@/lib/services';
-import PropertyCard from '@/components/homes/PropertyCard';
 import { HomeFilterBar } from '@/components/homes/HomeFilterBar';
 import EmptyState from '@/components/ui/EmptyState';
 import Button from '@/components/ui/Button';
 import { PostHomeButton } from '@/components/homes/PostHomeButton';
+import HomesResults from '@/components/homes/HomesResults';
 
 const PAGE_LIMIT = 20;
 
@@ -26,6 +26,9 @@ export default async function HomesPage({ searchParams }: { searchParams: Record
   setIf('bathrooms', searchParams.bathrooms);
   setIf('furnished', searchParams.furnished);
   setIf('q', searchParams.q);
+  // The filter UI calls this field `q`; the API contract calls it `search`.
+  // Keep `q` for the controlled input and send `search` to the backend.
+  if (params.q) params.search = params.q;
   setIf('sort', searchParams.sort || 'newest');
   if (!params.limit) params.limit = String(PAGE_LIMIT);
 
@@ -60,12 +63,13 @@ export default async function HomesPage({ searchParams }: { searchParams: Record
         {data.data.length === 0 ? (
           <EmptyState title="No homes found" description="Try adjusting your filters or search for a different location." action={<Button variant="outline" onClick={() => (window.location.search = '')}>Reset filters</Button>} />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {data.data.map((listing: any) => (<PropertyCard key={listing.id} listing={listing} />))}
-          </div>
-        )}
-        {data.hasMore && data.nextCursor && (
-          <div className="mt-8 flex justify-center"><Button variant="outline">Load more</Button></div>
+          <HomesResults
+            initialListings={data.data}
+            initialCursor={data.nextCursor || null}
+            initialHasMore={Boolean(data.hasMore && data.nextCursor)}
+            filters={params}
+            pageLimit={PAGE_LIMIT}
+          />
         )}
       </div>
     </div>

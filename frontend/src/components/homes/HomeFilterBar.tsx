@@ -19,7 +19,7 @@ const TYPE_LABEL: Record<string, string> = {
 export function HomeFilterBar({ propertyTypes, rentPeriods, current }: HomeFilterBarProps) {
   const [open, setOpen] = useState(false);
   const hasFilters =
-    current.city || current.area || current.propertyType || current.minRent || current.maxRent || current.bedrooms || current.bathrooms || current.furnished || current.q;
+    current.city || current.area || current.propertyType || current.minRent || current.maxRent || current.bedrooms || current.bathrooms || current.furnished || current.q || (current.sort && current.sort !== 'newest');
 
   const buildUrl = (updates: Partial<Record<string, string>>) => {
     const params = new URLSearchParams(window.location.search);
@@ -51,26 +51,28 @@ export function HomeFilterBar({ propertyTypes, rentPeriods, current }: HomeFilte
         >
           Filters <span className="text-[#c9a227]">{hasFilters ? '· active' : ''}</span>
         </button>
-        <Button variant="outline" size="sm" onClick={() => buildUrl({})} disabled={!hasFilters}>
+        <Button variant="outline" size="sm" onClick={() => { window.location.search = ''; }} disabled={!hasFilters}>
           Reset
         </Button>
       </div>
 
       {open && (
         <div className="mt-4 p-4 rounded-xl border border-white/[0.08] bg-white/[0.03] w-full max-w-md">
-          <div className="grid grid-cols-2 gap-3 mb-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
             <FilterSelect label="Property type" name="propertyType" options={propertyTypes.map((t) => ({ value: t, label: TYPE_LABEL[t] || t }))} current={current.propertyType || ''} buildUrl={buildUrl} />
-            <FilterSelect label="Bedrooms" name="bedrooms" options={['1', '2', '3', '4+'].map((v) => ({ value: v, label: v }))} current={current.bedrooms || ''} buildUrl={buildUrl} />
+            <FilterSelect label="Bedrooms" name="bedrooms" options={['1', '2', '3', '4'].map((v) => ({ value: v, label: v === '4' ? '4+' : v }))} current={current.bedrooms || ''} buildUrl={buildUrl} />
+            <FilterSelect label="Bathrooms" name="bathrooms" options={['1', '2', '3', '4'].map((v) => ({ value: v, label: v === '4' ? '4+' : v }))} current={current.bathrooms || ''} buildUrl={buildUrl} />
           </div>
           <div className="grid grid-cols-2 gap-3 mb-3">
             <FilterInput label="Min rent" name="minRent" current={current.minRent || ''} buildUrl={buildUrl} />
             <FilterInput label="Max rent" name="maxRent" current={current.maxRent || ''} buildUrl={buildUrl} />
           </div>
-          <div className="mb-3">
+          <div className="grid grid-cols-2 gap-3 mb-3">
             <FilterSelect label="Furnished" name="furnished" options={[{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }]} current={current.furnished || ''} buildUrl={buildUrl} />
+            <FilterSelect label="Sort by" name="sort" options={[{ value: 'newest', label: 'Newest' }, { value: 'price_asc', label: 'Price: low to high' }, { value: 'price_desc', label: 'Price: high to low' }]} current={current.sort || 'newest'} buildUrl={buildUrl} />
           </div>
           <div className="flex justify-end">
-            <Button variant="outline" size="sm" onClick={() => buildUrl({})}>Clear all</Button>
+            <Button variant="outline" size="sm" onClick={() => { window.location.search = ''; }}>Clear all</Button>
           </div>
         </div>
       )}

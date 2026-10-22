@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
-  fetchHome, fetchHomeContactOptions, contactHomeListing, toggleSaveHome,
+  fetchHome, fetchHomeContactOptions, contactHomeListing, toggleSaveHome, createHomeReport,
 } from '@/lib/services';
 import Button from '@/components/ui/Button';
 import Card from '@/components/ui/Card';
@@ -18,7 +18,7 @@ import VerificationBadge from '@/components/ui/VerificationBadge';
 import {
   MapPin, Bed, Bath, Home, Play, Share2, Phone, MessageCircle,
   AlertCircle, User, ChevronLeft, ChevronRight, Maximize2, Bookmark,
-  CalendarDays, Building2, Wallet, Shield, ArrowLeft,
+  CalendarDays, Building2, Wallet, Shield, ArrowLeft, Flag,
 } from 'lucide-react';
 
 const PERIOD_LABEL: Record<string, string> = {
@@ -163,6 +163,11 @@ export default function HomeDetailPage() {
   const [contacting, setContacting] = useState(false);
   const [showComposer, setShowComposer] = useState(false);
   const [message, setMessage] = useState('');
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportType, setReportType] = useState('SCAM');
+  const [reportReason, setReportReason] = useState('');
+  const [reportDescription, setReportDescription] = useState('');
+  const [reporting, setReporting] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
@@ -251,6 +256,35 @@ export default function HomeDetailPage() {
       showToast({ type: 'error', title: 'Could not save', message: e?.message || 'Please try again.' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleReport = async () => {
+    if (!user) {
+      router.push(`/login?redirect=/homes/${id}`);
+      return;
+    }
+    if (!reportReason.trim()) {
+      showToast({ type: 'error', title: 'Reason required', message: 'Tell us why this listing should be reviewed.' });
+      return;
+    }
+    if (reporting) return;
+    setReporting(true);
+    try {
+      await createHomeReport({
+        listingId: id,
+        type: reportType,
+        reason: reportReason.trim(),
+        description: reportDescription.trim() || undefined,
+      }, token);
+      showToast({ type: 'success', title: 'Report submitted', message: 'Our moderation team will review this listing.' });
+      setReportOpen(false);
+      setReportReason('');
+      setReportDescription('');
+    } catch (e: any) {
+      showToast({ type: 'error', title: 'Could not submit report', message: e?.message || 'Please try again.' });
+    } finally {
+      setReporting(false);
     }
   };
 
@@ -386,8 +420,43 @@ export default function HomeDetailPage() {
                 {saved ? 'Saved' : 'Save'}
               </Button>
             )}
+            {!isOwner && (
+              <Button size="sm" variant="ghost" icon={<Flag size={15} />} onClick={() => setReportOpen((open) => !open)}>
+                Report
+              </Button>
+            )}
           </div>
         </div>
+
+        {reportOpen && !isOwner && (
+          <Card variant="glass" padding="lg" className="mb-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-white">Report this listing</h2>
+              <button type="button" onClick={() => setReportOpen(false)} className="text-sm text-white/50 hover:text-white">Cancel</button>
+            </div>
+            <div className="space-y-3">
+              <label className="block text-xs font-medium text-white/60" htmlFor="home-report-type">Reason category</label>
+              <select id="home-report-type" value={reportType} onChange={(event) => setReportType(event.target.value)} className="w-full rounded-[var(--radius-lg)] border border-white/[0.1] bg-black/30 px-3 py-2.5 text-sm text-white">
+                <option value="SCAM">Suspected scam</option>
+                <option value="FAKE_PROPERTY">Fake property</option>
+                <option value="UNAUTHORIZED_LISTING">Unauthorized listing</option>
+                <option value="MISLEADING_MEDIA">Misleading photos or description</option>
+                <option value="INCORRECT_PRICE">Incorrect price or hidden charges</option>
+                <option value="DUPLICATE_LISTING">Duplicate listing</option>
+                <option value="ALREADY_RENTED">Already rented</option>
+                <option value="INAPPROPRIATE">Inappropriate content</option>
+                <option value="OTHER">Other</option>
+              </select>
+              <label className="block text-xs font-medium text-white/60" htmlFor="home-report-reason">What happened? <span className="text-red-300">*</span></label>
+              <textarea id="home-report-reason" value={reportReason} onChange={(event) => setReportReason(event.target.value)} rows={2} maxLength={500} required placeholder="Describe the concern so our moderators can review it." className="w-full resize-y rounded-[var(--radius-lg)] border border-white/[0.1] bg-black/30 px-3 py-2.5 text-sm text-white placeholder-white/30" />
+              <label className="block text-xs font-medium text-white/60" htmlFor="home-report-details">Additional details (optional)</label>
+              <textarea id="home-report-details" value={reportDescription} onChange={(event) => setReportDescription(event.target.value)} rows={2} maxLength={1000} placeholder="Add any helpful context." className="w-full resize-y rounded-[var(--radius-lg)] border border-white/[0.1] bg-black/30 px-3 py-2.5 text-sm text-white placeholder-white/30" />
+              <div className="flex justify-end">
+                <Button variant="gold" loading={reporting} onClick={() => void handleReport()}>Submit report</Button>
+              </div>
+            </div>
+          </Card>
+        )}
 
         {/* Owner-only banner while the listing is not public -------------- */}
         {isOwner && listing.availabilityStatus !== 'PUBLISHED' && (
