@@ -220,16 +220,30 @@ export class GiftService {
   }
 
   async sendGift(senderId: string, receiverId: string, giftId: string, streamId?: string, options: { quantity?: number; message?: string; isAnon?: boolean; isSuper?: boolean; requestId?: string } = {}) {
-    const gift = await prisma.gift.findUnique({ where: { id: giftId } });
-    if (!gift) throw new Error('Gift not found');
-    if (!gift.isActive) throw new Error('This gift is no longer available');
+    const quantity = options.quantity === undefined ? 1 : options.quantity;
+    if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 99) {
+      throw new Error('quantity must be an integer between 1 and 99');
+    }
+    const message = typeof options.message === 'string' ? options.message.trim().slice(0, 280) || null : null;
+    const isAnon = Boolean(options.isAnon);
 
+    // Check idempotency before catalog availability: retries of a committed send
+    // must resolve to the original transaction even if the gift was archived.
     if (options.requestId) {
       const existing = await prisma.giftTransaction.findUnique({ where: { requestId: options.requestId } });
       if (existing) {
-        if (existing.senderId !== senderId || existing.receiverId !== receiverId || existing.giftId !== giftId) {
-          throw new Error('Gift request key is already in use');
-        }
+        const sameRequest =
+          existing.senderId === senderId &&
+          existing.receiverId === receiverId &&
+          existing.giftId === giftId &&
+          (existing.streamId || undefined) === streamId &&
+          (existing.quantity || 1) === quantity &&
+          (existing.message || null) === message &&
+          Boolean(existing.isAnon) === isAnon;
+        if (!sameRequest) throw new Error('Gift request key is already in use');
+
+        const gift = await prisma.gift.findUnique({ where: { id: giftId } });
+        if (!gift) throw new Error('Gift not found');
         const currentWallet = await walletService.ensureWallet(senderId);
         return {
           transaction: existing,
@@ -242,6 +256,10 @@ export class GiftService {
         };
       }
     }
+
+    const gift = await prisma.gift.findUnique({ where: { id: giftId } });
+    if (!gift) throw new Error('Gift not found');
+    if (!gift.isActive) throw new Error('This gift is no longer available');
 
     if (senderId === receiverId) {
       throw new Error('Cannot send a gift to yourself');
@@ -268,9 +286,7 @@ export class GiftService {
       throw new Error("Recipient's wallet is frozen.");
     }
 
-    const quantity = Math.min(99, Math.max(1, Math.trunc(options.quantity || 1)));
     const totalCost = gift.price * quantity;
-    const message = options.message?.trim().slice(0, 280) || null;
 
     // Check balance
     const availableBalance = Math.max(0, senderWallet.coinBalance - senderWallet.lockedCoins);
@@ -422,7 +438,16 @@ export class GiftService {
       const prismaError = error as { code?: string };
       if (options.requestId && prismaError.code === 'P2002') {
         const existing = await prisma.giftTransaction.findUnique({ where: { requestId: options.requestId } });
-        if (existing && existing.senderId === senderId && existing.receiverId === receiverId && existing.giftId === giftId) {
+        if (
+          existing &&
+          existing.senderId === senderId &&
+          existing.receiverId === receiverId &&
+          existing.giftId === giftId &&
+          (existing.streamId || undefined) === streamId &&
+          (existing.quantity || 1) === quantity &&
+          (existing.message || null) === message &&
+          Boolean(existing.isAnon) === isAnon
+        ) {
           const currentWallet = await walletService.ensureWallet(senderId);
           return {
             transaction: existing,
