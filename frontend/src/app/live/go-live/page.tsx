@@ -48,7 +48,6 @@ import {
   Settings,
   Share2,
   SlidersHorizontal,
-  Sparkles,
   Trophy,
   LayoutGrid,
   Shield,
@@ -58,7 +57,6 @@ import {
   UserPlus,
   Users,
   Video,
-  Wand2,
   X,
   Zap,
 } from 'lucide-react';
@@ -96,10 +94,9 @@ type GoalChoice = 'none' | 'followers' | 'gifts' | 'duration';
 type SheetId =
   | 'none'
   | 'settings'
-  | 'effects'
-  | 'beauty'
   | 'category'
   | 'guests'
+  | 'guest-settings'
   | 'goal'
   | 'more'
   | 'end';
@@ -169,17 +166,6 @@ const MODES: { id: LiveMode; label: string; sub: string; icon: typeof Mic }[] = 
   { id: 'gaming', label: 'Mobile gaming', sub: 'Gameplay broadcast', icon: Gamepad2 },
 ];
 
-const FILTERS: { id: string; label: string; css: string }[] = [
-  { id: 'none', label: 'Original', css: '' },
-  { id: 'warm', label: 'Warm', css: 'sepia(0.28) saturate(1.3) contrast(1.04) brightness(1.04)' },
-  { id: 'cool', label: 'Cool', css: 'hue-rotate(14deg) saturate(0.95) brightness(1.03)' },
-  { id: 'vivid', label: 'Vivid', css: 'saturate(1.55) contrast(1.1)' },
-  { id: 'dream', label: 'Dream', css: 'saturate(1.25) brightness(1.12) contrast(0.92) blur(0.3px)' },
-  { id: 'neon', label: 'Neon', css: 'saturate(1.8) contrast(1.3) hue-rotate(-12deg)' },
-  { id: 'sunset', label: 'Sunset', css: 'sepia(0.5) saturate(1.6) hue-rotate(-18deg)' },
-  { id: 'mono', label: 'B&W', css: 'grayscale(1) contrast(1.12)' },
-];
-
 const REACT_EMOJIS = ['❤️', '🔥', '👏', '😂', '😍', '🎉'];
 
 /** Minimal live_event → system chat line (keeps chat free of junk). */
@@ -221,7 +207,7 @@ const HOST_CHAT_RECONCILE = {
 };
 
 /** Camera <video> that attaches the real device MediaStream. */
-function CameraFeed({ stream, mirror, filterCss, muted, ariaLabel }: { stream: MediaStream | null; mirror?: boolean; filterCss?: string; muted?: boolean; ariaLabel?: string }) {
+function CameraFeed({ stream, mirror, muted, ariaLabel }: { stream: MediaStream | null; mirror?: boolean; muted?: boolean; ariaLabel?: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const backdropRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
@@ -273,7 +259,7 @@ function CameraFeed({ stream, mirror, filterCss, muted, ariaLabel }: { stream: M
         muted
         aria-hidden
         className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-[16px] bg-[#050505]"
-        style={{ transform: mirrorTransform, filter: filterCss || undefined }}
+        style={{ transform: mirrorTransform }}
       />
       <video
         ref={videoRef}
@@ -282,7 +268,7 @@ function CameraFeed({ stream, mirror, filterCss, muted, ariaLabel }: { stream: M
         muted={muted ?? true}
         aria-label={ariaLabel || 'Live camera'}
         className="relative h-full w-full object-contain bg-[#050505]"
-        style={{ transform: mirrorTransform, filter: filterCss || undefined }}
+        style={{ transform: mirrorTransform }}
       />
     </>
   );
@@ -317,7 +303,6 @@ export default function GoLivePage() {
   const [title, setTitle] = useState('');
   const [mode, setMode] = useState<LiveMode>('camera');
   const [goal, setGoal] = useState<GoalChoice>('followers');
-  const [filter, setFilter] = useState('none');
   const [streamData, setStreamData] = useState<StreamDetail | null>(null);
   const [viewers, setViewers] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -977,7 +962,6 @@ export default function GoLivePage() {
   const displayName = user?.username || user?.fullName || 'Streamer';
   const avatar = user?.avatar || user?.avatarUrl || null;
   const feedMirror = isPreLive || isLiveRoom ? !cam.isFrontCamera : false;
-  const filterCss = FILTERS.find((f) => f.id === filter)?.css || '';
   const lkReconnecting = phase === 'LIVE' && lk.connectionState === ConnectionState.Reconnecting;
   const secs = duration % 60;
   const mins = Math.floor(duration / 60) % 60;
@@ -1026,7 +1010,7 @@ export default function GoLivePage() {
       {isLiveRoom && hostStageTiles.length >= 2 ? (
         <LiveParticipantGrid participants={hostStageTiles} />
       ) : (
-        <CameraFeed stream={isLiveRoom ? roomVideo || cam.stream : cam.stream} mirror={feedMirror} filterCss={filterCss} ariaLabel={isLiveRoom ? 'Live broadcast' : 'Camera preview'} />
+        <CameraFeed stream={isLiveRoom ? roomVideo || cam.stream : cam.stream} mirror={feedMirror} ariaLabel={isLiveRoom ? 'Live broadcast' : 'Camera preview'} />
       )}
 
       {/* Screen-edge glow so overlay controls stay legible over bright video. */}
@@ -1093,12 +1077,6 @@ export default function GoLivePage() {
           <div className="flex shrink-0 items-center justify-center gap-2.5 pt-4">
             <CameraControl onPress={() => void cam.flipCamera()} label="Flip camera" active={!cam.isFrontCamera}>
               <FlipIc />
-            </CameraControl>
-            <CameraControl onPress={() => setSheet('beauty')} label="Beautify" active={filter !== 'none'}>
-              <Sparkles size={18} />
-            </CameraControl>
-            <CameraControl onPress={() => setSheet('effects')} label="Effects" active={false}>
-              <SlidersHorizontal size={18} />
             </CameraControl>
             <CameraControl onPress={() => setSheet('settings')} label="Settings" active={false}>
               <Settings size={18} />
@@ -1399,9 +1377,6 @@ export default function GoLivePage() {
             </LiveAction>
             <LiveAction onPress={() => setSheet('guests')} label="Guests" badge={guestStage.guestCount + guestStage.pending.length}>
               <Users size={20} />
-            </LiveAction>
-            <LiveAction onPress={() => setSheet('beauty')} label="Beautify" active={filter !== 'none'}>
-              <Wand2 size={20} />
             </LiveAction>
             <LiveAction onPress={() => setSheet('more')} label="More">
               <EllipsisH />
@@ -1715,8 +1690,10 @@ export default function GoLivePage() {
                     onToggle={() => updateAllowGuests(!allowGuests)}
                     active={allowGuests}
                   />
-                  <button type="button" onClick={() => { setSheet('beauty'); }} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-sm">
-                    <Sparkles size={16} className="text-[#F2C75C]" /> Beauty &amp; filters<span className="ml-auto text-white/40"><ChevronRight size={15} /></span>
+                  <button type="button" onClick={() => setSheet('guest-settings')} className="flex w-full items-center gap-3 rounded-2xl bg-white/[0.04] px-3 py-2.5 text-left text-sm transition hover:bg-white/[0.07]">
+                    <span className="grid h-9 w-9 place-items-center rounded-full bg-[#D6A83F]/10 text-[#F2C75C]"><Users size={16} /></span>
+                    <span className="flex-1"><span className="block font-semibold">Guest settings</span><span className="block text-[10px] text-white/40">Stage capacity and guest requests</span></span>
+                    <ChevronRight size={15} className="text-white/40" />
                   </button>
 
                   {/* Chat moderation — only meaningful while the stream is live */}
@@ -1750,6 +1727,32 @@ export default function GoLivePage() {
                 </div>
               )}
 
+              {sheet === 'guest-settings' && (
+                <div className="mt-3 space-y-3 pb-2">
+                  <div className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3">
+                    <div className="flex items-start gap-3">
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#D6A83F]/15 text-[#F2C75C]"><Users size={18} /></span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-white">Guest stage</p>
+                        <p className="mt-1 text-xs leading-relaxed text-white/50">Let viewers request to join your live. You stay in control and approve each guest before they enter the stage.</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between rounded-xl bg-black/20 px-3 py-2.5">
+                      <div><p className="text-sm font-semibold text-white">Allow guest requests</p><p className="mt-0.5 text-[10px] text-white/45">{allowGuests ? 'Viewers can request to join' : 'New guest requests are disabled'}</p></div>
+                      <button type="button" role="switch" aria-checked={allowGuests} onClick={() => updateAllowGuests(!allowGuests)} className={cn('relative h-6 w-11 shrink-0 rounded-full transition-colors', allowGuests ? 'bg-[#D6A83F]' : 'bg-white/20')}>
+                        <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform', allowGuests ? 'translate-x-[22px]' : 'translate-x-0.5')} />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-2xl border border-white/[0.07] bg-white/[0.035] p-3"><p className="text-[10px] font-semibold uppercase tracking-wider text-white/40">Guests on stage</p><p className="mt-1 text-xl font-bold text-white tabular-nums">{guestStage.guestCount}<span className="text-sm font-medium text-white/35"> / {guestStage.guestLimit}</span></p></div>
+                    <div className="rounded-2xl border border-white/[0.07] bg-white/[0.035] p-3"><p className="text-[10px] font-semibold uppercase tracking-wider text-white/40">Requests waiting</p><p className="mt-1 text-xl font-bold text-white tabular-nums">{guestStage.pending.length}</p></div>
+                  </div>
+                  <p className="px-1 text-[11px] leading-relaxed text-white/40">The stage limit is enforced by the live service. Guest audio and video use the existing live connection; no separate stream is created.</p>
+                  <button type="button" onClick={() => setSheet('guests')} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#D6A83F] px-4 py-3 text-sm font-extrabold text-black transition active:scale-[0.99]"><Users size={16} /> Manage guests and requests</button>
+                </div>
+              )}
+
               {sheet === 'category' && (
                 <div className="mt-3 grid max-h-[52vh] grid-cols-2 gap-2 overflow-y-auto pb-2">
                   {categories.map((cat) => {
@@ -1774,6 +1777,11 @@ export default function GoLivePage() {
 
               {sheet === 'guests' && (
                 <div className="mt-3 max-h-[52vh] space-y-3 overflow-y-auto pb-2">
+                  <button type="button" onClick={() => setSheet('guest-settings')} className="flex w-full items-center gap-3 rounded-2xl border border-[#D6A83F]/25 bg-[#D6A83F]/[0.08] px-3 py-3 text-left transition hover:bg-[#D6A83F]/[0.12]">
+                    <span className="grid h-9 w-9 place-items-center rounded-full bg-[#D6A83F]/15 text-[#F2C75C]"><Settings size={16} /></span>
+                    <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-white">Guest settings</span><span className="block text-[11px] text-white/45">Control who can join your stage</span></span>
+                    <ChevronRight size={15} className="text-white/40" />
+                  </button>
                   <div>
                     <p className="mb-1.5 flex items-center justify-between px-1 text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
                       <span>On stage</span>
@@ -1837,64 +1845,6 @@ export default function GoLivePage() {
                 </div>
               )}
 
-              {sheet === 'beauty' || sheet === 'effects' ? (
-                <div className="mt-3">
-                  {/* Live preview card + reset */}
-                  <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.045] px-3 py-2.5">
-                    <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full bg-[#18181b] shadow-inner">
-                      <img
-                        src={avatar || '/branding/vanta-icon-192.png'}
-                        alt="Effect preview"
-                        className="h-full w-full object-cover"
-                        style={{ filter: filterCss || undefined }}
-                      />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-white">{FILTERS.find((f) => f.id === filter)?.label || 'Original'}</p>
-                      <p className="truncate text-[10px] text-white/45">Tap a filter to preview it on your camera</p>
-                    </div>
-                    {filter !== 'none' && (
-                      <button
-                        type="button"
-                        onClick={() => setFilter('none')}
-                        className="shrink-0 rounded-full border border-white/15 bg-white/[0.07] px-2.5 py-1 text-[10px] font-bold text-white/85 transition active:scale-95 hover:bg-white/[0.12]"
-                      >
-                        Reset
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Circular filter swatches */}
-                  <div className="mt-3 grid grid-cols-4 gap-2">
-                    {FILTERS.map((f) => {
-                      const selected = filter === f.id;
-                      return (
-                        <button
-                          key={f.id}
-                          type="button"
-                          onClick={() => setFilter(f.id)}
-                          aria-pressed={selected}
-                          className={cn(
-                            'flex flex-col items-center gap-1.5 rounded-2xl border py-2 text-[10px] font-semibold transition active:scale-95',
-                            selected ? 'border-[#D6A83F]/70 bg-[#D6A83F]/15 text-[#F2C75C]' : 'border-white/[0.06] bg-white/[0.04] text-white/70 hover:bg-white/[0.08]',
-                          )}
-                        >
-                          <span className={cn('relative grid h-12 w-12 place-items-center overflow-hidden rounded-full', selected ? 'ring-2 ring-[#D6A83F]/70' : 'ring-1 ring-white/15')}>
-                            <img src={avatar || '/branding/vanta-icon-192.png'} alt={f.label} className="h-full w-full object-cover" style={{ filter: f.css || undefined }} />
-                            {selected && (
-                              <span className="absolute -right-0.5 -top-0.5 grid h-4 w-4 place-items-center rounded-full bg-[#D6A83F] text-black">
-                                <Check size={9} strokeWidth={3.5} />
-                              </span>
-                            )}
-                          </span>
-                          {f.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-
               {sheet === 'goal' && (
                 <div className="mt-3 space-y-1.5">
                   {([
@@ -1957,10 +1907,9 @@ export default function GoLivePage() {
 function sheetTitle(id: SheetId): string {
   switch (id) {
     case 'settings': return 'Live settings';
-    case 'effects': return 'Live effects';
-    case 'beauty': return 'Beautify';
     case 'category': return 'Choose a category';
     case 'guests': return 'Guests';
+    case 'guest-settings': return 'Guest settings';
     case 'goal': return 'Set a LIVE goal';
     case 'more': return 'More options';
     default: return '';
