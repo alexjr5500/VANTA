@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { paletteFor, renderGiftArtwork, resolveGiftArtworkId } from './GiftArtworkSvgs';
+import { giftArtworkAsset } from './giftArtworkAssets';
 
 export type GiftArtworkProps = {
   slug?: string;
@@ -26,15 +27,19 @@ function key(slug = '', name = '') {
 /**
  * Single render entry for EVERY gift surface in VANTA (Gift Store grid,
  * pickers, gift history, admin, realtime overlay + previews):
- *   1. If a DB assetUrl exists (image/video) it wins and fails back to SVG.
- *   2. Large hero sizes (>= 140px) render the cinematic WebGL scene.
- *   3. Everything else renders the shared premium SVG artwork library —
- *      one VANTA universe, consistent stage, quality-scaled effects.
+ *   1. Existing DB assetUrl wins; known gifts use an optional local WebP next.
+ *   2. Any failed image/video safely falls back to the shared SVG artwork.
+ *   3. Large hero sizes (>= 140px) render the cinematic WebGL scene if no asset.
+ *   4. Everything else renders the shared premium SVG artwork library.
+ *
+ * This is presentation-only: catalog IDs, names, prices, and send transactions
+ * remain unchanged.
  */
 export default function GiftArtwork({ slug, name, artworkType, assetUrl, size = 120, animate = true, className = '', quality = 1 }: GiftArtworkProps) {
   const [assetFailed, setAssetFailed] = useState(false);
   const id = key(slug, name);
   const artId = resolveGiftArtworkId(slug, artworkType);
+  const resolvedAssetUrl = assetUrl || giftArtworkAsset(slug, name);
   const hue = Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 360;
   const p = paletteFor(artId, hue);
   // Keep catalog grids GPU-light; reserve WebGL for previews and overlay hero moments.
@@ -51,9 +56,9 @@ export default function GiftArtwork({ slug, name, artworkType, assetUrl, size = 
   );
   return (
     <motion.div {...common} className={`relative shrink-0 ${className}`} style={{ width: size, height: size }}>
-      {assetUrl && !assetFailed ? (/\\.(mp4|webm)(\\?|$)/i.test(assetUrl)
-        ? <video src={assetUrl} autoPlay={animate} loop muted playsInline preload={animate ? 'metadata' : 'none'} onError={() => setAssetFailed(true)} className="h-full w-full object-contain" />
-        : <img src={assetUrl} alt="" loading={animate ? 'eager' : 'lazy'} onError={() => setAssetFailed(true)} className="h-full w-full object-contain" />)
+      {resolvedAssetUrl && !assetFailed ? (/\\.(mp4|webm)(\\?|$)/i.test(resolvedAssetUrl)
+        ? <video src={resolvedAssetUrl} autoPlay={animate} loop muted playsInline preload={animate ? 'metadata' : 'none'} onError={() => setAssetFailed(true)} className="h-full w-full object-contain" />
+        : <img src={resolvedAssetUrl} alt="" loading={animate ? 'eager' : 'lazy'} onError={() => setAssetFailed(true)} className="h-full w-full object-contain" />)
         : useWebGl ? <GiftScene3D id={artId} palette={p} animate={animate} quality={quality} fallback={svg} /> : svg}
     </motion.div>
   );
