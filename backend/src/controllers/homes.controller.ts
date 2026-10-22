@@ -9,15 +9,48 @@ const wrap =
     try {
       await fn(req, res);
     } catch (error: any) {
-      const message = error?.message || 'Internal server error';
-      const status =
-        message.includes('not found') || message.includes('Not found')
-          ? 404
-          : message.includes('Not authorized') ||
-            message.includes('not authorized') ||
-            message.includes('Admin access required')
-            ? 403
-            : 400;
+      const message = typeof error?.message === 'string' ? error.message : 'Internal server error';
+      const normalized = message.toLowerCase();
+      let status = 500;
+
+      if (normalized.includes('already reported') || normalized.includes('already published')) {
+        status = 409;
+      } else if (normalized.includes('not found') || normalized.includes('listing owner not available')) {
+        status = 404;
+      } else if (normalized.includes('authentication required')) {
+        status = 401;
+      } else if (
+        normalized.includes('not authorized') ||
+        normalized.includes('admin access required') ||
+        normalized.includes('not allowed') ||
+        normalized.includes('not accepting messages') ||
+        normalized.includes('messaging is disabled')
+      ) {
+        status = 403;
+      } else if (
+        normalized.startsWith('invalid ') ||
+        normalized.includes(' is required') ||
+        normalized.includes(' are required') ||
+        normalized.includes('only pending') ||
+        normalized.includes('account not active') ||
+        normalized.includes('too many') ||
+        normalized.includes('maximum ') ||
+        normalized.includes('cannot contact your own listing') ||
+        normalized.includes('cannot report your own listing') ||
+        normalized.includes('rejected listings cannot be resubmitted') ||
+        normalized.includes('does not belong to this listing') ||
+        normalized.includes('unsupported')
+      ) {
+        status = 400;
+      }
+
+      // Do not turn unexpected database/runtime failures into client errors or
+      // leak internal parser/ORM details in an API response.
+      if (status === 500) {
+        console.error('[HOMES_API_ERROR]', error);
+        res.status(500).json({ error: 'Internal server error' });
+        return;
+      }
       res.status(status).json({ error: message });
     }
   };
@@ -252,7 +285,9 @@ export const adminReviewListing = wrap(async (req: AuthRequest, res: Response) =
     return;
   }
   const listingId = getParamString(req.params.id);
-  const result = await homesService.adminReviewListing(listingId, adminId, req.body);
+  const { decision, reason } = req.body || {};
+  if (decision !== 'APPROVE' && decision !== 'REJECT') throw new Error('Invalid listing review decision');
+  const result = await homesService.adminReviewListing(listingId, adminId, decision, reason);
   res.status(200).json(result);
 });
 
@@ -274,7 +309,9 @@ export const adminDecideVerification = wrap(async (req: AuthRequest, res: Respon
     return;
   }
   const verificationId = getParamString(req.params.id);
-  const result = await homesService.adminDecideVerification(verificationId, adminId, req.body);
+  const { decision, reason } = req.body || {};
+  if (decision !== 'APPROVE' && decision !== 'REJECT') throw new Error('Invalid verification decision');
+  const result = await homesService.adminDecideVerification(verificationId, adminId, decision, reason);
   res.status(200).json(result);
 });
 
@@ -295,7 +332,9 @@ export const adminResolveReport = wrap(async (req: AuthRequest, res: Response) =
     return;
   }
   const reportId = getParamString(req.params.id);
-  const result = await homesService.adminResolveReport(reportId, adminId, req.body);
+  const { decision, notes } = req.body || {};
+  if (decision !== 'RESOLVED' && decision !== 'DISMISSED') throw new Error('Invalid report resolution decision');
+  const result = await homesService.adminResolveReport(reportId, adminId, decision, notes);
   res.status(200).json(result);
 });
 

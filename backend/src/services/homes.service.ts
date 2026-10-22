@@ -335,8 +335,18 @@ export async function getPublicListings(params: {
   const page = hasMore ? listings.slice(0, -1) : listings;
   const nextCursor = hasMore ? page[page.length - 1]?.id : undefined;
 
+  // Reflect the viewer's actual saved state in discovery cards without
+  // issuing one query per listing. Anonymous visitors naturally see false.
+  const savedRows = params.viewerId && page.length
+    ? await prisma.savedProperty.findMany({
+        where: { userId: params.viewerId, listingId: { in: page.map((listing) => listing.id) } },
+        select: { listingId: true },
+      })
+    : [];
+  const savedIds = new Set(savedRows.map((row) => row.listingId));
+
   return {
-    data: page.map((l) => ({ ...l, isSaved: false })),
+    data: page.map((listing) => ({ ...listing, isSaved: savedIds.has(listing.id) })),
     nextCursor,
     hasMore: !!nextCursor,
   };
@@ -358,12 +368,28 @@ export async function getPublicListing(listingId: string, viewerId?: string) {
     isSaved = !!save;
   }
 
-  // Only published listings are visible publicly; owners/admins can see their own
-  if (listing.availabilityStatus !== 'PUBLISHED' && viewerId !== listing.owner.id) {
-    throw new Error('Listing not found');
+  // Keep direct-ID lookups consistent with discovery: inactive owners and
+  // unpublished listings must not be publicly discoverable. Owners can still
+  // inspect their own drafts while authenticated.
+  const isOwner = viewerId === listing.owner.id;
+  if (!isOwner) {
+    const owner = await prisma.user.findUnique({
+      where: { id: listing.owner.id },
+      select: { status: true },
+    });
+    if (listing.availabilityStatus !== 'PUBLISHED' || owner?.status !== 'ACTIVE') {
+      throw new Error('Listing not found');
+    }
   }
 
-  return { ...listing, isSaved };
+  // Contact details are private unless the owner explicitly opted to publish
+  // them. Owners retain access to their own values while editing a draft.
+  return {
+    ...listing,
+    contactWhatsApp: isOwner || listing.contactWhatsAppPublished ? listing.contactWhatsApp : null,
+    contactPhone: isOwner || listing.contactPhonePublished ? listing.contactPhone : null,
+    isSaved,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -495,10 +521,14 @@ export async function updateListing(listingId: string, userId: string, data: any
   if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone || null;
   if (data.contactPhonePublished !== undefined) updateData.contactPhonePublished = Boolean(data.contactPhonePublished);
 
-  // If a published listing is edited significantly, reset to pending review
-  if (existing.availabilityStatus === 'PUBLISHED' && (data.title || data.description || data.rentAmount || data.propertyType)) {
+  // Significant edits to a live listing require moderation again. A rejected
+  // listing must be edited back to draft before its owner can resubmit it.
+  const substantiveEdit = Boolean(data.title || data.description || data.rentAmount || data.propertyType);
+  if (existing.availabilityStatus === 'PUBLISHED' && substantiveEdit) {
     updateData.availabilityStatus = 'PENDING_REVIEW';
     updateData.publishedAt = null;
+  } else if (existing.availabilityStatus === 'REJECTED' && substantiveEdit) {
+    updateData.availabilityStatus = 'DRAFT';
   }
 
   const updated = await prisma.propertyListing.update({
@@ -578,6 +608,22 @@ export async function setListingAvailability(listingId: string, userId: string, 
 
   const validStatuses = ['PAUSED', 'RESERVED', 'RENTED', 'PUBLISHED', 'ARCHIVED'];
   if (!validStatuses.includes(status)) throw new Error('Invalid availability status');
+
+  // Owners may change availability only along valid lifecycle transitions.
+  // In particular, DRAFT/PENDING_REVIEW/REJECTED must never self-publish.
+  const allowedTransitions: Record<string, string[]> = {
+    DRAFT: ['ARCHIVED'],
+    PENDING_REVIEW: ['ARCHIVED'],
+    PUBLISHED: ['PAUSED', 'RESERVED', 'RENTED', 'ARCHIVED'],
+    PAUSED: ['PUBLISHED', 'RESERVED', 'ARCHIVED'],
+    RESERVED: ['PUBLISHED', 'PAUSED', 'RENTED', 'ARCHIVED'],
+    RENTED: ['ARCHIVED'],
+    REJECTED: ['ARCHIVED'],
+    ARCHIVED: [],
+  };
+  if (!allowedTransitions[listing.availabilityStatus]?.includes(status)) {
+    throw new Error('Invalid availability status transition');
+  }
 
   const updateData: Prisma.PropertyListingUpdateInput = { availabilityStatus: status as any };
   if (status === 'PUBLISHED' && listing.availabilityStatus !== 'PUBLISHED') {
@@ -761,6 +807,12 @@ export async function toggleSavedProperty(userId: string, listingId: string) {
     where: { userId_listingId: { userId, listingId } },
   });
 
+  if (!existing) {
+    if (listing.availabilityStatus !== 'PUBLISHED') throw new Error('Listing not found');
+    const owner = await prisma.user.findUnique({ where: { id: listing.ownerId }, select: { status: true } });
+    if (!owner || owner.status !== 'ACTIVE') throw new Error('Listing not found');
+  }
+
   if (existing) {
     await prisma.savedProperty.delete({ where: { id: existing.id } });
     await auditLog.log({
@@ -786,7 +838,15 @@ export async function getSavedProperties(userId: string, { cursor, limit = 20 }:
   requireActiveUser(userId);
   const take = Math.min(Math.max(1, Number(limit || 20)), 50);
   const saves = await prisma.savedProperty.findMany({
-    where: { userId },
+    where: {
+      userId,
+      listing: {
+        is: {
+          availabilityStatus: 'PUBLISHED',
+          owner: { is: { status: 'ACTIVE' } },
+        },
+      },
+    },
     include: { listing: { select: LISTING_PUBLIC_SELECT } },
     orderBy: { createdAt: 'desc' },
     take: take + 1,
@@ -796,7 +856,7 @@ export async function getSavedProperties(userId: string, { cursor, limit = 20 }:
   const page = hasMore ? saves.slice(0, -1) : saves;
   const nextCursor = hasMore ? page[page.length - 1]?.id : undefined;
   return {
-    data: page.map((s) => s.listing).filter(Boolean),
+    data: page.map((s) => s.listing).filter(Boolean).map((listing) => ({ ...listing, isSaved: true })),
     nextCursor,
     hasMore: !!nextCursor,
   };
@@ -810,7 +870,8 @@ export async function contactListing(listingId: string, enquirerId: string, mess
   requireActiveUser(enquirerId);
 
   const listing = await prisma.propertyListing.findUnique({ where: { id: listingId } });
-  if (!listing) throw new Error('Listing not found');
+  if (!listing || listing.availabilityStatus !== 'PUBLISHED') throw new Error('Listing not found');
+  if (!listing.contactVantaMessaging) throw new Error('VANTA messaging is disabled for this listing');
   if (listing.ownerId === enquirerId) throw new Error('Cannot contact your own listing');
 
   const enquirer = await prisma.user.findUnique({ where: { id: enquirerId }, select: { status: true, username: true } });
@@ -900,6 +961,7 @@ export async function getListingContactOptions(listingId: string) {
     where: { id: listingId },
     select: {
       id: true,
+      availabilityStatus: true,
       contactVantaMessaging: true,
       contactWhatsApp: true,
       contactWhatsAppPublished: true,
@@ -907,7 +969,7 @@ export async function getListingContactOptions(listingId: string) {
       contactPhonePublished: true,
     },
   });
-  if (!listing) throw new Error('Listing not found');
+  if (!listing || listing.availabilityStatus !== 'PUBLISHED') return null;
 
   const options: any = {
     vantaMessaging: listing.contactVantaMessaging,
@@ -1056,11 +1118,12 @@ export async function createReport(reporterId: string, data: any) {
   if (!reporter || reporter.status !== 'ACTIVE') throw new Error('Account not active');
 
   const listing = await prisma.propertyListing.findUnique({ where: { id: data.listingId } });
-  if (!listing) throw new Error('Listing not found');
+  if (!listing || listing.availabilityStatus !== 'PUBLISHED') throw new Error('Listing not found');
+  if (listing.ownerId === reporterId) throw new Error('Cannot report your own listing');
 
   const validTypes = ['SCAM', 'FAKE_PROPERTY', 'UNAUTHORIZED_LISTING', 'MISLEADING_MEDIA', 'INCORRECT_PRICE', 'DUPLICATE_LISTING', 'ALREADY_RENTED', 'INAPPROPRIATE', 'OTHER'];
   if (!validTypes.includes(data.type)) throw new Error('Invalid report type');
-  if (!data.reason || typeof data.reason !== 'string') throw new Error('Reason is required');
+  if (typeof data.reason !== 'string' || !data.reason.trim()) throw new Error('Reason is required');
 
   // Prevent duplicate reports from same user on same listing
   const existing = await prisma.propertyReport.findUnique({

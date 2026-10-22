@@ -293,12 +293,14 @@ export const submitHomeVerification = (data: any, token?: string | null) =>
 export const fetchMyHomeVerification = (token?: string | null) =>
   apiGet<any>('/api/homes/verification', authToken(token));
 
-export const createHomeReport = (data: any) => apiPost<any>('/api/homes/reports', data);
+export const createHomeReport = (data: any, token?: string | null) => apiPost<any>('/api/homes/reports', data, authToken(token));
 
 // ==========================================
 // VANTA HOMES - Admin
 // ==========================================
-export const fetchAdminHomes = (params?: any) => {
+export const reviewAdminHomeListing = (id: string, data: { decision: 'APPROVE' | 'REJECT'; reason?: string }, token?: string | null) =>
+  apiPost<any>(`/api/homes/admin/listings/${id}/review`, data, authToken(token));
+export const fetchAdminHomes = (params?: any, token?: string | null) => {
   const qs = new URLSearchParams();
   if (params?.cursor) qs.set('cursor', params.cursor);
   if (params?.limit) qs.set('limit', String(params.limit));
@@ -307,33 +309,33 @@ export const fetchAdminHomes = (params?: any) => {
   if (params?.city) qs.set('city', params.city);
   if (params?.owner) qs.set('owner', params.owner);
   if (params?.search) qs.set('search', params.search);
-  return apiGet<any>(`/api/homes/admin${qs.toString() ? `?${qs.toString()}` : ''}`);
+  return apiGet<any>(`/api/homes/admin${qs.toString() ? `?${qs.toString()}` : ''}`, authToken(token));
 };
-export const fetchAdminHomeVerifications = (params?: any) => {
+export const fetchAdminHomeVerifications = (params?: any, token?: string | null) => {
   const qs = new URLSearchParams();
   if (params?.cursor) qs.set('cursor', params.cursor);
   if (params?.limit) qs.set('limit', String(params.limit));
   if (params?.type) qs.set('type', params.type);
   if (params?.status) qs.set('status', params.status);
-  return apiGet<any>(`/api/homes/admin/verifications${qs.toString() ? `?${qs.toString()}` : ''}`);
+  return apiGet<any>(`/api/homes/admin/verifications${qs.toString() ? `?${qs.toString()}` : ''}`, authToken(token));
 };
-export const decideHomeVerification = (id: string, data: any) =>
-  apiPost<any>(`/api/homes/admin/verifications/${id}/decide`, data);
-export const fetchAdminHomeReports = (params?: any) => {
+export const decideHomeVerification = (id: string, data: any, token?: string | null) =>
+  apiPost<any>(`/api/homes/admin/verifications/${id}/decide`, data, authToken(token));
+export const fetchAdminHomeReports = (params?: any, token?: string | null) => {
   const qs = new URLSearchParams();
   if (params?.cursor) qs.set('cursor', params.cursor);
   if (params?.limit) qs.set('limit', String(params.limit));
   if (params?.status) qs.set('status', params.status);
-  return apiGet<any>(`/api/homes/admin/reports${qs.toString() ? `?${qs.toString()}` : ''}`);
+  return apiGet<any>(`/api/homes/admin/reports${qs.toString() ? `?${qs.toString()}` : ''}`, authToken(token));
 };
-export const resolveHomeReport = (id: string, data: any) =>
-  apiPost<any>(`/api/homes/admin/reports/${id}/resolve`, data);
-export const fetchAdminHomeAuditLogs = (params?: any) => {
+export const resolveHomeReport = (id: string, data: any, token?: string | null) =>
+  apiPost<any>(`/api/homes/admin/reports/${id}/resolve`, data, authToken(token));
+export const fetchAdminHomeAuditLogs = (params?: any, token?: string | null) => {
   const qs = new URLSearchParams();
   if (params?.cursor) qs.set('cursor', params.cursor);
   if (params?.limit) qs.set('limit', String(params.limit));
   if (params?.listingId) qs.set('listingId', params.listingId);
   if (params?.actorId) qs.set('actorId', params.actorId);
   if (params?.action) qs.set('action', params.action);
-  return apiGet<any>(`/api/homes/admin/audit${qs.toString() ? `?${qs.toString()}` : ''}`);
+  return apiGet<any>(`/api/homes/admin/audit${qs.toString() ? `?${qs.toString()}` : ''}`, authToken(token));
 };

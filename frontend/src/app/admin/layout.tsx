@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   BarChart3, Users, UserCog, FileText, Radio, Wallet, Gift, Coins,
-  Building2, Bell, TrendingUp, ScrollText, Server, Shield, ShieldCheck,
+  Building2, Home, Bell, TrendingUp, ScrollText, Server, Shield, ShieldCheck,
   Menu, X, LogOut,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -56,6 +56,7 @@ const navSections: NavSection[] = [
       { href: '/admin/users', label: 'Users', icon: Users, roles: ADMIN_ROLES },
       { href: '/admin/creators', label: 'Creators', icon: UserCog, roles: ADMIN_ROLES },
       { href: '/admin/verification', label: 'Verification', icon: ShieldCheck, roles: ADMIN_ROLES },
+      { href: '/admin/homes', label: 'Homes', icon: Home, roles: ADMIN_ROLES },
       { href: '/admin/content', label: 'Content', icon: FileText, roles: ADMIN_ROLES },
     ],
   },
