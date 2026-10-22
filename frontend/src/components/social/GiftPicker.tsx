@@ -22,7 +22,7 @@ function Visual({ gift, preview = false, size = 68 }: { gift: GiftCatalogItem; p
   if (asset && !failed) return /\.(mp4|webm)(\?|$)/i.test(asset)
     ? <video src={asset} autoPlay={preview} loop muted playsInline preload={preview ? 'metadata' : 'none'} onError={() => setFailed(true)} className="h-full w-full object-contain" />
     : <img src={asset} alt="" loading={preview ? 'eager' : 'lazy'} onError={() => setFailed(true)} className="h-full w-full object-contain" />;
-  return <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={asset} size={preview ? 168 : size} animate={preview} quality={giftVisualQuality(gift)} />;
+  return <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={asset} size={size} animate={preview} quality={giftVisualQuality(gift)} />;
 }
 
 export default function GiftPicker({ gifts, balance, recipient, token, streamId, initialGift, loading = false, loadError, onRetry, onClose, onSent }: { gifts: GiftCatalogItem[]; balance: number; recipient: Recipient; token: string; streamId?: string; initialGift?: GiftCatalogItem | null; loading?: boolean; loadError?: string; onRetry?: () => void; onClose: () => void; onSent: (_balance: number, _amount: number, _gift: GiftCatalogItem) => void }) {
@@ -48,7 +48,7 @@ export default function GiftPicker({ gifts, balance, recipient, token, streamId,
   const send = async () => {
     if (!selected || insufficient || sending || !validRecipient) return; setSending(true);
     const requestId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2)}_${Math.random().toString(36).slice(2)}`;
-    try { const response = await apiPost<any>('/api/monetization/gifts/send', { receiverId: recipient.id, giftId: selected.id, streamId, quantity, message: message.trim() || undefined, requestId }, token); const result = response.transaction || response; onSent(response.remainingBalance ?? result.remainingBalance ?? balance, response.amount ?? result.amount ?? selected.price, selected); setSent(true); setTimeout(onClose, 2100); }
+    try { const response = await apiPost<any>('/api/monetization/gifts/send', { receiverId: recipient.id, giftId: selected.id, streamId, quantity, message: message.trim() || undefined, requestId }, token); const result = response.transaction || response; onSent(response.remainingBalance ?? result.remainingBalance ?? balance, response.amount ?? result.amount ?? totalCost, selected); setSent(true); setTimeout(onClose, 2100); }
     catch (error: any) { toast.error('Gift not sent', error?.message || 'The transaction could not be completed.'); setSending(false); }
   };
   return <>
@@ -76,7 +76,7 @@ export default function GiftPicker({ gifts, balance, recipient, token, streamId,
         <button aria-label="Close gift picker" disabled={sending} onClick={onClose} className="-mr-1 grid h-9 w-9 shrink-0 place-items-center rounded-full text-white/50 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-50"><X size={19} /></button>
       </header>
       <AnimatePresence mode="wait">{sent && selected ? <motion.div key="success" initial={{ opacity: 0, scale: .9 }} animate={{ opacity: 1, scale: 1 }} className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden p-8 text-center">
-        <motion.div initial={{ y: 30, scale: .5 }} animate={{ y: [0, -6, 0], scale: 1 }} className="relative flex h-44 w-44 items-center justify-center"><Visual gift={selected} preview /></motion.div>
+        <motion.div initial={{ y: 30, scale: .5 }} animate={{ y: [0, -6, 0], scale: 1 }} className="relative flex h-44 w-44 items-center justify-center"><Visual gift={selected} preview size={168} /></motion.div>
         <span className="relative grid h-10 w-10 place-items-center rounded-full bg-white text-black"><Check size={22} /></span>
         <h3 className="relative mt-3 text-xl font-bold text-white">Gift sent</h3>
         <p className="relative mt-1 text-sm text-white/60">You sent a {selected.name} to {recipient.fullName || recipient.username}</p>
