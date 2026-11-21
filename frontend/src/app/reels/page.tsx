@@ -883,7 +883,7 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
 
           <div className="absolute bottom-[calc(1.5rem_+_var(--vanta-native-reel-action-offset,calc(4rem_+_env(safe-area-inset-bottom))))] right-3 z-10 flex flex-col items-center gap-3 ">
             <div className="flex flex-col items-center gap-0.5 text-[10px] leading-3 text-white/65" aria-label={`${reel.views} views`}><span className="grid h-7 w-10 place-items-center"><Eye size={18} /></span><span>{formatCount(reel.views)}</span></div>
-            <Action icon={<Heart className={reel.isLiked ? 'fill-[#f2c75c] text-[#c9a227] drop-shadow-[0_0_6px_rgba(242,199,92,.85)]' : 'text-[#8a8a8a]'} />} label={formatCount(reel.likes)} ariaLabel={reel.isLiked ? 'Unlike Reel' : 'Like Reel'} onClick={onLike} active={reel.isLiked} sparkle />
+            <Action icon={<Heart className={reel.isLiked ? 'fill-[#f2c75c] text-[#c9a227] drop-shadow-[0_0_6px_rgba(242,199,92,.85)]' : 'text-[#8a8a8a]'} />} label={formatCount(reel.likes)} ariaLabel={reel.isLiked ? 'Unlike Reel' : 'Like Reel'} onClick={onLike} active={reel.isLiked} />
             <Action icon={<MessageCircle />} label={formatCount(reel.comments)} ariaLabel="Open comments" onClick={onComment} />
             <Action icon={<RefreshCw />} label={formatCount(reel.reposts || 0)} ariaLabel={reel.isReposted ? 'Remove repost' : 'Repost Reel'} onClick={onRepost} active={Boolean(reel.isReposted)} />
             <Action icon={<Share2 />} label={formatCount(reel.shares || 0)} ariaLabel={`Share Reel · ${reel.shares || 0} shares`} onClick={onShare} />
@@ -899,12 +899,11 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
   );
 }
 
-function Action({ icon, label, ariaLabel, onClick, active, sparkle = false }: { icon: ReactNode; label: string; ariaLabel: string; onClick: () => void; active?: boolean; sparkle?: boolean }) {
+function Action({ icon, label, ariaLabel, onClick, active }: { icon: ReactNode; label: string; ariaLabel: string; onClick: () => void; active?: boolean }) {
   const [pulse, setPulse] = useState(0);
   return <motion.button type="button" onClick={() => { setPulse(value => value + 1); onClick(); }} whileTap={{ scale: 0.9 }} transition={{ type: 'spring', stiffness: 520, damping: 18 }} className={cn('flex min-h-10 min-w-10 flex-col items-center gap-0.5 text-[10px] leading-3 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60', active ? 'text-[#c9a227]' : 'text-[#8a8a8a] hover:text-white')} aria-label={ariaLabel} aria-pressed={active}>
     <span className="relative grid h-7 w-10 place-items-center">
       <motion.span key={pulse} initial={{ scale: 0.65, rotate: -18 }} animate={{ scale: [0.65, 1.35, 0.95, 1], rotate: [-18, 10, -4, 0] }} transition={{ duration: 0.42, times: [0, 0.42, 0.72, 1], ease: 'easeOut' }}>{icon}</motion.span>
-      {sparkle && pulse > 0 && <motion.span key={`sparkle-${pulse}`} initial={{ opacity: 0, scale: 0.45, rotate: -25 }} animate={{ opacity: [0, 1, 0], scale: [0.45, 1.15, 0.75], rotate: [-25, 8, 25] }} transition={{ duration: 0.55 }} className="pointer-events-none absolute -right-1 -top-1 text-[#f2c75c]"><Sparkles size={15} /></motion.span>}
     </span><span>{label}</span>
   </motion.button>;
 }

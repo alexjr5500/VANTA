@@ -164,6 +164,32 @@ export class FeedService {
    * 8. Ads (occasionally, clearly labeled)
    */
   async getHomeFeed(userId: string, cursor?: string, limit: number = 15, seed?: string) {
+    const feed: any = await this.getHomeFeedCached(userId, cursor, limit, seed);
+    const items: any[] = Array.isArray(feed?.items) ? feed.items : [];
+    const reelIds = items.filter(item => item?.type === 'reel' && typeof item.id === 'string').map(item => item.id.replace(/^video-/, ''));
+    if (!reelIds.length) return feed;
+    // Repost/gift counts and the viewer's own state change often, so they are read fresh instead of from the short-lived feed cache.
+    const [repostCounts, myReposts, giftTotals, myGifts] = await Promise.all([
+      prisma.reelRepost.groupBy({ by: ['videoId'], where: { videoId: { in: reelIds } }, _count: { _all: true } }),
+      prisma.reelRepost.findMany({ where: { userId, videoId: { in: reelIds } }, select: { videoId: true } }),
+      prisma.giftTransaction.groupBy({ by: ['videoId'], where: { videoId: { in: reelIds }, status: 'COMPLETED' }, _sum: { quantity: true } }),
+      prisma.giftTransaction.findMany({ where: { senderId: userId, videoId: { in: reelIds }, status: 'COMPLETED' }, select: { videoId: true }, distinct: ['videoId'] }),
+    ]);
+    const reposts = new Map(repostCounts.map(row => [row.videoId, row._count._all]));
+    const mine = new Set(myReposts.map(row => row.videoId));
+    const gifts = new Map(giftTotals.map(row => [row.videoId, row._sum.quantity || 0]));
+    const gifted = new Set(myGifts.map(row => row.videoId));
+    return {
+      ...feed,
+      items: items.map(item => {
+        if (item?.type !== 'reel') return item;
+        const id = String(item.id).replace(/^video-/, '');
+        return { ...item, reposts: reposts.get(id) || 0, isReposted: mine.has(id), gifts: gifts.get(id) || 0, tips: gifts.get(id) || 0, isGifted: gifted.has(id) };
+      }),
+    };
+  }
+
+  private async getHomeFeedCached(userId: string, cursor?: string, limit: number = 15, seed?: string) {
     const cacheKey = `${CACHE_KEYS.HOME_FEED(userId, cursor)}:${seed || 'default'}`;
     
     return cacheService.getOrSet(cacheKey, async () => {
