@@ -84,6 +84,7 @@ export default function DiscoverPage() {
   const [cursor, setCursor] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
   const [error, setError] = useState('');
   const [commentsFor, setCommentsFor] = useState<Item>();
   const [shareFor, setShareFor] = useState<Item>();
@@ -95,7 +96,8 @@ export default function DiscoverPage() {
     // error states so the current layout and scroll position stay intact.
     if (!background) {
       append ? setLoadingMore(true) : setLoading(true);
-      if (!append) setError('');
+      if (append) setLoadMoreError(false);
+      else { setError(''); setLoadMoreError(false); }
     }
     const exploreQuery = new URLSearchParams({ limit: '12' });
     if (nextCursor) exploreQuery.set('cursor', nextCursor);
@@ -118,14 +120,19 @@ export default function DiscoverPage() {
       const fulfilled = results.filter(result => result.status === 'fulfilled').length;
       if (!fulfilled) throw new Error('Discover services are unavailable');
       const value = (index: number) => results[index].status === 'fulfilled' ? (results[index] as PromiseFulfilledResult<any>).value : {};
-      setPosts(unwrap(value(0))); setCursor(value(0)?.nextCursor);
-      setTrending(unwrap(value(1))); setCreators(unwrap(value(2)));
-      setReels(unwrap(value(3))); setLive(unwrap(value(4))); setCommunities(unwrap(value(5)));
+      // A partial failure must not silently erase previously loaded sections.
+      if (results[0].status === 'fulfilled') { setPosts(unwrap(value(0))); setCursor(value(0)?.nextCursor); }
+      if (results[1].status === 'fulfilled') setTrending(unwrap(value(1)));
+      if (results[2].status === 'fulfilled') setCreators(unwrap(value(2)));
+      if (results[3].status === 'fulfilled') setReels(unwrap(value(3)));
+      if (results[4].status === 'fulfilled') setLive(unwrap(value(4)));
+      if (results[5].status === 'fulfilled') setCommunities(unwrap(value(5)));
     } catch (reason) {
       // A pull-to-refresh failure surfaces through the gesture (retry hint)
       // instead of replacing the page with an error state.
       if (background) throw reason;
-      setError("Couldn't load Discover.");
+      if (append) setLoadMoreError(true);
+      else setError("Couldn't load Discover.");
     } finally {
       if (!background) { setLoading(false); setLoadingMore(false); }
     }
@@ -191,9 +198,9 @@ export default function DiscoverPage() {
   useEffect(() => {
     const element = sentinel.current;
     if (!element || !cursor || debouncedQuery || category !== 'forYou') return;
-    const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting && !loadingMore) void loadDiscover(true, cursor); }, { rootMargin: '500px' });
+    const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting && !loading && !loadingMore && !loadMoreError) void loadDiscover(true, cursor); }, { rootMargin: '500px' });
     observer.observe(element); return () => observer.disconnect();
-  }, [category, cursor, debouncedQuery, loadDiscover, loadingMore]);
+  }, [category, cursor, debouncedQuery, loadDiscover, loading, loadingMore, loadMoreError]);
 
   const featured = useMemo(() => live[0] || reels[0] || trending.find(mediaOf) || posts.find(mediaOf) || creators[0], [creators, live, posts, reels, trending]);
   const topics = useMemo(() => {
