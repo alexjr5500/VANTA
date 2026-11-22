@@ -60,7 +60,7 @@ export default function ProfileContent(props: Props) {
   return <><div className="content-grid">{rows.map(item => {
     const image = mediaUrl(item);
     const isLive = gridTab === 'live';
-    const kind = isLive || gridTab === 'reels' || gridTab === 'reposts' ? 'video' : postKind(item);
+    const kind = isLive || gridTab === 'reels' ? 'video' : postKind(item);
     const isVideo = kind === 'video';
     const videoSource = isVideo ? mediaUrl({ videoUrl: item.videoUrl || item.playbackUrl || item.mediaUrl || item.media || item.url }) : '';
     const isText = kind === 'text';
@@ -69,7 +69,7 @@ export default function ProfileContent(props: Props) {
     const tileImage = isVideo
       ? mediaUrl({ thumbnailUrl: item.thumbnailUrl || item.thumbnail || item.posterUrl || item.previewImageUrl })
       : image;
-    const destination = isLive ? `/live/${item.id}` : gridTab === 'reels' || gridTab === 'reposts' ? `/reels/${item.id}` : `/post/${cleanPostId(item)}`;
+    const destination = isLive ? `/live/${item.id}` : gridTab === 'reels' ? `/reels/${item.id}` : `/post/${cleanPostId(item)}`;
     const isProfileMedia = gridTab === 'media';
     return <article className={isText ? 'content-tile tile-text' : 'content-tile'} key={item.id}>
       {isText ? (
@@ -80,10 +80,10 @@ export default function ProfileContent(props: Props) {
       ) : (
         <button className="tile-open" onClick={() => { if (isProfileMedia && !isVideo) { if (image) setPreview({ src: image, alt: item.title || `${profile.username}'s media` }); } else router.push(destination); }} aria-label={isProfileMedia ? `View ${item.title || 'profile media'}` : `Open ${gridTab} item`}>{tileImage ? <img src={tileImage} alt={item.content || item.title || `${gridTab} item`} loading="lazy" /> : isVideo && !isLive && videoSource ? <video src={videoSource} poster={mediaUrl({ thumbnailUrl: item.thumbnailUrl || item.thumbnail || item.posterUrl || item.previewImageUrl }) || undefined} aria-label={item.content || item.title || 'Reel preview'} muted playsInline preload="metadata" onLoadedMetadata={event => { const video = event.currentTarget; if (video.currentTime === 0 && Number.isFinite(video.duration) && video.duration > 0) { try { video.currentTime = Math.min(0.1, video.duration / 2); } catch { /* metadata-only preview */ } } }} /> : <div className="tile-fallback"><span>{isLive ? <Radio /> : gridTab === 'reels' ? <Film /> : <ImageIcon />}</span><small>{item.content || item.title || 'VANTA'}</small></div>}</button>
       )}
-      {isVideo && !isLive && <span className="tile-type"><Play size={11} className="tile-type-play" />{gridTab === 'reels' || gridTab === 'reposts' ? 'REEL' : 'VIDEO'}</span>}
+      {isVideo && !isLive && <span className="tile-type"><Play size={11} className="tile-type-play" />{gridTab === 'reels' ? 'REEL' : 'VIDEO'}</span>}
       {isLive && <span className={`tile-type ${item.status === 'LIVE' ? 'is-live' : ''}`}>{item.status === 'LIVE' ? 'LIVE' : 'STREAM'}</span>}
       {isVideo && !isLive && <span className="tile-play"><span className="tile-play-chip"><Play size={16} fill="currentColor" /></span></span>}
-      {!isText && gridTab !== 'media' && <div className="tile-overlay"><div className="tile-metrics">{isLive || gridTab === 'reels' || gridTab === 'reposts' ? <><Eye size={16} />{formatCount(item.views ?? item.viewerCount ?? item.totalViewers)}</> : <><button onClick={() => onLike(item)} aria-label={item.liked ? "Unlike" : "Like"} aria-pressed={Boolean(item.liked)} className={item.liked ? "text-[#c9a227]" : "text-[#8a8a8a]"}><Heart size={17} fill={item.liked ? "currentColor" : "none"} />{formatCount(item.likes ?? item._count?.likes)}</button><button onClick={() => onComment(item)} aria-label="Comments"><MessageCircle size={17} />{formatCount(item.comments ?? item._count?.comments)}</button></>}</div><div className="tile-actions">{gridTab === 'reels' && own && <button onClick={() => onDelete(item)} aria-label="Delete"><Trash2 size={16} /></button>}</div></div>}
+      {!isText && gridTab !== 'media' && <div className="tile-overlay"><div className="tile-metrics">{isLive || gridTab === 'reels' ? <><Eye size={16} />{formatCount(item.views ?? item.viewerCount ?? item.totalViewers)}</> : <><button onClick={() => onLike(item)} aria-label={item.liked ? "Unlike" : "Like"} aria-pressed={Boolean(item.liked)} className={item.liked ? "text-[#c9a227]" : "text-[#8a8a8a]"}><Heart size={17} fill={item.liked ? "currentColor" : "none"} />{formatCount(item.likes ?? item._count?.likes)}</button><button onClick={() => onComment(item)} aria-label="Comments"><MessageCircle size={17} />{formatCount(item.comments ?? item._count?.comments)}</button></>}</div><div className="tile-actions">{gridTab === 'reels' && own && <button onClick={() => onDelete(item)} aria-label="Delete"><Trash2 size={16} /></button>}</div></div>}
     </article>;
   })}</div><ImageViewer src={preview?.src ?? null} alt={preview?.alt} onClose={() => setPreview(null)} /></>;
 }
