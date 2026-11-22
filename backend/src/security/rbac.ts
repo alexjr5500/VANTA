@@ -303,7 +303,7 @@ export function getAllRoles(): Role[] {
  * Convert string to Role enum
  */
 export function parseRole(role: string): Role {
-  const upper = role.toUpperCase();
+  const upper = role.trim().toUpperCase();
   // Keep compatibility with role names used by older/admin deployments.
   if (upper === 'ADMINISTRATOR') return Role.ADMIN;
   if (Object.values(Role).includes(upper as Role)) {

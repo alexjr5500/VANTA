@@ -1,7 +1,16 @@
 import { describe, expect, test } from '@jest/globals';
-import { hasPermission, Permission, Role } from '../security/rbac';
+import { hasPermission, parseRole, Permission, Role } from '../security/rbac';
 
 describe('admin section permissions', () => {
+  test('normalizes padded administrator roles without granting unknown roles access', () => {
+    expect(parseRole(' admin ')).toBe(Role.ADMIN);
+    expect(parseRole(' CEO ')).toBe(Role.CEO);
+    expect(parseRole(' super_admin ')).toBe(Role.SUPER_ADMIN);
+    expect(parseRole(' administrator ')).toBe(Role.ADMIN);
+    expect(parseRole('unexpected-role')).toBe(Role.USER);
+    expect(hasPermission(parseRole('unexpected-role'), Permission.VIEW_SYSTEM_HEALTH)).toBe(false);
+  });
+
   test('moderators can handle moderation but cannot access financial controls', () => {
     expect(hasPermission(Role.MODERATOR, Permission.VIEW_REPORTS)).toBe(true);
     expect(hasPermission(Role.MODERATOR, Permission.RESOLVE_REPORTS)).toBe(true);
