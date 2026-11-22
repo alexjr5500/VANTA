@@ -66,6 +66,21 @@ describeWithDatabase('DurableQueueRepository PostgreSQL integration', () => {
     await expect(repository.complete('lease-job', 'worker-b')).resolves.toBe(true);
   });
 
+  it('refuses all terminal updates when the owner lease has expired but is not yet reclaimed', async () => {
+    await repository.enqueue('integration:expired', {}, { id: 'expired-job', maxAttempts: 2 });
+    await expect(repository.claim('worker-a')).resolves.toMatchObject({ id: 'expired-job' });
+    await pool.query(
+      'UPDATE "QueueJob" SET "lockedUntil" = NOW() - INTERVAL \\'1 second\\' WHERE "id" = $1',
+      ['expired-job'],
+    );
+    await expect(repository.complete('expired-job', 'worker-a')).resolves.toBe(false);
+    await expect(repository.fail('expired-job', 'worker-a', 'stale failure')).resolves.toBe(false);
+    await expect(repository.failPermanently('expired-job', 'worker-a', 'stale permanent failure')).resolves.toBe(false);
+    const state = await pool.query('SELECT "status", "attempts" FROM "QueueJob" WHERE "id" = $1', ['expired-job']);
+    expect(state.rows[0]).toMatchObject({ status: 'active', attempts: 1 });
+    await expect(repository.claim('worker-b')).resolves.toMatchObject({ id: 'expired-job', attempts: 2 });
+  });
+
   it('persists retry scheduling and marks a job failed after its final attempt', async () => {
     await repository.enqueue('integration:retry', {}, { id: 'retry-job', maxAttempts: 2 });
     const firstClaim = await repository.claim('worker-a');
