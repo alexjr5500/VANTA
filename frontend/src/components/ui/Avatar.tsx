@@ -73,7 +73,7 @@ export default function Avatar({
   useEffect(() => {
     const handleUpdate = (event: Event) => {
       const detail = (event as CustomEvent<ProfileMediaUpdate>).detail;
-      if (mediaUrlsMatch(resolvedSrc, detail.previousAvatar)) {
+      if (detail && mediaUrlsMatch(resolvedSrc, detail.previousAvatar)) {
         setResolvedSrc(detail.avatar ? resolveMediaUrl(detail.avatar) : null);
         setError(false);
       }
