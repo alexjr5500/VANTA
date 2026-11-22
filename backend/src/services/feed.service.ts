@@ -570,6 +570,7 @@ export class FeedService {
       likes: post._count?.likes || 0,
       comments: post._count?.comments || 0,
       shares: post.shareCount || 0,
+      views: post.views ?? 0,
       createdAt: post.createdAt,
       liked: post.likes?.length > 0 || post.isLiked || false,
       saved: post.saves?.length > 0 || post.isSaved || false,
