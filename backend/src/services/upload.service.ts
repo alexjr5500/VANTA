@@ -9,6 +9,8 @@ import { prisma } from "../prisma";
 import { imageOptimizer } from "./image-optimizer.service";
 import { createPrivateMediaUrl } from "./private-media.service";
 import { isCloudinaryStorageConfigured } from "./cloudinary-storage-config";
+import { DurableQueueRepository } from "./durable-queue.repository";
+import { enqueueCloudinaryMediaForUpload } from "./cloudinary-media-producer";
 
 const configuredUploadDir = process.env.UPLOAD_STORAGE_DIR;
 // Resolve relative storage paths against the backend project, not process.cwd().
@@ -119,6 +121,10 @@ if (!fs.existsSync(optimizedDir)) {
 
 const uploadPublicBaseUrl = (process.env.UPLOAD_PUBLIC_BASE_URL || "").replace(/\/$/, "");
 const useCloudinary = isCloudinaryStorageConfigured(process.env);
+const cloudinaryMediaProducerEnabled = process.env.VANTA_DURABLE_QUEUE_MEDIA_PRODUCER === "true";
+if (cloudinaryMediaProducerEnabled && !useCloudinary) {
+  throw new Error("Durable Cloudinary media producer requires configured Cloudinary storage");
+}
 const execFileAsync = promisify(execFile);
 const maxVideoDurationSeconds = Number(process.env.MAX_VIDEO_DURATION_SECONDS || 600);
 
@@ -569,26 +575,44 @@ export class UploadService {
       }
     }
 
-    // Persist only after storage succeeds; remove the asset if database persistence fails.
+    // Persist metadata and queue work atomically when Cloudinary media processing
+    // is explicitly enabled. The feature is disabled by default, including prod.
+    // Cloudinary has already accepted the original upload at this point.
+    const metadata = {
+      userId,
+      filename: file.filename,
+      originalName: file.originalname,
+      url: finalUrl,
+      path: storagePath,
+      mimeType: normalizeMimeType(file.mimetype),
+      fileType,
+      size: file.size,
+      category,
+      recordType: recordType || null,
+      recordId: recordId || null,
+    };
     let record;
     try {
-      record = await prisma.uploadedFile.create({
-        data: {
-        userId,
-        filename: file.filename,
-        originalName: file.originalname,
-        url: finalUrl,
-        path: storagePath,
-        mimeType: normalizeMimeType(file.mimetype),
-        fileType,
-        size: file.size,
-        category,
-        recordType: recordType || null,
-        recordId: recordId || null,
-        },
-      });
+      if (cloudinaryMediaProducerEnabled) {
+        record = await prisma.$transaction(async tx => {
+          const created = await tx.uploadedFile.create({ data: metadata });
+          const repository = new DurableQueueRepository(tx);
+          await enqueueCloudinaryMediaForUpload(
+            { id: created.id, fileType, category },
+            { optimize, generateThumbnail },
+            repository,
+          );
+          return created;
+        });
+      } else {
+        record = await prisma.uploadedFile.create({ data: metadata });
+      }
     } catch (error) {
-      await this.deleteStorageAsset(file.filename, storagePath);
+      try {
+        await this.deleteStorageAsset(file.filename, storagePath);
+      } finally {
+        removeLocalFile(file.path);
+      }
       throw new Error(`Could not save uploaded file metadata: ${error instanceof Error ? error.message : "database error"}`);
     }
 
