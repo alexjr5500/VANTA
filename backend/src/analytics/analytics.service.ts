@@ -171,7 +171,7 @@ export class AnalyticsEngine {
           targetType: e.targetType || null,
           targetId: e.targetId || null,
           metadata: e.metadata ? JSON.stringify(e.metadata) : null,
-          value: e.value || null,
+          value: e.value ?? null,
           ipAddress: e.ipAddress || null,
           userAgent: e.userAgent || null,
           deviceType: e.deviceInfo || null,
