@@ -31,7 +31,7 @@ function encoder(): SharpLike {
 export async function generateLocalThumbnail(
   storageRoot: string,
   job: MediaImageJob,
-  sharp: SharpLike = encoder(),
+  sharp?: SharpLike,
 ): Promise<string> {
   const input = resolveLocalMediaInput(storageRoot, job.inputPath);
   const name = safeMediaOutputName(job.outputName);
@@ -49,7 +49,7 @@ export async function generateLocalThumbnail(
   }
   const temporary = destination + '.' + crypto.randomBytes(12).toString('hex') + '.tmp';
   try {
-    await sharp(input).rotate().resize(320, 180, { fit: 'cover', withoutEnlargement: true })
+    await (sharp ?? encoder())(input).rotate().resize(320, 180, { fit: 'cover', withoutEnlargement: true })
       .webp({ quality: 70 }).toFile(temporary);
     if (fs.statSync(temporary).size === 0) throw new Error('Encoder produced empty thumbnail');
     // Exclusive destination creation prevents concurrent jobs overwriting output.
@@ -57,6 +57,9 @@ export async function generateLocalThumbnail(
       fs.linkSync(temporary, destination);
     } catch (error: any) {
       if (error?.code !== 'EEXIST') throw error;
+      if (!fs.lstatSync(destination).isFile() || fs.statSync(destination).size === 0) {
+        throw new Error('Concurrent thumbnail output is invalid');
+      }
     }
     return '/uploads/thumbnails/' + name + '_thumb.webp';
   } finally {
