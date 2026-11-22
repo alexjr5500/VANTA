@@ -72,6 +72,18 @@ describe('DurableQueueRepository', () => {
     db.$executeRawUnsafe.mockResolvedValueOnce(0);
     await expect(repo.fail('j1', 'worker-b', 'error')).resolves.toBe(false);
   });
+  it('requires a live lease for completion and failure updates', async () => {
+    await repo.complete('j1', 'worker-a');
+    await repo.fail('j1', 'worker-a', 'retry');
+    await repo.failPermanently('j1', 'worker-a', 'permanent');
+    for (const call of db.$executeRawUnsafe.mock.calls) {
+      const query = call[0];
+      if (query.includes('UPDATE "QueueJob"')) {
+        expect(query).toContain('"lockedUntil" > NOW()');
+      }
+    }
+  });
+
   it('normalizes negative and non-finite retry delay', async () => {
     await repo.fail('j2', 'worker-a', 'failed', -20);
     expect(db.$executeRawUnsafe).toHaveBeenCalledWith(expect.any(String), 'j2', 'worker-a', 0, 'failed');
