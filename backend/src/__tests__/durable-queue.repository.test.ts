@@ -27,10 +27,14 @@ describe('DurableQueueRepository', () => {
     const job = { id: 'j1' } as DurableJob;
     db.$queryRawUnsafe.mockResolvedValueOnce([job]);
     await expect(repo.claim('worker-a', 5000)).resolves.toBe(job);
-    expect(db.$queryRawUnsafe).toHaveBeenCalledWith(expect.stringContaining('FOR UPDATE SKIP LOCKED'), 'worker-a', 5000);
-    expect(db.$queryRawUnsafe).toHaveBeenCalledWith(expect.stringContaining('"attempts" < "maxAttempts"'), 'worker-a', 5000);
+    expect(db.$queryRawUnsafe).toHaveBeenCalledWith(expect.stringContaining('FOR UPDATE SKIP LOCKED'), 'worker-a', 5000, []);
+    expect(db.$queryRawUnsafe).toHaveBeenCalledWith(expect.stringContaining('"attempts" < "maxAttempts"'), 'worker-a', 5000, []);
     db.$queryRawUnsafe.mockResolvedValueOnce([]);
     await expect(repo.claim('worker-a')).resolves.toBeNull();
+    await repo.claim('worker-a', 5000, ['image:optimize']);
+    expect(db.$queryRawUnsafe).toHaveBeenLastCalledWith(
+      expect.stringContaining('"type" <> ALL($3::text[])'), 'worker-a', 5000, ['image:optimize'],
+    );
   });
   it('rejects blank workers and invalid lease durations', async () => {
     await expect(repo.claim('')).rejects.toThrow('Worker id is required');
