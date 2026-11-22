@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import { apiGet, apiPut } from '@/lib/apiClient';
 import { MAX_AVATAR_SIZE, MAX_BANNER_SIZE, uploadAvatar, uploadBanner, validateFile } from '@/lib/uploadService';
 import { versionMediaUrl } from '@/lib/profileMedia';
+import { resolveMediaUrl } from '@/lib/mediaUrl';
 import './edit-profile.css';
 import './edit-profile-recovery.css';
 
@@ -44,8 +45,8 @@ export default function EditProfilePage() {
       const profile = profileValue(value);
       if (!profile || typeof profile !== 'object' || !profile.username) throw new Error('Your profile data is unavailable.');
       const next = { fullName: profile.fullName || '', username: profile.username || '', bio: profile.bio || '', city: profile.city || '', website: profile.website || '', dateOfBirth: profile.dateOfBirth ? String(profile.dateOfBirth).slice(0, 10) : '' };
-      const media = { avatar: profile.avatarUrl || profile.avatar || '', cover: profile.bannerUrl || '' };
-      setForm(next); setOriginal(next); setInitialMedia(media); setAvatar({ file: null, preview: media.avatar }); setCover({ file: null, preview: media.cover });
+      const media = { avatar: profile.avatarUrl || profile.profile?.avatarUrl || profile.avatar || '', cover: profile.bannerUrl || profile.profile?.bannerUrl || '' };
+      setForm(next); setOriginal(next); setInitialMedia(media); setAvatar({ file: null, preview: resolveMediaUrl(media.avatar) }); setCover({ file: null, preview: resolveMediaUrl(media.cover) });
       setLoadFailed(false);
     }).catch((reason: any) => {
       if (!active || requestId !== profileRequest.current || reason?.statusCode === 499) return;
@@ -118,7 +119,7 @@ export default function EditProfilePage() {
       const saved = profileValue(await apiPut<any>('/api/profiles/me', payload, token));
       await updateUser({ ...saved, ...payload, avatar: avatarUrl, avatarUrl, bannerUrl }, { versionMedia: true });
       const next = { fullName: payload.fullName, username: payload.username, bio: payload.bio, city: payload.city, website: payload.website, dateOfBirth: payload.dateOfBirth || '' };
-      setOriginal(next); setForm(next); setInitialMedia({ avatar: avatarUrl, cover: bannerUrl }); setAvatar({ file: null, preview: versionMediaUrl(avatarUrl) || '' }); setCover({ file: null, preview: versionMediaUrl(bannerUrl) || '' });
+      setOriginal(next); setForm(next); setInitialMedia({ avatar: avatarUrl, cover: bannerUrl }); setAvatar({ file: null, preview: resolveMediaUrl(versionMediaUrl(avatarUrl)) }); setCover({ file: null, preview: resolveMediaUrl(versionMediaUrl(bannerUrl)) });
       setSuccess('Changes saved'); window.setTimeout(() => router.replace(`/profile/${payload.username}`), 600);
     } catch (reason: any) {
       const message = String(reason?.message || 'Unable to save changes. Check your connection and try again.');
