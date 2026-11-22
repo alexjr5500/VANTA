@@ -487,6 +487,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [managedEntity, setManagedEntity] = useState<any>(null);
   const [managementSearch, setManagementSearch] = useState('');
   const [managementResults, setManagementResults] = useState<any[]>([]);
+  const managementSearchRequestRef = useRef(0);
   const [managementBusy, setManagementBusy] = useState<string | null>(null);
   const [ownershipConfirm, setOwnershipConfirm] = useState<any | null>(null);
   const [isSavingEntity, setIsSavingEntity] = useState(false);
@@ -1175,6 +1176,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setMessageInput('');
     if (activeConversationRef.current) socketRef.current?.emit('leave_conversation', activeConversationRef.current);
     entityInfoRequestRef.current += 1;
+    managementSearchRequestRef.current += 1;
     activeConversationRef.current = id;
     previousLastMessageIdRef.current = null;
     initialScrollDoneRef.current = false;
@@ -2371,14 +2373,19 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
 
   const searchManagementUsers = async (value: string) => {
+    const requestId = ++managementSearchRequestRef.current;
+    const conversationId = activeConversationRef.current;
     setManagementSearch(value);
     if (!token || value.trim().length < 2) { setManagementResults([]); return; }
     try {
       const result = await apiGet<any>(`/api/search?q=${encodeURIComponent(value.trim())}&type=users`, token);
       const users = result?.results?.users ?? result?.data?.users ?? result?.users ?? (Array.isArray(result) ? result : []);
+      if (managementSearchRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       const memberIds = new Set((managedEntity?.members || []).map((member: any) => member.userId));
       setManagementResults(users.filter((person: any) => person.id !== user?.id && !memberIds.has(person.id)));
-    } catch { setManagementResults([]); }
+    } catch {
+      if (managementSearchRequestRef.current === requestId && activeConversationRef.current === conversationId) setManagementResults([]);
+    }
   };
 
   const updateManagedMembers = async (memberIds: string[], successMessage: string) => {
