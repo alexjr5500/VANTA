@@ -117,7 +117,7 @@ export class AnalyticsEngine {
     // Add to buffer for batch processing
     EVENT_BUFFER.push({
       ...event,
-      timestamp: event.createdAt || new Date().toISOString(),
+      timestamp: event.timestamp || new Date().toISOString(),
     });
 
     // Update real-time metrics
@@ -137,7 +137,7 @@ export class AnalyticsEngine {
     for (const event of events) {
       EVENT_BUFFER.push({
         ...event,
-        timestamp: event.createdAt || new Date().toISOString(),
+        timestamp: event.timestamp || new Date().toISOString(),
       });
       this.updateRealtimeMetrics(event);
       analyticsEventBus.emit('event', event);
