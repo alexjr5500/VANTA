@@ -91,11 +91,12 @@ export default function HomePage() {
   const [storyRefreshKey, setStoryRefreshKey] = useState(0);
   // Per-session feed seed. A stable seed keeps pagination consistent within a
   // visit; a refresh generates a NEW seed so the discovery content reorders.
-  const [feedSeed, setFeedSeed] = useState(() => Math.random().toString(36).slice(2, 10));
+  const feedSeedRef = useRef(Math.random().toString(36).slice(2, 10));
   const [cursor, setCursor] = useState<string>();
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
   const [error, setError] = useState('');
   const [online, setOnline] = useState(true);
   const [giftFor, setGiftFor] = useState<Item>();
@@ -114,12 +115,13 @@ export default function HomePage() {
   const fetchFeed = useCallback(async (reset = true, requestedCursor?: string, nextSeed?: string) => {
     if (!token) return;
     reset ? setLoading(true) : setLoadingMore(true);
-    setError('');
+    if (reset) { setError(''); setLoadMoreError(false); }
+    else setLoadMoreError(false);
     try {
       const query = new URLSearchParams({ limit: '12' });
       if (requestedCursor) query.set('cursor', requestedCursor);
       // Only the mixed home feed is seed-rotated; the Following tab is chronological.
-      const seedToUse = nextSeed ?? feedSeed;
+      const seedToUse = nextSeed ?? feedSeedRef.current;
       if (tab !== 'following') query.set('seed', seedToUse);
       const endpoint = tab === 'following' ? '/api/feed' : '/api/feed/home';
       const data = await apiGet<any>(`${endpoint}?${query}`, token, { skipCache: reset });
@@ -127,15 +129,15 @@ export default function HomePage() {
       setItems(previous => reset ? next : [...previous, ...next.filter(item => !previous.some(existing => existing.id === item.id))]);
       setCursor(data?.nextCursor);
       setHasMore(Boolean(data?.nextCursor));
-    } catch { setError("Couldn't load your feed."); }
+    } catch { if (reset) setError("Couldn't load your feed."); else setLoadMoreError(true); }
     finally { setLoading(false); setLoadingMore(false); }
-  }, [token, tab, feedSeed]);
+  }, [token, tab]);
 
   // Explicit refresh: start a NEW feed session (new seed) so the discovery
   // content reorders, and refresh the story tray too.
   const refreshFeed = useCallback(async () => {
     const nextSeed = Math.random().toString(36).slice(2, 10);
-    setFeedSeed(nextSeed);
+    feedSeedRef.current = nextSeed;
     setCursor(undefined);
     setHasMore(true);
     setStoryRefreshKey(key => key + 1);
@@ -163,7 +165,7 @@ export default function HomePage() {
     } : item));
     socket.on('social:post-updated', update); socket.on('social:comment-created', update); socket.connect();
     return () => { socket.off('social:post-updated', update); socket.off('social:comment-created', update); socket.disconnect(); };
-  }, [token]);
+  }, [token, user?.id]);
   useEffect(() => {
     if (!token) return;
     let current = true;
@@ -176,7 +178,7 @@ export default function HomePage() {
     const interval = window.setInterval(() => { void refreshLive(); }, 15_000);
     return () => { current = false; window.clearInterval(interval); };
   }, [token]);
-  useEffect(() => { const element = sentinel.current; if (!element) return; const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting && hasMore && !loadingMore) void fetchFeed(false, cursor); }, { rootMargin: '500px' }); observer.observe(element); return () => observer.disconnect(); }, [cursor, fetchFeed, hasMore, loadingMore]);
+  useEffect(() => { const element = sentinel.current; if (!element) return; const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting && hasMore && !loading && !loadingMore && !loadMoreError) void fetchFeed(false, cursor); }, { rootMargin: '500px' }); observer.observe(element); return () => observer.disconnect(); }, [cursor, fetchFeed, hasMore, loading, loadingMore, loadMoreError]);
 
   // Delete a post/reel from the â€¢â€¢â€¢ menu (own content only). Removes the item
   // from the local feed immediately after the server confirms.
@@ -234,16 +236,50 @@ export default function HomePage() {
     }
   };
   const follow = async (item: Item) => {
-    if (!token) return; const creator = getAuthor(item); const was = Boolean(item.following);
-    setItems(previous => previous.map(entry => getAuthor(entry).id === creator.id ? { ...entry, following: !was } : entry));
-    try { was ? await apiDelete(`/api/profiles/${creator.username}/follow`, token) : await apiPost(`/api/profiles/${creator.username}/follow`, {}, token); }
-    catch (reason: any) { setItems(previous => previous.map(entry => getAuthor(entry).id === creator.id ? { ...entry, following: was } : entry)); toast.error('Follow failed', reason?.message); }
+    if (!token) return;
+    const creator = getAuthor(item);
+    if (!creator.id || !creator.username) {
+      toast.error('Follow unavailable', 'This creator does not have a valid profile.');
+      return;
+    }
+    const actionKey = `follow:${creator.id}`;
+    if (pendingActionsRef.current.has(actionKey)) return;
+    pendingActionsRef.current.add(actionKey);
+    const was = Boolean(item.following || item.isFollowing);
+    const updateFollowing = (value: boolean) => setItems(previous => previous.map(entry =>
+      getAuthor(entry).id === creator.id ? { ...entry, following: value, isFollowing: value } : entry
+    ));
+    updateFollowing(!was);
+    try {
+      if (was) await apiDelete(`/api/profiles/${encodeURIComponent(creator.username)}/follow`, token);
+      else await apiPost(`/api/profiles/${encodeURIComponent(creator.username)}/follow`, {}, token);
+    } catch (reason: any) {
+      updateFollowing(was);
+      toast.error('Follow failed', reason?.message);
+    } finally {
+      pendingActionsRef.current.delete(actionKey);
+    }
   };
   const followSuggested = async (profile: Item) => {
-    if (!token || !profile.username) return; const was = Boolean(profile.following || profile.isFollowing);
-    setSuggested(previous => previous.map(entry => entry.id === profile.id ? { ...entry, following: !was, isFollowing: !was } : entry));
-    try { was ? await apiDelete(`/api/profiles/${profile.username}/follow`, token) : await apiPost(`/api/profiles/${profile.username}/follow`, {}, token); }
-    catch (reason: any) { setSuggested(previous => previous.map(entry => entry.id === profile.id ? { ...entry, following: was, isFollowing: was } : entry)); toast.error('Follow failed', reason?.message); }
+    if (!token || !profile.id || !profile.username) return;
+    const actionKey = `follow:${profile.id}`;
+    if (pendingActionsRef.current.has(actionKey)) return;
+    pendingActionsRef.current.add(actionKey);
+    const was = Boolean(profile.following || profile.isFollowing);
+    const updateFollowing = (value: boolean) => {
+      setSuggested(previous => previous.map(entry => entry.id === profile.id ? { ...entry, following: value, isFollowing: value } : entry));
+      setItems(previous => previous.map(entry => getAuthor(entry).id === profile.id ? { ...entry, following: value, isFollowing: value } : entry));
+    };
+    updateFollowing(!was);
+    try {
+      if (was) await apiDelete(`/api/profiles/${encodeURIComponent(profile.username)}/follow`, token);
+      else await apiPost(`/api/profiles/${encodeURIComponent(profile.username)}/follow`, {}, token);
+    } catch (reason: any) {
+      updateFollowing(was);
+      toast.error('Follow failed', reason?.message);
+    } finally {
+      pendingActionsRef.current.delete(actionKey);
+    }
   };
   const loadGiftData = async () => {
     if (!token) return; setGiftLoading(true); setGiftError('');
@@ -260,7 +296,24 @@ export default function HomePage() {
     // share endpoint, so we just share the /reels/:id link. Posts use the feed
     // share endpoint.
     const url = `${location.origin}${detailPathFor(target)}`;
-    try { if (!isReel) await apiPost(`/api/feed/${id}/share`, { destination }, token); if (destination === 'COPY_LINK') await navigator.clipboard.writeText(url); else if (destination === 'NATIVE' && navigator.share) await navigator.share({ title: 'VANTA', text: target.content, url }); else if (destination === 'MESSAGE') router.push(`/chat?share=${encodeURIComponent(url)}`); toast.success(destination === 'COPY_LINK' ? 'Link copied' : 'Shared successfully'); setMoreFor(undefined); }
+    try {
+      if (destination === 'NATIVE' && !navigator.share) {
+        toast.error('Device sharing is unavailable', 'Use Copy link instead.');
+        return;
+      }
+      if (destination === 'NATIVE') {
+        // The device share sheet can be cancelled; do not report success first.
+        await navigator.share({ title: 'VANTA', text: target.content, url });
+      } else if (destination === 'COPY_LINK') {
+        await navigator.clipboard.writeText(url);
+      } else if (destination === 'MESSAGE') {
+        router.push(`/chat?share=${encodeURIComponent(url)}`);
+      }
+      if (!isReel) await apiPost(`/api/feed/${id}/share`, { destination }, token);
+      if (destination === 'COPY_LINK') toast.success('Link copied');
+      else if (destination === 'NATIVE') toast.success('Shared successfully');
+      setMoreFor(undefined);
+    }
     catch (reason: any) { toast.error('Share failed', reason?.message); }
   };
   const repost = async (target: Item) => {
@@ -287,7 +340,7 @@ export default function HomePage() {
         <div className="mb-2 grid grid-cols-3 gap-1 rounded-lg border border-white/[.06] bg-[var(--surface)] p-0.5" role="tablist" aria-label="Feed filters">{([['forYou', 'For you'], ['following', 'Following'], ['latest', 'Latest']] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={cn('min-h-9 min-w-0 rounded-md px-1 text-xs font-medium transition sm:text-sm', tab === id ? 'bg-[#c9a227] text-black shadow-sm' : 'text-[#858585] hover:bg-white/[.04] hover:text-white')}>{label}</button>)}</div>
         <button type="button" onClick={openPostModal} className="mb-4 hidden w-full items-center gap-3 rounded-lg border border-white/[.08] bg-[#0d0d0f] px-4 py-3 text-left text-sm text-[#666] transition hover:border-white/[.14] hover:bg-[#151517] hover:text-[#b8b8b8] "><Avatar src={user?.avatar || user?.avatarUrl || (user?.profile as any)?.avatar || (user?.profile as any)?.avatarUrl} alt={user?.username || 'You'} size="md"/><span className="flex-1">Share something with VANTA...</span><span className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/[.08] text-[#b8b8b8]"><ImageIcon size={17}/></span></button>
         {!online && <div className="mb-4 flex items-center gap-2 rounded-lg border border-white/[.08] bg-[var(--surface)] px-3 py-2.5 text-xs text-[#b8b8b8]"><WifiOff size={14}/>You are offline. Some actions are unavailable.</div>}
-        {loading && !items.length ? <FeedSkeleton/> : error && !items.length ? <ErrorState retry={() => fetchFeed(true)}/> : !visible.length ? <EmptyFeed discover={() => router.push('/discover')}/> : <div className="space-y-2">{visible.map(item => <FeedPostCard key={item.id} item={item} currentUserId={user?.id} onLike={() => optimistic(item, 'like')} onSave={() => optimistic(item, 'save')} onComment={item => router.push(isVideoItem(item) ? detailPathFor(item) : `/post/${encodeURIComponent(cleanId(item))}/reply`)} onShare={setRepostFor} onGift={openGift} onFollow={follow} onMore={setMoreFor} compactCaption feedCompactMedia hideFollowButton/>)}<div ref={sentinel} className="flex justify-center py-6">{loadingMore && <Loader2 className="animate-spin text-[#666]"/>}{!hasMore && <span className="text-xs text-[#666]">You&apos;re all caught up.</span>}</div></div>}
+        {loading && !items.length ? <FeedSkeleton/> : error && !items.length ? <ErrorState retry={() => fetchFeed(true)}/> : !visible.length ? <EmptyFeed discover={() => router.push('/discover')}/> : <div className="space-y-2">{visible.map(item => <FeedPostCard key={item.id} item={item} currentUserId={user?.id} onLike={() => optimistic(item, 'like')} onSave={() => optimistic(item, 'save')} onComment={item => router.push(isVideoItem(item) ? detailPathFor(item) : `/post/${encodeURIComponent(cleanId(item))}/reply`)} onShare={setRepostFor} onGift={openGift} onFollow={follow} onMore={setMoreFor} compactCaption feedCompactMedia hideFollowButton/>)}<div ref={sentinel} className="flex justify-center py-6">{loadingMore && <Loader2 className="animate-spin text-[#666]"/>}{loadMoreError && <button type="button" onClick={() => void fetchFeed(false, cursor)} className="rounded-lg px-4 py-2 text-xs text-[#c9a227] hover:bg-white/[.05]">Couldn't load more posts. Retry</button>}{!hasMore && <span className="text-xs text-[#666]">You&apos;re all caught up.</span>}</div></div>}
       </main>
       </div>
     </PullToRefresh>

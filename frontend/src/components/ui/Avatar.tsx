@@ -73,7 +73,7 @@ export default function Avatar({
   useEffect(() => {
     const handleUpdate = (event: Event) => {
       const detail = (event as CustomEvent<ProfileMediaUpdate>).detail;
-      if (mediaUrlsMatch(resolvedSrc, detail.previousAvatar)) {
+      if (detail && mediaUrlsMatch(resolvedSrc, detail.previousAvatar)) {
         setResolvedSrc(detail.avatar ? resolveMediaUrl(detail.avatar) : null);
         setError(false);
       }
@@ -88,6 +88,7 @@ export default function Avatar({
     <div
       className={cn('relative inline-flex shrink-0 overflow-visible', sizeStyles[size], wrapperClassName, onClick && 'cursor-pointer')}
       onClick={onClick}
+      onKeyDown={onClick ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick(); } } : undefined}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-label={alt}

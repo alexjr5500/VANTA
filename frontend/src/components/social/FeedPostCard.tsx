@@ -127,13 +127,30 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
       setCaptionOverflows(false);
       return;
     }
-    const measure = () => setCaptionOverflows(element.scrollHeight > element.clientHeight + 2);
+    const measure = () => {
+      // Measure the collapsed preview even after expansion; otherwise the
+      // expanded paragraph reports no overflow and hides "Show less".
+      const wasExpanded = captionExpanded;
+      if (wasExpanded) {
+        element.style.display = '-webkit-box';
+        element.style.setProperty('-webkit-box-orient', 'vertical');
+        element.style.setProperty('-webkit-line-clamp', '5');
+        element.style.overflow = 'hidden';
+      }
+      setCaptionOverflows(element.scrollHeight > element.clientHeight + 2);
+      if (wasExpanded) {
+        element.style.removeProperty('display');
+        element.style.removeProperty('-webkit-box-orient');
+        element.style.removeProperty('-webkit-line-clamp');
+        element.style.removeProperty('overflow');
+      }
+    };
     measure();
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [captionText]);
+  }, [captionText, captionExpanded]);
 
   // Tapping anywhere on the card (except an interactive control) opens the
   // canonical post/reel detail page — the same single detail route the comment

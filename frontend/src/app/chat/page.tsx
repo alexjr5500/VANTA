@@ -223,7 +223,9 @@ const chatMediaLinksOf = (text: string): { url: string; kind: 'image' | 'video' 
   for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
     const url = match[0].replace(/[.,)]+$/, '');
     const path = url.split(/[?#]/)[0];
-    const name = decodeURIComponent(path.split('/').pop() || 'File');
+    const filename = path.split('/').pop() || 'File';
+    let name = filename;
+    try { name = decodeURIComponent(filename); } catch { /* Keep malformed URL text instead of crashing chat rendering. */ }
     const kind = /\.(png|jpe?g|gif|webp|avif)$/i.test(path) ? 'image' : /\.(mp4|webm|mov|m4v)$/i.test(path) ? 'video' : /\.(pdf|docx?|xlsx?|pptx?|txt|zip|csv)$/i.test(path) ? 'file' : null;
     if (kind && !out.some(item => item.url === url)) out.push({ url, kind, name });
   }
@@ -414,6 +416,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const activeConversationRef = useRef<string | null>(null);
+  const entityInfoRequestRef = useRef(0);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingActiveRef = useRef(false);
   const typingRenewRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -484,9 +487,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [managedEntity, setManagedEntity] = useState<any>(null);
   const [managementSearch, setManagementSearch] = useState('');
   const [managementResults, setManagementResults] = useState<any[]>([]);
+  const managementSearchRequestRef = useRef(0);
   const [managementBusy, setManagementBusy] = useState<string | null>(null);
   const [ownershipConfirm, setOwnershipConfirm] = useState<any | null>(null);
   const [isSavingEntity, setIsSavingEntity] = useState(false);
+  const entitySaveInFlightRef = useRef(false);
   const editAvatarInputRef = useRef<HTMLInputElement>(null);
   const [typingUserId, setTypingUserId] = useState<string | null>(null);
   const [typingByConversation, setTypingByConversation] = useState<Record<string, boolean>>({});
@@ -693,6 +698,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   }, [router, searchParams]);
 
   const openConversationInfo = useCallback(async () => {
+    const requestId = ++entityInfoRequestRef.current;
     setDetailsOpen(true);
     setMemberBrowserOpen(false);
     setMemberBrowserQuery('');
@@ -705,11 +711,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     try {
       const entityId = conversation.entityId || conversation.id;
       const entity = await apiGet<any>(`/api/${conversation.type === 'group' ? 'groups' : 'channels'}/${entityId}`, token);
-      setManagedEntity(entity);
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversation.id) setManagedEntity(entity);
     } catch {
       // The overview remains usable from conversation data if extra info is unavailable.
     } finally {
-      setIsLoadingEntityInfo(false);
+      if (entityInfoRequestRef.current === requestId) setIsLoadingEntityInfo(false);
     }
   }, [activeConversation, conversations, pushChatView, token]);
 
@@ -807,12 +813,17 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     if (!token) return;
     try {
       const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50`, token);
+      if (activeConversationRef.current !== conversationId) return;
       const msgList = Array.isArray(data) ? data : data?.messages ?? data?.data ?? [];
       setMessages(msgList.map((msg: any) => normalizeMessageRecord(msg, user?.id)).filter((msg: Message) => !msg.deletedAt));
       setMessageCursor(data?.nextCursor ?? null);
       await apiPut<any>(`/api/messages/${conversationId}/read`, {}, token).catch(() => undefined);
-      setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation));
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Chat unavailable', message: errorMessage(err, { action: 'load this conversation', context: 'conversation', fallback: 'Could not load this conversation.' }) }); }
+      if (activeConversationRef.current === conversationId) {
+        setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation));
+      }
+    } catch (err: any) {
+      if (activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Chat unavailable', message: errorMessage(err, { action: 'load this conversation', context: 'conversation', fallback: 'Could not load this conversation.' }) });
+    }
   }, [token, user?.id, showToast]);
 
   useEffect(() => { fetchConversations(); }, [fetchConversations]);
@@ -830,26 +841,33 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
   const loadOlderMessages = async () => {
     if (!token || !activeConversation || !messageCursor || loadingOlder) return;
+    const conversationId = activeConversation;
     const viewport = messagesViewportRef.current;
     const prevScrollHeight = viewport?.scrollHeight ?? 0;
     const prevScrollTop = viewport?.scrollTop ?? 0;
     setLoadingOlder(true);
     try {
-      const data = await apiGet<any>(`/api/messages/${activeConversation}?limit=50&cursor=${encodeURIComponent(messageCursor)}`, token);
+      const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50&cursor=${encodeURIComponent(messageCursor)}`, token);
+      if (activeConversationRef.current !== conversationId) return;
       const older = (data?.messages ?? [])
         .map((msg: any) => normalizeMessageRecord(msg, user?.id))
         .filter((msg: Message) => !msg.deletedAt);
-      setMessages(previous => [...older, ...previous]);
+      setMessages(previous => {
+        const existing = new Set(previous.map(message => message.id));
+        return [...older.filter((message: Message) => !existing.has(message.id)), ...previous];
+      });
       setMessageCursor(data?.nextCursor ?? null);
-      // Keep the reader exactly where they were after older messages are
-      // prepended above the current viewport (prevents a jarring jump).
-      const raf = window.requestAnimationFrame(() => {
+      // Preserve the reader's scroll position after prepending older messages.
+      window.requestAnimationFrame(() => {
+        if (activeConversationRef.current !== conversationId) return;
         const target = messagesViewportRef.current;
         if (target) target.scrollTop = (target.scrollHeight - prevScrollHeight) + prevScrollTop;
       });
-      window.setTimeout(() => window.cancelAnimationFrame(raf), 5000);
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Could not load older messages', message: errorMessage(err, { action: 'load older messages', fallback: 'Please try again.' }) }); }
-    finally { setLoadingOlder(false); }
+    } catch (err: any) {
+      if (activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Could not load older messages', message: errorMessage(err, { action: 'load older messages', fallback: 'Please try again.' }) });
+    } finally {
+      setLoadingOlder(false);
+    }
   };
 
   const clearTypingFor = (conversationId: string) => {
@@ -1158,6 +1176,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setEditingMessage(null);
     setMessageInput('');
     if (activeConversationRef.current) socketRef.current?.emit('leave_conversation', activeConversationRef.current);
+    entityInfoRequestRef.current += 1;
+    managementSearchRequestRef.current += 1;
     activeConversationRef.current = id;
     previousLastMessageIdRef.current = null;
     initialScrollDoneRef.current = false;
@@ -1166,6 +1186,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setActiveConversation(id);
     setShowMobileList(false);
     setDetailsOpen(false);
+    setEditEntityOpen(false);
+    setMemberBrowserOpen(false);
+    setOwnershipConfirm(null);
+    setManagementResults([]);
     fetchMessages(id);
     socketRef.current?.emit('conversation:join', id);
     if (searchParams.get('conversation') !== id) {
@@ -1180,6 +1204,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     if (activeConversationRef.current) {
       socketRef.current?.emit('leave_conversation', activeConversationRef.current);
     }
+    entityInfoRequestRef.current += 1;
+    managementSearchRequestRef.current += 1;
     activeConversationRef.current = null;
     previousLastMessageIdRef.current = null;
     initialScrollDoneRef.current = false;
@@ -1193,6 +1219,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setMessages([]);
     setShowMobileList(true);
     setDetailsOpen(false);
+    setEditEntityOpen(false);
+    setMemberBrowserOpen(false);
+    setOwnershipConfirm(null);
+    setManagementResults([]);
     setDirectMenuOpen(false);
     router.replace('/chat', { scroll: false });
   }, [router]);
@@ -1224,6 +1254,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     const requestedConversation = searchParams.get('conversation');
     if (!requestedConversation) {
       if (activeConversationRef.current) {
+        entityInfoRequestRef.current += 1;
+        managementSearchRequestRef.current += 1;
+        socketRef.current?.emit('leave_conversation', activeConversationRef.current);
         activeConversationRef.current = null;
         previousLastMessageIdRef.current = null;
         setActiveConversation(null);
@@ -1232,6 +1265,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         setEditingMessage(null);
         setMessageInput('');
         setShowMobileList(true);
+        setDetailsOpen(false);
+        setEditEntityOpen(false);
+        setMemberBrowserOpen(false);
+        setOwnershipConfirm(null);
+        setManagementResults([]);
       }
       return;
     }
@@ -2254,13 +2292,14 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       && (isManagedOwner || managedEntity?.permissions?.manageChannelInfo !== false || managedEntity?.permissions?.manageSubscribers !== false);
   const canEditEntityInfo = activeConv?.type === 'group'
     ? isGroupPrivileged || managedEntity?.permissions?.changeGroupInfo === true
-    : activeConv?.type === 'channel' && (isManagedOwner || managedEntity?.permissions?.manageChannelInfo !== false);
+    : activeConv?.type === 'channel' && ['OWNER', 'ADMIN', 'MODERATOR'].includes(activeConv.currentRole || '')
+      && (isManagedOwner || managedEntity?.permissions?.manageChannelInfo !== false);
   const canManageEntityMembers = activeConv?.type === 'group'
     ? isGroupPrivileged || managedEntity?.permissions?.addMembers === true
     : activeConv?.type === 'channel' && ['OWNER', 'ADMIN', 'MODERATOR'].includes(activeConv.currentRole || '')
       && (isManagedOwner || managedEntity?.permissions?.manageSubscribers !== false);
   const canRemoveEntityMembers = activeConv?.type === 'group' ? isGroupPrivileged : canManageEntityMembers;
-  const canManageEntityPermissions = activeConv?.type === 'group' ? isGroupPrivileged : isManagedOwner;
+  const canManageEntityPermissions = activeConv?.type === 'group' ? isGroupPrivileged : activeConv?.type === 'channel' && isManagedOwner;
   const managedPermissions = activeConv?.type === 'channel'
     ? [
         ['postMessages', 'Post messages'],
@@ -2304,9 +2343,12 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
   const openEntityEditor = async () => {
     if (!token || !activeConv || !canEditEntity || activeConv.type === 'direct') return;
+    const conversationId = activeConv.id;
+    const requestId = ++entityInfoRequestRef.current;
     try {
       const entityId = activeConv.entityId || activeConv.id;
       const entity = await apiGet<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${entityId}`, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setEditEntityId(entity.id || entityId);
       setEditName(entity.name || activeConv.name);
       setEditDescription(entity.description || '');
@@ -2318,7 +2360,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       setManagementResults([]);
       setEditEntityOpen(true);
       pushChatView('settings');
-    } catch (err: any) { showToast?.({ type: 'error', title: `Could not open ${activeConv.type} settings`, message: err?.message || 'Please try again.' }); }
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: `Could not open ${activeConv.type} settings`, message: err?.message || 'Please try again.' });
+    }
   };
 
   const uploadEntityAvatar = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -2335,77 +2379,111 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
 
   const saveEntityChanges = async () => {
-    if (!token || !activeConv || !editEntityId || !editName.trim() || !canEditEntityInfo) return;
+    if (!token || !activeConv || !editEntityId || !editName.trim() || !canEditEntityInfo || entitySaveInFlightRef.current) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
+    entitySaveInFlightRef.current = true;
     setIsSavingEntity(true);
     try {
       const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { name: editName.trim(), description: editDescription.trim(), avatar: editAvatar, ...((activeConv.type === 'group' && isGroupPrivileged) || (activeConv.type === 'channel' && isManagedOwner) ? { permissions: managedEntity?.permissions || {} } : {}), ...(activeConv.type === 'channel' ? { visibility: editVisibility, handle: editHandle.trim().replace(/^@/, '') } : {}) }, token);
-      setConversations(previous => previous.map(item => item.id === activeConv.id ? { ...item, name: updated.name || editName.trim(), description: updated.description ?? editDescription.trim(), avatar: updated.avatar ?? editAvatar ?? undefined } : item));
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
+      setConversations(previous => previous.map(item => item.id === conversationId ? { ...item, name: updated.name || editName.trim(), description: updated.description ?? editDescription.trim(), avatar: updated.avatar ?? editAvatar ?? undefined } : item));
       setManagedEntity(updated);
       setEditEntityOpen(false);
       showToast?.({ type: 'success', title: `${activeConv.type === 'group' ? 'Group' : 'Channel'} updated`, message: 'Changes are visible throughout Chat.' });
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Changes not saved', message: errorMessage(err, { action: 'save the changes', context: activeConv?.type === 'channel' ? 'channel' : 'group', fallback: 'Please try again.' }) }); }
-    finally { setIsSavingEntity(false); }
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Changes not saved', message: errorMessage(err, { action: 'save the changes', context: activeConv?.type === 'channel' ? 'channel' : 'group', fallback: 'Please try again.' }) });
+    } finally {
+      entitySaveInFlightRef.current = false;
+      setIsSavingEntity(false);
+    }
   };
 
   const searchManagementUsers = async (value: string) => {
+    const requestId = ++managementSearchRequestRef.current;
+    const conversationId = activeConversationRef.current;
     setManagementSearch(value);
     if (!token || value.trim().length < 2) { setManagementResults([]); return; }
     try {
       const result = await apiGet<any>(`/api/search?q=${encodeURIComponent(value.trim())}&type=users`, token);
       const users = result?.results?.users ?? result?.data?.users ?? result?.users ?? (Array.isArray(result) ? result : []);
+      if (managementSearchRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       const memberIds = new Set((managedEntity?.members || []).map((member: any) => member.userId));
       setManagementResults(users.filter((person: any) => person.id !== user?.id && !memberIds.has(person.id)));
-    } catch { setManagementResults([]); }
+    } catch {
+      if (managementSearchRequestRef.current === requestId && activeConversationRef.current === conversationId) setManagementResults([]);
+    }
   };
 
   const updateManagedMembers = async (memberIds: string[], successMessage: string) => {
-    if (!token || !activeConv || !editEntityId || !canManageEntityMembers) return;
+    if (!token || !activeConv || !editEntityId || !canManageEntityMembers || managementBusy) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
+    const existingIds = (managedEntity?.members || []).map((member: any) => member.userId).filter(Boolean);
+    if (!canRemoveEntityMembers && existingIds.some((id: string) => !memberIds.includes(id))) return;
     setManagementBusy('members');
     try {
       const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { memberIds }, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setManagedEntity(updated);
-      setConversations(previous => previous.map(item => item.id === activeConv.id ? { ...item, memberCount: updated._count?.members ?? updated.members?.length ?? item.memberCount } : item));
+      setConversations(previous => previous.map(item => item.id === conversationId ? { ...item, memberCount: updated._count?.members ?? updated.members?.length ?? item.memberCount } : item));
       setManagementSearch(''); setManagementResults([]);
       showToast?.({ type: 'success', title: successMessage, message: 'Membership has been updated.' });
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Membership not changed', message: err?.message || 'Please try again.' }); }
-    finally { setManagementBusy(null); }
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Membership not changed', message: err?.message || 'Please try again.' });
+    } finally { setManagementBusy(null); }
   };
 
-  const addManagedMember = (person: any) => updateManagedMembers([...(managedEntity?.members || []).map((member: any) => member.userId), person.id], `${person.username || 'Member'} added`);
+  const addManagedMember = (person: any) => {
+    if (!person?.id || (managedEntity?.members || []).some((member: any) => member.userId === person.id)) return;
+    void updateManagedMembers([...(managedEntity?.members || []).map((member: any) => member.userId), person.id], `${person.username || 'Member'} added`);
+  };
 
   const removeManagedMember = (member: any) => {
-    if (!canRemoveEntityMembers) return;
+    if (!canRemoveEntityMembers || managementBusy || !member?.userId || member.userId === user?.id) return;
     const username = member.user?.username || 'this member';
     if (!window.confirm(`Remove ${username} from this ${activeConv?.type}?`)) return;
     void updateManagedMembers((managedEntity?.members || []).filter((item: any) => item.userId !== member.userId).map((item: any) => item.userId), `${username} removed`);
   };
 
   const changeManagedRole = async (member: any, role: string) => {
-    if (!token || !activeConv || !editEntityId) return;
+    if (!token || !activeConv || !editEntityId || !isGroupPrivileged && activeConv.type === 'group' || activeConv.type === 'channel' && !isManagedOwner || managementBusy || !member?.userId || !['MEMBER', 'ADMIN', 'MODERATOR'].includes(role)) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
     const action = role === 'MEMBER' ? 'remove administrator rights from' : 'promote';
     if (!window.confirm(`${action[0].toUpperCase()}${action.slice(1)} @${member.user?.username || 'member'}?`)) return;
     setManagementBusy(member.userId);
     try {
       const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { memberRoles: { [member.userId]: role } }, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setManagedEntity(updated);
       showToast?.({ type: 'success', title: 'Administrator access updated', message: 'The new role is active.' });
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Role not changed', message: err?.message || 'Please try again.' }); }
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Role not changed', message: err?.message || 'Please try again.' });
+    }
     finally { setManagementBusy(null); }
   };
 
-  const toggleManagedPermission = (key: string) => setManagedEntity((previous: any) => { const current = previous?.permissions?.[key] ?? (activeConv?.type === 'channel' ? ['deleteMessages', 'manageChannelInfo', 'manageSubscribers'].includes(key) : ['sendMessages', 'sendMedia', 'sendLinks'].includes(key)); return { ...previous, permissions: { ...(previous?.permissions || {}), [key]: !current } }; });
+  const toggleManagedPermission = (key: string) => {
+    if (!canManageEntityPermissions || !managedPermissions.some(([permission]) => permission === key)) return;
+    setManagedEntity((previous: any) => { const current = previous?.permissions?.[key] ?? (activeConv?.type === 'channel' ? ['deleteMessages', 'manageChannelInfo', 'manageSubscribers'].includes(key) : ['sendMessages', 'sendMedia', 'sendLinks'].includes(key)); return { ...previous, permissions: { ...(previous?.permissions || {}), [key]: !current } }; });
+  };
 
   const confirmOwnershipTransfer = async () => {
-    if (!token || !activeConv || !editEntityId || !ownershipConfirm || activeConv.type === 'direct') return;
+    if (!token || !activeConv || !editEntityId || !ownershipConfirm || activeConv.type === 'direct' || !isManagedOwner || managementBusy || !ownershipConfirm.userId || ownershipConfirm.userId === user?.id) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
     setManagementBusy('ownership');
     try {
       const endpoint = activeConv.type === 'group' ? 'groups' : 'channels';
       const updated = await apiPost<any>(`/api/${endpoint}/${editEntityId}/transfer-ownership`, { targetUserId: ownershipConfirm.userId }, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setManagedEntity(updated);
       setOwnershipConfirm(null);
       // The backend also broadcasts `conversations:refresh` on the socket, but a
       // local refetch makes the new owner/role state appear instantly here too.
       await fetchConversations();
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       const targetName = ownershipConfirm.user?.username || 'The new owner';
       showToast?.({
         type: 'success',
@@ -2413,7 +2491,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         message: `${targetName} is now the owner of this ${activeConv.type}.`,
       });
     } catch (err: any) {
-      showToast?.({
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({
         type: 'error',
         title: 'Ownership transfer failed',
         message: err?.message || 'Please try again.',
@@ -2764,12 +2842,12 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                           </div>
                         )}
                       <div className={cn(
-                        'chat-bubble-text w-fit max-w-full overflow-hidden text-[15px] leading-[1.45]',
+                        'chat-bubble-text w-fit max-w-full overflow-hidden rounded-2xl px-3 py-2 text-[15px] leading-[1.45] shadow-sm',
                         msg.isOwn
-                           ? 'border-r-2 border-[#c9a227]/60 bg-transparent pr-2.5 text-white'
-                           : 'bg-transparent text-white'
+                           ? 'rounded-tr-md bg-[#303d4b] text-white'
+                           : 'rounded-tl-md bg-[#202b37] text-white'
                       )}>
-                        {msg.deletedAt ? null : msg.type === 'CALL' ? (
+                        {msg.deletedAt ? <span className="block text-sm italic text-white/60">Message deleted</span> : msg.type === 'CALL' ? (
                           <span className="flex items-center justify-center gap-1.5 whitespace-nowrap py-0.5 px-3 text-xs text-white/50">
                             <Phone size={12} className="text-[#d6a83f]" />
                             {renderTextWithLinks(msg.text || msg.content || '', 'linkify', { mentions: true, hashtags: true })}

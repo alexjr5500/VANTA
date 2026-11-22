@@ -57,7 +57,7 @@ export default function UserAvatar({
   useEffect(() => {
     const handleProfileMediaUpdate = (event: Event) => {
       const update = (event as CustomEvent<ProfileMediaUpdate>).detail;
-      if (!mediaUrlsMatch(resolvedSrc, update.previousAvatar)) return;
+      if (!update || !mediaUrlsMatch(resolvedSrc, update.previousAvatar)) return;
       setResolvedSrc(update.avatar ? resolveMediaUrl(update.avatar) : '');
     };
     window.addEventListener(PROFILE_MEDIA_EVENT, handleProfileMediaUpdate);

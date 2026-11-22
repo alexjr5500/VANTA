@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import { apiGet, apiPut } from '@/lib/apiClient';
 import { MAX_AVATAR_SIZE, MAX_BANNER_SIZE, uploadAvatar, uploadBanner, validateFile } from '@/lib/uploadService';
 import { versionMediaUrl } from '@/lib/profileMedia';
+import { resolveMediaUrl } from '@/lib/mediaUrl';
 import './edit-profile.css';
 import './edit-profile-recovery.css';
 
@@ -28,6 +29,8 @@ export default function EditProfilePage() {
   const [loadAttempt, setLoadAttempt] = useState(0); const [loadFailed, setLoadFailed] = useState(false);
   const profileRequest = useRef(0);
   const usernameCheck = useRef(0);
+  const [verifiedUsername, setVerifiedUsername] = useState('');
+  const saveInFlight = useRef(false);
 
   useEffect(() => {
     if (!token) {
@@ -42,8 +45,8 @@ export default function EditProfilePage() {
       const profile = profileValue(value);
       if (!profile || typeof profile !== 'object' || !profile.username) throw new Error('Your profile data is unavailable.');
       const next = { fullName: profile.fullName || '', username: profile.username || '', bio: profile.bio || '', city: profile.city || '', website: profile.website || '', dateOfBirth: profile.dateOfBirth ? String(profile.dateOfBirth).slice(0, 10) : '' };
-      const media = { avatar: profile.avatarUrl || profile.avatar || '', cover: profile.bannerUrl || '' };
-      setForm(next); setOriginal(next); setInitialMedia(media); setAvatar({ file: null, preview: media.avatar }); setCover({ file: null, preview: media.cover });
+      const media = { avatar: profile.avatarUrl || profile.profile?.avatarUrl || profile.avatar || '', cover: profile.bannerUrl || profile.profile?.bannerUrl || '' };
+      setForm(next); setOriginal(next); setInitialMedia(media); setAvatar({ file: null, preview: resolveMediaUrl(media.avatar) }); setCover({ file: null, preview: resolveMediaUrl(media.cover) });
       setLoadFailed(false);
     }).catch((reason: any) => {
       if (!active || requestId !== profileRequest.current || reason?.statusCode === 499) return;
@@ -62,14 +65,17 @@ export default function EditProfilePage() {
   useEffect(() => {
     const checkId = ++usernameCheck.current;
     const username = form.username.trim().toLowerCase();
-    if (username === original.username) { setAvailability('idle'); return; }
+    setVerifiedUsername('');
+    if (username === original.username.trim().toLowerCase()) { setAvailability('idle'); return; }
     if (!/^[a-z0-9_.]{3,30}$/.test(username)) { setAvailability('invalid'); return; }
     setAvailability('checking');
     let active = true;
     const timer = window.setTimeout(() => apiGet<any>(`/api/auth/check-username?username=${encodeURIComponent(username)}`, token || undefined, { skipCache: true })
       .then(value => {
         if (active && checkId === usernameCheck.current) {
-          setAvailability(value?.available === true || value?.data?.available === true ? 'available' : 'taken');
+          const available = value?.available === true || value?.data?.available === true;
+          setVerifiedUsername(available ? username : '');
+          setAvailability(available ? 'available' : 'taken');
         }
       })
       .catch(() => { if (active && checkId === usernameCheck.current) setAvailability('error'); }), 450);
@@ -89,8 +95,7 @@ export default function EditProfilePage() {
     const name = form.fullName.trim(); const username = form.username.trim().toLowerCase(); const website = form.website.trim();
     if (name.length < 1 || name.length > 50) return 'Display name must be between 1 and 50 characters.';
     if (!/^[a-z0-9_.]{3,30}$/.test(username)) return 'Username must be 3 to 30 letters, numbers, underscores, or periods.';
-    if (availability === 'taken') return 'That username is already taken.';
-    if (availability === 'checking' || availability === 'error') return 'Unable to verify username availability. Please try again.';
+    if (username !== original.username.trim().toLowerCase() && (availability !== 'available' || verifiedUsername !== username)) return availability === 'taken' ? 'That username is already taken.' : 'Please wait until your new username has been verified.';
     if (form.bio.length > 260) return 'Bio must be 260 characters or fewer.';
     if (form.city.trim().length > 100) return 'Location must be 100 characters or fewer.';
     if (form.dateOfBirth) {
@@ -102,7 +107,8 @@ export default function EditProfilePage() {
     return '';
   };
   const submit = async (event: FormEvent) => {
-    event.preventDefault(); if (!token || saving || !dirty) return; const validation = validate(); if (validation) { setError(validation); return; }
+    event.preventDefault(); if (!token || saving || saveInFlight.current || !dirty) return; const validation = validate(); if (validation) { setError(validation); return; }
+    saveInFlight.current = true;
     setSaving(true); setError(''); setSuccess('');
     try {
       let avatarUrl = initialMedia.avatar; let bannerUrl = initialMedia.cover;
@@ -113,12 +119,12 @@ export default function EditProfilePage() {
       const saved = profileValue(await apiPut<any>('/api/profiles/me', payload, token));
       await updateUser({ ...saved, ...payload, avatar: avatarUrl, avatarUrl, bannerUrl }, { versionMedia: true });
       const next = { fullName: payload.fullName, username: payload.username, bio: payload.bio, city: payload.city, website: payload.website, dateOfBirth: payload.dateOfBirth || '' };
-      setOriginal(next); setForm(next); setInitialMedia({ avatar: avatarUrl, cover: bannerUrl }); setAvatar({ file: null, preview: versionMediaUrl(avatarUrl) || '' }); setCover({ file: null, preview: versionMediaUrl(bannerUrl) || '' });
+      setOriginal(next); setForm(next); setInitialMedia({ avatar: avatarUrl, cover: bannerUrl }); setAvatar({ file: null, preview: resolveMediaUrl(versionMediaUrl(avatarUrl)) }); setCover({ file: null, preview: resolveMediaUrl(versionMediaUrl(bannerUrl)) });
       setSuccess('Changes saved'); window.setTimeout(() => router.replace(`/profile/${payload.username}`), 600);
     } catch (reason: any) {
       const message = String(reason?.message || 'Unable to save changes. Check your connection and try again.');
       setError(/username.*(use|taken|exist)/i.test(message) ? 'That username is already taken.' : message);
-    } finally { setSaving(false); setProgress(''); }
+    } finally { saveInFlight.current = false; setSaving(false); setProgress(''); }
   };
 
   if (loading || authLoading) return <main className="edit-profile-page"><div className="edit-profile-loading"><i /><i /><i /></div></main>;
