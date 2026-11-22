@@ -20,14 +20,24 @@ describe('real FFmpeg HLS integration', () => {
       ], { timeout: 20000 });
       expect(fixture.status).toBe(0);
       const result = await transcodeLocalHls(root, {
-        inputPath: 'fixture.mp4', outputName: 'fixture', qualities: ['360p'],
+        inputPath: 'fixture.mp4', outputName: 'fixture', qualities: ['360p', '480p'],
       });
       expect(result).toBe('/uploads/videos/fixture/master.m3u8');
       const dir = path.join(root, 'videos', 'fixture');
-      expect(fs.readFileSync(path.join(dir, 'master.m3u8'), 'utf8')).toContain('360p/playlist.m3u8');
-      const variant = path.join(dir, '360p');
-      expect(fs.readFileSync(path.join(variant, 'playlist.m3u8'), 'utf8')).toContain('#EXTINF');
-      expect(fs.readdirSync(variant).some(f => f.endsWith('.ts'))).toBe(true);
+      const master = fs.readFileSync(path.join(dir, 'master.m3u8'), 'utf8');
+      for (const quality of ['360p', '480p']) {
+        expect(master).toContain(`${quality}/playlist.m3u8`);
+        const variant = path.join(dir, quality);
+        const playlist = fs.readFileSync(path.join(variant, 'playlist.m3u8'), 'utf8');
+        expect(playlist).toContain('#EXTINF');
+        expect(playlist).toContain('#EXT-X-ENDLIST');
+        const segments = fs.readdirSync(variant).filter(f => f.endsWith('.ts'));
+        expect(segments.length).toBeGreaterThan(0);
+        for (const segment of segments) {
+          expect(playlist).toContain(segment);
+          expect(fs.statSync(path.join(variant, segment)).size).toBeGreaterThan(0);
+        }
+      }
       await expect(transcodeLocalHls(root, {
         inputPath: 'fixture.mp4', outputName: 'fixture', qualities: ['360p'],
       })).resolves.toBe(result);
