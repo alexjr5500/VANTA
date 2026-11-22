@@ -1,3 +1,4 @@
+import { spawnSync } from 'child_process';
 import { prisma } from './prisma';
 import { createDurableQueueWorker } from './services/durable-queue.runtime';
 
@@ -8,6 +9,21 @@ import { createDurableQueueWorker } from './services/durable-queue.runtime';
 async function main(): Promise<void> {
   if (process.env.VANTA_DURABLE_WORKER_ENABLED !== 'true') {
     throw new Error('VANTA_DURABLE_WORKER_ENABLED=true is required to start the durable worker');
+  }
+  // Fail fast rather than repeatedly claiming jobs that cannot be processed.
+  if (process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS === 'true') {
+    const ffmpeg = spawnSync(process.env.FFMPEG_PATH || 'ffmpeg', ['-version'], {
+      timeout: 5_000, encoding: 'utf8',
+    });
+    if (ffmpeg.error || ffmpeg.status !== 0) {
+      throw new Error('Media worker requires an executable FFmpeg binary');
+    }
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      require('sharp');
+    } catch {
+      throw new Error('Media worker requires the Sharp image encoder');
+    }
   }
   const worker = createDurableQueueWorker();
   let stopping = false;
