@@ -27,6 +27,7 @@ export type StoryComposerMode = 'menu' | 'text' | 'status' | 'media';
 export interface StoryComposerProps {
   open: boolean;
   onClose: () => void;
+  onRequestOpen?: () => void;
 }
 
 export interface StoryComposerOpenDetails {
@@ -39,6 +40,13 @@ export type StoryComposerOpener = (details: StoryComposerOpenDetails) => void;
 // Global open command so any consumer (Home tray, header button, profile) can
 // open the composer without prop drilling into every page.
 let openCommand: ((details: StoryComposerOpenDetails) => void) | null = null;
+let statusPickerCommand: (() => void) | null = null;
+
+/** The Android Status + action keeps its real user gesture for the native file picker. */
+export function openStatusFilePicker(fallback: () => void): void {
+  if (statusPickerCommand) statusPickerCommand();
+  else fallback();
+}
 export function setStoryComposerOpener(fn: StoryComposerOpener | null): void {
   openCommand = fn;
 }
@@ -91,12 +99,32 @@ export const CREATE_STATUS_CHOICES: MenuChoiceCard[] = [
  * the premium text canvas. No fake controls — every choice routes to an
  * existing, working VANTA flow.
  */
-export default function StoryComposer({ open, onClose }: StoryComposerProps) {
+export default function StoryComposer({ open, onClose, onRequestOpen }: StoryComposerProps) {
   const { user, token } = useAuth();
   const [mode, setMode] = useState<StoryComposerMode>('media');
   const [mediaSource, setMediaSource] = useState<MediaStorySource>('gallery-mixed');
   const [usage, setUsage] = useState<StoryUsage | null>(null);
   const wasOpenRef = useRef(false);
+  const statusPickerRef = useRef<HTMLInputElement>(null);
+  const [initialFiles, setInitialFiles] = useState<File[]>([]);
+  const [mediaSession, setMediaSession] = useState(0);
+
+  // Mounted even while the modal is closed: click synchronously from the
+  // user's Status + tap so Android WebView can open ACTION_OPEN_DOCUMENT.
+  useEffect(() => {
+    const openPicker = () => {
+      setInitialFiles([]);
+      setMediaSession(value => value + 1);
+      setMediaSource('gallery-mixed');
+      setMode('media');
+      onRequestOpen?.();
+      statusPickerRef.current?.click();
+    };
+    statusPickerCommand = openPicker;
+    return () => {
+      if (statusPickerCommand === openPicker) statusPickerCommand = null;
+    };
+  }, [onRequestOpen]);
 
   // Receive global open commands (e.g. from the Home tray's add button).
   useEffect(() => {
@@ -145,12 +173,28 @@ export default function StoryComposer({ open, onClose }: StoryComposerProps) {
   }, [open, onClose]);
 
   const handleClose = () => {
+    setInitialFiles([]);
     setMode('menu');
     onClose();
   };
 
   const closed = !open;
-return (
+  return (
+    <>
+      <input
+        ref={statusPickerRef}
+        type="file"
+        accept="image/*,video/*,application/x-vanta-status-picker"
+        multiple
+        className="hidden"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={event => {
+          const selected = Array.from(event.currentTarget.files || []);
+          event.currentTarget.value = '';
+          if (selected.length) setInitialFiles(selected);
+        }}
+      />
     <AnimatePresence>
       {open && (
         <motion.div
@@ -214,6 +258,8 @@ return (
                 transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
               >
                 <StoryMediaEditor
+                  key={mediaSession}
+                  initialFiles={initialFiles}
                   source={mediaSource}
                   onBack={handleClose}
                   onText={() => setMode('text')}
@@ -227,6 +273,7 @@ return (
         </motion.div>
       )}
     </AnimatePresence>
+    </>
   );
 }
 /**
