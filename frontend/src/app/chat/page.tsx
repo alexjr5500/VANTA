@@ -14,7 +14,7 @@ import {
   Loader2, Users, ArrowLeft, X, UserPlus, Camera, BellOff, AtSign,
   Pin, Image as ImageIcon, FileText, Info, ChevronRight, Flag, Ban, Pencil, RefreshCw,
   Shield, Trash2, Crown, Globe2, Lock, UserMinus, Copy, Forward, Smile, MoreVertical, MapPin, BarChart3, Music2, Wallet as WalletIcon,
-  Mic, Square, Phone, Video, Play,
+  Mic, Square, Phone, Video, Play, Clock3, Volume2, VolumeX,
 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import PullToRefresh from '@/components/ui/PullToRefresh';
@@ -31,6 +31,7 @@ import { useNotifications } from '@/context/NotificationContext';
 import VideoTrimModal from '@/components/video/VideoTrimModal';
 import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 import { VoiceNotePlayer, VideoFullscreenPlayer } from '@/components/messages/ChatMediaPlayer';
+import EmojiPicker from '@/components/create/EmojiPicker';
 import { activeReplyFor, createReply, type ReplyState } from '@/lib/replyState';
 import { isSecureMediaContext, mapMediaError } from '@/lib/mediaPermissions';
 import { addDrafts, hasBusyDraft, readyDraftCount, removeDraft, type AttachmentDraft } from '@/lib/attachmentDrafts';
@@ -437,6 +438,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [attachmentDrafts, setAttachmentDrafts] = useState<AttachmentDraft[]>([]);
   // Toggles the compact Camera / Photos / Files attachment sheet above the composer.
   const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
+  const [composerEmojiOpen, setComposerEmojiOpen] = useState(false);
   const [cameraPreviewError, setCameraPreviewError] = useState<string | null>(null);
   const cameraPreviewRef = useRef<HTMLVideoElement>(null);
   const cameraPreviewStreamRef = useRef<MediaStream | null>(null);
@@ -2672,6 +2674,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       {/* Chat Window */}
       <div className={cn(
         'flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#050505]',
+        activeConv?.type === 'direct' && 'vanta-direct-chat',
         showMobileList && 'hidden md:flex'
       )}>
         {activeConversation && activeConv ? (
@@ -2687,7 +2690,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                 <button type="button" onClick={() => setSelectedMessageIds(current => current.size === messages.length ? new Set() : new Set(messages.filter(message => !message.pending).map(message => message.id)))} className="rounded-full px-3 py-2 text-[11px] font-semibold text-[#f2c75c] transition hover:bg-[#d6a83f]/10">{selectedMessageIds.size === messages.filter(message => !message.pending).length ? "Clear all" : "Select loaded"}</button>
               </header>
             )}
-            <header className={cn("relative z-20 flex h-14 min-h-14 shrink-0 items-center justify-between border-b border-white/[0.08] bg-[#0d0d0f]/95 px-3 backdrop-blur-xl", selectedMessageIds.size > 0 && "hidden")}>
+            <header className={cn("relative z-20 flex h-14 min-h-14 shrink-0 items-center justify-between border-b border-white/[0.08] bg-[#0d0d0f]/95 px-3 backdrop-blur-xl", selectedMessageIds.size > 0 && "hidden", activeConv.type === 'direct' && 'vanta-direct-header')}>
               <div className="flex min-w-0 items-center gap-3">
                 <button
                   onClick={handleCloseConversation}
@@ -2762,17 +2765,45 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     </div>
                   </>
                 )}
-                <button onClick={() => setMessageSearchOpen(value => !value)} className="btn-icon h-9 w-9" aria-label="Search chat"><Search size={15} /></button>
+                <button onClick={() => setMessageSearchOpen(value => !value)} className={cn("btn-icon h-9 w-9", activeConv.type === 'direct' && 'hidden')} aria-label="Search chat"><Search size={15} /></button>
                  <button onClick={handleOpenConversationActions} className="btn-icon h-9 w-9" aria-label={activeConv.type === 'direct' ? 'Open conversation actions' : `Open ${activeConv.type === 'group' ? 'group' : 'channel'} information`}><MoreVertical size={17} /></button>
               </div>
             </header>
+            {activeConv.type === 'direct' && selectedMessageIds.size === 0 && (
+              <div className="vanta-direct-shortcuts relative z-20 mx-2.5 mb-2 grid h-[54px] shrink-0 grid-cols-4 items-center rounded-[22px] bg-[#263446] px-1" role="toolbar" aria-label="Chat shortcuts">
+                <button type="button" onClick={() => void toggleMute()} aria-label={activeConv.muted ? 'Unmute notifications' : 'Mute notifications'} title={activeConv.muted ? 'Unmute notifications' : 'Mute notifications'} className="grid h-11 place-items-center text-[#8da3b5] transition hover:text-white">
+                  {activeConv.muted ? <VolumeX size={24} /> : <Volume2 size={24} />}
+                </button>
+                <button type="button"
+                  disabled={!messages.some(msg => msg.attachments?.some(att => (att.fileType === 'IMAGE' || att.fileType === 'VIDEO') && Boolean(att.url)))}
+                  onClick={() => {
+                    const recent = [...messages].reverse().flatMap(msg => msg.attachments ?? []).find(att => att.url && (att.fileType === 'IMAGE' || att.fileType === 'VIDEO'));
+                    if (recent?.url) openMediaViewer({ ...recent, url: recent.url });
+                  }}
+                  aria-label="View recent chat media" title="View recent chat media"
+                  className="grid h-11 place-items-center text-[#8da3b5] transition hover:text-white disabled:opacity-30">
+                  <ImageIcon size={23} />
+                </button>
+                <button type="button" onClick={() => {
+                  const viewport = messagesViewportRef.current;
+                  if (viewport) viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+                }} aria-label="Jump to latest message" title="Jump to latest message"
+                  className="grid h-11 place-items-center text-[#8da3b5] transition hover:text-white">
+                  <Clock3 size={23} />
+                </button>
+                <button type="button" onClick={() => setMessageSearchOpen(value => !value)} aria-label="Search chat" title="Search chat"
+                  className="grid h-11 place-items-center text-[#8da3b5] transition hover:text-white">
+                  <Search size={23} />
+                </button>
+              </div>
+            )}
 
             {messageSearchOpen && <div className="border-b border-white/[0.08] bg-[#101010] px-4 py-2"><form onSubmit={event => { event.preventDefault(); void searchWithinChat(); }} className="flex items-center gap-2"><Search size={14} className="shrink-0 text-white/35" /><input autoFocus value={messageSearchQuery} onChange={event => setMessageSearchQuery(event.target.value)} placeholder="Search this chat" className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/30" /><button type="submit" disabled={!messageSearchQuery.trim() || searchingMessages} className="text-[11px] font-medium text-white disabled:text-white/25">Search</button><button type="button" onClick={() => { setMessageSearchOpen(false); setMessageSearchQuery(''); setMessageSearchResults([]); }} aria-label="Close chat search" className="text-white/40"><X size={14}/></button></form></div>}
 
             {(searchingMessages || messageSearchResults.length > 0) && <div className="border-b border-white/[0.08] bg-[#101010] px-4 py-2"><div className="flex items-center justify-between"><span className="text-[10px] text-white/40">{searchingMessages ? 'Searching chat...' : `${messageSearchResults.length} result${messageSearchResults.length === 1 ? '' : 's'}`}</span><button onClick={() => setMessageSearchResults([])} className="text-white/40" aria-label="Close search results"><X size={13}/></button></div>{messageSearchResults.slice(0, 5).map(result => <button key={result.id} onClick={() => document.getElementById(`message-${result.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })} className="mt-1 block w-full truncate rounded bg-white/[0.03] px-2 py-1 text-left text-[10px] text-white/60">@{result.sender.username}: {result.text}</button>)}</div>}
 
             {/* Messages */}
-            <div ref={messagesViewportRef} className={cn("relative min-h-0 flex-1 touch-pan-y overscroll-contain overflow-x-hidden overflow-y-auto scrollbar-hide bg-[#050505] px-3 py-4 pb-6 [overflow-anchor:none] [-webkit-overflow-scrolling:touch]", selectedMessageIds.size > 0 && "bg-[#1F2630] pt-4 pb-4")}>
+            <div ref={messagesViewportRef} className={cn("relative min-h-0 flex-1 touch-pan-y overscroll-contain overflow-x-hidden overflow-y-auto scrollbar-hide bg-[#050505] px-3 py-4 pb-6 [overflow-anchor:none] [-webkit-overflow-scrolling:touch]", activeConv.type === 'direct' && 'vanta-direct-wallpaper', selectedMessageIds.size > 0 && "pt-4 pb-4")}>
               {messageCursor && <div className="flex justify-center"><button onClick={loadOlderMessages} disabled={loadingOlder} className="rounded-full bg-white/[0.05] px-3 py-1 text-[10px] text-white/50 disabled:opacity-50">{loadingOlder ? 'Loading…' : 'Load older messages'}</button></div>}
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center">
@@ -2808,8 +2839,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   // show the other person's avatar only at the start of a run.
                   // Group/channel conversations retain sender identity for each run.
                   const isGroupLike = activeConv?.type === 'group' || activeConv?.type === 'channel';
-                  const showSenderIdentity = isGroupLike ? !inSameRun : (!msg.isOwn && !inSameRun);
-                  return <div key={msg.id} className={inSameRun ? 'mt-1' : ''}>{showDate && <div className="my-5 flex justify-center"><span className="rounded-full bg-[#202126] px-3 py-1.5 text-[11px] font-medium text-white/65">{dateLabel}</span></div>}{msg.id === firstUnreadId && <div className="my-4 flex items-center gap-3"><span className="h-px flex-1 bg-[#d6a83f]/25"/><span className="rounded-full border border-[#d6a83f]/30 bg-[#d6a83f]/10 px-3 py-1 text-[9px] font-semibold uppercase tracking-[.14em] text-[#f2c75c]">New messages</span><span className="h-px flex-1 bg-[#d6a83f]/25"/></div>}
+                  const showSenderIdentity = isGroupLike && !inSameRun;
+                  return <div key={msg.id} className={inSameRun ? 'mt-[3px]' : ''}>{showDate && <div className="my-4 flex justify-center"><span className="rounded-full bg-[#243646]/95 px-3 py-1.5 text-xs font-semibold text-white/85 shadow-sm">{dateLabel}</span></div>}{msg.id === firstUnreadId && <div className="my-4 flex items-center gap-3"><span className="h-px flex-1 bg-[#d6a83f]/25"/><span className="rounded-full border border-[#d6a83f]/30 bg-[#d6a83f]/10 px-3 py-1 text-[9px] font-semibold uppercase tracking-[.14em] text-[#f2c75c]">New messages</span><span className="h-px flex-1 bg-[#d6a83f]/25"/></div>}
                   <div
                     id={`message-${msg.id}`}
                     className={cn('flex relative scroll-mt-24 transition-shadow touch-pan-y will-change-transform', msg.isOwn ? 'justify-end' : 'justify-start', selectedMessageIds.size > 0 && 'cursor-pointer -mx-3 w-[calc(100%+1.5rem)] py-1.5 pl-[3.25rem] pr-3 transition-colors duration-150 [&_*]:pointer-events-none select-none', selectedMessageIds.has(msg.id) && 'bg-[#d6a83f]/[0.14] shadow-[inset_3px_0_0_#d6a83f]')}
@@ -2828,7 +2859,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   >
                     {selectedMessageIds.size > 0 && <span aria-hidden="true" className={cn('absolute left-2.5 top-1/2 z-10 grid h-[22px] w-[22px] -translate-y-1/2 place-items-center rounded-full border-2 transition-all duration-150', selectedMessageIds.has(msg.id) ? 'scale-100 border-[#e8c65f] bg-gradient-to-b from-[#f2d777] to-[#c49a2f] text-[#17130a] shadow-[0_0_12px_rgba(214,168,63,.5)]' : 'scale-95 border-white/30 bg-black/30 text-transparent')}><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></span>}
                     <div className={cn('flex w-full min-w-0 items-start gap-2.5', msg.isOwn ? 'flex-row-reverse' : 'flex-row')}>
-                      <div className="w-fit min-w-[3.5rem] max-w-[calc(100%-2.75rem)]">
+                      <div className={cn('w-fit min-w-[3.5rem]', activeConv.type === 'direct' ? 'max-w-[min(85vw,410px)]' : 'max-w-[calc(100%-2.75rem)]')}>
                         {showSenderIdentity && (
                           <div className={cn('flex max-w-[min(100%,420px)] items-center gap-2', msg.isOwn && 'justify-end')}>
                             <button
@@ -2843,9 +2874,13 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                         )}
                       <div className={cn(
                         'chat-bubble-text w-fit max-w-full overflow-hidden rounded-2xl px-3 py-2 text-[15px] leading-[1.45] shadow-sm',
-                        msg.isOwn
-                           ? 'rounded-tr-md bg-[#303d4b] text-white'
-                           : 'rounded-tl-md bg-[#202b37] text-white'
+                        activeConv.type === 'direct'
+                          ? msg.isOwn
+                            ? 'rounded-br-md bg-gradient-to-br from-[#5c54d9] to-[#2989de] text-white'
+                            : 'rounded-bl-md bg-[#243444] text-white'
+                          : msg.isOwn
+                            ? 'rounded-tr-md bg-[#303d4b] text-white'
+                            : 'rounded-tl-md bg-[#202b37] text-white'
                       )}>
                         {msg.deletedAt ? <span className="block text-sm italic text-white/60">Message deleted</span> : msg.type === 'CALL' ? (
                           <span className="flex items-center justify-center gap-1.5 whitespace-nowrap py-0.5 px-3 text-xs text-white/50">
@@ -3028,7 +3063,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   <button type="button" onClick={requestDeleteSelectedMessages} className="flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl bg-[#4a2c32] text-[10px] font-semibold text-[#ffb9bd] transition hover:bg-[#5a343b]"><Trash2 size={17}/>Delete</button>
                 </div>
               </div>
-            ) : canPublish ? <div className="vanta-chat-composer sticky bottom-0 z-30 shrink-0 bg-transparent px-2.5 pb-[max(8px,env(safe-area-inset-bottom))] pt-2">
+            ) : canPublish ? <div className={cn("vanta-chat-composer sticky bottom-0 z-30 shrink-0 bg-transparent px-2.5 pb-[max(8px,env(safe-area-inset-bottom))] pt-2", activeConv.type === 'direct' && 'vanta-direct-composer')}>
               {editingMessage && <div className="mb-2 flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/70"><span>Editing message</span><button onClick={() => { setEditingMessage(null); setMessageInput(''); }} aria-label="Cancel editing"><X size={14} /></button></div>}
               {activeReply && <div className="mb-1.5 flex items-center gap-2 border-l-2 border-[#d6a83f] pr-2 pl-2 py-1"><button type="button" className="min-w-0 flex-1 truncate text-left text-[11px]" onClick={() => { const original = document.getElementById(`message-${activeReply.id}`); original?.scrollIntoView({ behavior: 'smooth', block: 'center' }); original?.classList.add('ring-1', 'ring-[#d6a83f]/70'); window.setTimeout(() => original?.classList.remove('ring-1', 'ring-[#d6a83f]/70'), 1200); }}><span className="font-semibold text-[#f2c75c]">@{activeReply.sender?.username || 'user'}</span><span className="text-white/45"> · {activeReply.text || activeReply.content || 'Attachment'}</span></button><button className="grid h-6 w-6 shrink-0 place-items-center rounded text-white/40" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={12} /></button></div>}
               {(recordingState === 'recording' || recordingState === 'ready' || recordingState === 'uploading') && (
@@ -3206,13 +3241,26 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   </section>
                 </>
               )}
-              <div className="flex items-center gap-1.5 bg-transparent px-0 py-0">
+              {composerEmojiOpen && (
+                <div className="absolute bottom-[calc(100%+6px)] left-2 z-[65] max-w-[calc(100vw-16px)]">
+                  <EmojiPicker onEmojiSelect={emoji => {
+                    setMessageInput(current => current + emoji);
+                    setComposerEmojiOpen(false);
+                    messageInputRef.current?.focus({ preventScroll: true });
+                  }} onClose={() => setComposerEmojiOpen(false)} className="max-w-full" />
+                </div>
+              )}
+              <div className={cn("flex items-center gap-1.5 bg-transparent px-0 py-0", activeConv.type === 'direct' && 'vanta-direct-input-row')}>
                 {/* Hidden native pickers — each invokes a distinct real device capability */}
                 <input ref={attachmentInputRef} type="file" className="hidden" accept="image/*,video/*" multiple onChange={handleAttachment} />
                 <input ref={cameraInputRef} type="file" className="hidden" accept="image/*,video/*" capture="environment" onChange={handleAttachment} />
                 <input ref={musicInputRef} type="file" className="hidden" accept="audio/*,.mp3,.wav,.ogg,.m4a,.flac,.aac" onChange={handleMusicAttachment} />
                 <input ref={fileInputRef} type="file" className="hidden" accept="application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" multiple onChange={handleDocumentAttachment} />
-                <button onClick={() => setShowAttachmentSheet(value => !value)} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="btn-icon h-9 w-9 shrink-0 rounded-full bg-white/[0.045] disabled:opacity-50" aria-label="Add attachment">{isUploadingAttachment ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={17} />}</button>
+                <button onClick={() => { setComposerEmojiOpen(false); setShowAttachmentSheet(value => !value); }} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="btn-icon h-10 w-10 shrink-0 rounded-full bg-white/[0.045] disabled:opacity-50" aria-label="Add attachment">{isUploadingAttachment ? <Loader2 size={17} className="animate-spin" /> : <Paperclip size={22} />}</button>
+                {activeConv.type === 'direct' && (
+                  <button type="button" aria-label="Choose emoji" aria-expanded={composerEmojiOpen} onClick={() => { setShowAttachmentSheet(false); setComposerEmojiOpen(value => !value); }}
+                    className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white/65 hover:text-white"><Smile size={23}/></button>
+                )}
                 <div className="flex-1 relative">
                   <textarea
                     ref={messageInputRef}
@@ -3245,7 +3293,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     }}
                     disabled={recordingState !== 'idle'}
                     placeholder="Message"
-                    className="min-h-10 max-h-[100px] w-full resize-none overflow-y-auto rounded-2xl border-0 bg-[#27313d] px-3.5 py-2.5 text-sm leading-5 text-white outline-none placeholder:text-white/35 focus:bg-[#354252]"
+                    className="min-h-10 max-h-[100px] w-full resize-none overflow-y-auto rounded-2xl border-0 bg-[#27313d] px-3.5 py-2.5 text-[16px] leading-5 text-white outline-none placeholder:text-white/40 focus:bg-[#354252]"
                     enterKeyHint="enter"
                     onKeyDown={e => {
                       // Keep Enter as a newline on phones; the visible Send button
@@ -3261,7 +3309,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                 {messageInput.trim() || attachmentDrafts.length ? (
                   <button
                     onClick={sendComposer}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#c9a227] text-[#171b20] transition-colors hover:bg-[#e0b638]"
+                    className="flex h-[50px] w-[50px] shrink-0 items-center justify-center rounded-full bg-[#2b9de4] text-white transition-colors hover:bg-[#168bd0]"
                     aria-label="Send message"
                   >
                     <Send size={16} />
@@ -3272,7 +3320,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     animate={{ scale: 1 }}
                     type="button"
                     onClick={() => void startVoiceRecording()}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1E9DE9] text-white transition-colors hover:bg-[#168bd0]"
+                    className="flex h-[50px] w-[50px] shrink-0 items-center justify-center rounded-full bg-[#2b9de4] text-white transition-colors hover:bg-[#168bd0]"
                     aria-label="Record voice note"
                     title="Record voice note"
                   >
