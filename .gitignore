@@ -202,3 +202,12 @@ backend/scripts/verify-env-loading.ts
 # Scratch SQLite purchase-FK integration harness (generated client + scratch DB)
 backend/.sqlite-test-client/
 backend/prisma/vanta-integration-test.db
+
+# Local command output and build process markers
+/build-be.pid
+/build-fe.pid
+/cached.txt
+/staged.txt
+/staged2.txt
+/staged3.txt
+/status.txt
