@@ -1,3 +1,4 @@
+import { isPublicCloudinaryDerivative } from './cloudinary-media-categories';
 export type CloudinaryJobKind = 'cloudinary:image:optimize' | 'cloudinary:thumbnail:generate' | 'cloudinary:video:transcode';
 
 export interface CloudinaryMediaRecord {
@@ -50,6 +51,10 @@ export async function prepareCloudinaryMedia(
   // Their token-checked delivery path is separate from public uploaded media.
   if (record.category === 'message') {
     throw new Error('Private message media is not supported by public derivative delivery');
+  }
+
+  if (!isPublicCloudinaryDerivative(record.fileType, record.category)) {
+    throw new Error('Unsupported private media category for public derivative processing');
   }
 
   const match = /^cloudinary:(image|video):(.+)$/.exec(record.path || '');

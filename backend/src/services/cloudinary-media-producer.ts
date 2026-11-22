@@ -1,4 +1,5 @@
 import { EnqueueOptions } from './durable-queue.repository';
+import { isPublicCloudinaryDerivative } from './cloudinary-media-categories';
 
 interface QueueWriter {
   enqueue(type: string, payload: unknown, options?: EnqueueOptions): Promise<string>;
@@ -26,7 +27,7 @@ export async function enqueueCloudinaryMediaForUpload(
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(file.id)) throw new Error('Invalid UploadedFile ID');
   // Private message attachments must use the token-checked media route.
   // Do not create public derivative jobs for them.
-  if (file.category === 'message') return;
+  if (!isPublicCloudinaryDerivative(file.fileType, file.category)) return;
   const jobs: string[] = [];
   if (file.fileType === 'IMAGE') {
     if (options.optimize) jobs.push('cloudinary:image:optimize');
