@@ -25,6 +25,7 @@ async function main(): Promise<void> {
   process.once('SIGTERM', () => shutdown('SIGTERM'));
   process.once('SIGINT', () => shutdown('SIGINT'));
   await prisma.$connect();
+  if (stopping) return;
   worker.start();
   console.info('[DurableQueueWorker] Started:', worker.id);
 }
