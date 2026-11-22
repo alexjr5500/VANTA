@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Search, UserCheck, UserPlus, Users, X } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
@@ -26,14 +26,19 @@ export default function PeopleDialog({ kind, own, username, token, currentUserId
   const [actionError, setActionError] = useState('');
   const [pending, setPending] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
+  const pendingRef = useRef(new Set<string>());
   const title = kind === 'followers' ? 'Followers' : 'Following';
   useEffect(() => {
     const path = own ? `/api/profiles/me/${kind}` : `/api/profiles/${encodeURIComponent(username)}/${kind}`;
+    let active = true;
     setLoading(true); setLoadError(''); setActionError('');
     apiGet<any>(`${path}?limit=60`, token, { skipCache: true })
-      .then(result => setRows(unwrap(result)))
-      .catch((reason: any) => setLoadError(reason?.message || `Unable to load ${kind}.`))
-      .finally(() => setLoading(false));
+      .then(result => { if (active) setRows(unwrap(result)); })
+      .catch((reason: any) => {
+        if (active && reason?.statusCode !== 499) setLoadError(reason?.message || `Unable to load ${kind}.`);
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [kind, own, token, username, retryKey]);
   const filtered = useMemo(() => { const value = query.trim().toLowerCase(); return value ? rows.filter(person => `${person.fullName || ''} ${person.username || ''}`.toLowerCase().includes(value)) : rows; }, [query, rows]);
 
@@ -47,15 +52,16 @@ export default function PeopleDialog({ kind, own, username, token, currentUserId
   }, [close]);
 
   const toggleFollow = async (person: ProfileItem) => {
-    if (!token || person.id === currentUserId || pending === person.username) return;
+    if (!token || person.id === currentUserId || pendingRef.current.has(person.username)) return;
+    pendingRef.current.add(person.username);
     const following = !!person.isFollowing;
     setPending(person.username); setActionError('');
     try {
       const result: any = following ? await apiDelete(`/api/profiles/${encodeURIComponent(person.username)}/follow`, token) : await apiPost(`/api/profiles/${encodeURIComponent(person.username)}/follow`, {}, token);
-      setRows(current => current.map(row => row.username === person.username ? { ...row, isFollowing: !!result?.isFollowing } : row));
+      setRows(current => current.map(row => row.username === person.username ? { ...row, isFollowing: typeof result?.isFollowing === 'boolean' ? result.isFollowing : !following } : row));
       window.dispatchEvent(new CustomEvent('vanta:follow-updated', { detail: result }));
     } catch (reason: any) { setActionError(reason?.message || `Unable to ${following ? 'unfollow' : 'follow'} @${person.username}.`); }
-    finally { setPending(null); }
+    finally { pendingRef.current.delete(person.username); setPending(null); }
   };
   return (
     <>
