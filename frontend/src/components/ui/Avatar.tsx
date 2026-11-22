@@ -88,6 +88,7 @@ export default function Avatar({
     <div
       className={cn('relative inline-flex shrink-0 overflow-visible', sizeStyles[size], wrapperClassName, onClick && 'cursor-pointer')}
       onClick={onClick}
+      onKeyDown={onClick ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick(); } } : undefined}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-label={alt}
