@@ -8,7 +8,6 @@ import {
   resolveAdminPassword,
 } from './admin-credentials';
 import { seedAdminDevWallet } from '../src/services/admin-dev-wallet.service';
-import { ensureCanonicalPurchaseCatalog } from '../src/services/purchase-catalog.service';
 
 const prisma = new PrismaClient();
 
@@ -77,29 +76,9 @@ async function main() {
   // Do not create a second hard-coded CEO account on a fresh database.
   console.log(`✅ Configured administrator identity ensured (${adminEmail}, @${adminUsername})`);
 
-// ============================================================================
-  // 0c + 1. PURCHASE CATALOG (Verified Badge plans + VANTA Coin packages)
-  // The DATABASE is the authoritative purchase catalog. The same provisioning
-  // routine used at application startup (src/services/purchase-catalog.service.ts)
-  // upserts:
-  //   * the four canonical Verified Badge plans (Blue 1/3/6 mo, Gold 1 yr) into
-  //     `SubscriptionPlan`, and
-  //   * the canonical VANTA Coin packages (src/config/wallet.config.ts) into
-  //     `SparkCoinPackage` — using the EXACT ids the frontend config uses
-  //     (`pkg_starter`, `pkg_popular`, ...), and deactivates (never deletes)
-  //     legacy rows with old ids (e.g. `pkg_popular_pack`) whose ids never
-  //     existed in the config catalog.
-  // This is idempotent: running it repeatedly never duplicates packages.
-  // ============================================================================
-  const catalog = await ensureCanonicalPurchaseCatalog(prisma);
-  console.log(
-    `✅ Purchase catalog provisioned: ${catalog.coinPackages} coin package(s) active, ` +
-    `${catalog.badgePlans} badge plan(s), ${catalog.legacyDeactivated} legacy package(s) retired`
-  );
+  // Purchase catalog provisioning runs once at backend startup (src/index.ts).
+  // Do not also mutate catalog prices/plans during the predeploy seed.
 
-  // ============================================================================
-  // 2. Create Gifts
-  // ============================================================================
   const allGifts = initialGiftCatalog;
 
   for (const gift of allGifts) {
