@@ -1,7 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { initialGiftCatalog } from './gift-catalog.data';
-import { CryptoUtils } from '../src/security/crypto';
 import {
   ADMIN_EMAIL as adminEmail,
   ADMIN_USERNAME as adminUsername,
@@ -73,62 +72,6 @@ async function main() {
 
     console.log(`✅ Administrator account created: ${admin.email} (${admin.username})`);
   }
-
-  // ============================================================================
-  // 0b. VERIFY THE CONFIGURED ADMIN ACCOUNT
-  // Verification is a REAL, server-controlled property on the User record
-  // (User.verified). This block is idempotent and never destroys existing
-  // accounts/data — it only ensures the flag is set. The frontend badge reads
-  // this server value; it must never be inferred from a hardcoded username.
-  // ============================================================================
-  const ensureVerifiedUser = async (
-    handle: string,
-    fullName: string,
-    opts: { role?: 'USER' | 'ADMIN'; email?: string; password?: string } = {}
-  ): Promise<void> => {
-    const lower = handle.toLowerCase();
-    // SQLite has no case-insensitive filter mode, so match known case variants
-    // (covers the seeded uppercase "CEO" account without creating a duplicate).
-    const variants = Array.from(
-      new Set([lower, handle, handle.toUpperCase(), lower.charAt(0).toUpperCase() + lower.slice(1)])
-    );
-
-    const existing = await prisma.user.findFirst({
-      where: { OR: variants.map((username) => ({ username })) },
-    });
-
-    if (existing) {
-      const data: Record<string, unknown> = {};
-      if (!existing.verified) data.verified = true;
-      if (!existing.emailVerified) data.emailVerified = true;
-      if (existing.status !== 'ACTIVE') data.status = 'ACTIVE';
-      if (opts.role === 'ADMIN' && existing.role !== 'ADMIN') data.role = 'ADMIN';
-      if (Object.keys(data).length > 0) {
-        await prisma.user.update({ where: { id: existing.id }, data });
-      }
-      console.log(`✅ @${existing.username} verified (server-controlled User.verified)`);
-      return;
-    }
-
-    const passwordHash = await bcrypt.hash(opts.password || `Vanta$${lower}2025`, 10);
-    const created = await prisma.user.create({
-      data: {
-        email: opts.email || `${lower}@vanta.app`,
-        username: lower,
-        passwordHash,
-        fullName,
-        role: opts.role || 'USER',
-        verified: true,
-        emailVerified: true,
-        status: 'ACTIVE',
-        profile: { create: { username: lower, fullName } },
-        wallet: { create: {} },
-        userSettings: { create: {} },
-        notificationPrefs: { create: {} },
-      },
-    });
-    console.log(`✅ Verified creator account created: @${created.username}`);
-  };
 
   // The configured administrator above is the single admin bootstrap account.
   // Do not create a second hard-coded CEO account on a fresh database.
