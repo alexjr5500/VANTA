@@ -63,6 +63,8 @@ class MainActivity : Activity() {
         private val VANTA_ORIGIN: String
             get() = BuildConfig.VANTA_ORIGIN
         private val VANTA_HOSTS = setOfNotNull(Uri.parse(BuildConfig.VANTA_ORIGIN).host)
+        // Marker used only by the first-party Status media input to request Android Files.
+        private const val STATUS_MEDIA_PICKER = "application/x-vanta-status-picker"
         private const val FILE_CHOOSER_REQUEST = 4107
         private const val CAMERA_REQUEST = 4108
         private const val CAMERA_URI_STATE = "vanta.pending.camera.uri"
@@ -320,9 +322,12 @@ class MainActivity : Activity() {
                         .distinct()
                         .toTypedArray()
 
+                    val statusMediaPicker = STATUS_MEDIA_PICKER in acceptedFileTypes
+                    acceptedFileTypes = acceptedFileTypes.filterNot { it == STATUS_MEDIA_PICKER }.toTypedArray()
                     val accepted = acceptedFileTypes
                     val mediaOnly = accepted.isNotEmpty() && accepted.all { it.startsWith("image/") || it.startsWith("video/") }
                     when {
+                        statusMediaPicker -> launchStatusFiles()
                         mediaOnly && fileChooserParams.isCaptureEnabled -> launchCamera()
                         mediaOnly -> launchPhotos()
                         else -> launchFiles()
@@ -439,7 +444,7 @@ class MainActivity : Activity() {
         webView.evaluateJavascript(
             // The WebView is already measured above the native navigation
             // bar, so adding the inset again in CSS would create a double gap.
-            "document.documentElement.style.setProperty('--vanta-native-safe-bottom', '0px'); document.documentElement.style.setProperty('--vanta-native-reel-action-offset', '64px')",
+            "document.documentElement.classList.add('vanta-native-android'); document.documentElement.style.setProperty('--vanta-native-safe-bottom', '0px'); document.documentElement.style.setProperty('--vanta-native-reel-action-offset', '64px')",
             null
         )
     }
@@ -720,6 +725,17 @@ class MainActivity : Activity() {
                 putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
                 putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             }
+        }
+        launchIntent(intent, FILE_CHOOSER_REQUEST)
+    }
+
+    /** Native Android document picker for Status media, without changing other upload pickers. */
+    private fun launchStatusFiles() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
         }
         launchIntent(intent, FILE_CHOOSER_REQUEST)
     }

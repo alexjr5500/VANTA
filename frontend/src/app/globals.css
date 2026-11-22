@@ -3446,3 +3446,41 @@ html.light .feed-item:hover {
     border-radius: 12px !important;
   }
 }
+
+
+/* Android APK only: native FrameLayout already reserves the OS bars. Avoid
+   counting their insets again in the WebView's chat/creation surfaces. */
+html.vanta-native-android body {
+  padding-bottom: 0 !important;
+}
+
+html.vanta-native-android .chat-screen {
+  height: var(--chat-viewport-height, 100dvh);
+  bottom: auto;
+}
+
+html.vanta-native-android .vanta-chat-composer {
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}
+
+html.vanta-native-android .vanta-entity-create {
+  height: var(--chat-viewport-height, 100dvh) !important;
+  min-height: 0;
+}
+
+html.vanta-native-android .vanta-entity-create > header {
+  min-height: 52px;
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}
+
+html.vanta-native-android .vanta-entity-create > div.flex-1 {
+  padding-top: 0;
+}
+
+html.vanta-native-android .vanta-entity-create footer {
+  min-height: 56px;
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}

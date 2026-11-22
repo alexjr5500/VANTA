@@ -12,6 +12,7 @@ import {
   Image as ImageIcon,
   Loader2,
   Plus,
+  Pencil,
   RefreshCw,
   Trash2,
   Type,
@@ -52,6 +53,7 @@ export type MediaStorySource = 'camera-photo' | 'camera-video' | 'gallery-image'
 
 export interface StoryMediaEditorProps {
   source: MediaStorySource;
+  initialFiles?: File[];
   onBack?: () => void;
   onText?: () => void;
   onClose: () => void;
@@ -195,7 +197,7 @@ async function buildDraftItems(files: File[]): Promise<DraftMedia[]> {
  *    and uploads only start once every draft exists,
  *  - guards against double-submission with an immediate ref-based lock.
  */
-export default function StoryMediaEditor({ source, onBack, onText, onClose }: StoryMediaEditorProps) {
+export default function StoryMediaEditor({ source, initialFiles, onBack, onText, onClose }: StoryMediaEditorProps) {
   const { token, user } = useAuth();
   const toast = useToast();
 
@@ -218,6 +220,7 @@ export default function StoryMediaEditor({ source, onBack, onText, onClose }: St
   const successShownRef = useRef(false);
   const closeTimerRef = useRef<number | null>(null);
 
+  const appliedInitialFilesRef = useRef(false);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const cameraPhotoRef = useRef<HTMLInputElement | null>(null);
   const cameraVideoRef = useRef<HTMLInputElement | null>(null);
@@ -335,6 +338,13 @@ useEffect(() => {
     },
     [capacity, items.length]
   );
+
+  // Accept the media chosen directly from Android Files without reopening a picker.
+  useEffect(() => {
+    if (appliedInitialFilesRef.current || !initialFiles?.length) return;
+    appliedInitialFilesRef.current = true;
+    void addFiles(initialFiles);
+  }, [addFiles, initialFiles]);
 
   const openGalleryPicker = useCallback(() => {
     galleryInputRef.current?.click();
@@ -579,14 +589,26 @@ const sourceLabel = source === 'camera-video' ? 'Record a video'
           <h2 className="text-sm font-semibold text-white">Add status</h2>
           <p className="max-w-[220px] truncate text-[10px] text-white/40">{sourceLabel}</p>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close creation"
-          className="grid h-11 w-11 place-items-center rounded-full text-[#8a8a8a] transition hover:bg-white/[0.06] hover:text-white"
-        >
-          <X size={18} />
-        </button>
+        {onText && items.length === 0 ? (
+          <button
+            type="button"
+            onClick={onText}
+            aria-label="Write a text Status"
+            title="Text Status"
+            className="grid h-11 w-11 place-items-center rounded-full text-[#dfbd55] transition hover:bg-white/[0.06]"
+          >
+            <Pencil size={19} />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close creation"
+            className="grid h-11 w-11 place-items-center rounded-full text-[#8a8a8a] transition hover:bg-white/[0.06] hover:text-white"
+          >
+            <X size={18} />
+          </button>
+        )}
       </header>
 
       {publishing ? (
