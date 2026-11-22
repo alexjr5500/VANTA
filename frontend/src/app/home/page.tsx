@@ -262,7 +262,24 @@ export default function HomePage() {
     // share endpoint, so we just share the /reels/:id link. Posts use the feed
     // share endpoint.
     const url = `${location.origin}${detailPathFor(target)}`;
-    try { if (!isReel) await apiPost(`/api/feed/${id}/share`, { destination }, token); if (destination === 'COPY_LINK') await navigator.clipboard.writeText(url); else if (destination === 'NATIVE' && navigator.share) await navigator.share({ title: 'VANTA', text: target.content, url }); else if (destination === 'MESSAGE') router.push(`/chat?share=${encodeURIComponent(url)}`); toast.success(destination === 'COPY_LINK' ? 'Link copied' : 'Shared successfully'); setMoreFor(undefined); }
+    try {
+      if (destination === 'NATIVE' && !navigator.share) {
+        toast.error('Device sharing is unavailable', 'Use Copy link instead.');
+        return;
+      }
+      if (destination === 'NATIVE') {
+        // The device share sheet can be cancelled; do not report success first.
+        await navigator.share({ title: 'VANTA', text: target.content, url });
+      } else if (destination === 'COPY_LINK') {
+        await navigator.clipboard.writeText(url);
+      } else if (destination === 'MESSAGE') {
+        router.push(`/chat?share=${encodeURIComponent(url)}`);
+      }
+      if (!isReel) await apiPost(`/api/feed/${id}/share`, { destination }, token);
+      if (destination === 'COPY_LINK') toast.success('Link copied');
+      else if (destination === 'NATIVE') toast.success('Shared successfully');
+      setMoreFor(undefined);
+    }
     catch (reason: any) { toast.error('Share failed', reason?.message); }
   };
   const repost = async (target: Item) => {
