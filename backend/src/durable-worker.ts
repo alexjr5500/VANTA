@@ -1,4 +1,6 @@
 import { spawnSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 import { prisma } from './prisma';
 import { createDurableQueueWorker } from './services/durable-queue.runtime';
 
@@ -12,6 +14,16 @@ async function main(): Promise<void> {
   }
   // Fail fast rather than repeatedly claiming jobs that cannot be processed.
   if (process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS === 'true') {
+    const storage = process.env.UPLOAD_STORAGE_DIR;
+    if (!storage || !path.isAbsolute(storage)) {
+      throw new Error('Media worker requires an absolute UPLOAD_STORAGE_DIR');
+    }
+    const resolved = path.resolve(storage);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory() ||
+        fs.realpathSync(resolved) !== resolved) {
+      throw new Error('Media worker requires an existing, non-symlink upload directory');
+    }
+    fs.accessSync(resolved, fs.constants.R_OK | fs.constants.W_OK);
     const ffmpeg = spawnSync(process.env.FFMPEG_PATH || 'ffmpeg', ['-version'], {
       timeout: 5_000, encoding: 'utf8',
     });
