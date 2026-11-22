@@ -74,7 +74,7 @@ loadEnvForPrisma();
 
 /** Canonical administrator identity comes from backend environment variables. */
 export const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'vantapp74@gmail.com').trim().toLowerCase();
-export const ADMIN_USERNAME = (process.env.ADMIN_USERNAME || 'Alex').trim();
+export const ADMIN_USERNAME = (process.env.ADMIN_USERNAME || 'alex').trim();
 export const ADMIN_FULL_NAME = (process.env.ADMIN_FULL_NAME || ADMIN_USERNAME).trim();
 
 /**
