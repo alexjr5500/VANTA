@@ -1,5 +1,3 @@
-import { safeMediaOutputName } from './media-job-paths';
-
 export type CloudinaryJobKind = 'image:optimize' | 'thumbnail:generate' | 'video:transcode';
 
 export interface CloudinaryMediaRecord {
