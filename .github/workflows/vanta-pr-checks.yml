@@ -175,6 +175,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Verify FFmpeg exists
         run: ffmpeg -version
+      - name: Verify Sharp native runtime loads
+        run: npm --prefix backend exec -- node -e "const sharp = require('sharp'); console.log('Sharp', sharp.versions.sharp);"
       - name: Run durable media and queue unit tests
         env:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_test?schema=public
