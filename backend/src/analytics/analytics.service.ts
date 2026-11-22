@@ -117,7 +117,7 @@ export class AnalyticsEngine {
     // Add to buffer for batch processing
     EVENT_BUFFER.push({
       ...event,
-      timestamp: event.timestamp || new Date().toISOString(),
+      timestamp: event.createdAt || new Date().toISOString(),
     });
 
     // Update real-time metrics
@@ -137,7 +137,7 @@ export class AnalyticsEngine {
     for (const event of events) {
       EVENT_BUFFER.push({
         ...event,
-        timestamp: event.timestamp || new Date().toISOString(),
+        timestamp: event.createdAt || new Date().toISOString(),
       });
       this.updateRealtimeMetrics(event);
       analyticsEventBus.emit('event', event);
@@ -166,9 +166,9 @@ export class AnalyticsEngine {
           value: e.value || null,
           ipAddress: e.ipAddress || null,
           userAgent: e.userAgent || null,
-          deviceInfo: e.deviceInfo || null,
+          deviceType: e.deviceInfo || null,
           source: e.source || null,
-          timestamp: new Date(e.timestamp as string),
+          createdAt: new Date(e.timestamp as string),
         })),
         skipDuplicates: true,
       });
@@ -493,13 +493,13 @@ export class AnalyticsEngine {
     const events = await prisma.analyticsEvent.findMany({
       where: {
         eventType: { contains: eventPattern.replace('*', '%') },
-        timestamp: { gte: start, lte: end },
+        createdAt: { gte: start, lte: end },
         ...(filters?.userId ? { userId: filters.userId } : {}),
         ...(filters?.targetType ? { targetType: filters.targetType } : {}),
         ...(filters?.targetId ? { targetId: filters.targetId } : {}),
         ...(filters?.source ? { source: filters.source } : {}),
       },
-      orderBy: { timestamp: 'asc' },
+      orderBy: { createdAt: 'asc' },
     });
 
     return this.aggregateTimeSeries(events, grain, 'count', groupBy, limit);
@@ -512,10 +512,10 @@ export class AnalyticsEngine {
     const events = await prisma.analyticsEvent.findMany({
       where: {
         eventType: { in: ['user.active', 'user.login', 'session.start'] },
-        timestamp: { gte: start, lte: end },
+        createdAt: { gte: start, lte: end },
       },
-      select: { userId: true, timestamp: true },
-      orderBy: { timestamp: 'asc' },
+      select: { userId: true, createdAt: true },
+      orderBy: { createdAt: 'asc' },
     });
 
     const grain = granularity || periodType;
@@ -548,12 +548,12 @@ export class AnalyticsEngine {
     const events = await prisma.analyticsEvent.findMany({
       where: {
         eventType: { contains: eventPattern.replace('*', '%') },
-        timestamp: { gte: start, lte: end },
+        createdAt: { gte: start, lte: end },
         ...(filters?.userId ? { userId: filters.userId } : {}),
         ...(filters?.targetType ? { targetType: filters.targetType } : {}),
         ...(filters?.targetId ? { targetId: filters.targetId } : {}),
       },
-      orderBy: { timestamp: 'asc' },
+      orderBy: { createdAt: 'asc' },
     });
 
     const bucketed = this.bucketByTime(events, grain);
@@ -581,10 +581,10 @@ export class AnalyticsEngine {
     const events = await prisma.analyticsEvent.findMany({
       where: {
         eventType: { contains: eventPattern.replace('*', '%') },
-        timestamp: { gte: start, lte: end },
+        createdAt: { gte: start, lte: end },
         value: { not: null },
       },
-      orderBy: { timestamp: 'asc' },
+      orderBy: { createdAt: 'asc' },
     });
 
     const bucketed = this.bucketByTime(events, grain);
@@ -610,10 +610,10 @@ export class AnalyticsEngine {
 
   private async computePercentage(numerator: string, denominator: string, start: Date, end: Date): Promise<any> {
     const numEvents = await prisma.analyticsEvent.count({
-      where: { eventType: { contains: numerator.replace('*', '%') }, timestamp: { gte: start, lte: end } },
+      where: { eventType: { contains: numerator.replace('*', '%') }, createdAt: { gte: start, lte: end } },
     });
     const denEvents = await prisma.analyticsEvent.count({
-      where: { eventType: { contains: denominator.replace('*', '%') }, timestamp: { gte: start, lte: end } },
+      where: { eventType: { contains: denominator.replace('*', '%') }, createdAt: { gte: start, lte: end } },
     });
 
     return {
@@ -629,13 +629,13 @@ export class AnalyticsEngine {
     const midpoint = new Date((start.getTime() + end.getTime()) / 2);
     
     const firstPeriod = await prisma.analyticsEvent.findMany({
-      where: { eventType: { in: ['user.active', 'user.login'] }, timestamp: { gte: start, lte: midpoint } },
+      where: { eventType: { in: ['user.active', 'user.login'] }, createdAt: { gte: start, lte: midpoint } },
       select: { userId: true },
       distinct: ['userId'],
     });
     
     const secondPeriod = await prisma.analyticsEvent.findMany({
-      where: { eventType: { in: ['user.active', 'user.login'] }, timestamp: { gte: midpoint, lte: end } },
+      where: { eventType: { in: ['user.active', 'user.login'] }, createdAt: { gte: midpoint, lte: end } },
       select: { userId: true },
       distinct: ['userId'],
     });
@@ -670,14 +670,14 @@ export class AnalyticsEngine {
     const startCount = await prisma.analyticsEvent.count({
       where: {
         eventType: 'user.register',
-        timestamp: { gte: start, lte: midpoint },
+        createdAt: { gte: start, lte: midpoint },
       },
     });
     
     const endCount = await prisma.analyticsEvent.count({
       where: {
         eventType: 'user.register',
-        timestamp: { gte: midpoint, lte: end },
+        createdAt: { gte: midpoint, lte: end },
       },
     });
 
@@ -694,14 +694,14 @@ export class AnalyticsEngine {
     const revenue = await prisma.analyticsEvent.aggregate({
       where: {
         eventType: { in: ['coin.purchase', 'subscription.created', 'gift.sent'] },
-        timestamp: { gte: start, lte: end },
+        createdAt: { gte: start, lte: end },
         value: { not: null },
       },
       _sum: { value: true },
     });
 
     const users = await prisma.analyticsEvent.findMany({
-      where: { eventType: 'user.register', timestamp: { gte: start, lte: end } },
+      where: { eventType: 'user.register', createdAt: { gte: start, lte: end } },
       select: { userId: true },
       distinct: ['userId'],
     });
@@ -721,14 +721,14 @@ export class AnalyticsEngine {
     const interactions = await prisma.analyticsEvent.count({
       where: {
         eventType: { in: ['reaction.like', 'comment.created', 'content.share', 'content.save'] },
-        timestamp: { gte: start, lte: end },
+        createdAt: { gte: start, lte: end },
       },
     });
 
     const views = await prisma.analyticsEvent.count({
       where: {
         eventType: { in: ['content.view', 'video.view', 'story.view'] },
-        timestamp: { gte: start, lte: end },
+        createdAt: { gte: start, lte: end },
       },
     });
 
@@ -743,7 +743,7 @@ export class AnalyticsEngine {
     const events = await prisma.analyticsEvent.findMany({
       where: {
         eventType: { in: ['gift.sent', 'subscription.created', 'ad.impression'] },
-        timestamp: { gte: start, lte: end },
+        createdAt: { gte: start, lte: end },
         ...(filters?.userId ? { userId: filters.userId } : {}),
         ...(filters?.targetId ? { targetId: filters.targetId } : {}),
         value: { not: null },
@@ -758,7 +758,7 @@ export class AnalyticsEngine {
     const events = await prisma.analyticsEvent.findMany({
       where: {
         eventType: { in: ['coin.purchase', 'subscription.created'] },
-        timestamp: { gte: start, lte: end },
+        createdAt: { gte: start, lte: end },
         ...(filters?.userId ? { userId: filters.userId } : {}),
         value: { not: null },
       },
@@ -785,10 +785,10 @@ export class AnalyticsEngine {
 
   private async computeRefundRate(start: Date, end: Date): Promise<any> {
     const refunds = await prisma.analyticsEvent.count({
-      where: { eventType: 'payment.refund', timestamp: { gte: start, lte: end } },
+      where: { eventType: 'payment.refund', createdAt: { gte: start, lte: end } },
     });
     const payments = await prisma.analyticsEvent.count({
-      where: { eventType: 'payment.success', timestamp: { gte: start, lte: end } },
+      where: { eventType: 'payment.success', createdAt: { gte: start, lte: end } },
     });
 
     return {
@@ -800,10 +800,10 @@ export class AnalyticsEngine {
 
   private async computeConversionRate(start: Date, end: Date): Promise<any> {
     const registrations = await prisma.analyticsEvent.count({
-      where: { eventType: 'user.register', timestamp: { gte: start, lte: end } },
+      where: { eventType: 'user.register', createdAt: { gte: start, lte: end } },
     });
     const visits = await prisma.analyticsEvent.count({
-      where: { eventType: 'page.visit', timestamp: { gte: start, lte: end } },
+      where: { eventType: 'page.visit', createdAt: { gte: start, lte: end } },
     });
 
     return {
@@ -816,12 +816,12 @@ export class AnalyticsEngine {
   private async computeCAC(start: Date, end: Date): Promise<any> {
     // CAC = total marketing spend / new customers
     const marketingSpend = await prisma.analyticsEvent.aggregate({
-      where: { eventType: 'marketing.spend', timestamp: { gte: start, lte: end }, value: { not: null } },
+      where: { eventType: 'marketing.spend', createdAt: { gte: start, lte: end }, value: { not: null } },
       _sum: { value: true },
     });
 
     const newUsers = await prisma.analyticsEvent.count({
-      where: { eventType: 'user.register', timestamp: { gte: start, lte: end } },
+      where: { eventType: 'user.register', createdAt: { gte: start, lte: end } },
     });
 
     const spend = marketingSpend._sum.value || 0;
@@ -835,12 +835,12 @@ export class AnalyticsEngine {
   private async computeROAS(start: Date, end: Date): Promise<any> {
     // ROAS = revenue from marketing / marketing spend
     const marketingRevenue = await prisma.analyticsEvent.aggregate({
-      where: { eventType: { in: ['coin.purchase', 'subscription.created'] }, source: { in: ['ad', 'campaign', 'referral'] }, timestamp: { gte: start, lte: end }, value: { not: null } },
+      where: { eventType: { in: ['coin.purchase', 'subscription.created'] }, source: { in: ['ad', 'campaign', 'referral'] }, createdAt: { gte: start, lte: end }, value: { not: null } },
       _sum: { value: true },
     });
 
     const marketingSpend = await prisma.analyticsEvent.aggregate({
-      where: { eventType: 'marketing.spend', timestamp: { gte: start, lte: end }, value: { not: null } },
+      where: { eventType: 'marketing.spend', createdAt: { gte: start, lte: end }, value: { not: null } },
       _sum: { value: true },
     });
 
@@ -856,11 +856,11 @@ export class AnalyticsEngine {
   private async computeViralCoefficient(start: Date, end: Date): Promise<any> {
     // Viral coefficient = invites sent * conversion rate / total users
     const invites = await prisma.analyticsEvent.count({
-      where: { eventType: 'referral.invite_sent', timestamp: { gte: start, lte: end } },
+      where: { eventType: 'referral.invite_sent', createdAt: { gte: start, lte: end } },
     });
 
     const referrals = await prisma.analyticsEvent.count({
-      where: { eventType: 'referral.signup', timestamp: { gte: start, lte: end } },
+      where: { eventType: 'referral.signup', createdAt: { gte: start, lte: end } },
     });
 
     const conversionRate = invites > 0 ? referrals / invites : 0;
@@ -884,16 +884,16 @@ export class AnalyticsEngine {
     const events = await prisma.analyticsEvent.findMany({
       where: {
         eventType,
-        timestamp: { gte: start, lte: end },
+        createdAt: { gte: start, lte: end },
         ...(filters?.streamId ? { targetId: filters.streamId } : {}),
       },
-      orderBy: { timestamp: 'asc' },
+      orderBy: { createdAt: 'asc' },
     });
 
     // Group by minute and find max
     const bucketed: Record<string, number> = {};
     for (const event of events) {
-      const key = new Date(event.timestamp).toISOString().slice(0, 16);
+      const key = new Date(event.createdAt).toISOString().slice(0, 16);
       bucketed[key] = (bucketed[key] || 0) + 1;
     }
 
@@ -907,10 +907,10 @@ export class AnalyticsEngine {
 
   private async computeAIAccuracy(aiType: string, start: Date, end: Date): Promise<any> {
     const correct = await prisma.analyticsEvent.count({
-      where: { eventType: `ai.${aiType}.correct`, timestamp: { gte: start, lte: end } },
+      where: { eventType: `ai.${aiType}.correct`, createdAt: { gte: start, lte: end } },
     });
     const total = await prisma.analyticsEvent.count({
-      where: { eventType: { contains: `ai.${aiType}` }, timestamp: { gte: start, lte: end } },
+      where: { eventType: { contains: `ai.${aiType}` }, createdAt: { gte: start, lte: end } },
     });
 
     return {
@@ -922,10 +922,10 @@ export class AnalyticsEngine {
 
   private async computeAIDetectionRate(detectionType: string, start: Date, end: Date): Promise<any> {
     const detected = await prisma.analyticsEvent.count({
-      where: { eventType: `ai.detected.${detectionType}`, timestamp: { gte: start, lte: end } },
+      where: { eventType: `ai.detected.${detectionType}`, createdAt: { gte: start, lte: end } },
     });
     const actual = await prisma.analyticsEvent.count({
-      where: { eventType: { in: [`report.${detectionType}`, `moderation.${detectionType}`] }, timestamp: { gte: start, lte: end } },
+      where: { eventType: { in: [`report.${detectionType}`, `moderation.${detectionType}`] }, createdAt: { gte: start, lte: end } },
     });
 
     return {
@@ -937,7 +937,7 @@ export class AnalyticsEngine {
 
   private async computeAIResponseTime(start: Date, end: Date): Promise<any> {
     const result = await prisma.analyticsEvent.aggregate({
-      where: { eventType: { contains: 'ai.response' }, timestamp: { gte: start, lte: end }, value: { not: null } },
+      where: { eventType: { contains: 'ai.response' }, createdAt: { gte: start, lte: end }, value: { not: null } },
       _avg: { value: true },
       _max: { value: true },
       _min: { value: true },
@@ -963,7 +963,7 @@ export class AnalyticsEngine {
       const count = await prisma.analyticsEvent.count({
         where: {
           eventType: { contains: step.eventPattern.replace('*', '%') },
-          timestamp: { gte: start, lte: end },
+          createdAt: { gte: start, lte: end },
         },
       });
 
@@ -991,8 +991,8 @@ export class AnalyticsEngine {
   async getCohortAnalysis(cohortPeriod: 'week' | 'month', periods: number = 12): Promise<CohortAnalysis[]> {
     const registrations = await prisma.analyticsEvent.findMany({
       where: { eventType: 'user.register' },
-      select: { userId: true, timestamp: true },
-      orderBy: { timestamp: 'asc' },
+      select: { userId: true, createdAt: true },
+      orderBy: { createdAt: 'asc' },
     });
 
     // Group users by registration cohort
@@ -1000,8 +1000,8 @@ export class AnalyticsEngine {
     for (const reg of registrations) {
       if (!reg.userId) continue;
       const key = cohortPeriod === 'week' 
-        ? this.getWeekKey(reg.timestamp)
-        : this.getMonthKey(reg.timestamp);
+        ? this.getWeekKey(reg.createdAt)
+        : this.getMonthKey(reg.createdAt);
       
       if (!cohorts.has(key)) cohorts.set(key, []);
       cohorts.get(key)!.push(reg.userId);
@@ -1023,7 +1023,7 @@ export class AnalyticsEngine {
           where: {
             userId: { in: cohortUsers },
             eventType: { in: ['user.active', 'user.login'] },
-            timestamp: { gte: periodStart, lte: periodEnd },
+            createdAt: { gte: periodStart, lte: periodEnd },
           },
           select: { userId: true },
           distinct: ['userId'],
@@ -1053,18 +1053,18 @@ export class AnalyticsEngine {
     const events = await prisma.analyticsEvent.findMany({
       where: {
         userId,
-        timestamp: {
+        createdAt: {
           gte: start || new Date(Date.now() - 86400000),
           lte: end || new Date(),
         },
       },
-      orderBy: { timestamp: 'asc' },
+      orderBy: { createdAt: 'asc' },
       take: 100,
     });
 
     const steps = events.map(e => ({
       action: e.eventType,
-      timestamp: e.timestamp.toISOString(),
+      timestamp: e.createdAt.toISOString(),
       page: e.targetType || 'unknown',
       duration: 0, // Would need session context
     }));
@@ -1177,7 +1177,7 @@ export class AnalyticsEngine {
       by: ['targetId', 'targetType'],
       where: {
         eventType: { contains: metric.replace('*', '%') },
-        timestamp: { gte: start, lte: end },
+        createdAt: { gte: start, lte: end },
         targetId: { not: null },
       },
       _count: { id: true },
@@ -1202,7 +1202,7 @@ export class AnalyticsEngine {
     const events = await prisma.analyticsEvent.findMany({
       where: {
         eventType: { in: ['page.visit', 'user.register'] },
-        timestamp: { gte: start, lte: end },
+        createdAt: { gte: start, lte: end },
         source: { not: null },
       },
       select: { source: true },
@@ -1224,14 +1224,14 @@ export class AnalyticsEngine {
 
   async getAudienceDemographics(start: Date, end: Date): Promise<Record<string, any>> {
     const activeUserIds = await prisma.analyticsEvent.findMany({
-      where: { eventType: 'user.active', timestamp: { gte: start, lte: end } },
+      where: { eventType: 'user.active', createdAt: { gte: start, lte: end } },
       select: { userId: true },
       distinct: ['userId'],
     });
 
     // Fall back to event metadata analysis
     const eventMetadata = await prisma.analyticsEvent.findMany({
-      where: { eventType: 'user.active', timestamp: { gte: start, lte: end }, metadata: { not: null } },
+      where: { eventType: 'user.active', createdAt: { gte: start, lte: end }, metadata: { not: null } },
       select: { metadata: true },
       take: 1000,
     });
@@ -1264,7 +1264,7 @@ export class AnalyticsEngine {
     const buckets: Record<string, any[]> = {};
 
     for (const event of events) {
-      const key = this.getTimeBucketKey(event.timestamp, granularity);
+      const key = this.getTimeBucketKey(event.createdAt, granularity);
       if (!buckets[key]) buckets[key] = [];
       buckets[key].push(event);
     }
