@@ -39,6 +39,9 @@ export async function optimizeLocalImage(storageRoot: string, job: OptimizeImage
       fs.linkSync(temporary, destination);
     } catch (error: any) {
       if (error?.code !== 'EEXIST') throw error;
+      if (!fs.lstatSync(destination).isFile() || fs.statSync(destination).size === 0) {
+        throw new Error('Concurrent optimized image output is invalid');
+      }
     }
     return '/uploads/optimized/' + name + '.webp';
   } finally {
