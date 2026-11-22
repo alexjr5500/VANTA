@@ -1,4 +1,4 @@
-export type CloudinaryJobKind = 'image:optimize' | 'thumbnail:generate' | 'video:transcode';
+export type CloudinaryJobKind = 'cloudinary:image:optimize' | 'cloudinary:thumbnail:generate' | 'cloudinary:video:transcode';
 
 export interface CloudinaryMediaRecord {
   id: string;
@@ -53,17 +53,17 @@ export async function prepareCloudinaryMedia(
     throw new Error('Cloudinary media source is not a supported VANTA asset');
   }
   const resourceType = match[1] as 'image' | 'video';
-  const expectedType = kind === 'video:transcode' ? 'VIDEO' : 'IMAGE';
-  if (record.fileType !== expectedType || (kind === 'video:transcode' ? resourceType !== 'video' : resourceType !== 'image')) {
+  const expectedType = kind === 'cloudinary:video:transcode' ? 'VIDEO' : 'IMAGE';
+  if (record.fileType !== expectedType || (kind === 'cloudinary:video:transcode' ? resourceType !== 'video' : resourceType !== 'image')) {
     throw new Error('Cloudinary media source type does not match the job');
   }
 
   let transformation: Record<string, unknown>;
-  if (kind === 'image:optimize') {
+  if (kind === 'cloudinary:image:optimize') {
     const width = job.maxWidth ?? 1200;
     if (!Number.isInteger(width) || width < 64 || width > 3840) throw new Error('Invalid image width');
     transformation = { width, crop: 'limit', quality: 80, format: 'webp' };
-  } else if (kind === 'thumbnail:generate') {
+  } else if (kind === 'cloudinary:thumbnail:generate') {
     transformation = { width: 320, height: 180, crop: 'fill', quality: 70, format: 'webp' };
   } else {
     // Cloudinary owns the ABR ladder, unlike the local FFmpeg implementation.

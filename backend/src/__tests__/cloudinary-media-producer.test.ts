@@ -9,10 +9,10 @@ describe('opt-in Cloudinary upload job producer', () => {
       { id: 'file_123', fileType: 'IMAGE', category: 'post-image' },
       { optimize: true, generateThumbnail: true }, repository,
     );
-    expect(repository.enqueue).toHaveBeenNthCalledWith(1, 'image:optimize',
-      { fileId: 'file_123' }, { id: 'media-image-optimize-file_123', maxAttempts: 3 });
-    expect(repository.enqueue).toHaveBeenNthCalledWith(2, 'thumbnail:generate',
-      { fileId: 'file_123' }, { id: 'media-thumbnail-generate-file_123', maxAttempts: 3 });
+    expect(repository.enqueue).toHaveBeenNthCalledWith(1, 'cloudinary:image:optimize',
+      { fileId: 'file_123' }, { id: 'media-cloudinary-image-optimize-file_123', maxAttempts: 3 });
+    expect(repository.enqueue).toHaveBeenNthCalledWith(2, 'cloudinary:thumbnail:generate',
+      { fileId: 'file_123' }, { id: 'media-cloudinary-thumbnail-generate-file_123', maxAttempts: 3 });
   });
 
   it('enqueues managed HLS for reel, story and post video only', async () => {
@@ -22,8 +22,8 @@ describe('opt-in Cloudinary upload job producer', () => {
         { optimize: true, generateThumbnail: true }, repository);
     }
     expect(repository.enqueue).toHaveBeenCalledTimes(3);
-    expect(repository.enqueue).toHaveBeenLastCalledWith('video:transcode', { fileId: 'file_123' },
-      { id: 'media-video-transcode-file_123', maxAttempts: 3 });
+    expect(repository.enqueue).toHaveBeenLastCalledWith('cloudinary:video:transcode', { fileId: 'file_123' },
+      { id: 'media-cloudinary-video-transcode-file_123', maxAttempts: 3 });
   });
 
   it('does not generate unnecessary jobs for documents, private videos or disabled image options', async () => {

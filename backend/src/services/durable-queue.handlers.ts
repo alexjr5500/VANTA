@@ -69,7 +69,7 @@ export function createDurableQueueHandlers(
         explicit: (id: string, options: Parameters<typeof cloudinary.uploader.explicit>[1]) =>
           cloudinary.uploader.explicit(id, options),
       };
-      for (const kind of ['image:optimize', 'thumbnail:generate', 'video:transcode'] as CloudinaryJobKind[]) {
+      for (const kind of ['cloudinary:image:optimize', 'cloudinary:thumbnail:generate', 'cloudinary:video:transcode'] as CloudinaryJobKind[]) {
         handlers.set(kind, async (job: DurableJob): Promise<void> => {
           await prepareCloudinaryMedia(kind, job.payload as CloudinaryMediaJob, store, client);
         });

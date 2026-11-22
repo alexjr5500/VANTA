@@ -26,15 +26,15 @@ export async function enqueueCloudinaryMediaForUpload(
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(file.id)) throw new Error('Invalid UploadedFile ID');
   const jobs: string[] = [];
   if (file.fileType === 'IMAGE') {
-    if (options.optimize) jobs.push('image:optimize');
-    if (options.generateThumbnail) jobs.push('thumbnail:generate');
+    if (options.optimize) jobs.push('cloudinary:image:optimize');
+    if (options.generateThumbnail) jobs.push('cloudinary:thumbnail:generate');
   } else if (file.fileType === 'VIDEO' &&
              ['reel', 'story', 'post-video'].includes(file.category)) {
-    jobs.push('video:transcode');
+    jobs.push('cloudinary:video:transcode');
   }
   for (const type of jobs) {
     await repository.enqueue(type, { fileId: file.id }, {
-      id: `media-${type.replace(':', '-')}-${file.id}`,
+      id: `media-${type.replace(/:/g, '-')}-${file.id}`,
       maxAttempts: 3,
     });
   }

@@ -11,6 +11,8 @@ import { createDurableQueueHandlers } from './durable-queue.handlers';
 export function createDurableQueueWorker(options: DurableWorkerOptions = {}): DurableQueueWorker {
   const disabled = process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS !== 'true';
   const cloudinary = process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE === 'cloudinary';
+  const localTypes = ['image:optimize', 'thumbnail:generate', 'video:transcode', 'cleanup:temp'];
+  const cloudTypes = ['cloudinary:image:optimize', 'cloudinary:thumbnail:generate', 'cloudinary:video:transcode'];
   return new DurableQueueWorker(
     new DurableQueueRepository(prisma),
     createDurableQueueHandlers(),
@@ -18,8 +20,8 @@ export function createDurableQueueWorker(options: DurableWorkerOptions = {}): Du
       ...options,
       excludedJobTypes: [
         ...(options.excludedJobTypes ?? []),
-        ...(disabled ? ['image:optimize', 'thumbnail:generate', 'video:transcode', 'cleanup:temp']
-                     : cloudinary ? ['cleanup:temp'] : []),
+        ...(disabled ? [...localTypes, ...cloudTypes]
+                     : cloudinary ? localTypes : cloudTypes),
       ],
     },
   );

@@ -72,6 +72,17 @@ describeWithDatabase('DurableQueueRepository PostgreSQL integration', () => {
     expect(media.rows[0]).toMatchObject({ status: 'active', attempts: 1 });
   });
 
+  it('keeps local and Cloudinary jobs isolated between storage modes', async () => {
+    await repository.enqueue('image:optimize', { inputPath: 'source.jpg', outputName: 'local' }, { id: 'local-job', priority: 5 });
+    await repository.enqueue('cloudinary:image:optimize', { fileId: 'asset_123' }, { id: 'cloud-job', priority: 10 });
+    const localExcluded = ['cloudinary:image:optimize', 'cloudinary:thumbnail:generate', 'cloudinary:video:transcode'];
+    const remoteExcluded = ['image:optimize', 'thumbnail:generate', 'video:transcode', 'cleanup:temp'];
+    await expect(repository.claim('local-worker', 60_000, localExcluded)).resolves.toMatchObject({ id: 'local-job' });
+    await expect(repository.claim('cloud-worker', 60_000, remoteExcluded)).resolves.toMatchObject({ id: 'cloud-job' });
+    await expect(repository.claim('local-worker', 60_000, localExcluded)).resolves.toBeNull();
+    await expect(repository.claim('cloud-worker', 60_000, remoteExcluded)).resolves.toBeNull();
+  });
+
   it('allows only one worker to claim a single job under concurrent contention', async () => {
     await repository.enqueue('integration:once', { value: 42 }, { id: 'single-job' });
     const claims = await Promise.all([repository.claim('worker-a'), repository.claim('worker-b')]);
