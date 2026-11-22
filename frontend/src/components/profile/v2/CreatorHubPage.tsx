@@ -65,6 +65,7 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   const contentRequest = useRef(0);
   const paginationInFlight = useRef(false);
   const pendingPostActionsRef = useRef(new Set<string>());
+  const followInFlightRef = useRef(false);
 
   const loadProfile = useCallback(async () => {
     if (authLoading) return;
@@ -191,16 +192,18 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     } catch (reason: any) { toast.error('Could not start chat', reason?.message); }
   };
   const follow = async () => {
-    if (!profile || followPending) return;
+    if (!profile || own || followPending || followInFlightRef.current) return;
     if (!token) return router.push(`/login?next=${encodeURIComponent(`/profile/${profile.username}`)}`);
     const wasFollowing = !!profile.isFollowing;
     if (wasFollowing && !unfollowOpen) { setUnfollowOpen(true); return; }
     setUnfollowOpen(false);
+    followInFlightRef.current = true;
+    const targetId = profile.id;
     setFollowPending(true);
     setProfile(current => current ? { ...current, isFollowing: !wasFollowing, stats: { ...current.stats, followers: Math.max(0, finite(current.stats?.followers ?? current._count?.followers) + (wasFollowing ? -1 : 1)) } } : current);
     try {
       const result: any = wasFollowing ? await apiDelete(`/api/profiles/${profile.username}/follow`, token) : await apiPost(`/api/profiles/${profile.username}/follow`, {}, token);
-      setProfile(current => current ? { ...current, isFollowing: !!result?.isFollowing, stats: { ...current.stats, followers: finite(result?.counts?.target?.followers ?? current.stats?.followers) } } : current);
+      setProfile(current => current?.id === targetId ? { ...current, isFollowing: typeof result?.isFollowing === 'boolean' ? result.isFollowing : !wasFollowing, stats: { ...current.stats, followers: finite(result?.counts?.target?.followers ?? current.stats?.followers) } } : current);
       if (own === false && result?.counts?.currentUser) {
         window.dispatchEvent(new CustomEvent('vanta:profile-counts-updated', {
           detail: { userId: user?.id, counts: result.counts.currentUser },
@@ -208,8 +211,11 @@ export default function CreatorHubPage({ username }: { username?: string }) {
       }
       window.dispatchEvent(new CustomEvent('vanta:follow-updated', { detail: result }));
     }
-    catch (reason: any) { void loadProfile(); toast.error('Follow update failed', reason?.message); }
-    finally { setFollowPending(false); }
+    catch (reason: any) {
+      setProfile(current => current?.id === targetId ? { ...current, isFollowing: wasFollowing, stats: { ...current.stats, followers: finite(current.stats?.followers ?? current._count?.followers) + (wasFollowing ? -1 : 1) } } : current);
+      toast.error('Follow update failed', reason?.message);
+    }
+    finally { followInFlightRef.current = false; setFollowPending(false); }
   };
   const updatePost = (id: string, patch: ProfileItem) => setContent(current => ({ ...current, [tab]: current[tab].map(item => cleanPostId(item) === id ? { ...item, ...patch } : item) }));
   const togglePost = async (item: ProfileItem, mode: 'like' | 'save') => {
