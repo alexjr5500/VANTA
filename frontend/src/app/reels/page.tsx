@@ -697,7 +697,17 @@ export default function ReelsPage() {
         ))}
       </PullToRefresh>
 
-      
+      {loadMoreError && nextStart != null && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-24 z-30 flex justify-center px-4">
+          <button type="button" onClick={() => {
+            if (loadingMoreRef.current) return;
+            loadingMoreRef.current = true;
+            void load(nextStart, true).finally(() => { loadingMoreRef.current = false; });
+          }} className="pointer-events-auto rounded-full border border-white/15 bg-[#1f2630] px-4 py-2 text-xs font-medium text-[#e6c35a] shadow-lg" aria-label="Retry loading more Reels">
+            Couldn&apos;t load more Reels. Retry
+          </button>
+        </div>
+      )}
 
       <AnimatePresence>
         {commentsFor && <CommentsPanel reel={commentsFor} items={comments} loading={commentsLoading} text={commentText} sending={commentSending} currentUserId={user?.id} setText={setCommentText} submit={submitComment} remove={deleteComment} toggleLike={toggleCommentLike} close={() => setCommentsFor(null)} />}
