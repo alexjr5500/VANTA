@@ -69,6 +69,8 @@ export interface MediaFile {
 export interface MediaUploaderHandle {
   /** Open the native file picker, optionally filtered to images or videos. */
   openPicker: (kind?: 'image' | 'video') => void;
+  /** Capture a photo with the existing native camera input. */
+  openCamera: () => void;
 }
 
 interface MediaUploaderProps {
@@ -352,7 +354,7 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
     e.target.value = '';
   }, [processFiles]);
 
-  useImperativeHandle(ref, () => ({ openPicker }), [openPicker]);
+  useImperativeHandle(ref, () => ({ openPicker, openCamera }), [openPicker, openCamera]);
 
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes}B`;

@@ -2,14 +2,14 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Image as ImageIcon, Video, Smile, AlertCircle, Loader2, Type, Paperclip } from 'lucide-react';
+import { X, Globe2, Camera, Image as ImageIcon, Video, Smile, AlertCircle, Loader2, Type, Paperclip } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { useContentCreation } from './ContentCreationContext';
 import EmojiPicker from './EmojiPicker';
 import MediaUploader, { MediaFile, MediaUploaderHandle } from './MediaUploader';
 import CharacterCounter from './CharacterCounter';
-import { savePostDraft } from './DraftManager';
+import DraftManager, { savePostDraft } from './DraftManager';
 import { apiPost, invalidateCache } from '@/lib/apiClient';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
@@ -34,6 +34,9 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
   const [media, setMedia] = useState<MediaFile[]>([]);
   const [visibility, setVisibility] = useState<'public' | 'followers'>('public');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showDrafts, setShowDrafts] = useState(false);
+  const [draftNotice, setDraftNotice] = useState('');
+  const [uploadSession, setUploadSession] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isStory = intent === 'story';
@@ -125,10 +128,24 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
     setMedia([]);
     setVisibility('public');
     setShowEmojiPicker(false);
+    setShowDrafts(false);
+    setDraftNotice('');
     setError(null);
     onClose();
     closeAll();
   }, [content, media, visibility, hasContent, isSubmitting, onClose, closeAll]);
+
+  const restoreDraft = useCallback((draft: { content: string; media: { type: 'image' | 'video'; url: string; name: string }[] }) => {
+    if (hasContent && !window.confirm('Replace the current post with this saved draft?')) return;
+    setContent(draft.content);
+    setMedia([]);
+    setUploadSession((session) => session + 1);
+    // Drafts do not contain original File bytes: attachments must be reselected.
+    setVisibility('public');
+    setDraftNotice(draft.media.length ? 'Draft text loaded. This post is public; reattach photos or videos before posting.' : 'Draft loaded. This post will be public.');
+    setShowDrafts(false);
+    window.requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
+  }, [hasContent]);
 
   const handleEmojiSelect = useCallback((emoji: string) => {
     setContent((prev) => prev + emoji);
@@ -191,6 +208,8 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
       setMedia([]);
       setVisibility('public');
       setShowEmojiPicker(false);
+      setShowDrafts(false);
+      setDraftNotice('');
       onClose();
       closeAll();
     } catch {
@@ -222,69 +241,49 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
             onClick={() => { if (!showEmojiPicker) handleClose(); }}
           />
 
-          {/* Mobile composer sheet - slides up from the bottom edge like Create+ */}
+          {/* Immersive full-screen editor — no bottom-sheet frame or grab handle. */}
           <motion.div
-            initial={{ y: '100%' }}
-            animate={{ y: 0, transition: { type: 'spring', damping: 30, stiffness: 320 } }}
-            exit={{ y: '100%', transition: { duration: 0.2, ease: 'easeIn' } }}
-            className={cn(
-              'fixed inset-x-0 bottom-[var(--vanta-kb,0px)] z-[101] mx-auto flex w-full flex-col overflow-hidden bg-[#050505] shadow-[0_-12px_48px_rgba(0,0,0,0.6)]',
-              isStory
-                ? 'top-0 h-[var(--vanta-vh,100dvh)] border-0 rounded-none md:max-w-[480px] md:h-[88dvh] md:rounded-t-[28px] md:border-x md:border-t md:border-white/[0.08] md:bg-[#0d0d0f]/95 md:backdrop-blur-2xl'
-                : 'max-w-[480px] border-x border-t border-white/[0.08] bg-[#0d0d0f]/95 rounded-t-[28px] backdrop-blur-2xl'
-            )}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0, transition: { duration: 0.18 } }}
+            exit={{ opacity: 0, y: 12, transition: { duration: 0.15 } }}
+            className="fixed inset-x-0 top-0 bottom-[var(--vanta-kb,0px)] z-[101] flex min-h-0 w-full flex-col overflow-hidden bg-[#050607] text-white"
             role="dialog"
             aria-modal="true"
             aria-label={isStory ? 'Create a story' : 'Create a post'}
           >
-            {/* Grab handle */}
-            {!isStory && (
-              <div aria-hidden="true" className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-white/15" />
-            )}
-
-            {/* Header: back / title / Post */}
-            <header className={cn('relative flex shrink-0 items-center justify-between py-1.5 pl-1 pr-3', isStory ? 'border-b-0' : 'border-b border-white/[0.06]')}>
-              <button
-                type="button"
-                onClick={handleClose}
-                disabled={isSubmitting}
-                className="flex h-11 w-11 items-center justify-center rounded-full text-[#c8c8cc] transition hover:bg-white/[0.06] hover:text-white active:scale-95 disabled:opacity-40"
-                aria-label="Close composer"
-              >
-                <ArrowLeft size={22} />
+            <header className="relative flex h-[74px] shrink-0 items-center justify-between px-4">
+              <button type="button" onClick={handleClose} disabled={isSubmitting}
+                className="grid h-12 w-12 place-items-center rounded-full text-white/90 transition hover:bg-white/[0.06] disabled:opacity-40"
+                aria-label="Close composer">
+                <X size={28} />
               </button>
-
-              <h2 className="pointer-events-none absolute left-1/2 top-1/2 max-w-[45%] -translate-x-1/2 -translate-y-1/2 truncate text-center text-[15px] font-semibold tracking-tight text-[#f5f5f5]">
-                {intentMeta.title}
-              </h2>
-
-              <motion.button
-                type="button"
-                onClick={handleSubmit}
-                disabled={!canSubmit || isSubmitting}
-                whileTap={{ scale: 0.96 }}
-                className={cn(
-                  'flex min-h-[36px] shrink-0 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-semibold transition-all duration-200',
-                  canSubmit && !isSubmitting
-                    ? 'bg-gradient-to-r from-[#f2c75c] to-[#d6a83f] text-black shadow-[0_4px_20px_rgba(214,168,63,0.28)]'
-                    : 'cursor-not-allowed bg-white/[0.06] text-white/30'
+              {isStory && (
+                <h2 className="pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-base font-semibold text-white">{intentMeta.title}</h2>
+              )}
+              <div className="ml-auto flex items-center gap-3">
+                {!isStory && (
+                  <button type="button" onClick={() => setShowDrafts((visible) => !visible)} disabled={isSubmitting}
+                    className="min-h-11 px-1 text-sm font-semibold text-[#dfbd55] transition hover:text-[#f2c75c]"
+                    aria-expanded={showDrafts} aria-label="Open saved post drafts">Drafts</button>
                 )}
-                aria-label={intentMeta.submitLabel}
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 size={15} className="animate-spin" />
-                    Posting...
-                  </>
-                ) : (
-                  intentMeta.submitLabel
-                )}
-              </motion.button>
+                <motion.button type="button" onClick={handleSubmit} disabled={!canSubmit || isSubmitting}
+                  whileTap={{ scale: 0.96 }}
+                  className={cn('flex min-h-[42px] items-center justify-center gap-1.5 rounded-full px-5 text-sm font-bold transition-colors',
+                    canSubmit && !isSubmitting ? 'bg-[#c9a227] text-[#090b0e] hover:bg-[#dfbd55]' : 'cursor-not-allowed bg-[#1f2932] text-white/40')}
+                  aria-label={intentMeta.submitLabel}>
+                  {isSubmitting ? <><Loader2 size={15} className="animate-spin" />Posting…</> : intentMeta.submitLabel}
+                </motion.button>
+              </div>
             </header>
+            {!isStory && showDrafts && (
+              <div className="absolute right-4 top-[70px] z-30 w-[min(92vw,400px)]">
+                <DraftManager onClose={() => setShowDrafts(false)} onSelectDraft={restoreDraft} />
+              </div>
+            )}
 
             {/* Body */}
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-hide">
-              <div className="space-y-4 px-5 pb-6 pt-4">
+              <div className="space-y-4 px-5 pb-8 pt-4">
                 {/* Authenticated identity - shared Avatar + verification badge */}
                 {!isStory && (
                   <div className="flex items-center gap-3">
@@ -298,8 +297,11 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                         <span className="truncate">{user?.fullName || user?.username || 'VANTA creator'}</span>
                         <VerificationBadge type={user?.verified && user.verificationType ? user.verificationType : 'NONE'} size="sm" showTooltip />
                       </p>
-                      <p className="truncate text-xs text-[#666]">@{user?.username || 'you'}</p>
+                      <p className="truncate text-xs text-white/40">@{user?.username || 'you'}</p>
                     </div>
+                    <span className="ml-auto flex shrink-0 items-center gap-1.5 rounded-full border border-[#c9a227]/45 px-3 py-1.5 text-xs font-semibold text-[#dfbd55]" aria-label="Posts are visible to everyone">
+                      <Globe2 size={13} /> Everyone
+                    </span>
                   </div>
                 )}
 
@@ -310,14 +312,15 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                     value={content}
                     onChange={handleTextareaInput}
                     placeholder={intentMeta.placeholder}
-                    rows={4}
+                    rows={5}
                     maxLength={MAX_CHARS + 100}
-                    className="min-h-[110px] w-full resize-none border-0 bg-transparent text-lg leading-relaxed text-[#f5f5f5] placeholder:text-[#666] outline-none focus:outline-none focus:ring-0 focus:shadow-none"
+                    className="min-h-[38dvh] w-full resize-none border-0 bg-transparent text-[23px] leading-relaxed text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 focus:shadow-none"
                     aria-label="Post content"
                   />
                 )}
 
                 {quoteTarget && !isStory && <QuoteEmbed quote={quoteTarget} />}
+                {!isStory && draftNotice && <p role="status" className="text-xs text-[#dfbd55]">{draftNotice}</p>}
 
                 {/* Clean VANTA error state */}
                 <AnimatePresence>
@@ -420,6 +423,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                 ) : (
                   <>
                     <MediaUploader
+                      key={uploadSession}
                       ref={uploaderRef}
                       onMediaChange={setMedia}
                       maxFiles={isStory ? 1 : MAX_POST_MEDIA}
@@ -476,19 +480,34 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
               )}
             </AnimatePresence>
 
-            {/* Creation toolbar - real actions only */}
-            <footer className="shrink-0 border-t border-white/[0.06] bg-[#151517]/80 px-3 pt-1.5 pb-[max(8px,env(safe-area-inset-bottom))]">
+            {!isStory && (
+              <div className="flex min-h-[46px] shrink-0 items-center gap-2 border-t border-white/[0.08] px-5 text-xs text-[#dfbd55]">
+                <Globe2 size={16} /> Everyone can reply
+              </div>
+            )}
+            {/* Creation toolbar — all visible controls use the existing uploader. */}
+            <footer className="shrink-0 border-t border-white/[0.08] bg-[#0b1116] px-3 pt-1.5 pb-[max(8px,env(safe-area-inset-bottom))]">
               <div className="flex items-center justify-between">
                 <div className="-ml-1.5 flex items-center">
                   <button
                     type="button"
                     onClick={() => { if (isStory) setStoryKind('media'); uploaderRef.current?.openPicker('image'); }}
                     disabled={media.length >= (isStory ? 1 : MAX_POST_MEDIA)}
-                    className="flex h-11 w-11 items-center justify-center rounded-full text-[#c8c8cc] transition hover:bg-white/[0.06] hover:text-white active:scale-95 disabled:pointer-events-none disabled:opacity-30"
+                    className="flex h-11 w-11 items-center justify-center rounded-full text-[#dfbd55] transition hover:bg-white/[0.06] hover:text-white active:scale-95 disabled:pointer-events-none disabled:opacity-30"
                     aria-label="Add photo"
                     title="Photo"
                   >
                     <ImageIcon size={20} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { if (isStory) setStoryKind('media'); uploaderRef.current?.openCamera(); }}
+                    disabled={media.length >= (isStory ? 1 : MAX_POST_MEDIA)}
+                    className="flex h-11 w-11 items-center justify-center rounded-full text-[#dfbd55] transition hover:bg-white/[0.06] active:scale-95 disabled:pointer-events-none disabled:opacity-30"
+                    aria-label="Open camera"
+                    title="Camera"
+                  >
+                    <Camera size={21} />
                   </button>
                   <button
                     type="button"

@@ -17,6 +17,7 @@ export interface StoryBackground {
 }
 
 export const STORY_BACKGROUNDS: StoryBackground[] = [
+  { id: 'slate', label: 'Slate', css: '#243640', ink: '#f4f6f7', group: 'solid' },
   // ── Solid ──────────────────────────────────────────────────────────────────
   { id: 'ink', label: 'Ink', css: 'linear-gradient(180deg, #101014 0%, #070709 100%)', ink: '#f5f5f7', group: 'solid' },
   { id: 'obsidian', label: 'Obsidian', css: 'linear-gradient(160deg, #0b0b0e 0%, #050506 100%)', ink: '#dfbd55', group: 'solid' },

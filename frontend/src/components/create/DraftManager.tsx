@@ -120,10 +120,19 @@ export default function DraftManager({ onSelectDraft, onClose, className }: Draf
         ) : (
           <div className="p-2 space-y-1">
             {drafts.map((draft) => (
-              <button
+              <div
                 key={draft.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => onSelectDraft(draft)}
-                className="w-full text-left rounded-xl p-3 hover:bg-white/[0.04] transition group"
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSelectDraft(draft);
+                  }
+                }}
+                className="w-full cursor-pointer text-left rounded-xl p-3 hover:bg-white/[0.04] transition group"
                 aria-label={`Load draft from ${formatDate(draft.createdAt)}`}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -155,7 +164,7 @@ export default function DraftManager({ onSelectDraft, onClose, className }: Draf
                     <Trash2 size={13} />
                   </button>
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         )}

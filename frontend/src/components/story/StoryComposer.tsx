@@ -231,7 +231,12 @@ export default function StoryComposer({ open, onClose, onRequestOpen }: StoryCom
                 exit={{ opacity: 0, y: 24 }}
                 transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
               >
-                <StoryComposerTextStory onBack={() => setMode('media')} onClose={handleClose} />
+                <StoryComposerTextStory
+                  onBack={() => setMode('media')}
+                  onClose={handleClose}
+                  onPhoto={() => { setMediaSource('gallery-mixed'); setMode('media'); }}
+                  onVideo={() => { setMediaSource('camera-video'); setMode('media'); }}
+                />
               </motion.div>
             )}
 
