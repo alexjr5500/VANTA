@@ -65,6 +65,7 @@ export default function DiscoverPage() {
   const sentinel = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const pageScrollRef = useRef<HTMLDivElement>(null);
+  const pendingActionsRef = useRef(new Set<string>());
   const [category, setCategory] = useState<Category>('forYou');
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -212,12 +213,30 @@ export default function DiscoverPage() {
   const hasForYouContent = Boolean(featured || trending.length || creators.length || reels.length || live.length || communities.length || posts.length);
 
   const follow = async (profile: Item) => {
-    if (!token || !profile.username) return;
+    if (!token || !profile.id || !profile.username) return;
+    const actionKey = `follow:${profile.id}`;
+    if (pendingActionsRef.current.has(actionKey)) return;
+    pendingActionsRef.current.add(actionKey);
     const was = Boolean(profile.following || profile.isFollowing);
-    const update = (rows: Item[]) => rows.map(item => item.id === profile.id ? { ...item, following: !was, isFollowing: !was, _count: { ...item._count, followers: Math.max(0, profileFollowers(item) + (was ? -1 : 1)) } } : item);
-    setCreators(update); setSearchResults(current => ({ ...current, people: update(current.people || []) }));
-    try { was ? await apiDelete(`/api/profiles/${profile.username}/follow`, token) : await apiPost(`/api/profiles/${profile.username}/follow`, {}, token); }
-    catch (reason: any) { setCreators(rows => rows.map(item => item.id === profile.id ? { ...item, following: was, isFollowing: was } : item)); toast.error('Follow update failed', reason?.message); }
+    const update = (value: boolean) => (rows: Item[]) => rows.map(item => {
+      if (item.id !== profile.id) return item;
+      const current = Boolean(item.following || item.isFollowing);
+      return { ...item, following: value, isFollowing: value,
+        _count: { ...item._count, followers: Math.max(0, profileFollowers(item) + (current === value ? 0 : value ? 1 : -1)) } };
+    });
+    setCreators(update(!was));
+    setSearchResults(current => ({ ...current, people: update(!was)(current.people || []) }));
+    try {
+      const endpoint = `/api/profiles/${encodeURIComponent(profile.username)}/follow`;
+      if (was) await apiDelete(endpoint, token);
+      else await apiPost(endpoint, {}, token);
+    } catch (reason: any) {
+      setCreators(update(was));
+      setSearchResults(current => ({ ...current, people: update(was)(current.people || []) }));
+      toast.error('Follow update failed', reason?.message);
+    } finally {
+      pendingActionsRef.current.delete(actionKey);
+    }
   };
   const joinCommunity = async (community: Item) => {
     if (!token || community.isPrivate) return;
