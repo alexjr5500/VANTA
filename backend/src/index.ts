@@ -824,11 +824,9 @@ async function startServer() {
 
     // Purchase catalog provisioning: ensures the canonical VANTA Coin packages
     // (`SparkCoinPackage`) and Verified Badge plans (`SubscriptionPlan`) exist
-    // as REAL database rows on every boot. Production (Railway) never runs
-    // `npm run seed` on deploy, so without this step the `SparkCoinPackage`
-    // table stays empty/mismatched and EVERY coin purchase fails the
-    // `PurchaseOrder_packageId_fkey` foreign key. Idempotent upsert — safe to
-    // run every startup, never duplicates rows.
+    // as REAL database rows on every boot. The predeploy seed no longer
+    // provisions this catalog, avoiding duplicate writes on deployment.
+    // Idempotent upsert preserves historical purchase foreign keys.
     try {
       const { ensureCanonicalPurchaseCatalog } = await import('./services/purchase-catalog.service');
       const catalog = await ensureCanonicalPurchaseCatalog(prisma);
