@@ -100,8 +100,8 @@ class ImageOptimizer {
       }
     }
 
-    // Queue cleanup of original
-    await jobQueue.add(JOB_TYPES.CLEANUP_TEMP, { path: inputPath, delay: 3600000 }, 1);
+    // Keep the original upload: it may still be referenced by DB rows or clients.
+    // Only dedicated .media-temp files are eligible for delayed cleanup.
 
     return results;
   }
