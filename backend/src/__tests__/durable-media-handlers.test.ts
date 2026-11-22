@@ -58,7 +58,7 @@ describe('durable media handler activation', () => {
     delete process.env.UPLOAD_STORAGE_DIR;
     const handlers = createDurableQueueHandlers({ deliverByDeviceId: jest.fn() });
     expect([...handlers.keys()].sort()).toEqual([
-      'cloudinary:image:optimize', 'push:deliver', 'cloudinary:thumbnail:generate', 'cloudinary:video:transcode',
+      'cloudinary:image:optimize', 'cloudinary:thumbnail:generate', 'cloudinary:video:transcode', 'push:deliver',
     ]);
   });
 
