@@ -117,7 +117,7 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     const requestId = ++contentRequest.current;
     if (!profile) return;
     if (!endpoint) { setContent(current => ({ ...current, [tab]: [] })); setNextCursor(current => ({ ...current, [tab]: undefined })); return; }
-    let active = true; setContentLoading(true); setContentError(''); setNextCursor(current => ({ ...current, [tab]: undefined }));
+    let active = true; setContentLoading(true); setContentError('');
     apiGet<any>(`${endpoint}?limit=24`, token || undefined, { skipCache: true })
       .then(result => {
         if (!active || requestId !== contentRequest.current) return;
@@ -127,7 +127,7 @@ export default function CreatorHubPage({ username }: { username?: string }) {
       })
       .catch((reason: any) => {
         if (!active || requestId !== contentRequest.current || reason?.statusCode === 499) return;
-        setContent(current => ({ ...current, [tab]: [] }));
+        // Keep already loaded posts visible when a refresh fails; retry remains available.
         const status = errorStatus(reason);
         setContentError(status === 401 || status === 403 ? 'This content is not available to your account.' : reason?.message || `Unable to load ${tab}.`);
       })
