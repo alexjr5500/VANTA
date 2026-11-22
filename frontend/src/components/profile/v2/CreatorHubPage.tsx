@@ -61,6 +61,8 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   const [repostFor, setRepostFor] = useState<ProfileItem>(); const [moreFor, setMoreFor] = useState<ProfileItem>();
   const [giftFor, setGiftFor] = useState<ProfileItem>(); const [gifts, setGifts] = useState<GiftCatalogItem[]>([]); const [balance, setBalance] = useState(0);
   const profileRequest = useRef(0);
+  const paginationRequest = useRef(0);
+  const paginationInFlight = useRef(false);
   const pendingPostActionsRef = useRef(new Set<string>());
 
   const loadProfile = useCallback(async () => {
@@ -104,6 +106,7 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   }, [normalized, own, tab]);
 
   useEffect(() => {
+    paginationRequest.current += 1;
     if (!profile) return;
     if (!endpoint) { setContent(current => ({ ...current, [tab]: [] })); setNextCursor(current => ({ ...current, [tab]: undefined })); return; }
     let active = true; setContentLoading(true); setContentError(''); setNextCursor(current => ({ ...current, [tab]: undefined }));
@@ -147,10 +150,13 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   const loadMore = async () => {
     const requestedTab = tab;
     const cursor = nextCursor[requestedTab];
-    if (!endpoint || !cursor || loadingMore) return;
+    if (!endpoint || !cursor || paginationInFlight.current || contentLoading) return;
+    const requestId = paginationRequest.current;
+    paginationInFlight.current = true;
     setLoadingMore(true);
     try {
       const result = await apiGet<any>(`${endpoint}?limit=24&cursor=${encodeURIComponent(cursor)}`, token || undefined, { skipCache: true });
+      if (paginationRequest.current !== requestId) return;
       const rows = postOnly(unwrap(result)).map(item => normalizeProfileItem(item, requestedTab === 'likes'));
       setContent(current => {
         const existingIds = new Set(current[requestedTab].map(cleanPostId));
@@ -158,8 +164,9 @@ export default function CreatorHubPage({ username }: { username?: string }) {
       });
       setNextCursor(current => ({ ...current, [requestedTab]: nextCursorFrom(result) }));
     } catch (reason: any) {
-      toast.error(`Unable to load more ${requestedTab}`, reason?.message);
+      if (paginationRequest.current === requestId && reason?.statusCode !== 499) toast.error(`Unable to load more ${requestedTab}`, reason?.message);
     } finally {
+      paginationInFlight.current = false;
       setLoadingMore(false);
     }
   };
