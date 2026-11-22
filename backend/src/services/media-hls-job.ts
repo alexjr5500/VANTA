@@ -77,6 +77,10 @@ export async function transcodeLocalHls(storageRoot: string, job: TranscodeJob):
       variants.push(`#EXT-X-STREAM-INF:BANDWIDTH=${preset.bandwidth},RESOLUTION=${preset.width}x${preset.height}\n${quality}/playlist.m3u8`);
     }
     fs.writeFileSync(path.join(staging, 'master.m3u8'), '#EXTM3U\n#EXT-X-VERSION:3\n' + variants.join('\n') + '\n', { flag: 'wx' });
+    // Do not overwrite another worker's output if two leases race.
+    if (fs.existsSync(destination)) {
+      throw new Error('Concurrent HLS output publication detected; retry after inspecting output');
+    }
     fs.renameSync(staging, destination);
     return '/uploads/videos/' + name + '/master.m3u8';
   } finally {
