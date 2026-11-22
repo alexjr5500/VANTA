@@ -1,3 +1,7 @@
+import { v2 as cloudinary } from 'cloudinary';
+import { prisma } from '../prisma';
+import { isCloudinaryStorageConfigured } from './cloudinary-storage-config';
+import { prepareCloudinaryMedia, CloudinaryJobKind, CloudinaryMediaJob } from './cloudinary-media-job';
 import { optimizeLocalImage } from './media-image-job';
 import { cleanupExpiredMediaTemp } from './media-cleanup-job';
 import { generateLocalThumbnail } from './media-thumbnail-job';
@@ -44,6 +48,35 @@ export function createDurableQueueHandlers(
   // Media jobs are explicitly opt-in and require a separately provisioned worker
   // image with Sharp/FFmpeg and a shared persistent upload volume.
   if (process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS === 'true') {
+    const mode = process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE || 'local';
+    if (mode === 'cloudinary') {
+      if (!isCloudinaryStorageConfigured(process.env)) {
+        throw new Error('Cloudinary media jobs require all Cloudinary credentials');
+      }
+      cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET,
+        secure: true,
+      });
+      const store = {
+        findById: (id: string) => prisma.uploadedFile.findUnique({
+          where: { id },
+          select: { id: true, path: true, category: true, fileType: true, deletedAt: true },
+        }),
+      };
+      const client = {
+        explicit: (id: string, options: Parameters<typeof cloudinary.uploader.explicit>[1]) =>
+          cloudinary.uploader.explicit(id, options),
+      };
+      for (const kind of ['image:optimize', 'thumbnail:generate', 'video:transcode'] as CloudinaryJobKind[]) {
+        handlers.set(kind, async (job: DurableJob): Promise<void> => {
+          await prepareCloudinaryMedia(kind, job.payload as CloudinaryMediaJob, store, client);
+        });
+      }
+      return handlers;
+    }
+    if (mode !== 'local') throw new Error('Unsupported durable media storage mode');
     const root = process.env.UPLOAD_STORAGE_DIR;
     if (!root) throw new Error('UPLOAD_STORAGE_DIR is required for durable media jobs');
     handlers.set('image:optimize', async (job: DurableJob): Promise<void> => {

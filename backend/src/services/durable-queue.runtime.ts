@@ -9,14 +9,18 @@ import { createDurableQueueHandlers } from './durable-queue.handlers';
  * import-time side effects and does not activate the worker in production.
  */
 export function createDurableQueueWorker(options: DurableWorkerOptions = {}): DurableQueueWorker {
+  const disabled = process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS !== 'true';
+  const cloudinary = process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE === 'cloudinary';
   return new DurableQueueWorker(
     new DurableQueueRepository(prisma),
     createDurableQueueHandlers(),
     {
       ...options,
-      excludedJobTypes: process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS === 'true'
-        ? (options.excludedJobTypes ?? [])
-        : [...(options.excludedJobTypes ?? []), 'image:optimize', 'thumbnail:generate', 'video:transcode', 'cleanup:temp'],
+      excludedJobTypes: [
+        ...(options.excludedJobTypes ?? []),
+        ...(disabled ? ['image:optimize', 'thumbnail:generate', 'video:transcode', 'cleanup:temp']
+                     : cloudinary ? ['cleanup:temp'] : []),
+      ],
     },
   );
 }

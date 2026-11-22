@@ -6,7 +6,15 @@ import { createDurableQueueHandlers } from '../services/durable-queue.handlers';
 describe('durable media handler activation', () => {
   const oldFlag = process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS;
   const oldRoot = process.env.UPLOAD_STORAGE_DIR;
+  const oldMode = process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE;
+  const oldCloud = [process.env.CLOUDINARY_CLOUD_NAME, process.env.CLOUDINARY_API_KEY, process.env.CLOUDINARY_API_SECRET];
   afterEach(() => {
+    if (oldMode === undefined) delete process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE;
+    else process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE = oldMode;
+    for (const [i, key] of ['CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET'].entries()) {
+      if (oldCloud[i] === undefined) delete process.env[key];
+      else process.env[key] = oldCloud[i];
+    }
     if (oldFlag === undefined) delete process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS;
     else process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS = oldFlag;
     if (oldRoot === undefined) delete process.env.UPLOAD_STORAGE_DIR;
@@ -20,6 +28,7 @@ describe('durable media handler activation', () => {
   });
 
   test('requires a configured upload root when enabled', () => {
+    process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE = 'local';
     process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS = 'true';
     delete process.env.UPLOAD_STORAGE_DIR;
     expect(() => createDurableQueueHandlers({ deliverByDeviceId: jest.fn() }))
@@ -30,6 +39,7 @@ describe('durable media handler activation', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vanta-handler-'));
     try {
       process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS = 'true';
+      process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE = 'local';
       process.env.UPLOAD_STORAGE_DIR = root;
       const handlers = createDurableQueueHandlers({ deliverByDeviceId: jest.fn() });
       expect([...handlers.keys()].sort()).toEqual([
@@ -38,5 +48,27 @@ describe('durable media handler activation', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+  test('Cloudinary mode registers remotely processed media and excludes local cleanup', () => {
+    process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS = 'true';
+    process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE = 'cloudinary';
+    process.env.CLOUDINARY_CLOUD_NAME = 'test-cloud';
+    process.env.CLOUDINARY_API_KEY = 'test-key';
+    process.env.CLOUDINARY_API_SECRET = 'test-secret';
+    delete process.env.UPLOAD_STORAGE_DIR;
+    const handlers = createDurableQueueHandlers({ deliverByDeviceId: jest.fn() });
+    expect([...handlers.keys()].sort()).toEqual([
+      'image:optimize', 'push:deliver', 'thumbnail:generate', 'video:transcode',
+    ]);
+  });
+
+  test('Cloudinary mode fails closed without credentials', () => {
+    process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS = 'true';
+    process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE = 'cloudinary';
+    delete process.env.CLOUDINARY_CLOUD_NAME;
+    delete process.env.CLOUDINARY_API_KEY;
+    delete process.env.CLOUDINARY_API_SECRET;
+    expect(() => createDurableQueueHandlers({ deliverByDeviceId: jest.fn() }))
+      .toThrow('Cloudinary credentials');
   });
 });

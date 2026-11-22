@@ -4,6 +4,7 @@ import path from 'path';
 import { prisma } from './prisma';
 import { createDurableQueueWorker } from './services/durable-queue.runtime';
 import { assertReadableBackendUploads } from './services/media-storage-readiness';
+import { isCloudinaryStorageConfigured } from './services/cloudinary-storage-config';
 
 /**
  * Dedicated worker process. Never start queue processing in the HTTP server.
@@ -15,6 +16,12 @@ async function main(): Promise<void> {
   }
   // Fail fast rather than repeatedly claiming jobs that cannot be processed.
   if (process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS === 'true') {
+    const mode = process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE || 'local';
+    if (mode === 'cloudinary') {
+      if (!isCloudinaryStorageConfigured(process.env)) {
+        throw new Error('Cloudinary media worker requires all Cloudinary credentials');
+      }
+    } else if (mode === 'local') {
     const storage = process.env.UPLOAD_STORAGE_DIR;
     if (!storage || !path.isAbsolute(storage)) {
       throw new Error('Media worker requires an absolute UPLOAD_STORAGE_DIR');
@@ -44,6 +51,9 @@ async function main(): Promise<void> {
     } catch {
       throw new Error('Media worker requires the Sharp image encoder');
     }
+    } else {
+      throw new Error('Unsupported durable media storage mode');
+    }
   }
   const worker = createDurableQueueWorker();
   let stopping = false;
@@ -61,7 +71,8 @@ async function main(): Promise<void> {
   process.once('SIGTERM', () => shutdown('SIGTERM'));
   process.once('SIGINT', () => shutdown('SIGINT'));
   await prisma.$connect();
-  if (process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS === 'true') {
+  if (process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS === 'true' &&
+      (process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE || 'local') === 'local') {
     // A directory mounted into this worker is not evidence that the HTTP
     // uploader can see it. Test actual backend-owned file metadata against
     // this worker's filesystem before claiming a single media job.
