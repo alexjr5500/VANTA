@@ -62,6 +62,7 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   const [giftFor, setGiftFor] = useState<ProfileItem>(); const [gifts, setGifts] = useState<GiftCatalogItem[]>([]); const [balance, setBalance] = useState(0);
   const profileRequest = useRef(0);
   const paginationRequest = useRef(0);
+  const contentRequest = useRef(0);
   const paginationInFlight = useRef(false);
   const pendingPostActionsRef = useRef(new Set<string>());
 
@@ -107,43 +108,47 @@ export default function CreatorHubPage({ username }: { username?: string }) {
 
   useEffect(() => {
     paginationRequest.current += 1;
+    const requestId = ++contentRequest.current;
     if (!profile) return;
     if (!endpoint) { setContent(current => ({ ...current, [tab]: [] })); setNextCursor(current => ({ ...current, [tab]: undefined })); return; }
     let active = true; setContentLoading(true); setContentError(''); setNextCursor(current => ({ ...current, [tab]: undefined }));
     apiGet<any>(`${endpoint}?limit=24`, token || undefined, { skipCache: true })
       .then(result => {
-        if (!active) return;
+        if (!active || requestId !== contentRequest.current) return;
         const rows = postOnly(unwrap(result)).map(item => normalizeProfileItem(item, tab === 'likes'));
         setContent(current => ({ ...current, [tab]: rows }));
         setNextCursor(current => ({ ...current, [tab]: nextCursorFrom(result) }));
       })
       .catch((reason: any) => {
-        if (!active || reason?.statusCode === 499) return;
+        if (!active || requestId !== contentRequest.current || reason?.statusCode === 499) return;
         setContent(current => ({ ...current, [tab]: [] }));
         const status = errorStatus(reason);
         setContentError(status === 401 || status === 403 ? 'This content is not available to your account.' : reason?.message || `Unable to load ${tab}.`);
       })
-      .finally(() => active && setContentLoading(false));
+      .finally(() => { if (active && requestId === contentRequest.current) setContentLoading(false); });
     return () => { active = false; };
   }, [contentRetry, endpoint, profile, tab, token]);
 
   const refreshProfile = useCallback(async () => {
     await Promise.all([loadProfile(), new Promise<void>(resolve => {
       if (!profile || !endpoint) { resolve(); return; }
+      const requestId = ++contentRequest.current;
+      paginationRequest.current += 1;
       let settled = false;
       const finish = () => { if (!settled) { settled = true; resolve(); } };
       setContentLoading(true);
       setContentError('');
       apiGet<any>(`${endpoint}?limit=24`, token || undefined, { skipCache: true })
         .then(result => {
+          if (requestId !== contentRequest.current) return;
           const rows = postOnly(unwrap(result)).map(item => normalizeProfileItem(item, tab === 'likes'));
           setContent(current => ({ ...current, [tab]: rows }));
           setNextCursor(current => ({ ...current, [tab]: nextCursorFrom(result) }));
         })
         .catch((reason: any) => {
-          if (reason?.statusCode !== 499) setContentError(reason?.message || `Unable to load ${tab}.`);
+          if (requestId === contentRequest.current && reason?.statusCode !== 499) setContentError(reason?.message || `Unable to load ${tab}.`);
         })
-        .finally(() => { setContentLoading(false); finish(); });
+        .finally(() => { if (requestId === contentRequest.current) setContentLoading(false); finish(); });
     })]);
   }, [endpoint, loadProfile, profile, tab, token]);
 
