@@ -2847,7 +2847,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                            ? 'rounded-tr-md bg-[#303d4b] text-white'
                            : 'rounded-tl-md bg-[#202b37] text-white'
                       )}>
-                        {msg.deletedAt ? null : msg.type === 'CALL' ? (
+                        {msg.deletedAt ? <span className="block text-sm italic text-white/60">Message deleted</span> : msg.type === 'CALL' ? (
                           <span className="flex items-center justify-center gap-1.5 whitespace-nowrap py-0.5 px-3 text-xs text-white/50">
                             <Phone size={12} className="text-[#d6a83f]" />
                             {renderTextWithLinks(msg.text || msg.content || '', 'linkify', { mentions: true, hashtags: true })}
