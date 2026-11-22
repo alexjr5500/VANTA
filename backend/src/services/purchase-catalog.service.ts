@@ -5,9 +5,9 @@
 // (Verified Badge) are the AUTHORITATIVE purchase catalog: the backend resolves
 // every order from these rows, and the frontend catalog endpoint serves them.
 //
-// Production deployment (Railway) does NOT run `npm run seed` on every deploy,
-// so the canonical rows are provisioned here instead — from the same config
-// modules the API uses — making package provisioning part of every startup.
+// Railway may run the separate predeploy seed, but catalog provisioning is
+// centralized in the backend startup path. The canonical rows come from the
+// server-side config modules used by the API.
 //
 // Guarantees:
 //   * idempotent upsert (running it 1x or 1000x yields the same rows);
