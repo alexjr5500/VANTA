@@ -1,3 +1,4 @@
+import java.net.URI
 import java.util.zip.ZipFile
 
 plugins {
@@ -24,7 +25,7 @@ val vantaDebugOrigin = providers.gradleProperty("vantaDebugOrigin")
     ?.takeIf { it.isNotEmpty() }
 
 vantaDebugOrigin?.let { origin ->
-    val url = java.net.URI(origin)
+    val url = URI(origin)
     require(
         url.scheme == "https" &&
         url.host?.endsWith("-vanta-73db.vercel.app") == true &&
