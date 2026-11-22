@@ -43,6 +43,7 @@ import GiftPickerBoundary from '@/components/social/GiftPickerBoundary';
 import { normalizeGiftCatalog } from '@/lib/giftCatalog';
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
+import { chooseReelPlaybackSource } from '@/lib/reelPlaybackSource';
 import { renderTextWithLinks } from '@/lib/linkify';
 import { feedFromSwipe, settleFeedSwipe, startFeedSwipe, trackFeedSwipe } from '@/lib/feedSwipe';
 
@@ -69,6 +70,7 @@ type Reel = {
   title?: string;
   description?: string;
   videoUrl: string;
+  hlsUrl?: string | null;
   thumbnailUrl?: string;
   duration?: number;
   views: number;
@@ -169,6 +171,7 @@ export default function ReelsPage() {
       const items = (Array.isArray(result) ? result : result.items || []).map(reel => ({
         ...reel,
         videoUrl: resolveMediaUrl(reel.videoUrl),
+        hlsUrl: resolveMediaUrl(reel.hlsUrl) || undefined,
         thumbnailUrl: resolveMediaUrl(reel.thumbnailUrl) || undefined,
         author: { ...reel.author, isFollowing: reel.author?.isFollowing ?? reel.isFollowing },
       }));
@@ -731,6 +734,8 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
   const [expanded, setExpanded] = useState(false);
   const [videoLoading, setVideoLoading] = useState(true);
   const [videoFailed, setVideoFailed] = useState(false);
+  const [nativeHlsSupported, setNativeHlsSupported] = useState(false);
+  const [hlsFailed, setHlsFailed] = useState(false);
   const [videoError, setVideoError] = useState('');
   const [progress, setProgress] = useState(0);
   const [likedPulse, setLikedPulse] = useState<'like' | 'unlike' | null>(null);
@@ -743,6 +748,23 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
   // not start until the user taps.
   const { prefs: contentPrefs, hydrated: contentPrefsReady } = useContentPrefs();
   const autoplayEnabled = contentPrefsReady ? contentPrefs.autoplay : true;
+
+  useEffect(() => {
+    const probe = document.createElement('video');
+    setNativeHlsSupported(Boolean(probe.canPlayType('application/vnd.apple.mpegurl')));
+  }, []);
+
+  // If native HLS fails, retry the original MP4 source before reporting an
+  // error. No hls.js dependency is needed on unsupported browsers.
+  useEffect(() => {
+    if (!hlsFailed) return;
+    const player = videos.current[reel.id];
+    if (!player) return;
+    player.load();
+    if (active && !paused && autoplayEnabled) void player.play().catch(() => undefined);
+  }, [hlsFailed, reel.id, active, paused, autoplayEnabled, videos]);
+
+  const playbackSource = chooseReelPlaybackSource(reel.videoUrl, reel.hlsUrl, nativeHlsSupported, hlsFailed);
 
   useEffect(() => () => {
     if (tapTimer.current) window.clearTimeout(tapTimer.current);
@@ -802,7 +824,7 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
           {nearby && !videoFailed && (
             <video
               ref={node => { videos.current[reel.id] = node; }}
-              src={resolveMediaUrl(reel.videoUrl)}
+              src={resolveMediaUrl(playbackSource)}
               poster={resolveMediaUrl(reel.thumbnailUrl)}
               preload={active ? 'auto' : 'metadata'}
               autoPlay={active && !paused && autoplayEnabled}
@@ -812,6 +834,11 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
               onClick={handleTap}
               onLoadStart={() => { setVideoLoading(true); setVideoError(''); }}
               onError={(event) => {
+                if (nativeHlsSupported && reel.hlsUrl && !hlsFailed) {
+                  setHlsFailed(true);
+                  setVideoLoading(true);
+                  return;
+                }
                 const mediaError = event.currentTarget.error;
                 const code = mediaError?.code;
                 const detail = mediaError?.message || '';
