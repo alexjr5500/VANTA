@@ -212,9 +212,9 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     updatePost(id, { [key]: !was, ...(mode === 'like' ? { likes: Math.max(0, previousLikes + (was ? -1 : 1)) } : {}) });
     try {
       if (mode === 'like') {
-        const result: any = await apiPost(tab === 'reposts' ? `/api/reels/${id}/like` : `/api/feed/${id}/like`, {}, token);
+        const result: any = await apiPost(tab === 'reposts' && item.repostKind !== 'post' ? `/api/reels/${id}/like` : `/api/feed/${id}/like`, {}, token);
         updatePost(id, { liked: typeof result?.liked === 'boolean' ? result.liked : !was, likes: finite(result?.likeCount ?? result?.likes ?? previousLikes + (was ? -1 : 1)) });
-      } else if (tab === 'reposts') {
+      } else if (tab === 'reposts' && item.repostKind !== 'post') {
         const result: any = await apiPost(`/api/reels/${id}/save`, {}, token);
         if (typeof result?.saved === 'boolean') updatePost(id, { saved: result.saved });
       } else if (was) {
@@ -281,12 +281,12 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     if (!token) return;
     const id = cleanPostId(target);
     try {
-      if (tab === 'reels' || tab === 'reposts' || isVideoPost(target)) {
+      if (tab === 'reels' || (tab === 'reposts' && target.repostKind !== 'post') || isVideoPost(target)) {
         const result: any = await apiPost(`/api/reels/${id}/repost`, {}, token);
         patchRow(id, { isReposted: Boolean(result?.reposted), reposts: Number(result?.reposts ?? 0) });
       } else {
-        await apiPost(`/api/feed/${id}/share`, { destination: 'REPOST' }, token);
-        patchRow(id, { isReposted: true, reposts: Number(target.reposts ?? target.shares ?? 0) + (target.isReposted ? 0 : 1) });
+        const result: any = await apiPost(`/api/feed/${id}/repost`, {}, token);
+        patchRow(id, { isReposted: Boolean(result?.reposted), reposts: Number(result?.reposts ?? 0) });
       }
     }
     catch (reason: any) { toast.error('Repost failed', reason?.message); }

@@ -13,10 +13,10 @@ type Props = {
   token?: string | null;
   url: string;
   title: string;
-  reposted: boolean;
+  reposted?: boolean;
   saved: boolean;
   close: () => void;
-  onRepost: () => void;
+  onRepost?: () => void;
   onCopy: () => void;
   onNative: () => void;
   onSave: () => void;
@@ -118,7 +118,7 @@ export default function ReelShareSheet({ token, url, title, reposted, saved, clo
       )}
 
       <div className="flex gap-4 overflow-x-auto border-t border-white/[.07] px-4 py-4 [scrollbar-width:none]">
-        {token && <Target label={reposted ? 'Remove repost' : 'Repost'} color="bg-[#e0bb4f] text-black" onClick={onRepost}><RefreshCw size={22} /></Target>}
+        {token && onRepost && <Target label={reposted ? 'Remove repost' : 'Repost'} color="bg-[#e0bb4f] text-black" onClick={onRepost}><RefreshCw size={22} /></Target>}
         <Target label="Copy link" color="bg-[#2f6bff] text-white" onClick={onCopy}><Link2 size={22} /></Target>
         {external.map(item => <a key={item.label} href={item.href} target="_blank" rel="noopener noreferrer" onClick={close} className="flex w-16 shrink-0 flex-col items-center gap-1.5"><span className={cn('grid h-14 w-14 place-items-center rounded-full text-xl font-bold text-white', item.color)}>{item.glyph}</span><span className="text-[11px] text-white/70">{item.label}</span></a>)}
         <Target label="More" color="bg-white/10 text-white" onClick={onNative}><Share2 size={22} /></Target>

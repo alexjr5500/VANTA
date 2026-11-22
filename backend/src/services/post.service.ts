@@ -85,6 +85,18 @@ export class PostService {
     return { shared: true, shareCount: post.shareCount };
   }
 
+  // Toggle a repost of a normal post. Reposts show on the reposter's profile Reposts tab.
+  async repostPost(postId: string, userId: string) {
+    const post = await prisma.post.findUnique({ where: { id: postId, moderationRemovedAt: null }, select: { id: true } });
+    if (!post) throw new Error("Post not found");
+    const existing = await prisma.postRepost.findUnique({ where: { userId_postId: { userId, postId } } });
+    if (existing) await prisma.postRepost.delete({ where: { id: existing.id } });
+    else await prisma.postRepost.create({ data: { userId, postId } });
+    const reposts = await prisma.postRepost.count({ where: { postId } });
+    emitSocialEvent("social:post-updated", { postId, reposts });
+    return { reposted: !existing, reposts };
+  }
+
   async getPostById(postId: string, userId?: string) {
     const post = await prisma.post.findUnique({
       where: { id: postId, moderationRemovedAt: null },

@@ -84,6 +84,7 @@ model User {
   videos            Video[]                  @relation("CreatorVideos")
   reelShares        ReelShare[]
   reelReposts       ReelRepost[]
+  postReposts       PostRepost[]
   videoLikes        VideoLike[]
   videoComments     VideoComment[]
   videoCommentLikes VideoCommentLike[]
@@ -786,6 +787,7 @@ model Post {
   likes      PostLike[]
   comments   PostComment[]
   saves      PostSave[]
+  reposts    PostRepost[]
   shareCount Int           @default(0)
   views      Int           @default(0)
   moderationRemovedAt DateTime?
@@ -798,6 +800,19 @@ model Post {
   @@index([authorId, pinned, createdAt])
   @@index([content])
   @@index([moderationRemovedAt])
+}
+
+model PostRepost {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+  @@index([postId, createdAt])
+  @@index([userId, createdAt])
 }
 
 model PostSave {

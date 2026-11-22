@@ -268,7 +268,7 @@ export default function HomePage() {
     try {
       let patch: any;
       if (isVideoItem(target)) { const result: any = await apiPost(`/api/reels/${cleanId(target)}/repost`, {}, token); patch = { isReposted: Boolean(result?.reposted), reposts: Number(result?.reposts ?? 0) }; }
-      else { await apiPost(`/api/feed/${cleanId(target)}/share`, { destination: 'REPOST' }, token); patch = { isReposted: true, reposts: Number(target.reposts ?? target.shares ?? 0) + (target.isReposted ? 0 : 1) }; }
+      else { const result: any = await apiPost(`/api/feed/${cleanId(target)}/repost`, {}, token); patch = { isReposted: Boolean(result?.reposted), reposts: Number(result?.reposts ?? 0) }; }
       setItems(previous => previous.map(entry => entry.id === target.id ? { ...entry, ...patch } : entry));
       setRepostFor(undefined);
     } catch (reason: any) { toast.error('Repost failed', reason?.message); }

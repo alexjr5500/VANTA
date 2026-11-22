@@ -1705,50 +1705,125 @@ export class UserService {
     return this.getUserReels(user.id, cursor, limit);
   }
 
-  // Reels this user reposted (most recent repost first). Each item carries
-  // repostedAt + the original creator so the profile can show real reposts.
+  // Everything this user reposted (reels and normal posts), most recent repost first.
+  // Each item carries repostedAt, the original author and the reposter, so the
+  // profile can show real reposts with the original content and files intact.
+  // Cursor is "<repostedAt ISO>|<repostId>" over the merged list.
   async getUserReposts(userId: string, cursor?: string, limit: number = 12, viewerId?: string) {
-    const rows = await prisma.reelRepost.findMany({
-      where: { userId, video: { publishStatus: 'PUBLISHED', videoUrl: { not: null }, moderationRemovedAt: null } },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: limit + 1,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      include: {
-        video: {
-          include: {
-            creator: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
-            likes: viewerId ? { where: { userId: viewerId }, select: { id: true } } : false,
-            saves: viewerId ? { where: { userId: viewerId }, select: { id: true } } : false,
-            reposts: viewerId ? { where: { userId: viewerId }, select: { id: true } } : false,
-            _count: { select: { likes: true, comments: true, reposts: true } },
+    const [cursorDateText, cursorId] = cursor?.includes('|') ? cursor.split('|', 2) : [];
+    const cursorDate = cursorDateText ? new Date(cursorDateText) : undefined;
+    const after = cursorDate && !Number.isNaN(cursorDate.getTime()) && cursorId
+      ? { OR: [{ createdAt: { lt: cursorDate } }, { createdAt: cursorDate, id: { lt: cursorId } }] }
+      : {};
+    const authorSelect = { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT };
+    const [reelRows, postRows, reposter] = await Promise.all([
+      prisma.reelRepost.findMany({
+        where: { userId, video: { publishStatus: 'PUBLISHED', videoUrl: { not: null }, moderationRemovedAt: null }, ...after },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: limit + 1,
+        include: {
+          video: {
+            include: {
+              creator: { select: authorSelect },
+              likes: viewerId ? { where: { userId: viewerId }, select: { id: true } } : false,
+              saves: viewerId ? { where: { userId: viewerId }, select: { id: true } } : false,
+              reposts: viewerId ? { where: { userId: viewerId }, select: { id: true } } : false,
+              _count: { select: { likes: true, comments: true, reposts: true } },
+            },
           },
         },
-      },
-    });
-    const hasMore = rows.length > limit;
-    if (hasMore) rows.pop();
-    const nextCursor = hasMore ? rows[rows.length - 1]?.id : undefined;
+      }),
+      prisma.postRepost.findMany({
+        where: { userId, post: { moderationRemovedAt: null }, ...after },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: limit + 1,
+        include: {
+          post: {
+            include: {
+              author: { select: { ...authorSelect, profile: { select: { avatarUrl: true } } } },
+              likes: viewerId ? { where: { userId: viewerId }, select: { id: true } } : false,
+              saves: viewerId ? { where: { userId: viewerId }, select: { id: true } } : false,
+              reposts: viewerId ? { where: { userId: viewerId }, select: { id: true } } : false,
+              _count: { select: { likes: true, comments: true, reposts: true } },
+            },
+          },
+        },
+      }),
+      prisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true, fullName: true, avatar: true } }),
+    ]);
+
+    const merged: Array<{ at: Date; id: string; kind: 'reel' | 'post'; row: any }> = [
+      ...reelRows.map((row: any) => ({ at: row.createdAt as Date, id: row.id as string, kind: 'reel' as const, row })),
+      ...postRows.map((row: any) => ({ at: row.createdAt as Date, id: row.id as string, kind: 'post' as const, row })),
+    ].sort((x, y) => (y.at.getTime() - x.at.getTime()) || (x.id < y.id ? 1 : -1));
+    const hasMore = merged.length > limit;
+    const page = merged.slice(0, limit);
+    const last = page[page.length - 1];
+    const nextCursor = hasMore && last ? `${last.at.toISOString()}|${last.id}` : undefined;
+
+    // Files attached to reposted posts (images, documents, video) so they render in the tab.
+    const postIds = page.filter(entry => entry.kind === 'post').map(entry => entry.row.post.id as string);
+    const files = postIds.length
+      ? await prisma.uploadedFile.findMany({
+          where: { recordType: 'Post', recordId: { in: postIds }, deletedAt: null },
+          select: { id: true, recordId: true, url: true, mimeType: true, fileType: true, createdAt: true },
+          orderBy: { createdAt: 'asc' },
+        })
+      : [];
+    const filesByPost = new Map<string, any[]>();
+    for (const file of files) {
+      const list = filesByPost.get(file.recordId) ?? [];
+      list.push({ id: file.id, url: file.url, type: file.fileType, mimeType: file.mimeType });
+      filesByPost.set(file.recordId, list);
+    }
+    const reposterInfo = reposter ? enrichPublicUser(reposter as any) : null;
+
     return {
-      items: rows.map(row => ({
-        id: row.video.id,
-        repostId: row.id,
-        title: row.video.title,
-        videoUrl: row.video.videoUrl,
-        mediaUrl: row.video.videoUrl,
-        thumbnailUrl: row.video.thumbnailUrl,
-        duration: row.video.duration,
-        views: row.video.views,
-        likes: row.video._count.likes,
-        comments: row.video._count.comments,
-        reposts: row.video._count.reposts,
-        description: row.video.description,
-        isLiked: viewerId ? (row.video as any).likes?.length > 0 : false,
-        saved: viewerId ? (row.video as any).saves?.length > 0 : false,
-        isReposted: viewerId ? (row.video as any).reposts?.length > 0 : false,
-        createdAt: row.video.createdAt,
-        repostedAt: row.createdAt,
-        creator: enrichPublicUser(row.video.creator as any),
-      })),
+      items: page.map(({ kind, row }) => {
+        if (kind === 'post') {
+          const post = row.post;
+          const { author, ...rest } = post;
+          const attachments = filesByPost.get(post.id) ?? (post.mediaUrl ? [{ url: post.mediaUrl }] : []);
+          return {
+            ...this.serializePost(rest, author, {
+              viewerId,
+              liked: post.likes?.length > 0,
+              saved: post.saves?.length > 0,
+            }),
+            ...(attachments.length ? { media: attachments[0].url, mediaUrl: attachments[0].url } : {}),
+            attachments,
+            views: post.views ?? 0,
+            reposts: post._count?.reposts ?? 0,
+            isReposted: viewerId ? post.reposts?.length > 0 : false,
+            repostId: row.id,
+            repostedAt: row.createdAt,
+            repostKind: 'post',
+            reposter: reposterInfo,
+          };
+        }
+        return {
+          id: row.video.id,
+          repostId: row.id,
+          repostKind: 'reel',
+          title: row.video.title,
+          videoUrl: row.video.videoUrl,
+          mediaUrl: row.video.videoUrl,
+          thumbnailUrl: row.video.thumbnailUrl,
+          duration: row.video.duration,
+          views: row.video.views,
+          likes: row.video._count.likes,
+          comments: row.video._count.comments,
+          reposts: row.video._count.reposts,
+          description: row.video.description,
+          isLiked: viewerId ? (row.video as any).likes?.length > 0 : false,
+          saved: viewerId ? (row.video as any).saves?.length > 0 : false,
+          isReposted: viewerId ? (row.video as any).reposts?.length > 0 : false,
+          createdAt: row.video.createdAt,
+          repostedAt: row.createdAt,
+          creator: enrichPublicUser(row.video.creator as any),
+          reposter: reposterInfo,
+        };
+      }),
       nextCursor,
     };
   }
