@@ -162,9 +162,9 @@ export default function AnalyticsPage() {
         <div className="space-y-6">
           {/* KPI Cards */}
           <div className="grid grid-cols-2  gap-3">
-            <MetricCard label="Daily Active Users" value={formatNumber(executive.data?.kpis.dau || 0)} icon={<Users size={18} className="text-white" />} color="from-[#151517]0 to-[#68686c]" loading={executive.loading} />
+            <MetricCard label="Daily Active Users" value={formatNumber(executive.data?.kpis.dau || 0)} icon={<Users size={18} className="text-white" />} color="from-[#151517] to-[#68686c]" loading={executive.loading} />
             <MetricCard label="Weekly Active Users" value={formatNumber(executive.data?.kpis.wau || 0)} icon={<Users size={18} className="text-white" />} color="from-green-500 to-emerald-600" loading={executive.loading} />
-            <MetricCard label="Monthly Active Users" value={formatNumber(executive.data?.kpis.mau || 0)} icon={<Users size={18} className="text-white" />} color="from-[#151517]0 to-[#b78929]" loading={executive.loading} />
+            <MetricCard label="Monthly Active Users" value={formatNumber(executive.data?.kpis.mau || 0)} icon={<Users size={18} className="text-white" />} color="from-[#151517] to-[#b78929]" loading={executive.loading} />
             <MetricCard label="Platform Revenue" value={formatCurrency(executive.data?.kpis.revenue || 0)} icon={<DollarSign size={18} className="text-white" />} color="from-yellow-500 to-amber-600" loading={executive.loading} />
           </div>
           <div className="grid grid-cols-2  gap-3">
@@ -176,8 +176,8 @@ export default function AnalyticsPage() {
 
           {/* Trends */}
           <div className="grid grid-cols-1  gap-6">
-            <AnalyticsChart title="DAU Trend" data={executive.data?.trends.dau || []} icon={<Activity size={16} />} gradient="from-[#151517]0 to-[#68686c]" loading={executive.loading} />
-            <AnalyticsChart title="MAU Trend" data={executive.data?.trends.mau || []} icon={<Users size={16} />} gradient="from-[#151517]0 to-[#b78929]" loading={executive.loading} />
+            <AnalyticsChart title="DAU Trend" data={executive.data?.trends.dau || []} icon={<Activity size={16} />} gradient="from-[#151517] to-[#68686c]" loading={executive.loading} />
+            <AnalyticsChart title="MAU Trend" data={executive.data?.trends.mau || []} icon={<Users size={16} />} gradient="from-[#151517] to-[#b78929]" loading={executive.loading} />
           </div>
           <div className="grid grid-cols-1  gap-6">
             <AnalyticsChart title="Revenue Trend" data={executive.data?.trends.revenue || []} icon={<DollarSign size={16} />} gradient="from-green-500 to-emerald-600" loading={executive.loading} prefix="$" />
@@ -202,9 +202,9 @@ export default function AnalyticsPage() {
         <div className="space-y-6">
           <div className="grid grid-cols-2  gap-3">
             <MetricCard label="Total Revenue" value={formatCurrency(revenue.data?.summary.totalRevenue || 0)} icon={<DollarSign size={18} className="text-white" />} color="from-yellow-500 to-amber-600" loading={revenue.loading} />
-            <MetricCard label="ARPU" value={formatCurrency(revenue.data?.summary.arpu || 0)} icon={<Users size={18} className="text-white" />} color="from-[#151517]0 to-[#68686c]" loading={revenue.loading} />
+            <MetricCard label="ARPU" value={formatCurrency(revenue.data?.summary.arpu || 0)} icon={<Users size={18} className="text-white" />} color="from-[#151517] to-[#68686c]" loading={revenue.loading} />
             <MetricCard label="Purchases" value={formatNumber(revenue.data?.summary.coinPurchases || 0)} icon={<DollarSign size={18} className="text-white" />} color="from-green-500 to-emerald-600" loading={revenue.loading} />
-            <MetricCard label="Payment Success" value={formatPercentage(revenue.data?.summary.paymentSuccessRate || 0)} icon={<Activity size={18} className="text-white" />} color="from-[#151517]0 to-[#b78929]" loading={revenue.loading} />
+            <MetricCard label="Payment Success" value={formatPercentage(revenue.data?.summary.paymentSuccessRate || 0)} icon={<Activity size={18} className="text-white" />} color="from-[#151517] to-[#b78929]" loading={revenue.loading} />
           </div>
           <AnalyticsChart title="Revenue by Day" data={revenue.data?.revenueByDay || []} icon={<DollarSign size={16} />} gradient="from-green-500 to-emerald-600" prefix="$" loading={revenue.loading} />
           {revenue.data?.predictions && (
@@ -225,11 +225,11 @@ export default function AnalyticsPage() {
           <div className="grid grid-cols-2  gap-3">
             <MetricCard label="Growth Rate" value={formatPercentage(growth.data?.kpis.growthRate || 0)} icon={<TrendingUp size={18} className="text-white" />} color="from-green-500 to-emerald-600" loading={growth.loading} />
             <MetricCard label="Churn Rate" value={formatPercentage(growth.data?.kpis.churnRate || 0)} icon={<TrendingDown size={18} className="text-white" />} color="from-red-500 to-[#b78929]" loading={growth.loading} />
-            <MetricCard label="Retention" value={formatPercentage(growth.data?.kpis.retentionRate || 0)} icon={<Target size={18} className="text-white" />} color="from-[#151517]0 to-[#68686c]" loading={growth.loading} />
-            <MetricCard label="Total Users" value={formatNumber(growth.data?.kpis.totalUsers || 0)} icon={<Users size={18} className="text-white" />} color="from-[#151517]0 to-[#b78929]" loading={growth.loading} />
+            <MetricCard label="Retention" value={formatPercentage(growth.data?.kpis.retentionRate || 0)} icon={<Target size={18} className="text-white" />} color="from-[#151517] to-[#68686c]" loading={growth.loading} />
+            <MetricCard label="Total Users" value={formatNumber(growth.data?.kpis.totalUsers || 0)} icon={<Users size={18} className="text-white" />} color="from-[#151517] to-[#b78929]" loading={growth.loading} />
           </div>
           <div className="grid grid-cols-1  gap-6">
-            <AnalyticsChart title="DAU" data={growth.data?.dau || []} icon={<Activity size={16} />} gradient="from-[#151517]0 to-[#68686c]" loading={growth.loading} />
+            <AnalyticsChart title="DAU" data={growth.data?.dau || []} icon={<Activity size={16} />} gradient="from-[#151517] to-[#68686c]" loading={growth.loading} />
             <AnalyticsChart title="New Users" data={growth.data?.newUsers || []} icon={<UserPlus size={16} />} gradient="from-green-500 to-emerald-600" loading={growth.loading} />
           </div>
           <CohortTable cohorts={(cohorts.data || []) as any} loading={cohorts.loading} />
@@ -241,11 +241,11 @@ export default function AnalyticsPage() {
         <div className="space-y-6">
           <div className="grid grid-cols-2  gap-3">
             <MetricCard label="Engagement Rate" value={formatPercentage(product.data?.engagementRate || 0)} icon={<Activity size={18} className="text-white" />} color="from-[#d6a83f] to-[#b78929]" loading={product.loading} />
-            <MetricCard label="Posts" value={formatNumber(product.data?.contentBreakdown.posts || 0)} icon={<Eye size={18} className="text-white" />} color="from-[#151517]0 to-[#68686c]" loading={product.loading} />
-            <MetricCard label="Videos" value={formatNumber(product.data?.contentBreakdown.videos || 0)} icon={<Eye size={18} className="text-white" />} color="from-[#151517]0 to-[#b78929]" loading={product.loading} />
+            <MetricCard label="Posts" value={formatNumber(product.data?.contentBreakdown.posts || 0)} icon={<Eye size={18} className="text-white" />} color="from-[#151517] to-[#68686c]" loading={product.loading} />
+            <MetricCard label="Videos" value={formatNumber(product.data?.contentBreakdown.videos || 0)} icon={<Eye size={18} className="text-white" />} color="from-[#151517] to-[#b78929]" loading={product.loading} />
             <MetricCard label="Live Streams" value={formatNumber(product.data?.contentBreakdown.liveStreams || 0)} icon={<Eye size={18} className="text-white" />} color="from-green-500 to-emerald-600" loading={product.loading} />
           </div>
-          <AnalyticsChart title="Session Duration" data={product.data?.sessionDuration || []} icon={<Clock size={16} />} gradient="from-[#151517]0 to-[#68686c]" suffix=" min" loading={product.loading} />
+          <AnalyticsChart title="Session Duration" data={product.data?.sessionDuration || []} icon={<Clock size={16} />} gradient="from-[#151517] to-[#68686c]" suffix=" min" loading={product.loading} />
           <FunnelChart steps={(funnel.data || []) as any} loading={funnel.loading} />
         </div>
       )}
@@ -266,12 +266,12 @@ export default function AnalyticsPage() {
       {activeTab === 'creator' && (
         <div className="space-y-6">
           <div className="grid grid-cols-2  gap-3">
-            <MetricCard label="Profile Views" value={formatNumber(creator.data?.profileViews || 0)} icon={<Eye size={18} className="text-white" />} color="from-[#151517]0 to-[#68686c]" loading={creator.loading} />
-            <MetricCard label="Followers (Net)" value={formatNumber(creator.data?.followers.net || 0)} icon={<Users size={18} className="text-white" />} color="from-[#151517]0 to-[#b78929]" loading={creator.loading} />
+            <MetricCard label="Profile Views" value={formatNumber(creator.data?.profileViews || 0)} icon={<Eye size={18} className="text-white" />} color="from-[#151517] to-[#68686c]" loading={creator.loading} />
+            <MetricCard label="Followers (Net)" value={formatNumber(creator.data?.followers.net || 0)} icon={<Users size={18} className="text-white" />} color="from-[#151517] to-[#b78929]" loading={creator.loading} />
             <MetricCard label="Earnings" value={formatCurrency(creator.data?.earnings || 0)} icon={<DollarSign size={18} className="text-white" />} color="from-green-500 to-emerald-600" loading={creator.loading} />
             <MetricCard label="Followers Gained" value={formatNumber(creator.data?.followers.gained || 0)} icon={<UserPlus size={18} className="text-white" />} color="from-teal-500 to-[#68686c]" loading={creator.loading} />
           </div>
-          <AnalyticsChart title="Watch Time" data={creator.data?.watchTime || []} icon={<Clock size={16} />} gradient="from-[#151517]0 to-[#b78929]" suffix=" min" loading={creator.loading} />
+          <AnalyticsChart title="Watch Time" data={creator.data?.watchTime || []} icon={<Clock size={16} />} gradient="from-[#151517] to-[#b78929]" suffix=" min" loading={creator.loading} />
 
           {/* Demographics */}
           {creator.data?.demographics && (
@@ -285,7 +285,7 @@ export default function AnalyticsPage() {
                   <h4 className="text-xs text-gray-400 mb-2">Top Countries</h4>
                   <div className="space-y-2">
                     {(creator.data.demographics.countries || []).slice(0, 5).map(([country, count]: [string, number], i: number) => (
-                      <ProgressBar key={i} label={country} value={count} max={creator.data.demographics.countries[0]?.[1] || 1} color="from-[#151517]0 to-[#68686c]" />
+                      <ProgressBar key={i} label={country} value={count} max={creator.data.demographics.countries[0]?.[1] || 1} color="from-[#151517] to-[#68686c]" />
                     ))}
                   </div>
                 </div>
@@ -293,7 +293,7 @@ export default function AnalyticsPage() {
                   <h4 className="text-xs text-gray-400 mb-2">Devices</h4>
                   <div className="space-y-2">
                     {(creator.data.demographics.devices || []).map(([device, count]: [string, number], i: number) => (
-                      <ProgressBar key={i} label={device} value={count} max={creator.data.demographics.devices[0]?.[1] || 1} color="from-[#151517]0 to-[#b78929]" />
+                      <ProgressBar key={i} label={device} value={count} max={creator.data.demographics.devices[0]?.[1] || 1} color="from-[#151517] to-[#b78929]" />
                     ))}
                   </div>
                 </div>
@@ -307,8 +307,8 @@ export default function AnalyticsPage() {
       {activeTab === 'content' && (
         <div className="space-y-6">
           <div className="grid grid-cols-2  gap-3">
-            <MetricCard label="Posts" value={formatNumber(product.data?.contentBreakdown.posts || 0)} icon={<Eye size={18} className="text-white" />} color="from-[#151517]0 to-[#68686c]" loading={product.loading} />
-            <MetricCard label="Videos" value={formatNumber(product.data?.contentBreakdown.videos || 0)} icon={<Eye size={18} className="text-white" />} color="from-[#151517]0 to-[#b78929]" loading={product.loading} />
+            <MetricCard label="Posts" value={formatNumber(product.data?.contentBreakdown.posts || 0)} icon={<Eye size={18} className="text-white" />} color="from-[#151517] to-[#68686c]" loading={product.loading} />
+            <MetricCard label="Videos" value={formatNumber(product.data?.contentBreakdown.videos || 0)} icon={<Eye size={18} className="text-white" />} color="from-[#151517] to-[#b78929]" loading={product.loading} />
             <MetricCard label="Live Streams" value={formatNumber(product.data?.contentBreakdown.liveStreams || 0)} icon={<Eye size={18} className="text-white" />} color="from-green-500 to-emerald-600" loading={product.loading} />
             <MetricCard label="Stories" value={formatNumber(product.data?.contentBreakdown.stories || 0)} icon={<Eye size={18} className="text-white" />} color="from-orange-500 to-red-600" loading={product.loading} />
           </div>
