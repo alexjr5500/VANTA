@@ -836,7 +836,7 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
               aria-label={`Reel by ${reel.author.username}`}
             />
           )}
-          <div className="pointer-events-none absolute inset-0 z-[2] bg-gradient-to-t from-black/90 via-transparent to-black/35" />
+          <div className="pointer-events-none absolute inset-0 z-[2] bg-gradient-to-t from-black/55 via-transparent to-black/15" />
 
           {videoLoading && !videoFailed && <div className="pointer-events-none absolute inset-0 grid place-items-center"><Loader2 className="animate-spin text-white/70" size={28} /></div>}
           {videoFailed && <div className="absolute inset-0 z-20 grid place-items-center bg-black/75 px-8 text-center"><div><Clapperboard className="mx-auto text-white/40" /><h3 className="mt-4 font-semibold">Unable to load Reel</h3><p className="mt-1 max-w-xs text-xs leading-5 text-white/45">{videoError || 'The video could not be played.'}</p><button type="button" onClick={retry} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-white/15 px-4 py-2 text-sm"><RefreshCw size={15} />Retry</button></div></div>}
