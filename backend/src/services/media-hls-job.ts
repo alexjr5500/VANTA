@@ -31,7 +31,20 @@ export async function transcodeLocalHls(storageRoot: string, job: TranscodeJob):
     if (!fs.lstatSync(destination).isDirectory() || fs.realpathSync(destination) !== destination) {
       throw new Error('Unsafe existing HLS output');
     }
-    if (fs.existsSync(master) && fs.statSync(master).size > 0) return '/uploads/videos/' + name + '/master.m3u8';
+    if (fs.existsSync(master) && fs.lstatSync(master).isFile() && fs.statSync(master).size > 0) {
+      const valid = requested.every(quality => {
+        const variant = path.join(destination, quality);
+        const playlist = path.join(variant, 'playlist.m3u8');
+        if (!fs.existsSync(variant) || !fs.lstatSync(variant).isDirectory() ||
+            !fs.existsSync(playlist) || !fs.lstatSync(playlist).isFile()) return false;
+        const segments = fs.readdirSync(variant).filter(file => /^segment-\d{5}\.ts$/.test(file));
+        return segments.length > 0 && segments.every(file => {
+          const segment = path.join(variant, file);
+          return fs.lstatSync(segment).isFile() && fs.statSync(segment).size > 0;
+        });
+      });
+      if (valid) return '/uploads/videos/' + name + '/master.m3u8';
+    }
     throw new Error('Incomplete existing HLS output requires manual recovery');
   }
   const staging = path.join(videos, '.hls-' + crypto.randomBytes(12).toString('hex'));
