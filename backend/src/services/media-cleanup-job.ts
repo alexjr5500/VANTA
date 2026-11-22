@@ -19,6 +19,12 @@ export function cleanupExpiredMediaTemp(
   const temporaryRoot = path.join(root, '.media-temp');
   if (!fs.existsSync(temporaryRoot)) return false;
   if (fs.realpathSync(temporaryRoot) !== temporaryRoot) throw new Error('Unsafe temporary media directory');
+  const candidatePath = path.resolve(temporaryRoot, relativePath);
+  const rel = path.relative(temporaryRoot, candidatePath);
+  if (rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
+    throw new Error('Temporary media path escapes storage');
+  }
+  if (!fs.existsSync(candidatePath)) return false;
   const candidate = resolveLocalMediaInput(temporaryRoot, relativePath);
   const stat = fs.lstatSync(candidate);
   if (!stat.isFile()) throw new Error('Temporary media target must be a regular file');
