@@ -173,6 +173,9 @@ export class AnalyticsEngine {
         skipDuplicates: true,
       });
     } catch (error) {
+      // Preserve failed batches for the next scheduled flush rather than
+      // silently dropping analytics events during transient database failures.
+      EVENT_BUFFER.unshift(...events);
       console.error('[AnalyticsEngine] Error flushing events:', error);
     }
   }
@@ -190,7 +193,7 @@ export class AnalyticsEngine {
         realtimeMetrics.increment('realtime:new_registrations_today');
         break;
       case 'user.login':
-        realtimeMetrics.set('realtime:active_users', (realtimeMetrics.get('realtime:active_users')?.value || 0) + 1);
+        realtimeMetrics.set('realtime:active_users', realtimeMetrics.get('realtime:active_users')?.value || 0 + 1);
         break;
       case 'stream.start':
         realtimeMetrics.increment('realtime:active_streams');
@@ -202,15 +205,11 @@ export class AnalyticsEngine {
       case 'stream.viewer_join':
         realtimeMetrics.increment(`realtime:stream:${event.targetId}:viewers`);
         realtimeMetrics.set('realtime:total_concurrent_viewers', 
-          Object.entries(realtimeMetrics.getAll()).filter(([k]) => k.startsWith('realtime:stream:') && k.endsWith(':viewers')).reduce((sum, [, v]) => sum + v.value, 0));
+          Array.from(realtimeMetrics.getAll()).filter(([k]) => k.startsWith('realtime:stream:')).reduce((sum, [, v]) => sum + v.value, 0));
         break;
       case 'stream.viewer_leave':
         const streamViewers = realtimeMetrics.get(`realtime:stream:${event.targetId}:viewers`)?.value || 0;
         realtimeMetrics.set(`realtime:stream:${event.targetId}:viewers`, Math.max(0, streamViewers - 1));
-        realtimeMetrics.set('realtime:total_concurrent_viewers',
-          Object.entries(realtimeMetrics.getAll())
-            .filter(([key]) => key.startsWith('realtime:stream:') && key.endsWith(':viewers'))
-            .reduce((sum, [, metric]) => sum + metric.value, 0));
         break;
       case 'gift.sent':
         realtimeMetrics.increment('realtime:gifts_today');
