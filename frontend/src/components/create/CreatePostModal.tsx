@@ -49,7 +49,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
   const hasFailedMedia = media.some((item) => item.error || !item.uploadedUrl);
   const canSubmit = isTextStory
     ? content.trim().length > 0 && !isOverLimit
-    : hasContent && !isOverLimit && !isUploadingMedia && !hasFailedMedia;
+    : hasContent && !isOverLimit && !isUploadingMedia && !hasFailedMedia && (!isStory || Boolean(media[0]?.uploadedId));
   const uploadSummary = media.length === 0
     ? null
     : media.every((item) => item.progress === 100 && !item.error)
@@ -261,11 +261,11 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
               <motion.button
                 type="button"
                 onClick={handleSubmit}
-                disabled={!canSubmit}
+                disabled={!canSubmit || isSubmitting}
                 whileTap={{ scale: 0.96 }}
                 className={cn(
                   'flex min-h-[36px] shrink-0 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-semibold transition-all duration-200',
-                  canSubmit
+                  canSubmit && !isSubmitting
                     ? 'bg-gradient-to-r from-[#f2c75c] to-[#d6a83f] text-black shadow-[0_4px_20px_rgba(214,168,63,0.28)]'
                     : 'cursor-not-allowed bg-white/[0.06] text-white/30'
                 )}
@@ -415,7 +415,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                       {uploadSummary && <p className={cn('text-xs font-medium', uploadSummary.tone)}>{uploadSummary.label}</p>}
                       <CharacterCounter current={content.length} max={MAX_CHARS} />
                     </div>
-                    {error && <p className="mt-2 text-center text-xs text-red-300">{error}</p>}
+
                   </div>
                 ) : (
                   <>
