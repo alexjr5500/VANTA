@@ -1,15 +1,9 @@
 import bcrypt from 'bcryptjs';
-
-export interface AdministratorSeedClient {
-  user: {
-    findFirst(args: { where: { OR: Array<{ email?: string; username?: string }> } }): Promise<{ id: string } | null>;
-    create(args: { data: Record<string, unknown> }): Promise<unknown>;
-  };
-}
+import type { PrismaClient } from '@prisma/client';
 
 /** Only creates a missing administrator. Never alters an existing account. */
 export async function ensureInitialAdministrator(
-  prisma: AdministratorSeedClient,
+  prisma: Pick<PrismaClient, 'user'>,
   identity: { email: string; username: string; fullName: string },
   resolvePassword: () => string,
 ): Promise<'existing' | 'created'> {
