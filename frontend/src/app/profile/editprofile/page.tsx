@@ -28,6 +28,7 @@ export default function EditProfilePage() {
   const [loadAttempt, setLoadAttempt] = useState(0); const [loadFailed, setLoadFailed] = useState(false);
   const profileRequest = useRef(0);
   const usernameCheck = useRef(0);
+  const [verifiedUsername, setVerifiedUsername] = useState('');
   const saveInFlight = useRef(false);
 
   useEffect(() => {
@@ -63,6 +64,7 @@ export default function EditProfilePage() {
   useEffect(() => {
     const checkId = ++usernameCheck.current;
     const username = form.username.trim().toLowerCase();
+    setVerifiedUsername('');
     if (username === original.username.trim().toLowerCase()) { setAvailability('idle'); return; }
     if (!/^[a-z0-9_.]{3,30}$/.test(username)) { setAvailability('invalid'); return; }
     setAvailability('checking');
@@ -70,7 +72,9 @@ export default function EditProfilePage() {
     const timer = window.setTimeout(() => apiGet<any>(`/api/auth/check-username?username=${encodeURIComponent(username)}`, token || undefined, { skipCache: true })
       .then(value => {
         if (active && checkId === usernameCheck.current) {
-          setAvailability(value?.available === true || value?.data?.available === true ? 'available' : 'taken');
+          const available = value?.available === true || value?.data?.available === true;
+          setVerifiedUsername(available ? username : '');
+          setAvailability(available ? 'available' : 'taken');
         }
       })
       .catch(() => { if (active && checkId === usernameCheck.current) setAvailability('error'); }), 450);
@@ -90,7 +94,7 @@ export default function EditProfilePage() {
     const name = form.fullName.trim(); const username = form.username.trim().toLowerCase(); const website = form.website.trim();
     if (name.length < 1 || name.length > 50) return 'Display name must be between 1 and 50 characters.';
     if (!/^[a-z0-9_.]{3,30}$/.test(username)) return 'Username must be 3 to 30 letters, numbers, underscores, or periods.';
-    if (username !== original.username.trim().toLowerCase() && availability !== 'available') return availability === 'taken' ? 'That username is already taken.' : 'Please wait until your new username has been verified.';
+    if (username !== original.username.trim().toLowerCase() && (availability !== 'available' || verifiedUsername !== username)) return availability === 'taken' ? 'That username is already taken.' : 'Please wait until your new username has been verified.';
     if (form.bio.length > 260) return 'Bio must be 260 characters or fewer.';
     if (form.city.trim().length > 100) return 'Location must be 100 characters or fewer.';
     if (form.dateOfBirth) {
