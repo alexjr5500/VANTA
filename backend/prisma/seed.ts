@@ -13,7 +13,6 @@ import { ensureCanonicalPurchaseCatalog } from '../src/services/purchase-catalog
 const prisma = new PrismaClient();
 
 async function main() {
-  const adminPassword = resolveAdminPassword();
   console.log('🌱 Seeding VANTA monetization data...');
 
   // ============================================================================
@@ -36,6 +35,7 @@ async function main() {
     // First-time account creation remains supported below.
     console.log('✅ Existing administrator account found; automatic reconciliation skipped');
   } else {
+    const adminPassword = resolveAdminPassword();
     // Keep seed-created credentials aligned with the application's current
     // password hashing algorithm. Runtime verification remains compatible
     // with Argon2 hashes created by older versions.
