@@ -249,9 +249,29 @@ export default function DiscoverPage() {
     catch (reason: any) { update(was); toast.error('Could not update post', reason?.message); }
   };
   const share = async (destination: string) => {
-    if (!shareFor || !token) return; const url = `${location.origin}/post/${cleanId(shareFor)}`;
-    try { await apiPost(`/api/feed/${cleanId(shareFor)}/share`, { destination }, token); if (destination === 'COPY_LINK') await navigator.clipboard.writeText(url); else if (destination === 'NATIVE' && navigator.share) await navigator.share({ title: 'VANTA', text: shareFor.content, url }); else if (destination === 'MESSAGE') router.push(`/chat?share=${encodeURIComponent(url)}`); toast.success('Shared successfully'); setShareFor(undefined); }
-    catch (reason: any) { toast.error('Share failed', reason?.message); }
+    if (!shareFor || !token) return;
+    const url = `${location.origin}/post/${cleanId(shareFor)}`;
+    try {
+      if (destination === 'NATIVE') {
+        if (!navigator.share) {
+          toast.error('Device sharing is unavailable', 'Use Copy link instead.');
+          return;
+        }
+        await navigator.share({ title: 'VANTA', text: shareFor.content, url });
+      } else if (destination === 'COPY_LINK') {
+        await navigator.clipboard.writeText(url);
+      } else if (destination === 'MESSAGE') {
+        router.push(`/chat?share=${encodeURIComponent(url)}`);
+      } else {
+        return;
+      }
+      await apiPost(`/api/feed/${cleanId(shareFor)}/share`, { destination }, token);
+      if (destination === 'COPY_LINK') toast.success('Link copied');
+      else if (destination === 'NATIVE') toast.success('Shared successfully');
+      setShareFor(undefined);
+    } catch (reason: any) {
+      if (reason?.name !== 'AbortError') toast.error('Share failed', reason?.message);
+    }
   };
   const selectTopic = (topic: string) => { setQuery(topic); setSearchFilter('all'); searchRef.current?.focus(); scrollPageTop(pageScrollRef.current); };
 
