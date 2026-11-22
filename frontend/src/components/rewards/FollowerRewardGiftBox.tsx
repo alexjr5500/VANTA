@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Gift, Lock, Users } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Gift } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
-import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
 import {
   claimFollowerReward,
   getRewardAvailability,
@@ -32,6 +32,9 @@ export default function FollowerRewardGiftBox({ creatorUsername, token }: Props)
   const [availability, setAvailability] = useState<RewardAvailability | null>(null);
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const [done, setDone] = useState(false);
+  const claimLock = useRef(false);
   const [result, setResult] = useState<{ rewardType: string; coinAmount: number | null } | null>(null);
 
   const load = useCallback(async () => {
@@ -60,7 +63,8 @@ export default function FollowerRewardGiftBox({ creatorUsername, token }: Props)
   const expired = campaign?.expiresAt ? new Date(campaign.expiresAt).getTime() < Date.now() : false;
 
   const claim = async () => {
-    if (!token || !campaign || claiming) return;
+    if (!token || !campaign || claiming || claimLock.current) return;
+    claimLock.current = true;
     setClaiming(true);
     try {
       const claimed = await claimFollowerReward(token, campaign.id);
@@ -68,123 +72,91 @@ export default function FollowerRewardGiftBox({ creatorUsername, token }: Props)
         rewardType: claimed.rewardType,
         coinAmount: claimed.rewardType === 'COINS' ? (claimed.rewardPerUser ?? campaign.rewardPerUser) : null,
       });
+      setOpening(true);
       setAvailability((current) => (current ? { ...current, available: false, reason: 'already-claimed' } : current));
       toast.success('Reward claimed 🎉');
     } catch (reason: any) {
       toast.error('Could not claim the reward', reason?.message);
       void load();
     } finally {
+      claimLock.current = false;
       setClaiming(false);
     }
   };
 
-  const rewardLabel = (owner: { rewardType: string; rewardPerUser: number; gift?: { name?: string; emoji?: string | null } | null }) => {
-    if (owner.rewardType === 'GIFT') return `${owner.gift?.emoji ?? '🎁'} ${owner.gift?.name ?? 'A gift'}`;
-    return `${owner.rewardPerUser.toLocaleString()} VANTA Coins`;
-  };
-
-  // ---------- Success state (immutable claim already recorded) ----------
-  if (result) {
+  // ---------- Opened state: box opens, then disappears ----------
+  if (result || opening) {
     return (
-      <section className="mx-4 mt-3 overflow-hidden rounded-2xl border border-[var(--active-border)] bg-[var(--active-soft)]" aria-live="polite">
-        <div className="flex items-center gap-3 px-4 py-3.5">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[var(--active)] text-[var(--active-foreground)]">
-            <Gift size={18} />
-          </span>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-[var(--text-primary)]">
-              {result.rewardType === 'GIFT' ? 'Gift delivered!' : `${(result.coinAmount ?? 0).toLocaleString()} coins added`}
-            </p>
-            <p className="text-xs text-[var(--text-secondary)]">This reward was sent straight to your wallet.</p>
-          </div>
-        </div>
-      </section>
+      <div className="relative mx-4 mt-1 h-14" aria-live="polite">
+        <motion.div
+          className="absolute right-3 top-0 origin-top text-[var(--active)]"
+          initial={{ scale: 1, rotate: 0, opacity: 1 }}
+          animate={{ scale: [1, 1.25, 1.5], rotate: [0, -14, 14, -8, 0], opacity: [1, 1, 0] }}
+          transition={{ duration: 1.1, ease: 'easeOut' }}
+          onAnimationComplete={() => setDone(true)}
+        >
+          <GiftOpen />
+        </motion.div>
+        <span className="sr-only">{result?.rewardType === 'GIFT' ? 'Gift delivered' : `${(result?.coinAmount ?? 0).toLocaleString()} coins added`}</span>
+      </div>
     );
   }
 
+  if (done) return null;
   if (loading || !availability) return null;
-// ---------- Quiet unavailable states (no noise for things that don't concern us) ----------
-  if (availability.reason === 'not-authenticated') {
-    return (
-      <section className="mx-4 mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
-        <div className="flex items-center gap-3 px-4 py-3.5">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--active-soft)] text-[var(--active)]">
-            <Lock size={15} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-[var(--text-primary)]">A follower reward is waiting</p>
-            <p className="text-xs text-[var(--text-muted)]">Sign in and follow @{creatorUsername} to claim it.</p>
-          </div>
-          <button
-            className="shrink-0 rounded-xl bg-[var(--active)] px-3 py-2 text-xs font-semibold text-[var(--active-foreground)] transition-opacity hover:opacity-90"
-            onClick={() => router.push(`/login?next=${encodeURIComponent(`/profile/${creatorUsername}`)}`)}
-          >
-            Sign in
-          </button>
-        </div>
-      </section>
-    );
-  }
-
-  if (availability.reason === 'not-following') {
-    return (
-      <section className="mx-4 mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
-        <div className="flex items-center gap-3 px-4 py-3.5">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--active-soft)] text-[var(--active)]">
-            <Users size={15} />
-          </span>
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-[var(--text-primary)]">@{(campaign?.creatorUsername ?? creatorUsername)} rewards followers</p>
-            <p className="text-xs text-[var(--text-muted)]">Follow them to unlock this reward.</p>
-          </div>
-        </div>
-      </section>
-    );
-  }
+  // Unavailable / not-following / signed-out-without-campaign states render nothing.
+  if (availability.reason === 'not-authenticated' || availability.reason === 'not-following') return null;
 
   if (!availability.available || !campaign || expired) return null;
 
-  // ---------- Claimable ----------
+  // ---------- Claimable: only a dangling gift box ----------
+  if (!token) {
+    return (
+      <div className="relative mx-4 mt-1 h-14">
+        <button
+          type="button"
+          aria-label="Sign in to claim your reward"
+          className="absolute right-3 top-0 origin-top text-[var(--active)] focus-visible:outline-none"
+          onClick={() => router.push(`/login?next=${encodeURIComponent(`/profile/${creatorUsername}`)}`)}
+        >
+          <Dangle><Gift size={34} /></Dangle>
+        </button>
+      </div>
+    );
+  }
   return (
-    <section className="mx-4 mt-3 overflow-hidden rounded-2xl border border-[var(--active-border)] bg-[var(--surface)] shadow-[var(--active-glow)]">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-2.5">
-        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--active)]">
-          <Gift size={12} /> Reward available
-        </span>
-        {campaign.expiresAt && (
-          <span className="text-[10px] text-[var(--text-muted)]">
-            {new Date(campaign.expiresAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-          </span>
-        )}
-      </div>
-      <div className="flex items-center gap-3 px-4 py-3.5">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[var(--active-soft)] text-[var(--active)]">
-          {campaign.rewardType === 'COINS' ? <VantaCoinIcon size={20} /> : <Gift size={18} />}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-[var(--text-primary)]">{rewardLabel(campaign)}</p>
-          <p className="text-xs text-[var(--text-secondary)]">
-            {campaign.claimedUsers.toLocaleString()} of {campaign.totalAllocation.toLocaleString()} claimed
-            {campaign.rewardType === 'GIFT' ? ` · ${campaign.gift?.name ?? 'gift'}` : ''}
-          </p>
-        </div>
-        {token ? (
-          <button
-            className="shrink-0 rounded-xl bg-[var(--active)] px-4 py-2.5 text-sm font-semibold text-[var(--active-foreground)] transition-transform active:scale-[0.98] disabled:opacity-60"
-            onClick={() => void claim()}
-            disabled={claiming}
-          >
-            {claiming ? 'Claiming…' : 'Claim'}
-          </button>
-        ) : (
-          <button
-            className="shrink-0 rounded-xl border border-[var(--active-border)] px-4 py-2.5 text-sm font-semibold text-[var(--active)] transition-colors hover:bg-[var(--active-soft)]"
-            onClick={() => router.push(`/login?next=${encodeURIComponent(`/profile/${creatorUsername}`)}`)}
-          >
-            Sign in
-          </button>
-        )}
-      </div>
-    </section>
+    <div className="relative mx-4 mt-1 h-14">
+      <button
+        type="button"
+        aria-label="Claim your reward"
+        className="absolute right-3 top-0 origin-top text-[var(--active)] disabled:pointer-events-none focus-visible:outline-none"
+        onClick={() => void claim()}
+        disabled={claiming}
+      >
+        <Dangle><Gift size={34} /></Dangle>
+      </button>
+    </div>
+  );
+}
+
+function Dangle({ children }: { children: React.ReactNode }) {
+  return (
+    <motion.span
+      className="block origin-top"
+      animate={{ rotate: [-7, 7, -7] }}
+      transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}
+    >
+      <span className="mx-auto block h-3 w-px bg-[var(--active-border)]" />
+      <span className="block drop-shadow-[var(--active-glow)]">{children}</span>
+    </motion.span>
+  );
+}
+
+function GiftOpen() {
+  return (
+    <span className="block">
+      <span className="mx-auto block h-3 w-px bg-[var(--active-border)]" />
+      <Gift size={34} />
+    </span>
   );
 }

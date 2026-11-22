@@ -1707,7 +1707,7 @@ export class UserService {
 
   // Reels this user reposted (most recent repost first). Each item carries
   // repostedAt + the original creator so the profile can show real reposts.
-  async getUserReposts(userId: string, cursor?: string, limit: number = 12) {
+  async getUserReposts(userId: string, cursor?: string, limit: number = 12, viewerId?: string) {
     const rows = await prisma.reelRepost.findMany({
       where: { userId, video: { publishStatus: 'PUBLISHED', videoUrl: { not: null }, moderationRemovedAt: null } },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -1716,8 +1716,11 @@ export class UserService {
       include: {
         video: {
           include: {
-            creator: { select: { id: true, username: true, fullName: true, avatar: true } },
-            _count: { select: { likes: true, comments: true } },
+            creator: { select: { id: true, username: true, fullName: true, avatar: true, verified: true, ...BADGE_USER_SELECT } },
+            likes: viewerId ? { where: { userId: viewerId }, select: { id: true } } : false,
+            saves: viewerId ? { where: { userId: viewerId }, select: { id: true } } : false,
+            reposts: viewerId ? { where: { userId: viewerId }, select: { id: true } } : false,
+            _count: { select: { likes: true, comments: true, reposts: true } },
           },
         },
       },
@@ -1731,14 +1734,20 @@ export class UserService {
         repostId: row.id,
         title: row.video.title,
         videoUrl: row.video.videoUrl,
+        mediaUrl: row.video.videoUrl,
         thumbnailUrl: row.video.thumbnailUrl,
         duration: row.video.duration,
         views: row.video.views,
         likes: row.video._count.likes,
         comments: row.video._count.comments,
+        reposts: row.video._count.reposts,
+        description: row.video.description,
+        isLiked: viewerId ? (row.video as any).likes?.length > 0 : false,
+        saved: viewerId ? (row.video as any).saves?.length > 0 : false,
+        isReposted: viewerId ? (row.video as any).reposts?.length > 0 : false,
         createdAt: row.video.createdAt,
         repostedAt: row.createdAt,
-        creator: row.video.creator,
+        creator: enrichPublicUser(row.video.creator as any),
       })),
       nextCursor,
     };
@@ -1751,7 +1760,7 @@ export class UserService {
     if (!(await this.canViewProfile(user.id, viewerId))) {
       throw new Error('This profile is private');
     }
-    return this.getUserReposts(user.id, cursor, limit);
+    return this.getUserReposts(user.id, cursor, limit, viewerId);
   }
 
   // ===== LIVESTREAMS =====

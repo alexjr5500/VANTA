@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Bookmark, Gift, Heart, MessageCircle, MoreHorizontal, Repeat2 } from 'lucide-react';
+import { BarChart2, Bookmark, Gift, Heart, MessageCircle, MoreHorizontal, Repeat2, Share } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import Avatar from '@/components/ui/Avatar';
@@ -54,6 +54,9 @@ type FeedPostCardProps = {
   compactCaption?: boolean;
   feedCompactMedia?: boolean;
   hideFollowButton?: boolean;
+  /** Profile Reposts tab: X-style 'You reposted' row, views and a share-link action. */
+  repostContext?: string;
+  onShareLink?: (_item: Item) => void;
 };
 
 const formatCount = (value = 0) => value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}K` : String(value);
@@ -88,7 +91,7 @@ const postAttachments = (item: Item): PostAttachment[] => {
   const single = mediaUrl(item);
   return single ? [{ url: single, poster: mediaPoster(item) || undefined }] : [];
 };
-export default function FeedPostCard({ item, currentUserId, onLike, onSave, onComment, onShare, onGift, onMore, feedCompactMedia = false }: FeedPostCardProps) {
+export default function FeedPostCard({ item, currentUserId, onLike, onSave, onComment, onShare, onGift, onMore, feedCompactMedia = false, repostContext, onShareLink }: FeedPostCardProps) {
   const router = useRouter();
   const { prefs: contentPrefs, hydrated: contentPrefsHydrated } = useContentPrefs();
   // Feed video autoplay follows the persisted Video Autoplay preference.
@@ -142,6 +145,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
   };
 
   return <motion.article initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .24 }} onClick={openDetail} className="flex min-w-0 flex-col pt-2 pb-0.5 cursor-pointer">
+    {repostContext && <div className="flex items-center gap-1.5 pb-1 pl-[54px] text-[11px] font-semibold text-[#777]"><Repeat2 size={13}/><span>{repostContext}</span></div>}
     <header className="grid min-w-0 grid-cols-[44px_minmax(0,1fr)] items-start gap-2.5">
       <button
         type="button"
@@ -190,8 +194,10 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
             <button type="button" onClick={() => onComment(item)} aria-label="Open comments" className={actionClass}><MessageCircle size={17}/><span>{formatCount(item.comments)}</span></button>
             <button type="button" onClick={() => onShare(item)} aria-label="Repost" aria-pressed={Boolean(item.isReposted)} className={cn(actionClass, 'transition-colors', item.isReposted && 'text-[#f2c75c]')}><Repeat2 size={17}/><span>{formatCount(item.reposts ?? item.shares)}</span></button>
             {!isOwn ? <button type="button" onClick={() => onGift(item)} aria-label="Send gift" className={cn(actionClass, 'transition-colors hover:text-[#c9a227]', item.isGifted && 'text-[#f2c75c]')}><Gift size={17} className={item.isGifted ? 'fill-current' : ''}/><span>{formatCount(item.tips ?? item.tipCount ?? item.giftsReceived ?? 0)}</span></button> : <span className={cn(actionClass, 'pointer-events-none', item.isGifted && 'text-[#f2c75c]')} aria-label="Tips"><Gift size={17} className={item.isGifted ? 'fill-current' : ''}/><span>{formatCount(item.tips ?? item.tipCount ?? item.giftsReceived ?? 0)}</span></span>}
+            {repostContext && <span className={cn(actionClass, 'pointer-events-none')} aria-label="Views"><BarChart2 size={17}/><span>{formatCount(item.views ?? 0)}</span></span>}
           </div>
           <button type="button" onClick={() => onSave(item)} aria-label={item.saved ? 'Remove saved post' : 'Save post'} aria-pressed={item.saved} className={cn(actionClass, item.saved && 'text-white')}><Bookmark size={17} className={item.saved ? 'fill-current' : ''}/><span className="sr-only">{item.saved ? 'Saved' : 'Save'}</span></button>
+          {repostContext && onShareLink && <button type="button" onClick={() => onShareLink(item)} aria-label="Share" className={actionClass}><Share size={17}/></button>}
         </footer>
       </div>
     </header>
