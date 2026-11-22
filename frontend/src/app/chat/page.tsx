@@ -2281,7 +2281,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     : activeConv?.type === 'channel' && ['OWNER', 'ADMIN', 'MODERATOR'].includes(activeConv.currentRole || '')
       && (isManagedOwner || managedEntity?.permissions?.manageSubscribers !== false);
   const canRemoveEntityMembers = activeConv?.type === 'group' ? isGroupPrivileged : canManageEntityMembers;
-  const canManageEntityPermissions = activeConv?.type === 'group' ? isGroupPrivileged : isManagedOwner;
+  const canManageEntityPermissions = activeConv?.type === 'group' ? isGroupPrivileged : activeConv?.type === 'channel' && isManagedOwner;
   const managedPermissions = activeConv?.type === 'channel'
     ? [
         ['postMessages', 'Post messages'],
@@ -2432,7 +2432,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     finally { setManagementBusy(null); }
   };
 
-  const toggleManagedPermission = (key: string) => setManagedEntity((previous: any) => { const current = previous?.permissions?.[key] ?? (activeConv?.type === 'channel' ? ['deleteMessages', 'manageChannelInfo', 'manageSubscribers'].includes(key) : ['sendMessages', 'sendMedia', 'sendLinks'].includes(key)); return { ...previous, permissions: { ...(previous?.permissions || {}), [key]: !current } }; });
+  const toggleManagedPermission = (key: string) => {
+    if (!canManageEntityPermissions || !managedPermissions.some(([permission]) => permission === key)) return;
+    setManagedEntity((previous: any) => { const current = previous?.permissions?.[key] ?? (activeConv?.type === 'channel' ? ['deleteMessages', 'manageChannelInfo', 'manageSubscribers'].includes(key) : ['sendMessages', 'sendMedia', 'sendLinks'].includes(key)); return { ...previous, permissions: { ...(previous?.permissions || {}), [key]: !current } }; });
+  };
 
   const confirmOwnershipTransfer = async () => {
     if (!token || !activeConv || !editEntityId || !ownershipConfirm || activeConv.type === 'direct') return;
