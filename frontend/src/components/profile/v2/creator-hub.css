@@ -1188,3 +1188,13 @@ html.light .tile-type { background: rgba(5, 5, 5, 0.78); }
     pointer-events: auto;
   }
 }
+
+/* Reposts: clean tiles that keep the original creator visible. */
+.repost-tile .repost-badge { position: absolute; top: 6px; left: 6px; z-index: 3; display: inline-flex; align-items: center; gap: 3px; padding: 3px 6px; border-radius: 999px; background: rgba(5, 5, 5, 0.72); color: var(--profile-gold, #c9a227); font-size: 9px; font-weight: 700; letter-spacing: 0.02em; }
+.repost-tile .repost-source { position: absolute; inset: auto 0 0; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 18px 6px 6px; background: linear-gradient(to top, rgba(5, 5, 5, 0.85), rgba(5, 5, 5, 0)); color: #fff; pointer-events: none; }
+.repost-tile .repost-source-avatar { display: grid; flex: 0 0 auto; width: 20px; height: 20px; place-items: center; overflow: hidden; border-radius: 50%; background: rgba(245, 245, 245, 0.2); font-size: 10px; font-weight: 700; }
+.repost-tile .repost-source-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.repost-tile .repost-source-meta { display: flex; min-width: 0; flex-direction: column; line-height: 1.15; }
+.repost-tile .repost-source-meta b { overflow: hidden; font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.repost-tile .repost-source-meta small { display: inline-flex; align-items: center; gap: 3px; font-size: 9px; opacity: 0.85; }
+.repost-tile .tile-play-chip { width: 32px; height: 32px; }

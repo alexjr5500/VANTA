@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Eye, Film, Heart, Image as ImageIcon, MessageCircle, Play, Radio, Trash2 } from 'lucide-react';
+import { Eye, Film, Repeat2, Heart, Image as ImageIcon, MessageCircle, Play, Radio, Trash2 } from 'lucide-react';
 import FeedPostCard from '@/components/social/FeedPostCard';
 import ImageViewer from '@/components/ui/ImageViewer';
 import type { ProfileData, ProfileItem, ProfileTab } from './profileTypes';
@@ -30,6 +30,29 @@ export default function ProfileContent(props: Props) {
   if (!rows.length) return <Empty tab={tab} own={own} onCreate={onCreate} />;
   if (tab === 'posts' || tab === 'likes') {
     return <div className="profile-post-feed">{rows.map(item => <FeedPostCard key={item.id} item={item} currentUserId={currentUserId} onLike={onLike} onSave={onSave} onComment={onComment} onShare={onShare} onGift={onGift} onFollow={onFollow} onMore={onMore} feedCompactMedia hideFollowButton />)}</div>;
+  }
+  if (tab === 'reposts') {
+    return <div className="content-grid repost-grid">{rows.map(item => {
+      const creator = item.creator || item.author || item.user || {};
+      const handle = creator.username ? `@${creator.username}` : '';
+      const isReel = Boolean(item.videoUrl || item.playbackUrl) || String(item.type || item.kind || '').toLowerCase() === 'reel';
+      const poster = mediaUrl({ thumbnailUrl: item.thumbnailUrl || item.thumbnail || item.posterUrl || item.previewImageUrl })
+        || (isReel ? '' : mediaUrl(item));
+      const avatar = creator.avatar || creator.avatarUrl ? mediaUrl({ imageUrl: creator.avatar || creator.avatarUrl }) : '';
+      const destination = isReel ? `/reels/${item.id}` : `/post/${cleanPostId(item)}`;
+      const label = item.title || item.content || (isReel ? 'Reel' : 'Post');
+      return <article className="content-tile repost-tile" key={item.repostId || item.id}>
+        <button className="tile-open" onClick={() => router.push(destination)} aria-label={`Open ${isReel ? 'reel' : 'post'} by ${handle || 'creator'} reposted by ${profile.username}`}>
+          {poster ? <img src={poster} alt={label} loading="lazy" /> : <div className="tile-fallback repost-fallback"><span>{isReel ? <Film /> : <MessageCircle />}</span><small>{label}</small></div>}
+        </button>
+        <span className="repost-badge"><Repeat2 size={12} />Reposted</span>
+        {isReel && <span className="tile-play"><span className="tile-play-chip"><Play size={16} fill="currentColor" /></span></span>}
+        <div className="repost-source">
+          <span className="repost-source-avatar">{avatar ? <img src={avatar} alt="" loading="lazy" /> : (creator.username || '?').charAt(0).toUpperCase()}</span>
+          <span className="repost-source-meta"><b>{handle || 'Unknown creator'}</b>{isReel && <small><Eye size={10} />{formatCount(item.views)}</small>}</span>
+        </div>
+      </article>;
+    })}</div>;
   }
   // The grid renders the reels/media/live galleries. Keep the full ProfileTab type
   // so the (unreachable-for-posts) post/like tile branches below still typecheck.
