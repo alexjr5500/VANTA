@@ -2271,7 +2271,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       && (isManagedOwner || managedEntity?.permissions?.manageChannelInfo !== false || managedEntity?.permissions?.manageSubscribers !== false);
   const canEditEntityInfo = activeConv?.type === 'group'
     ? isGroupPrivileged || managedEntity?.permissions?.changeGroupInfo === true
-    : activeConv?.type === 'channel' && (isManagedOwner || managedEntity?.permissions?.manageChannelInfo !== false);
+    : activeConv?.type === 'channel' && ['OWNER', 'ADMIN', 'MODERATOR'].includes(activeConv.currentRole || '')
+      && (isManagedOwner || managedEntity?.permissions?.manageChannelInfo !== false);
   const canManageEntityMembers = activeConv?.type === 'group'
     ? isGroupPrivileged || managedEntity?.permissions?.addMembers === true
     : activeConv?.type === 'channel' && ['OWNER', 'ADMIN', 'MODERATOR'].includes(activeConv.currentRole || '')
@@ -2321,9 +2322,12 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
   const openEntityEditor = async () => {
     if (!token || !activeConv || !canEditEntity || activeConv.type === 'direct') return;
+    const conversationId = activeConv.id;
+    const requestId = ++entityInfoRequestRef.current;
     try {
       const entityId = activeConv.entityId || activeConv.id;
       const entity = await apiGet<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${entityId}`, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setEditEntityId(entity.id || entityId);
       setEditName(entity.name || activeConv.name);
       setEditDescription(entity.description || '');
@@ -2335,7 +2339,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       setManagementResults([]);
       setEditEntityOpen(true);
       pushChatView('settings');
-    } catch (err: any) { showToast?.({ type: 'error', title: `Could not open ${activeConv.type} settings`, message: err?.message || 'Please try again.' }); }
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: `Could not open ${activeConv.type} settings`, message: err?.message || 'Please try again.' });
+    }
   };
 
   const uploadEntityAvatar = async (event: React.ChangeEvent<HTMLInputElement>) => {
