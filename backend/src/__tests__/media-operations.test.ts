@@ -28,6 +28,15 @@ describe('durable media cleanup and HLS validation', () => {
     expect(() => cleanupExpiredMediaTemp(root, 'link.mp4')).toThrow();
   });
 
+  test('HLS does not acknowledge a master playlist without actual segments', async () => {
+    const destination = path.join(root, 'videos', 'incomplete');
+    fs.mkdirSync(destination, { recursive: true });
+    fs.writeFileSync(path.join(destination, 'master.m3u8'), '#EXTM3U');
+    await expect(transcodeLocalHls(root, {
+      inputPath: 'original.mp4', outputName: 'incomplete', qualities: ['360p'],
+    })).rejects.toThrow('Incomplete existing HLS output');
+  });
+
   test('HLS validates quality allow-list before invoking FFmpeg', async () => {
     await expect(transcodeLocalHls(root, {
       inputPath: 'original.mp4', outputName: 'test', qualities: ['1080p'],
