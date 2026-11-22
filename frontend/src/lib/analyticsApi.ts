@@ -126,7 +126,7 @@ const getAnalyticsAccessToken = (): string | undefined => {
 };
 
 export async function unwrap<T>(path: string): Promise<T> {
-  const body = await apiGet<any>(path, getAnalyticsAccessToken());
+  const body = await apiGet<any>(path, getAnalyticsAccessToken(), { skipCache: true, cacheTTL: 0 });
   // Analytics endpoints predate the standard { success, data } envelope:
   // some return the payload directly while others wrap it in data.
   return (body?.data ?? body) as T;
