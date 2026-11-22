@@ -1254,6 +1254,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     const requestedConversation = searchParams.get('conversation');
     if (!requestedConversation) {
       if (activeConversationRef.current) {
+        entityInfoRequestRef.current += 1;
+        managementSearchRequestRef.current += 1;
+        socketRef.current?.emit('leave_conversation', activeConversationRef.current);
         activeConversationRef.current = null;
         previousLastMessageIdRef.current = null;
         setActiveConversation(null);
@@ -1262,6 +1265,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         setEditingMessage(null);
         setMessageInput('');
         setShowMobileList(true);
+        setDetailsOpen(false);
+        setEditEntityOpen(false);
+        setMemberBrowserOpen(false);
+        setOwnershipConfirm(null);
+        setManagementResults([]);
       }
       return;
     }
