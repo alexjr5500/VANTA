@@ -6,6 +6,10 @@ import { contentViewService } from "../services/content-view.service";
 import { buildReelFeed } from "../services/reel-feed.service";
 import { BADGE_USER_SELECT, enrichItemAuthors, enrichPublicUser } from "../services/public-verification";
 
+// This response field is enabled only after HLS acceptance testing.
+// Never replace the MP4 URL: older clients need the original as fallback.
+const reelHlsDeliveryEnabled = process.env.VANTA_DURABLE_QUEUE_MEDIA_DELIVERY === "true";
+
 const parseLimit = (value: unknown, defaultLimit = 20) => {
   const parsed = typeof value === "string" ? parseInt(value, 10) : NaN;
   if (Number.isNaN(parsed) || parsed <= 0) return defaultLimit;
@@ -176,6 +180,15 @@ export const getReels = async (req: AuthRequest, res: Response): Promise<void> =
     const orderMap = new Map(pageReelIds.map((id, index) => [id, index]));
     reels.sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0));
 
+    const hlsFiles = reelHlsDeliveryEnabled && pageReelIds.length
+      ? await prisma.uploadedFile.findMany({
+        where: { recordType: "Video", recordId: { in: pageReelIds },
+          category: "reel", fileType: "VIDEO", deletedAt: null, hlsUrl: { not: null } },
+        select: { recordId: true, hlsUrl: true },
+      }) : [];
+    const hlsByReel = new Map(hlsFiles.filter(file => file.recordId && file.hlsUrl)
+      .map(file => [file.recordId!, file.hlsUrl!]));
+
     const giftTotals = pageReelIds.length ? await prisma.giftTransaction.groupBy({
       by: ["videoId"],
       where: { videoId: { in: pageReelIds }, status: "COMPLETED" },
@@ -195,6 +208,7 @@ export const getReels = async (req: AuthRequest, res: Response): Promise<void> =
         title: reel.title,
         description: reel.description,
         videoUrl: reel.videoUrl,
+        hlsUrl: hlsByReel.get(reel.id) ?? null,
         thumbnailUrl: reel.thumbnailUrl,
         duration: reel.duration,
         views: reel.views,
@@ -275,6 +289,13 @@ export const getReelById = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
+    const derivative = reelHlsDeliveryEnabled
+      ? await prisma.uploadedFile.findFirst({
+        where: { recordType: "Video", recordId: reel.id, category: "reel",
+          fileType: "VIDEO", deletedAt: null, hlsUrl: { not: null } },
+        select: { hlsUrl: true },
+      }) : null;
+
     const { creator, likes, saves, reposts, _count, ...rest } = reel as any;
     const gifts = await prisma.giftTransaction.aggregate({
       where: { videoId: reel.id, status: "COMPLETED" },
@@ -286,6 +307,7 @@ export const getReelById = async (req: AuthRequest, res: Response): Promise<void
     }) : null;
     res.status(200).json(enrichItemAuthors({
       ...rest,
+      hlsUrl: derivative?.hlsUrl ?? null,
       isGifted: Boolean(viewerGift),
       creator,
       likesCount: _count.likes,
