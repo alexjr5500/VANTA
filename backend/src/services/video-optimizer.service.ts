@@ -1,6 +1,8 @@
 import path from 'path';
 import fs from 'fs';
 import { jobQueue, JOB_TYPES } from './queue.service';
+import { transcodeLocalHls } from './media-hls-job';
+import { uploadStorageDir } from './upload.service';
 
 // Video optimization configuration
 const VIDEO_QUALITIES = {
@@ -22,7 +24,7 @@ class VideoOptimizer {
   private uploadDir: string;
 
   constructor() {
-    this.uploadDir = path.resolve(__dirname, '../../public/uploads');
+    this.uploadDir = uploadStorageDir;
     if (!fs.existsSync(this.uploadDir)) {
       fs.mkdirSync(this.uploadDir, { recursive: true });
     }
@@ -40,50 +42,14 @@ class VideoOptimizer {
     thumbnail: string;
   }> {
     const baseName = path.parse(outputName).name;
-    const outputDir = path.join(this.uploadDir, 'videos', baseName);
-    
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
-
-    const variants: Record<string, string> = {};
-    const variantStreams: string[] = [];
-
-    for (const quality of qualities) {
-      const q = VIDEO_QUALITIES[quality as keyof typeof VIDEO_QUALITIES];
-      if (!q) continue;
-
-      const variantDir = path.join(outputDir, quality);
-      if (!fs.existsSync(variantDir)) {
-        fs.mkdirSync(variantDir, { recursive: true });
-      }
-
-      const playlistPath = `/uploads/videos/${baseName}/${quality}/playlist.m3u8`;
-      variants[quality] = playlistPath;
-      
-      variantStreams.push(
-        `#EXT-X-STREAM-INF:BANDWIDTH=${parseInt(q.bitrate) * 1000},RESOLUTION=${q.width}x${q.height}\n${quality}/playlist.m3u8`
-      );
-    }
-
-    // Generate master playlist
-    const masterPlaylist = [
-      '#EXTM3U',
-      '#EXT-X-VERSION:3',
-      ...variantStreams,
-    ].join('\n');
-
-    const masterPath = path.join(outputDir, 'master.m3u8');
-    fs.writeFileSync(masterPath, masterPlaylist);
-
-    // Generate thumbnail
-    const thumbnail = `/uploads/videos/${baseName}/thumbnail.jpg`;
-
-    return {
-      masterPlaylist: `/uploads/videos/${baseName}/master.m3u8`,
-      variants,
-      thumbnail,
-    };
+    const masterPlaylist = await transcodeLocalHls(this.uploadDir, {
+      inputPath, outputName: baseName, qualities,
+    });
+    const variants = Object.fromEntries(qualities.map(quality => [
+      quality, `/uploads/videos/${baseName}/${quality}/playlist.m3u8`,
+    ]));
+    // No thumbnail URL is advertised until a real thumbnail is generated.
+    return { masterPlaylist, variants, thumbnail: '' };
   }
 
   // Generate DASH manifest
@@ -91,32 +57,8 @@ class VideoOptimizer {
     manifest: string;
     variants: Record<string, string>;
   }> {
-    const baseName = path.parse(outputName).name;
-    const outputDir = path.join(this.uploadDir, 'videos', baseName);
-    
-    if (!fs.existsSync(outputDir)) {
-      fs.mkdirSync(outputDir, { recursive: true });
-    }
-
-    const variants: Record<string, string> = {};
-    const adaptationSets: string[] = [];
-
-    for (const quality of qualities) {
-      const q = VIDEO_QUALITIES[quality as keyof typeof VIDEO_QUALITIES];
-      if (!q) continue;
-
-      const variantDir = path.join(outputDir, quality);
-      if (!fs.existsSync(variantDir)) {
-        fs.mkdirSync(variantDir, { recursive: true });
-      }
-
-      const mpdPath = `/uploads/videos/${baseName}/${quality}/manifest.mpd`;
-      variants[quality] = mpdPath;
-    }
-
-    const manifest = `/uploads/videos/${baseName}/manifest.mpd`;
-
-    return { manifest, variants };
+    // Never claim that a DASH manifest exists when it has not been encoded.
+    throw new Error('DASH encoding is not implemented; use generateHLS for playable video');
   }
 
   // Queue thumbnail generation
