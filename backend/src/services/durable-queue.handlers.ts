@@ -64,12 +64,15 @@ export function createDurableQueueHandlers(
           where: { id },
           select: { id: true, path: true, category: true, fileType: true, deletedAt: true },
         }),
-        saveDerivative: async (id: string, originalPath: string, kind: CloudinaryJobKind, url: string) => {
+        saveDerivative: async (source: { id: string; path: string | null; category: string; fileType: string }, kind: CloudinaryJobKind, url: string) => {
           const data = kind === 'cloudinary:image:optimize' ? { optimizedUrl: url }
             : kind === 'cloudinary:thumbnail:generate' ? { thumbnailUrl: url }
             : { hlsUrl: url };
           const result = await prisma.uploadedFile.updateMany({
-            where: { id, path: originalPath, deletedAt: null, category: { not: 'message' } },
+            // The asset must still be the *same* public source. A category or
+            // type change during processing must not publish an old public URL.
+            where: { id: source.id, path: source.path, category: source.category,
+              fileType: source.fileType, deletedAt: null },
             data,
           });
           return result.count === 1;

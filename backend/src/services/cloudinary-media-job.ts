@@ -10,7 +10,7 @@ export interface CloudinaryMediaRecord {
 }
 export interface CloudinaryMediaStore {
   findById(fileId: string): Promise<CloudinaryMediaRecord | null>;
-  saveDerivative(fileId: string, originalPath: string, kind: CloudinaryJobKind, url: string): Promise<boolean>;
+  saveDerivative(source: CloudinaryMediaRecord, kind: CloudinaryJobKind, url: string): Promise<boolean>;
 }
 export interface CloudinaryMediaClient {
   explicit(publicId: string, options: {
@@ -108,7 +108,7 @@ export async function prepareCloudinaryMedia(
       !verified.pathname.endsWith(expectedExt)) {
     throw new Error('Cloudinary did not confirm a safe media derivative URL');
   }
-  const updated = await store.saveDerivative(job.fileId, record.path!, kind, url);
+  const updated = await store.saveDerivative(record, kind, url);
   if (!updated) {
     throw new Error('Cloudinary media source changed or was deleted before publishing the derivative');
   }

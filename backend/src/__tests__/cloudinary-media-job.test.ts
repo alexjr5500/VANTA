@@ -22,7 +22,7 @@ describe('Cloudinary durable media processing', () => {
     const { store, client } = createDeps();
     await prepareCloudinaryMedia('cloudinary:image:optimize', { fileId: 'file_123', maxWidth: 800 }, store, client);
     expect(store.findById).toHaveBeenCalledWith('file_123');
-    expect(store.saveDerivative).toHaveBeenCalledWith('file_123', 'cloudinary:image:vanta/post-image/asset_1', 'cloudinary:image:optimize', 'https://res.cloudinary.com/test-cloud/image/upload/vanta/output.webp');
+    expect(store.saveDerivative).toHaveBeenCalledWith(expect.objectContaining({ id: 'file_123', path: 'cloudinary:image:vanta/post-image/asset_1', category: 'post-image', fileType: 'IMAGE' }), 'cloudinary:image:optimize', 'https://res.cloudinary.com/test-cloud/image/upload/vanta/output.webp');
     expect(client.explicit).toHaveBeenCalledWith('vanta/post-image/asset_1', {
       resource_type: 'image', type: 'upload', eager_async: false,
       eager: [{ width: 800, crop: 'limit', quality: 80, format: 'webp' }],
@@ -51,7 +51,7 @@ describe('Cloudinary durable media processing', () => {
       eager: [{ secure_url: 'https://res.cloudinary.com/test-cloud/video/upload/sp_hd/vanta/reel/video_1.m3u8' }],
     });
     await prepareCloudinaryMedia('cloudinary:video:transcode', { fileId: 'video_12' }, store, client);
-    expect(store.saveDerivative).toHaveBeenCalledWith('video_12', 'cloudinary:video:vanta/reel/video_1', 'cloudinary:video:transcode', expect.stringMatching(new RegExp('[.]m3u8$')));
+    expect(store.saveDerivative).toHaveBeenCalledWith(expect.objectContaining({ id: 'video_12', path: 'cloudinary:video:vanta/reel/video_1', category: 'reel', fileType: 'VIDEO' }), 'cloudinary:video:transcode', expect.stringMatching(new RegExp('[.]m3u8$')));
     expect(client.explicit).toHaveBeenCalledWith('vanta/reel/video_1', {
       resource_type: 'video', type: 'upload', eager_async: false,
       eager: [{ streaming_profile: 'hd', format: 'm3u8' }],
@@ -127,6 +127,7 @@ describe('Cloudinary durable media processing', () => {
     store.saveDerivative.mockResolvedValue(false);
     await expect(prepareCloudinaryMedia('cloudinary:image:optimize',
       { fileId: 'file_123' }, store, client)).rejects.toThrow('changed or was deleted');
+    expect(store.saveDerivative).toHaveBeenCalledWith(expect.objectContaining({ category: 'post-image', fileType: 'IMAGE', deletedAt: null }), 'cloudinary:image:optimize', expect.stringContaining('.webp'));
     expect(store.saveDerivative).toHaveBeenCalledTimes(1);
   });
 });
