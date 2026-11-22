@@ -56,6 +56,17 @@ export const sharePost = async (req: AuthRequest, res: Response): Promise<void> 
   }
 };
 
+export const repostPost = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+    res.status(200).json(await postService.repostPost(req.params.id, userId));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    res.status(400).json({ error: message });
+  }
+};
+
 export const getPostById = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;

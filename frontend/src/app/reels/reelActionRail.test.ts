@@ -7,8 +7,8 @@ const detail = readFileSync(path.resolve(__dirname, '[id]/page.tsx'), 'utf8');
 const hub = readFileSync(path.resolve(__dirname, '../../components/profile/v2/CreatorHubPage.tsx'), 'utf8');
 
 describe('reel action rail', () => {
-  it('has independent gold-when-active repost on both pages', () => {
-    expect(feed).toContain("onClick={onRepost} active={Boolean(reel.isReposted)}");
+  it('has repost only on the single reel page (removed from main /reels)', () => {
+    expect(feed).not.toContain('onRepost');
     expect(detail).toContain("onClick={() => void repost()} active={Boolean(reel.isReposted)}");
   });
   it('gift turns active after a real send, from server state', () => {

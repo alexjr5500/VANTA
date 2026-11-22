@@ -14,7 +14,7 @@ describe('reels share sheet wiring', () => {
   });
 
   it('feed wires send, repost, save, report and native handlers', () => {
-    for (const prop of ['onSend={sendToChat}', 'onRepost=', 'onSave=', 'onReport=', 'onNative=', 'onCopy=']) {
+    for (const prop of ['onSend={sendToChat}', 'onSave=', 'onReport=', 'onNative=', 'onCopy=']) {
       expect(feed).toContain(prop);
     }
   });

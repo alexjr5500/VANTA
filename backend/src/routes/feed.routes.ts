@@ -23,6 +23,7 @@ import {
   unsavePost,
   getSavedPosts,
   sharePost,
+  repostPost,
   getPostById,
   viewPost,
 } from "../controllers/post.controller";
@@ -42,6 +43,7 @@ router.post("/", createPost);
 router.delete("/:id", deletePost);
 router.post("/:id/like", likePost);
 router.post("/:id/share", sharePost);
+router.post("/:id/repost", repostPost);
 router.post("/:id/views", viewPost);
 router.post("/:id/save", savePost);
 router.delete("/:id/save", unsavePost);

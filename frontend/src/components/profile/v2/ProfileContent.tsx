@@ -34,7 +34,7 @@ export default function ProfileContent(props: Props) {
   }
   if (tab === 'reposts') {
     const label = own ? 'You reposted' : `${profile.fullName || profile.displayName || profile.username} reposted`;
-    return <div className="profile-post-feed">{rows.map(item => <FeedPostCard key={item.repostId || item.id} item={{ ...item, type: 'reel' }} currentUserId={currentUserId} onLike={onLike} onSave={onSave} onComment={onComment} onShare={onShare} onGift={onGift} onFollow={onFollow} onMore={onMore} onShareLink={onShareLink} repostContext={label} feedCompactMedia hideFollowButton />)}</div>;
+    return <div className="profile-post-feed">{rows.map(item => <FeedPostCard key={item.repostId || item.id} item={item.repostKind === 'post' ? item : { ...item, type: 'reel' }} currentUserId={currentUserId} onLike={onLike} onSave={onSave} onComment={onComment} onShare={onShare} onGift={onGift} onFollow={onFollow} onMore={onMore} onShareLink={onShareLink} repostContext={label} feedCompactMedia hideFollowButton />)}</div>;
   }
   // The grid renders the reels/media/live galleries. Keep the full ProfileTab type
   // so the (unreachable-for-posts) post/like tile branches below still typecheck.
