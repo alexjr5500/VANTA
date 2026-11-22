@@ -1186,6 +1186,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setActiveConversation(id);
     setShowMobileList(false);
     setDetailsOpen(false);
+    setEditEntityOpen(false);
+    setMemberBrowserOpen(false);
+    setOwnershipConfirm(null);
+    setManagementResults([]);
     fetchMessages(id);
     socketRef.current?.emit('conversation:join', id);
     if (searchParams.get('conversation') !== id) {
@@ -1200,6 +1204,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     if (activeConversationRef.current) {
       socketRef.current?.emit('leave_conversation', activeConversationRef.current);
     }
+    entityInfoRequestRef.current += 1;
+    managementSearchRequestRef.current += 1;
     activeConversationRef.current = null;
     previousLastMessageIdRef.current = null;
     initialScrollDoneRef.current = false;
@@ -1213,6 +1219,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setMessages([]);
     setShowMobileList(true);
     setDetailsOpen(false);
+    setEditEntityOpen(false);
+    setMemberBrowserOpen(false);
+    setOwnershipConfirm(null);
+    setManagementResults([]);
     setDirectMenuOpen(false);
     router.replace('/chat', { scroll: false });
   }, [router]);
