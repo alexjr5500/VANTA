@@ -837,26 +837,33 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
   const loadOlderMessages = async () => {
     if (!token || !activeConversation || !messageCursor || loadingOlder) return;
+    const conversationId = activeConversation;
     const viewport = messagesViewportRef.current;
     const prevScrollHeight = viewport?.scrollHeight ?? 0;
     const prevScrollTop = viewport?.scrollTop ?? 0;
     setLoadingOlder(true);
     try {
-      const data = await apiGet<any>(`/api/messages/${activeConversation}?limit=50&cursor=${encodeURIComponent(messageCursor)}`, token);
+      const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50&cursor=${encodeURIComponent(messageCursor)}`, token);
+      if (activeConversationRef.current !== conversationId) return;
       const older = (data?.messages ?? [])
         .map((msg: any) => normalizeMessageRecord(msg, user?.id))
         .filter((msg: Message) => !msg.deletedAt);
-      setMessages(previous => [...older, ...previous]);
+      setMessages(previous => {
+        const existing = new Set(previous.map(message => message.id));
+        return [...older.filter((message: Message) => !existing.has(message.id)), ...previous];
+      });
       setMessageCursor(data?.nextCursor ?? null);
-      // Keep the reader exactly where they were after older messages are
-      // prepended above the current viewport (prevents a jarring jump).
-      const raf = window.requestAnimationFrame(() => {
+      // Preserve the reader's scroll position after prepending older messages.
+      window.requestAnimationFrame(() => {
+        if (activeConversationRef.current !== conversationId) return;
         const target = messagesViewportRef.current;
         if (target) target.scrollTop = (target.scrollHeight - prevScrollHeight) + prevScrollTop;
       });
-      window.setTimeout(() => window.cancelAnimationFrame(raf), 5000);
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Could not load older messages', message: errorMessage(err, { action: 'load older messages', fallback: 'Please try again.' }) }); }
-    finally { setLoadingOlder(false); }
+    } catch (err: any) {
+      if (activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Could not load older messages', message: errorMessage(err, { action: 'load older messages', fallback: 'Please try again.' }) });
+    } finally {
+      setLoadingOlder(false);
+    }
   };
 
   const clearTypingFor = (conversationId: string) => {
