@@ -37,6 +37,18 @@ describe('durable media cleanup and HLS validation', () => {
     })).rejects.toThrow('Incomplete existing HLS output');
   });
 
+  test('HLS rejects a master that points at incomplete variant playlists', async () => {
+    const destination = path.join(root, 'videos', 'incomplete-variant');
+    const variant = path.join(destination, '360p');
+    fs.mkdirSync(variant, { recursive: true });
+    fs.writeFileSync(path.join(destination, 'master.m3u8'), '#EXTM3U\\n360p/playlist.m3u8');
+    fs.writeFileSync(path.join(variant, 'playlist.m3u8'), '#EXTM3U\\n#EXTINF:4.0,\\nsegment-00000.ts');
+    fs.writeFileSync(path.join(variant, 'segment-00000.ts'), 'data');
+    await expect(transcodeLocalHls(root, {
+      inputPath: 'original.mp4', outputName: 'incomplete-variant', qualities: ['360p'],
+    })).rejects.toThrow('Incomplete existing HLS output');
+  });
+
   test('HLS validates quality allow-list before invoking FFmpeg', async () => {
     await expect(transcodeLocalHls(root, {
       inputPath: 'original.mp4', outputName: 'test', qualities: ['1080p'],
