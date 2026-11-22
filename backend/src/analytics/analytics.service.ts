@@ -193,7 +193,7 @@ export class AnalyticsEngine {
         realtimeMetrics.increment('realtime:new_registrations_today');
         break;
       case 'user.login':
-        realtimeMetrics.set('realtime:active_users', realtimeMetrics.get('realtime:active_users')?.value || 0 + 1);
+        realtimeMetrics.set('realtime:active_users', (realtimeMetrics.get('realtime:active_users')?.value || 0) + 1);
         break;
       case 'stream.start':
         realtimeMetrics.increment('realtime:active_streams');
@@ -205,11 +205,15 @@ export class AnalyticsEngine {
       case 'stream.viewer_join':
         realtimeMetrics.increment(`realtime:stream:${event.targetId}:viewers`);
         realtimeMetrics.set('realtime:total_concurrent_viewers', 
-          Array.from(realtimeMetrics.getAll()).filter(([k]) => k.startsWith('realtime:stream:')).reduce((sum, [, v]) => sum + v.value, 0));
+          Object.entries(realtimeMetrics.getAll()).filter(([k]) => k.startsWith('realtime:stream:') && k.endsWith(':viewers')).reduce((sum, [, v]) => sum + v.value, 0));
         break;
       case 'stream.viewer_leave':
         const streamViewers = realtimeMetrics.get(`realtime:stream:${event.targetId}:viewers`)?.value || 0;
         realtimeMetrics.set(`realtime:stream:${event.targetId}:viewers`, Math.max(0, streamViewers - 1));
+        realtimeMetrics.set('realtime:total_concurrent_viewers',
+          Object.entries(realtimeMetrics.getAll())
+            .filter(([key]) => key.startsWith('realtime:stream:') && key.endsWith(':viewers'))
+            .reduce((sum, [, metric]) => sum + metric.value, 0));
         break;
       case 'gift.sent':
         realtimeMetrics.increment('realtime:gifts_today');
@@ -538,7 +542,7 @@ export class AnalyticsEngine {
       metric: `${entityType}.${periodType === 'day' ? 'dau' : periodType === 'week' ? 'wau' : 'mau'}`,
       period: grain,
       data: result,
-      total: result.reduce((sum, p) => sum + p.value, 0),
+      total: new Set(events.map(event => event.userId).filter(Boolean)).size,
       average: result.length > 0 ? result.reduce((sum, p) => sum + p.value, 0) / result.length : 0,
     };
   }
