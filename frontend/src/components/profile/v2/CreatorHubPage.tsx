@@ -24,8 +24,8 @@ import { cleanPostId, finite, isVideoPost, postOnly, unwrap } from './profileTyp
 
 const TABS: Array<{ id: ProfileTab; label: string; icon: typeof Film; ownOnly?: boolean }> = [
   { id: 'posts', label: 'Posts', icon: MessageCircle },
-  { id: 'reels', label: 'Reels', icon: Film },
   { id: 'reposts', label: 'Reposts', icon: RefreshCw },
+  { id: 'reels', label: 'Reels', icon: Film },
   { id: 'media', label: 'Media', icon: ImageIcon },
   { id: 'likes', label: 'Likes', icon: Heart, ownOnly: true },
 ];
