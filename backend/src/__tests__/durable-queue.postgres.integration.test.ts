@@ -70,7 +70,7 @@ describeWithDatabase('DurableQueueRepository PostgreSQL integration', () => {
     await repository.enqueue('integration:expired', {}, { id: 'expired-job', maxAttempts: 2 });
     await expect(repository.claim('worker-a')).resolves.toMatchObject({ id: 'expired-job' });
     await pool.query(
-      'UPDATE "QueueJob" SET "lockedUntil" = NOW() - INTERVAL \\'1 second\\' WHERE "id" = $1',
+      `UPDATE "QueueJob" SET "lockedUntil" = NOW() - INTERVAL '1 second' WHERE "id" = $1`,
       ['expired-job'],
     );
     await expect(repository.complete('expired-job', 'worker-a')).resolves.toBe(false);
