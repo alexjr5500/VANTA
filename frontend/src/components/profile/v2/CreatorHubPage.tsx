@@ -48,7 +48,12 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const downloadPost = async (target: ProfileItem) => { if (downloadingId) return; setDownloadingId(target.id); await downloadPostVideo(target, toast, p => { if (p === null) { setDownloadingId(null); setMoreFor(undefined); } }); };
   const { openPostModal, openQuotePost } = useContentCreation();
-  const normalized = username && username !== 'me' ? decodeURIComponent(username).replace(/^@/, '') : '';
+  // Route params are normally decoded by Next.js; malformed percent escapes must not crash the profile.
+  const normalized = (() => {
+    if (!username || username === 'me') return '';
+    try { return decodeURIComponent(username).replace(/^@/, ''); }
+    catch { return username.replace(/^@/, ''); }
+  })();
   const own = !normalized || (!!user?.username && normalized.toLowerCase() === user.username.toLowerCase());
   const [profile, setProfile] = useState<ProfileData | null>(null); const [tab, setTab] = useState<ProfileTab>('posts');
   const [content, setContent] = useState(emptyContent); const [nextCursor, setNextCursor] = useState<Partial<Record<ProfileTab, string>>>({}); const [loadingMore, setLoadingMore] = useState(false); const [loading, setLoading] = useState(true); const [contentLoading, setContentLoading] = useState(true);
