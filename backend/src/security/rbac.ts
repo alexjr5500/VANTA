@@ -249,6 +249,7 @@ const rolePermissions: Record<Role, Permission[]> = {
     Permission.MANAGE_ADS,
     Permission.VIEW_ANALYTICS,
     Permission.VIEW_SYSTEM_LOGS,
+    Permission.VIEW_SYSTEM_HEALTH,
     Permission.MANAGE_NOTIFICATIONS,
     Permission.VIEW_FOLLOWER_REWARDS,
     Permission.MANAGE_VERIFICATION,
