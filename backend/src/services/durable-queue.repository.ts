@@ -41,7 +41,7 @@ export class DurableQueueRepository {
       `WITH exhausted AS (
          UPDATE "QueueJob" SET "status" = 'failed', "lastError" = COALESCE("lastError", 'Worker lease expired; retry limit reached'),
            "lockedAt" = NULL, "lockedUntil" = NULL, "workerId" = NULL, "updatedAt" = NOW()
-         WHERE "status" = 'active' AND "lockedUntil" <= NOW() AND "attempts" >= "maxAttempts"
+         WHERE "type" <> ALL($3::text[]) AND "status" = 'active' AND "lockedUntil" <= NOW() AND "attempts" >= "maxAttempts"
          RETURNING "id"
        ), candidate AS (
          SELECT "id" FROM "QueueJob"
