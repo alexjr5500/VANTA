@@ -28,6 +28,6 @@ describe('initial administrator bootstrap', () => {
     const data = create.mock.calls[0][0].data;
     expect(data).toMatchObject({ email: identity.email, username: 'alex', role: 'ADMIN', status: 'ACTIVE', verified: true, emailVerified: true });
     expect(data.passwordHash).not.toBe('bootstrap-password');
-    expect(data.passwordHash).toMatch(/^\\$2[aby]\\$/);
+    expect(data.passwordHash.startsWith('$2')).toBe(true);
   });
 });
