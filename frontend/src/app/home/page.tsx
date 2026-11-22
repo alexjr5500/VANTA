@@ -236,10 +236,29 @@ export default function HomePage() {
     }
   };
   const follow = async (item: Item) => {
-    if (!token) return; const creator = getAuthor(item); const was = Boolean(item.following);
-    setItems(previous => previous.map(entry => getAuthor(entry).id === creator.id ? { ...entry, following: !was } : entry));
-    try { was ? await apiDelete(`/api/profiles/${creator.username}/follow`, token) : await apiPost(`/api/profiles/${creator.username}/follow`, {}, token); }
-    catch (reason: any) { setItems(previous => previous.map(entry => getAuthor(entry).id === creator.id ? { ...entry, following: was } : entry)); toast.error('Follow failed', reason?.message); }
+    if (!token) return;
+    const creator = getAuthor(item);
+    if (!creator.id || !creator.username) {
+      toast.error('Follow unavailable', 'This creator does not have a valid profile.');
+      return;
+    }
+    const actionKey = `follow:${creator.id}`;
+    if (pendingActionsRef.current.has(actionKey)) return;
+    pendingActionsRef.current.add(actionKey);
+    const was = Boolean(item.following || item.isFollowing);
+    const updateFollowing = (value: boolean) => setItems(previous => previous.map(entry =>
+      getAuthor(entry).id === creator.id ? { ...entry, following: value, isFollowing: value } : entry
+    ));
+    updateFollowing(!was);
+    try {
+      if (was) await apiDelete(`/api/profiles/${encodeURIComponent(creator.username)}/follow`, token);
+      else await apiPost(`/api/profiles/${encodeURIComponent(creator.username)}/follow`, {}, token);
+    } catch (reason: any) {
+      updateFollowing(was);
+      toast.error('Follow failed', reason?.message);
+    } finally {
+      pendingActionsRef.current.delete(actionKey);
+    }
   };
   const followSuggested = async (profile: Item) => {
     if (!token || !profile.username) return; const was = Boolean(profile.following || profile.isFollowing);
