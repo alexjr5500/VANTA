@@ -11,9 +11,11 @@ import { PushNotificationService } from "../services/push/push-notification.serv
 import { presenceRegistry } from "../services/push/presence-registry";
 import { webPushProvider } from "../services/push/web-push.provider";
 import { prisma } from "../prisma";
+import { jobQueue } from "../services/queue.service";
 
 jest.mock("../prisma", () => ({
   prisma: {
+    $executeRawUnsafe: jest.fn().mockResolvedValue(1),
     pushDevice: {
       findUnique: jest.fn(),
       findMany: jest.fn(),
@@ -191,6 +193,37 @@ describe("PushNotificationService — delivery", () => {
     expect(results[0].status).toBe("SENT");
     expect(webPushProvider.send).toHaveBeenCalledTimes(1);
     expect(prisma.pushDelivery.upsert).toHaveBeenCalled();
+  });
+
+  test("stores push retries in PostgreSQL when the durable retry flag is enabled", async () => {
+    const previousFlag = process.env.VANTA_DURABLE_QUEUE_PUSH_RETRIES;
+    process.env.VANTA_DURABLE_QUEUE_PUSH_RETRIES = "true";
+    const legacyAdd = jest.spyOn(jobQueue, "add").mockResolvedValue("legacy-job");
+    try {
+      (webPushProvider.isConfigured as jest.Mock).mockReturnValue(true);
+      (webPushProvider.send as jest.Mock).mockResolvedValue({ ok: false, error: "temporary provider error" });
+      (prisma.pushDevice.findMany as jest.Mock).mockResolvedValue([deviceRow()]);
+      (prisma.pushDelivery.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.pushDelivery.upsert as jest.Mock).mockResolvedValue({});
+
+      const results = await pushService.sendToUser("user1", payload);
+
+      expect(results[0].status).toBe("FAILED");
+      expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "QueueJob"'),
+        expect.stringMatching(/^push-retry-[a-f0-9]{64}$/),
+        "push:deliver",
+        expect.stringContaining('"deviceId":"device1"'),
+        50,
+        3,
+        expect.any(Date),
+      );
+      expect(legacyAdd).not.toHaveBeenCalled();
+    } finally {
+      if (previousFlag === undefined) delete process.env.VANTA_DURABLE_QUEUE_PUSH_RETRIES;
+      else process.env.VANTA_DURABLE_QUEUE_PUSH_RETRIES = previousFlag;
+      legacyAdd.mockRestore();
+    }
   });
 
   test("marks the device inactive when the provider says the token is dead", async () => {

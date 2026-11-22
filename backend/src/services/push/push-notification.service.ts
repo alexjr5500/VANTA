@@ -1,4 +1,6 @@
+import { createHash } from "crypto";
 import { prisma } from "../../prisma";
+import { DurableQueueClient, DurableQueueRepository } from "../durable-queue.repository";
 import { metricsCollector } from "../monitoring.service";
 import { jobQueue, JOB_TYPES, JOB_PRIORITY } from "../queue.service";
 import { webPushProvider } from "./web-push.provider";
@@ -334,7 +336,7 @@ async sendToToken(
   // Internals
   // --------------------------------------------------------------------------
 
-  private async deliver(device: PushDeviceRecord, payload: PushNotificationPayload): Promise<PushSendResult> {
+  private async deliver(device: PushDeviceRecord, payload: PushNotificationPayload, scheduleRetry = true): Promise<PushSendResult> {
     try {
       // Idempotency: if this event already reached this device with a terminal
       // outcome, do not push again (retries, multiple workers, FCM redelivery).
@@ -384,11 +386,7 @@ async sendToToken(
       await this.recordDelivery(device, payload, "FAILED", result.error);
       metricsCollector.increment("push.failed", 1, { type: payload.type, platform: device.platform, provider: provider.name });
       console.log(JSON.stringify({ event: "push_send_failure", userId: device.userId, deviceId: device.id, type: payload.type, provider: provider.name, error: result.error }));
-      await jobQueue.add(PUSH_DELIVER_JOB, { deviceId: device.id, payload }, JOB_PRIORITY.HIGH, {
-        groupId: `push:${payload.eventId}:${device.id}`,
-        delay: 2_000,
-        timeout: 15_000,
-      });
+      if (scheduleRetry) await this.enqueuePushRetry(device.id, payload);
       return { deviceId: device.id, platform: device.platform, provider: device.provider, status: "FAILED", error: result.error };
     } catch (error: any) {
       await this.recordDelivery(device, payload, "FAILED", String(error?.message || error).slice(0, 300));
@@ -397,17 +395,44 @@ async sendToToken(
     }
   }
 
-  /** Re-fetch a device and deliver (used by the retry job handler). */
-  async deliverByDeviceId(deviceId: string, payload: PushNotificationPayload): Promise<PushSendResult | null> {
+  /** Re-fetch a device and deliver (used by both legacy and durable retry handlers). */
+  async deliverByDeviceId(
+    deviceId: string,
+    payload: PushNotificationPayload,
+    options: { scheduleRetry?: boolean } = {},
+  ): Promise<PushSendResult | null> {
     const device = await prisma.pushDevice.findUnique({ where: { id: deviceId } });
     if (!device || !device.isActive) return null;
     const prior = await prisma.pushDelivery.findUnique({
       where: { eventId_deviceId: { eventId: payload.eventId, deviceId } },
     });
     if (prior && TERMINAL_STATUSES.has(prior.status)) return null;
-    return this.deliver(device, payload);
+    return this.deliver(device, payload, options.scheduleRetry !== false);
   }
-private async recordDelivery(
+
+  private async enqueuePushRetry(deviceId: string, payload: PushNotificationPayload): Promise<void> {
+    if (process.env.VANTA_DURABLE_QUEUE_PUSH_RETRIES === "true") {
+      const idempotencyKey = createHash("sha256")
+        .update(`${payload.eventId}:${deviceId}`)
+        .digest("hex");
+      const repository = new DurableQueueRepository(prisma as unknown as DurableQueueClient);
+      await repository.enqueue(PUSH_DELIVER_JOB, { deviceId, payload }, {
+        id: `push-retry-${idempotencyKey}`,
+        priority: JOB_PRIORITY.HIGH,
+        maxAttempts: 3,
+        runAt: new Date(Date.now() + 2_000),
+      });
+      return;
+    }
+
+    await jobQueue.add(PUSH_DELIVER_JOB, { deviceId, payload }, JOB_PRIORITY.HIGH, {
+      groupId: `push:${payload.eventId}:${deviceId}`,
+      delay: 2_000,
+      timeout: 15_000,
+    });
+  }
+
+  private async recordDelivery(
     device: PushDeviceRecord,
     payload: PushNotificationPayload,
     status: string,
