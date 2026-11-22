@@ -64,7 +64,7 @@ export default function TextStoryEditor({ onBack, onClose, onPublished, onPhoto,
       notifyStoryFeedChanged();
       toast.success('Status published');
       onPublished?.();
-      onClose();
+      onClose?.();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Failed to publish Status.');
     } finally { setPublishing(false); }

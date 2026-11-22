@@ -126,6 +126,7 @@ export default function DraftManager({ onSelectDraft, onClose, className }: Draf
                 tabIndex={0}
                 onClick={() => onSelectDraft(draft)}
                 onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return;
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
                     onSelectDraft(draft);
