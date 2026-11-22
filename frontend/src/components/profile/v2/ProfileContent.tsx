@@ -55,7 +55,7 @@ export default function ProfileContent(props: Props) {
     const isProfileMedia = gridTab === 'media';
     return <article className={isText ? 'content-tile tile-text' : 'content-tile'} key={item.id}>
       {isText ? (
-        <button className="tile-open tile-text-open" onClick={() => isProfileMedia ? undefined : router.push(destination)} aria-label={`Open ${gridTab} item`}>
+        <button className="tile-open tile-text-open" onClick={() => router.push(destination)} aria-label={`Open ${gridTab} item`}>
           <span className="tile-text-icon"><MessageCircle size={18} /></span>
           <p className="tile-text-body">{item.content || item.title || 'Text post'}</p>
         </button>
