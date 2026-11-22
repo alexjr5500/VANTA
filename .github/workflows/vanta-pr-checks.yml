@@ -185,6 +185,7 @@ jobs:
           src/__tests__/media-hls.ffmpeg.integration.test.ts
           src/__tests__/media-operations.test.ts
           src/__tests__/media-thumbnail-job.test.ts
+          src/__tests__/media-storage-readiness.test.ts
           src/__tests__/durable-media-handlers.test.ts
           src/__tests__/durable-queue.repository.test.ts
           src/__tests__/durable-queue.health.test.ts
