@@ -41,6 +41,15 @@ describe('local media thumbnail processing', () => {
     expect(sharp).not.toHaveBeenCalled();
   });
 
+  it('validates missing and unsafe input before loading the optional Sharp dependency', async () => {
+    await expect(generateLocalThumbnail(root, {
+      inputPath: '../outside.jpg', outputName: 'unsafe',
+    })).rejects.toThrow();
+    await expect(generateLocalThumbnail(root, {
+      inputPath: 'missing.jpg', outputName: 'missing',
+    })).rejects.toThrow();
+  });
+
   it('cleans temporary output after an encoder error', async () => {
     const chain: any = {};
     chain.rotate = () => chain;
