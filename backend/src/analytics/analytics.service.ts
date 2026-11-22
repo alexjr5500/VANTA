@@ -109,6 +109,7 @@ function eventTypeFilter(pattern: string): { startsWith: string } | { contains: 
 export class AnalyticsEngine {
   private batchTimer: NodeJS.Timeout | null = null;
   private initialized = false;
+  private flushing = false;
 
   initialize(): void {
     if (this.initialized) return;
@@ -158,8 +159,14 @@ export class AnalyticsEngine {
 
   // Flush buffered events to database
   private async flushEvents(): Promise<void> {
+    // Prevent overlapping interval and size-triggered flushes from reordering retries.
+    if (this.flushing) return;
+    this.flushing = true;
     const events = EVENT_BUFFER.splice(0, EVENT_BUFFER.length);
-    if (events.length === 0) return;
+    if (events.length === 0) {
+      this.flushing = false;
+      return;
+    }
 
     try {
       // Store events in AnalyticsEvent table
@@ -185,6 +192,8 @@ export class AnalyticsEngine {
       // silently dropping analytics events during transient database failures.
       EVENT_BUFFER.unshift(...events);
       console.error('[AnalyticsEngine] Error flushing events:', error);
+    } finally {
+      this.flushing = false;
     }
   }
 
