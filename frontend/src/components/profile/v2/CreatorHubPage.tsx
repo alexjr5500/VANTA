@@ -71,6 +71,7 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   const paginationInFlight = useRef(false);
   const pendingPostActionsRef = useRef(new Set<string>());
   const followInFlightRef = useRef(false);
+  const deleteInFlightRef = useRef(false);
 
   const loadProfile = useCallback(async () => {
     if (authLoading) return;
@@ -258,7 +259,8 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     setDeletePostFor(item);
   };
   const confirmDeletePost = async () => {
-    if (!token || !deletePostFor) return;
+    if (!token || !deletePostFor || deleteInFlightRef.current) return;
+    deleteInFlightRef.current = true;
     const item = deletePostFor;
     setDeletePostFor(undefined);
     const id = cleanPostId(item);
@@ -266,8 +268,13 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     const endpoint = isReel ? `/api/reels/${id}` : `/api/feed/${id}`;
     try {
       await apiDelete(endpoint, token);
-      const bucket = isReel ? 'reels' : 'posts';
-      setContent(current => ({ ...current, [bucket]: current[bucket].filter(post => cleanPostId(post) !== id) }));
+      setContent(current => {
+        const updated = { ...current };
+        for (const bucket of Object.keys(updated) as ProfileTab[]) {
+          updated[bucket] = current[bucket].filter(post => cleanPostId(post) !== id);
+        }
+        return updated;
+      });
       if (!isReel) {
         setProfile(current => current ? {
           ...current,
@@ -279,6 +286,7 @@ export default function CreatorHubPage({ username }: { username?: string }) {
       toast.success(isReel ? 'Reel deleted' : 'Post deleted');
     }
     catch (reason: any) { toast.error(isReel ? 'Reel not deleted' : 'Post not deleted', reason?.message); }
+    finally { deleteInFlightRef.current = false; }
   };
   const openGift = async (item: ProfileItem) => {
     if (!token) return; setGiftFor(item);
