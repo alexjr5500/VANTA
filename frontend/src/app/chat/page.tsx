@@ -2420,15 +2420,20 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
 
   const changeManagedRole = async (member: any, role: string) => {
-    if (!token || !activeConv || !editEntityId) return;
+    if (!token || !activeConv || !editEntityId || !isGroupPrivileged && activeConv.type === 'group' || activeConv.type === 'channel' && !isManagedOwner || managementBusy || !member?.userId || !['MEMBER', 'ADMIN', 'MODERATOR'].includes(role)) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
     const action = role === 'MEMBER' ? 'remove administrator rights from' : 'promote';
     if (!window.confirm(`${action[0].toUpperCase()}${action.slice(1)} @${member.user?.username || 'member'}?`)) return;
     setManagementBusy(member.userId);
     try {
       const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { memberRoles: { [member.userId]: role } }, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setManagedEntity(updated);
       showToast?.({ type: 'success', title: 'Administrator access updated', message: 'The new role is active.' });
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Role not changed', message: err?.message || 'Please try again.' }); }
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Role not changed', message: err?.message || 'Please try again.' });
+    }
     finally { setManagementBusy(null); }
   };
 
