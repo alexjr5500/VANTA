@@ -52,13 +52,15 @@ jobs:
       - name: Assemble debug APK
         working-directory: android
         env:
-          VANTA_DEBUG_ORIGIN: ${{ github.event_name == 'workflow_dispatch' && inputs.preview_origin || '' }}
+          # PR #288 must exercise its unmerged frontend, not the production URL.
+          # Remove this branch-specific preview mapping before merging the PR.
+          VANTA_DEBUG_ORIGIN: ${{ (github.event_name == 'workflow_dispatch' && inputs.preview_origin) || (github.event_name == 'pull_request' && github.head_ref == 'fix/android-status-picker-chat-layout-20261122' && 'https://vanta-git-fix-android-status-picker-chat-layo-2ddfde-vanta-73db.vercel.app') || '' }}
         run: gradle --no-daemon --stacktrace assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event_name == 'workflow_dispatch' && inputs.preview_origin != '' && 'vanta-android-preview-debug' || 'vanta-android-debug' }}
+          name: ${{ ((github.event_name == 'workflow_dispatch' && inputs.preview_origin != '') || (github.event_name == 'pull_request' && github.head_ref == 'fix/android-status-picker-chat-layout-20261122')) && 'vanta-android-preview-debug' || 'vanta-android-debug' }}
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
