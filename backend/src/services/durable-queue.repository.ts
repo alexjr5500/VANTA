@@ -76,7 +76,7 @@ export class DurableQueueRepository {
     const count = await this.db.$executeRawUnsafe(
       `UPDATE "QueueJob" SET "status" = 'completed', "completedAt" = NOW(),
        "lockedAt" = NULL, "lockedUntil" = NULL, "workerId" = NULL, "updatedAt" = NOW()
-       WHERE "id" = $1 AND "status" = 'active' AND "workerId" = $2`,
+       WHERE "id" = $1 AND "status" = 'active' AND "workerId" = $2 AND "lockedUntil" > NOW()`,
       jobId, workerId,
     );
     return count === 1;
@@ -88,7 +88,7 @@ export class DurableQueueRepository {
     const count = await this.db.$executeRawUnsafe(
       `UPDATE "QueueJob" SET "status" = 'failed', "lastError" = $3,
        "lockedAt" = NULL, "lockedUntil" = NULL, "workerId" = NULL, "updatedAt" = NOW()
-       WHERE "id" = $1 AND "status" = 'active' AND "workerId" = $2`,
+       WHERE "id" = $1 AND "status" = 'active' AND "workerId" = $2 AND "lockedUntil" > NOW()`,
       jobId, workerId, message,
     );
     return count === 1;
@@ -104,7 +104,7 @@ export class DurableQueueRepository {
                      ELSE NOW() + ($3 * INTERVAL '1 millisecond') END,
        "lastError" = $4, "lockedAt" = NULL, "lockedUntil" = NULL,
        "workerId" = NULL, "updatedAt" = NOW()
-       WHERE "id" = $1 AND "status" = 'active' AND "workerId" = $2`,
+       WHERE "id" = $1 AND "status" = 'active' AND "workerId" = $2 AND "lockedUntil" > NOW()`,
       jobId, workerId, delay, message,
     );
     return count === 1;
