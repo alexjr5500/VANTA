@@ -65,6 +65,7 @@ jobs:
           npm --prefix backend run test -- --runInBand --forceExit --detectOpenHandles=false
           src/__tests__/security.rate-limiter.test.ts
           src/__tests__/security.admin-authorization.test.ts
+          src/__tests__/initial-administrator-seed.test.ts
           src/__tests__/auth.controller.session-security.test.ts
           src/__tests__/security.password-recovery.test.ts
           src/__tests__/security.session-manager.test.ts
