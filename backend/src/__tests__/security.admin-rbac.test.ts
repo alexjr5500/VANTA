@@ -23,6 +23,7 @@ describe('admin section permissions', () => {
 
   test('admins can view system health without system configuration access', () => {
     expect(hasPermission(Role.ADMIN, Permission.VIEW_SYSTEM_HEALTH)).toBe(true);
+    expect(hasPermission(Role.ADMIN, Permission.SYSTEM_CONFIG)).toBe(false);
     expect(hasPermission(Role.CEO, Permission.VIEW_SYSTEM_HEALTH)).toBe(true);
     expect(hasPermission(Role.SUPER_ADMIN, Permission.VIEW_SYSTEM_HEALTH)).toBe(true);
     expect(hasPermission(Role.MODERATOR, Permission.VIEW_SYSTEM_HEALTH)).toBe(false);
