@@ -1,3 +1,5 @@
+import { generateLocalThumbnail } from './media-thumbnail-job';
+import { transcodeLocalHls } from './media-hls-job';
 import { DurableJob } from './durable-queue.repository';
 import { DurableJobHandler } from './durable-queue.worker';
 import { pushNotificationService } from './push/push-notification.service';
@@ -36,6 +38,31 @@ export function createDurableQueueHandlers(
       throw new Error(result.error || 'Push delivery failed');
     }
   });
+
+  // Media jobs are explicitly opt-in and require a separately provisioned worker
+  // image with Sharp/FFmpeg and a shared persistent upload volume.
+  if (process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS === 'true') {
+    const root = process.env.UPLOAD_STORAGE_DIR;
+    if (!root) throw new Error('UPLOAD_STORAGE_DIR is required for durable media jobs');
+    handlers.set('thumbnail:generate', async (job: DurableJob): Promise<void> => {
+      const data = job.payload as { inputPath?: unknown; outputName?: unknown } | null;
+      if (!data || typeof data.inputPath !== 'string' || typeof data.outputName !== 'string') {
+        throw new Error('Invalid thumbnail:generate payload');
+      }
+      await generateLocalThumbnail(root, { inputPath: data.inputPath, outputName: data.outputName });
+    });
+    handlers.set('video:transcode', async (job: DurableJob): Promise<void> => {
+      const data = job.payload as { inputPath?: unknown; outputName?: unknown; qualities?: unknown } | null;
+      if (!data || typeof data.inputPath !== 'string' || typeof data.outputName !== 'string' ||
+          (data.qualities !== undefined && (!Array.isArray(data.qualities) ||
+           !data.qualities.every(q => typeof q === 'string')))) {
+        throw new Error('Invalid video:transcode payload');
+      }
+      await transcodeLocalHls(root, {
+        inputPath: data.inputPath, outputName: data.outputName, qualities: data.qualities as string[] | undefined,
+      });
+    });
+  }
 
   return handlers;
 }
