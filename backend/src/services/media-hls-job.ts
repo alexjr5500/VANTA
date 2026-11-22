@@ -32,13 +32,18 @@ export async function transcodeLocalHls(storageRoot: string, job: TranscodeJob):
       throw new Error('Unsafe existing HLS output');
     }
     if (fs.existsSync(master) && fs.lstatSync(master).isFile() && fs.statSync(master).size > 0) {
+      const masterText = fs.readFileSync(master, 'utf8');
       const valid = requested.every(quality => {
+        if (!masterText.includes(`${quality}/playlist.m3u8`)) return false;
         const variant = path.join(destination, quality);
         const playlist = path.join(variant, 'playlist.m3u8');
         if (!fs.existsSync(variant) || !fs.lstatSync(variant).isDirectory() ||
             !fs.existsSync(playlist) || !fs.lstatSync(playlist).isFile()) return false;
         const segments = fs.readdirSync(variant).filter(file => /^segment-\d{5}\.ts$/.test(file));
+        const playlistText = fs.readFileSync(playlist, 'utf8');
+        if (!playlistText.includes('#EXT-X-ENDLIST') || !playlistText.includes('#EXTINF')) return false;
         return segments.length > 0 && segments.every(file => {
+          if (!playlistText.includes(file)) return false;
           const segment = path.join(variant, file);
           return fs.lstatSync(segment).isFile() && fs.statSync(segment).size > 0;
         });
