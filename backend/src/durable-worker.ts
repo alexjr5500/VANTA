@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { prisma } from './prisma';
 import { createDurableQueueWorker } from './services/durable-queue.runtime';
+import { assertReadableBackendUploads } from './services/media-storage-readiness';
 
 /**
  * Dedicated worker process. Never start queue processing in the HTTP server.
@@ -60,6 +61,18 @@ async function main(): Promise<void> {
   process.once('SIGTERM', () => shutdown('SIGTERM'));
   process.once('SIGINT', () => shutdown('SIGINT'));
   await prisma.$connect();
+  if (process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS === 'true') {
+    // A directory mounted into this worker is not evidence that the HTTP
+    // uploader can see it. Test actual backend-owned file metadata against
+    // this worker's filesystem before claiming a single media job.
+    const samples = await prisma.uploadedFile.findMany({
+      where: { deletedAt: null, path: { not: { startsWith: 'cloudinary:' } } },
+      select: { filename: true, size: true },
+      orderBy: { createdAt: 'desc' },
+      take: 25,
+    });
+    assertReadableBackendUploads(process.env.UPLOAD_STORAGE_DIR!, samples);
+  }
   if (stopping) return;
   worker.start();
   console.info('[DurableQueueWorker] Started:', worker.id);
