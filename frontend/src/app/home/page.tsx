@@ -261,10 +261,25 @@ export default function HomePage() {
     }
   };
   const followSuggested = async (profile: Item) => {
-    if (!token || !profile.username) return; const was = Boolean(profile.following || profile.isFollowing);
-    setSuggested(previous => previous.map(entry => entry.id === profile.id ? { ...entry, following: !was, isFollowing: !was } : entry));
-    try { was ? await apiDelete(`/api/profiles/${profile.username}/follow`, token) : await apiPost(`/api/profiles/${profile.username}/follow`, {}, token); }
-    catch (reason: any) { setSuggested(previous => previous.map(entry => entry.id === profile.id ? { ...entry, following: was, isFollowing: was } : entry)); toast.error('Follow failed', reason?.message); }
+    if (!token || !profile.id || !profile.username) return;
+    const actionKey = `follow:${profile.id}`;
+    if (pendingActionsRef.current.has(actionKey)) return;
+    pendingActionsRef.current.add(actionKey);
+    const was = Boolean(profile.following || profile.isFollowing);
+    const updateFollowing = (value: boolean) => {
+      setSuggested(previous => previous.map(entry => entry.id === profile.id ? { ...entry, following: value, isFollowing: value } : entry));
+      setItems(previous => previous.map(entry => getAuthor(entry).id === profile.id ? { ...entry, following: value, isFollowing: value } : entry));
+    };
+    updateFollowing(!was);
+    try {
+      if (was) await apiDelete(`/api/profiles/${encodeURIComponent(profile.username)}/follow`, token);
+      else await apiPost(`/api/profiles/${encodeURIComponent(profile.username)}/follow`, {}, token);
+    } catch (reason: any) {
+      updateFollowing(was);
+      toast.error('Follow failed', reason?.message);
+    } finally {
+      pendingActionsRef.current.delete(actionKey);
+    }
   };
   const loadGiftData = async () => {
     if (!token) return; setGiftLoading(true); setGiftError('');
