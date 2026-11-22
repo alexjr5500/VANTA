@@ -2398,22 +2398,31 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
 
   const updateManagedMembers = async (memberIds: string[], successMessage: string) => {
-    if (!token || !activeConv || !editEntityId || !canManageEntityMembers) return;
+    if (!token || !activeConv || !editEntityId || !canManageEntityMembers || managementBusy) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
+    const existingIds = (managedEntity?.members || []).map((member: any) => member.userId).filter(Boolean);
+    if (!canRemoveEntityMembers && existingIds.some((id: string) => !memberIds.includes(id))) return;
     setManagementBusy('members');
     try {
       const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { memberIds }, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setManagedEntity(updated);
-      setConversations(previous => previous.map(item => item.id === activeConv.id ? { ...item, memberCount: updated._count?.members ?? updated.members?.length ?? item.memberCount } : item));
+      setConversations(previous => previous.map(item => item.id === conversationId ? { ...item, memberCount: updated._count?.members ?? updated.members?.length ?? item.memberCount } : item));
       setManagementSearch(''); setManagementResults([]);
       showToast?.({ type: 'success', title: successMessage, message: 'Membership has been updated.' });
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Membership not changed', message: err?.message || 'Please try again.' }); }
-    finally { setManagementBusy(null); }
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Membership not changed', message: err?.message || 'Please try again.' });
+    } finally { setManagementBusy(null); }
   };
 
-  const addManagedMember = (person: any) => updateManagedMembers([...(managedEntity?.members || []).map((member: any) => member.userId), person.id], `${person.username || 'Member'} added`);
+  const addManagedMember = (person: any) => {
+    if (!person?.id || (managedEntity?.members || []).some((member: any) => member.userId === person.id)) return;
+    void updateManagedMembers([...(managedEntity?.members || []).map((member: any) => member.userId), person.id], `${person.username || 'Member'} added`);
+  };
 
   const removeManagedMember = (member: any) => {
-    if (!canRemoveEntityMembers) return;
+    if (!canRemoveEntityMembers || managementBusy || !member?.userId || member.userId === user?.id) return;
     const username = member.user?.username || 'this member';
     if (!window.confirm(`Remove ${username} from this ${activeConv?.type}?`)) return;
     void updateManagedMembers((managedEntity?.members || []).filter((item: any) => item.userId !== member.userId).map((item: any) => item.userId), `${username} removed`);
