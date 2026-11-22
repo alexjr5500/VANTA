@@ -1,3 +1,5 @@
+import { optimizeLocalImage } from './media-image-job';
+import { cleanupExpiredMediaTemp } from './media-cleanup-job';
 import { generateLocalThumbnail } from './media-thumbnail-job';
 import { transcodeLocalHls } from './media-hls-job';
 import { DurableJob } from './durable-queue.repository';
@@ -44,6 +46,24 @@ export function createDurableQueueHandlers(
   if (process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS === 'true') {
     const root = process.env.UPLOAD_STORAGE_DIR;
     if (!root) throw new Error('UPLOAD_STORAGE_DIR is required for durable media jobs');
+    handlers.set('image:optimize', async (job: DurableJob): Promise<void> => {
+      const data = job.payload as { inputPath?: unknown; outputName?: unknown; maxWidth?: unknown } | null;
+      if (!data || typeof data.inputPath !== 'string' || typeof data.outputName !== 'string' ||
+          (data.maxWidth !== undefined && typeof data.maxWidth !== 'number')) {
+        throw new Error('Invalid image:optimize payload');
+      }
+      await optimizeLocalImage(root, {
+        inputPath: data.inputPath, outputName: data.outputName, maxWidth: data.maxWidth as number | undefined,
+      });
+    });
+    handlers.set('cleanup:temp', async (job: DurableJob): Promise<void> => {
+      const data = job.payload as { relativePath?: unknown; olderThanMs?: unknown } | null;
+      if (!data || typeof data.relativePath !== 'string' ||
+          (data.olderThanMs !== undefined && typeof data.olderThanMs !== 'number')) {
+        throw new Error('Invalid cleanup:temp payload');
+      }
+      cleanupExpiredMediaTemp(root, data.relativePath, data.olderThanMs as number | undefined);
+    });
     handlers.set('thumbnail:generate', async (job: DurableJob): Promise<void> => {
       const data = job.payload as { inputPath?: unknown; outputName?: unknown } | null;
       if (!data || typeof data.inputPath !== 'string' || typeof data.outputName !== 'string') {
