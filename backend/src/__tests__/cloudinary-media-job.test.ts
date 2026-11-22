@@ -3,6 +3,7 @@ import { prepareCloudinaryMedia, CloudinaryMediaStore, CloudinaryMediaClient } f
 describe('Cloudinary durable media processing', () => {
   const createDeps = () => {
     const store: jest.Mocked<CloudinaryMediaStore> = {
+      saveDerivative: jest.fn().mockResolvedValue(true),
       findById: jest.fn().mockResolvedValue({
         id: 'file_123',
         path: 'cloudinary:image:vanta/post-image/asset_1',
@@ -21,23 +22,23 @@ describe('Cloudinary durable media processing', () => {
     const { store, client } = createDeps();
     await prepareCloudinaryMedia('cloudinary:image:optimize', { fileId: 'file_123', maxWidth: 800 }, store, client);
     expect(store.findById).toHaveBeenCalledWith('file_123');
+    expect(store.saveDerivative).toHaveBeenCalledWith('file_123', 'cloudinary:image:vanta/post-image/asset_1', 'cloudinary:image:optimize', 'https://res.cloudinary.com/test-cloud/image/upload/vanta/output.webp');
     expect(client.explicit).toHaveBeenCalledWith('vanta/post-image/asset_1', {
       resource_type: 'image', type: 'upload', eager_async: false,
       eager: [{ width: 800, crop: 'limit', quality: 80, format: 'webp' }],
     });
   });
 
-  it('keeps message thumbnails authenticated', async () => {
+  it('never publishes public derivative URLs for private message uploads', async () => {
     const { store, client } = createDeps();
     store.findById.mockResolvedValue({
       id: 'private_12', path: 'cloudinary:image:vanta/message/private_1',
       category: 'message', fileType: 'IMAGE', deletedAt: null,
     });
-    await prepareCloudinaryMedia('cloudinary:thumbnail:generate', { fileId: 'private_12' }, store, client);
-    expect(client.explicit).toHaveBeenCalledWith('vanta/message/private_1', {
-      resource_type: 'image', type: 'authenticated', eager_async: false,
-      eager: [{ width: 320, height: 180, crop: 'fill', quality: 70, format: 'webp' }],
-    });
+    await expect(prepareCloudinaryMedia('cloudinary:thumbnail:generate',
+      { fileId: 'private_12' }, store, client)).rejects.toThrow('Private message media');
+    expect(client.explicit).not.toHaveBeenCalled();
+    expect(store.saveDerivative).not.toHaveBeenCalled();
   });
 
   it('requests a managed HLS rendition from Cloudinary rather than local FFmpeg', async () => {
@@ -46,7 +47,11 @@ describe('Cloudinary durable media processing', () => {
       id: 'video_12', path: 'cloudinary:video:vanta/reel/video_1',
       category: 'reel', fileType: 'VIDEO', deletedAt: null,
     });
+    client.explicit.mockResolvedValue({
+      eager: [{ secure_url: 'https://res.cloudinary.com/test-cloud/video/upload/sp_hd/vanta/reel/video_1.m3u8' }],
+    });
     await prepareCloudinaryMedia('cloudinary:video:transcode', { fileId: 'video_12' }, store, client);
+    expect(store.saveDerivative).toHaveBeenCalledWith('video_12', 'cloudinary:video:vanta/reel/video_1', 'cloudinary:video:transcode', expect.stringMatching(/\\.m3u8$/));
     expect(client.explicit).toHaveBeenCalledWith('vanta/reel/video_1', {
       resource_type: 'video', type: 'upload', eager_async: false,
       eager: [{ streaming_profile: 'hd', format: 'm3u8' }],
@@ -100,5 +105,28 @@ describe('Cloudinary durable media processing', () => {
     client.explicit.mockResolvedValue({ eager: [] });
     await expect(prepareCloudinaryMedia('cloudinary:thumbnail:generate', { fileId: 'file_123' }, store, client))
       .rejects.toThrow('did not confirm');
+    expect(store.saveDerivative).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsafe external URLs and incorrect output formats', async () => {
+    const { store, client } = createDeps();
+    for (const url of [
+      'https://evil.example/image/upload/asset.webp',
+      'http://res.cloudinary.com/test-cloud/image/upload/asset.webp',
+      'https://res.cloudinary.com/test-cloud/image/upload/asset.mp4',
+    ]) {
+      client.explicit.mockResolvedValue({ eager: [{ secure_url: url }] });
+      await expect(prepareCloudinaryMedia('cloudinary:image:optimize',
+        { fileId: 'file_123' }, store, client)).rejects.toThrow('safe media derivative URL');
+    }
+    expect(store.saveDerivative).not.toHaveBeenCalled();
+  });
+
+  it('refuses to complete when the asset was deleted or replaced during transformation', async () => {
+    const { store, client } = createDeps();
+    store.saveDerivative.mockResolvedValue(false);
+    await expect(prepareCloudinaryMedia('cloudinary:image:optimize',
+      { fileId: 'file_123' }, store, client)).rejects.toThrow('changed or was deleted');
+    expect(store.saveDerivative).toHaveBeenCalledTimes(1);
   });
 });

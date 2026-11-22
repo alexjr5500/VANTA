@@ -64,6 +64,16 @@ export function createDurableQueueHandlers(
           where: { id },
           select: { id: true, path: true, category: true, fileType: true, deletedAt: true },
         }),
+        saveDerivative: async (id: string, originalPath: string, kind: CloudinaryJobKind, url: string) => {
+          const data = kind === 'cloudinary:image:optimize' ? { optimizedUrl: url }
+            : kind === 'cloudinary:thumbnail:generate' ? { thumbnailUrl: url }
+            : { hlsUrl: url };
+          const result = await prisma.uploadedFile.updateMany({
+            where: { id, path: originalPath, deletedAt: null, category: { not: 'message' } },
+            data,
+          });
+          return result.count === 1;
+        },
       };
       const client = {
         explicit: (id: string, options: Parameters<typeof cloudinary.uploader.explicit>[1]) =>

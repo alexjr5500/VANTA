@@ -32,6 +32,8 @@ describe('opt-in Cloudinary upload job producer', () => {
       { optimize: true, generateThumbnail: true }, repository);
     await enqueueCloudinaryMediaForUpload({ id: 'file_123', fileType: 'VIDEO', category: 'message' },
       { optimize: true, generateThumbnail: true }, repository);
+    await enqueueCloudinaryMediaForUpload({ id: 'file_123', fileType: 'IMAGE', category: 'message' },
+      { optimize: true, generateThumbnail: true }, repository);
     await enqueueCloudinaryMediaForUpload({ id: 'file_123', fileType: 'IMAGE', category: 'profile-media' },
       { optimize: false, generateThumbnail: false }, repository);
     expect(repository.enqueue).not.toHaveBeenCalled();

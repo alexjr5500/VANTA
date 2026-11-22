@@ -9,6 +9,7 @@ export interface CloudinaryMediaRecord {
 }
 export interface CloudinaryMediaStore {
   findById(fileId: string): Promise<CloudinaryMediaRecord | null>;
+  saveDerivative(fileId: string, originalPath: string, kind: CloudinaryJobKind, url: string): Promise<boolean>;
 }
 export interface CloudinaryMediaClient {
   explicit(publicId: string, options: {
@@ -45,6 +46,11 @@ export async function prepareCloudinaryMedia(
   }
   const record = await store.findById(job.fileId);
   if (!record || record.deletedAt) throw new Error('Cloudinary media source is unavailable');
+  // Private message derivatives must not be published as ordinary CDN URLs.
+  // Their token-checked delivery path is separate from public uploaded media.
+  if (record.category === 'message') {
+    throw new Error('Private message media is not supported by public derivative delivery');
+  }
 
   const match = /^cloudinary:(image|video):(.+)$/.exec(record.path || '');
   if (!match || !match[2].startsWith('vanta/') ||
@@ -83,7 +89,22 @@ export async function prepareCloudinaryMedia(
     eager_async: false,
   });
   const url = response?.eager?.[0]?.secure_url;
-  if (typeof url !== 'string' || !url.startsWith('https://')) {
+  // Never persist arbitrary provider URLs, insecure HTTP, or mismatched formats.
+  let verified: URL;
+  try {
+    verified = new URL(url);
+  } catch {
     throw new Error('Cloudinary did not confirm a prepared media derivative');
+  }
+  const expectedExt = kind === 'cloudinary:video:transcode' ? '.m3u8' : '.webp';
+  if (verified.protocol !== 'https:' || verified.hostname !== 'res.cloudinary.com' ||
+      verified.username || verified.password || verified.search || verified.hash ||
+      !verified.pathname.includes(`/${resourceType}/upload/`) ||
+      !verified.pathname.endsWith(expectedExt)) {
+    throw new Error('Cloudinary did not confirm a safe media derivative URL');
+  }
+  const updated = await store.saveDerivative(job.fileId, record.path!, kind, url);
+  if (!updated) {
+    throw new Error('Cloudinary media source changed or was deleted before publishing the derivative');
   }
 }

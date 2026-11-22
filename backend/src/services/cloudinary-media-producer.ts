@@ -24,6 +24,9 @@ export async function enqueueCloudinaryMediaForUpload(
   repository: QueueWriter,
 ): Promise<void> {
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(file.id)) throw new Error('Invalid UploadedFile ID');
+  // Private message attachments must use the token-checked media route.
+  // Do not create public derivative jobs for them.
+  if (file.category === 'message') return;
   const jobs: string[] = [];
   if (file.fileType === 'IMAGE') {
     if (options.optimize) jobs.push('cloudinary:image:optimize');

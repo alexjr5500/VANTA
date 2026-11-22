@@ -263,6 +263,10 @@ model UploadedFile {
   deletedAt    DateTime?
   moderationOriginalPath String?
   moderationOriginalUrl  String?
+  // Cloudinary worker outputs; original url remains the safe MP4/image fallback.
+  optimizedUrl  String?
+  thumbnailUrl  String?
+  hlsUrl        String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
