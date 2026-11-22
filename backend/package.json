@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.build.json",
     "prestart": "prisma generate",
     "start": "node dist/index.js",
+    "worker:durable": "node dist/durable-worker.js",
     "test": "jest --config jest.config.js",
     "test:coverage": "jest --config jest.config.js --coverage",
     "test:watch": "jest --config jest.config.js --watch",
