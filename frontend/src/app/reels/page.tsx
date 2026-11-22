@@ -150,6 +150,7 @@ export default function ReelsPage() {
   const feedSeedRef = useRef<string>(`sess-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
   const loadingMoreRef = useRef(false);
   const loadRequest = useRef(0);
+  const commentsRequest = useRef(0);
   const reelsViewport = useRef<HTMLElement | null>(null);
   // Derived feed-mount signal used by the swipe effect below: the touch
   // listeners must attach only once the scroll viewport actually exists.
@@ -466,7 +467,8 @@ export default function ReelsPage() {
     if (isOwn) { toast.error('That is your own Reel'); return; }
     if (!token) { toast.error('Sign in required'); return; }
     const key = `follow:${reel.author.id}`;
-    if (pending[key]) return;
+    if (pendingActionsRef.current.has(key)) return;
+    pendingActionsRef.current.add(key);
     const was = !!(reel.author.following || reel.author.isFollowing || reel.isFollowing);
     setPending(items => ({ ...items, [key]: true }));
     setReels(items => items.map(item => item.author.id === reel.author.id ? {
@@ -485,21 +487,23 @@ export default function ReelsPage() {
       } : item));
       toast.error('Follow update failed', reason?.message);
     } finally {
+      pendingActionsRef.current.delete(key);
       setPending(items => ({ ...items, [key]: false }));
     }
   };
 
   const openComments = async (reel: Reel) => {
+    const requestId = ++commentsRequest.current;
     setCommentsFor(reel);
     setComments([]);
     setCommentsLoading(true);
     try {
       const result = await apiGet<{ items?: ReelComment[] }>(`/api/reels/${reel.id}/comments?limit=30`, token || undefined, { skipCache: true });
-      setComments(result.items || []);
+      if (requestId === commentsRequest.current) setComments(result.items || []);
     } catch {
-      toast.error('Comments unavailable');
+      if (requestId === commentsRequest.current) toast.error('Comments unavailable');
     } finally {
-      setCommentsLoading(false);
+      if (requestId === commentsRequest.current) setCommentsLoading(false);
     }
   };
 
@@ -710,7 +714,7 @@ export default function ReelsPage() {
       )}
 
       <AnimatePresence>
-        {commentsFor && <CommentsPanel reel={commentsFor} items={comments} loading={commentsLoading} text={commentText} sending={commentSending} currentUserId={user?.id} setText={setCommentText} submit={submitComment} remove={deleteComment} toggleLike={toggleCommentLike} close={() => setCommentsFor(null)} />}
+        {commentsFor && <CommentsPanel reel={commentsFor} items={comments} loading={commentsLoading} text={commentText} sending={commentSending} currentUserId={user?.id} setText={setCommentText} submit={submitComment} remove={deleteComment} toggleLike={toggleCommentLike} close={() => { commentsRequest.current += 1; setCommentsFor(null); }} />}
         {shareFor && (() => {
           const liveReel = reels.find(item => item.id === shareFor.id) ?? shareFor;
           return <ReelShareSheet
