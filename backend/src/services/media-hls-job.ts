@@ -64,7 +64,7 @@ export async function transcodeLocalHls(storageRoot: string, job: TranscodeJob):
         '-hide_banner', '-nostdin', '-loglevel', 'error', '-y', '-i', input,
         '-map', '0:v:0', '-map', '0:a:0?', '-vf',
         `scale=w=${preset.width}:h=${preset.height}:force_original_aspect_ratio=decrease,pad=${preset.width}:${preset.height}:(ow-iw)/2:(oh-ih)/2`,
-        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', preset.bitrate,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-threads', '2', '-filter_threads', '2', '-b:v', preset.bitrate,
         '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k',
         '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
         '-hls_segment_filename', path.join(dir, 'segment-%05d.ts'),
