@@ -31,40 +31,11 @@ async function main() {
   });
 
   if (existingAdmin) {
-    // SECURE production admin password bootstrap/reset.
-    //
-    // When the configured admin account already exists, the
-    // Railway ADMIN_PASSWORD establishes/refreshes its password. Without this,
-    // setting ADMIN_PASSWORD after the first seed has NO effect, because the
-    // account-creation branch below is skipped on re-runs.
-    //
-    // The password is hashed with the SAME implementation used by the runtime
-    // auth service (CryptoUtils.hashPassword -> bcrypt), so verification via
-    // CryptoUtils.verifyPassword is guaranteed to work. The plaintext password
-    // is never stored in source or written to logs — only the bcrypt hash is
-    // persisted. This is idempotent and never creates a second admin account;
-    // only email/username/role/status/flags are preserved and the password hash
-    // is reconciled to ADMIN_PASSWORD.
-    const freshHash = await CryptoUtils.hashPassword(adminPassword);
-
-    const updates: any = {};
-    if (existingAdmin.email !== adminEmail) updates.email = adminEmail;
-    if (existingAdmin.username !== adminUsername) updates.username = adminUsername;
-    if (existingAdmin.fullName !== adminFullName) updates.fullName = adminFullName;
-    if (existingAdmin.role !== 'ADMIN') updates.role = 'ADMIN';
-    if (!existingAdmin.verified) updates.verified = true;
-    if (!existingAdmin.emailVerified) updates.emailVerified = true;
-    if (existingAdmin.status !== 'ACTIVE') updates.status = 'ACTIVE';
-    // Always reconcile the hash so the configured ADMIN_PASSWORD is authoritative.
-    updates.passwordHash = freshHash;
-
-    await prisma.user.update({
-      where: { id: existingAdmin.id },
-      data: updates,
-    });
-    console.log(
-      '✅ Administrator account reconciled (identity/role/flags preserved; password established from ADMIN_PASSWORD)'
-    );
+    // Routine deployments must never reset credentials, reactivate a suspended
+    // administrator, or silently change privileged roles. Existing accounts
+    // are managed through explicit, audited administrative workflows.
+    // First-time account creation remains supported below.
+    console.log('✅ Existing administrator account found; automatic reconciliation skipped');
   } else {
     // Keep seed-created credentials aligned with the application's current
     // password hashing algorithm. Runtime verification remains compatible
