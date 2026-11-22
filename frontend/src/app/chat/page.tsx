@@ -223,7 +223,9 @@ const chatMediaLinksOf = (text: string): { url: string; kind: 'image' | 'video' 
   for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
     const url = match[0].replace(/[.,)]+$/, '');
     const path = url.split(/[?#]/)[0];
-    const name = decodeURIComponent(path.split('/').pop() || 'File');
+    const filename = path.split('/').pop() || 'File';
+    let name = filename;
+    try { name = decodeURIComponent(filename); } catch { /* Keep malformed URL text instead of crashing chat rendering. */ }
     const kind = /\.(png|jpe?g|gif|webp|avif)$/i.test(path) ? 'image' : /\.(mp4|webm|mov|m4v)$/i.test(path) ? 'video' : /\.(pdf|docx?|xlsx?|pptx?|txt|zip|csv)$/i.test(path) ? 'file' : null;
     if (kind && !out.some(item => item.url === url)) out.push({ url, kind, name });
   }
