@@ -2443,16 +2443,20 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
 
   const confirmOwnershipTransfer = async () => {
-    if (!token || !activeConv || !editEntityId || !ownershipConfirm || activeConv.type === 'direct') return;
+    if (!token || !activeConv || !editEntityId || !ownershipConfirm || activeConv.type === 'direct' || !isManagedOwner || managementBusy || !ownershipConfirm.userId || ownershipConfirm.userId === user?.id) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
     setManagementBusy('ownership');
     try {
       const endpoint = activeConv.type === 'group' ? 'groups' : 'channels';
       const updated = await apiPost<any>(`/api/${endpoint}/${editEntityId}/transfer-ownership`, { targetUserId: ownershipConfirm.userId }, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setManagedEntity(updated);
       setOwnershipConfirm(null);
       // The backend also broadcasts `conversations:refresh` on the socket, but a
       // local refetch makes the new owner/role state appear instantly here too.
       await fetchConversations();
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       const targetName = ownershipConfirm.user?.username || 'The new owner';
       showToast?.({
         type: 'success',
@@ -2460,7 +2464,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         message: `${targetName} is now the owner of this ${activeConv.type}.`,
       });
     } catch (err: any) {
-      showToast?.({
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({
         type: 'error',
         title: 'Ownership transfer failed',
         message: err?.message || 'Please try again.',
