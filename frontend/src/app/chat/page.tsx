@@ -217,6 +217,19 @@ const chatQuoteOf = (message: Message) => {
   return extractQuoteRef(visibleMessageText(message), window.location.host);
 };
 
+// Direct links to uploaded images, videos or documents render an inline attachment preview.
+const chatMediaLinksOf = (text: string): { url: string; kind: 'image' | 'video' | 'file'; name: string }[] => {
+  const out: { url: string; kind: 'image' | 'video' | 'file'; name: string }[] = [];
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
+    const url = match[0].replace(/[.,)]+$/, '');
+    const path = url.split(/[?#]/)[0];
+    const name = decodeURIComponent(path.split('/').pop() || 'File');
+    const kind = /\.(png|jpe?g|gif|webp|avif)$/i.test(path) ? 'image' : /\.(mp4|webm|mov|m4v)$/i.test(path) ? 'video' : /\.(pdf|docx?|xlsx?|pptx?|txt|zip|csv)$/i.test(path) ? 'file' : null;
+    if (kind && !out.some(item => item.url === url)) out.push({ url, kind, name });
+  }
+  return out.slice(0, 3);
+};
+
 const visibleMessageText = (message: Message): string => {
   if (!message.attachments?.some(attachment => attachment.fileType === 'IMAGE')) return message.text;
   const text = message.text.trim();
@@ -2721,7 +2734,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   return <div key={msg.id} className={inSameRun ? 'mt-1' : ''}>{showDate && <div className="my-5 flex justify-center"><span className="rounded-full bg-[#202126] px-3 py-1.5 text-[11px] font-medium text-white/65">{dateLabel}</span></div>}{msg.id === firstUnreadId && <div className="my-4 flex items-center gap-3"><span className="h-px flex-1 bg-[#d6a83f]/25"/><span className="rounded-full border border-[#d6a83f]/30 bg-[#d6a83f]/10 px-3 py-1 text-[9px] font-semibold uppercase tracking-[.14em] text-[#f2c75c]">New messages</span><span className="h-px flex-1 bg-[#d6a83f]/25"/></div>}
                   <div
                     id={`message-${msg.id}`}
-                    className={cn('flex relative scroll-mt-24 transition-shadow touch-pan-y will-change-transform', msg.isOwn ? 'justify-end' : 'justify-start', selectedMessageIds.size > 0 && 'cursor-pointer rounded-xl py-1 pl-10 pr-2 transition-colors duration-150 [&_*]:pointer-events-none select-none', selectedMessageIds.has(msg.id) && 'bg-[#d6a83f]/[0.14] shadow-[inset_3px_0_0_#d6a83f]')}
+                    className={cn('flex relative scroll-mt-24 transition-shadow touch-pan-y will-change-transform', msg.isOwn ? 'justify-end' : 'justify-start', selectedMessageIds.size > 0 && 'cursor-pointer -mx-3 w-[calc(100%+1.5rem)] py-1.5 pl-[3.25rem] pr-3 transition-colors duration-150 [&_*]:pointer-events-none select-none', selectedMessageIds.has(msg.id) && 'bg-[#d6a83f]/[0.14] shadow-[inset_3px_0_0_#d6a83f]')}
                     style={swipeOffset?.id === msg.id ? { transform: `translateX(${swipeOffset.offset}px)` } : undefined}
                     role={selectedMessageIds.size > 0 ? "checkbox" : undefined}
                     aria-checked={selectedMessageIds.size > 0 ? selectedMessageIds.has(msg.id) : undefined}
@@ -2754,7 +2767,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                         'chat-bubble-text w-fit max-w-full overflow-hidden text-[15px] leading-[1.45]',
                         msg.isOwn
                            ? 'rounded-2xl rounded-br-sm bg-[#1E9DE9] text-white'
-                           : 'rounded-2xl rounded-bl-md bg-[#121212] text-[#dedee2]'
+                           : 'rounded-2xl rounded-bl-md bg-[#2B2D31] text-white'
                       )}>
                         {msg.deletedAt ? null : msg.type === 'CALL' ? (
                           <span className="flex items-center justify-center gap-1.5 whitespace-nowrap py-0.5 px-3 text-xs text-white/50">
@@ -2888,6 +2901,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                             );
                           })()}
                           {(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg)).trim() && <p className="px-3 py-2 max-w-[min(420px,65vw)] whitespace-pre-wrap break-normal [overflow-wrap:break-word]">{showMessageTime && !msg.deletedAt && !(msg.isOwn && hasAudioAttachment) && <span className={cn('float-right ml-2 inline-flex translate-y-[3px] items-center gap-1 select-none text-[10px] leading-none tabular-nums', msg.isOwn ? 'text-white/75' : 'text-white/40')}>{currentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}{msg.isOwn && (msg.failed ? <button onClick={() => retryFailedMessage(msg)} className="text-[9px] text-red-100">Retry</button> : msg.pending ? <Loader2 size={10} className="animate-spin" /> : <CheckCheck size={11} />)}</span>}{renderTextWithLinks(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg), 'linkify', { mentions: true, hashtags: true })}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}</p>}
+                          {!msg.deletedAt && chatMediaLinksOf(visibleMessageText(msg)).map(link => <div key={link.url} className="w-[min(320px,65vw)] max-w-full px-2 pb-2 pt-1">{link.kind === 'video' ? <video src={link.url} controls playsInline preload="metadata" className="max-h-64 w-full rounded-xl bg-black object-cover" /> : link.kind === 'image' ? <a href={link.url} target="_blank" rel="noreferrer"><img src={link.url} alt="" loading="lazy" className="max-h-64 w-full rounded-xl object-cover" /></a> : <a href={link.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-xl border border-white/[.12] bg-white/[.04] px-3 py-2 text-[13px] text-white"><FileText size={16} className="shrink-0 text-[#f2c75c]" /><span className="truncate">{link.name}</span></a>}</div>)}
                           {chatQuoteOf(msg) && <div className="w-[min(320px,65vw)] max-w-full px-2 pb-2 pt-1"><QuoteEmbed quote={chatQuoteOf(msg)!.ref} /></div>}
                           {!(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg)).trim() && showMessageTime && !msg.deletedAt && !(msg.isOwn && hasAudioAttachment) && (
                           <div className={cn('flex items-center gap-1 px-3 pb-1.5 pt-0.5 text-[10px] tabular-nums', msg.isOwn ? 'justify-end text-white/75' : 'text-white/40')}>
