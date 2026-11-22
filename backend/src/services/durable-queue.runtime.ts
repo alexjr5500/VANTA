@@ -12,6 +12,11 @@ export function createDurableQueueWorker(options: DurableWorkerOptions = {}): Du
   return new DurableQueueWorker(
     new DurableQueueRepository(prisma),
     createDurableQueueHandlers(),
-    options,
+    {
+      ...options,
+      excludedJobTypes: process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS === 'true'
+        ? (options.excludedJobTypes ?? [])
+        : [...(options.excludedJobTypes ?? []), 'image:optimize', 'thumbnail:generate', 'video:transcode', 'cleanup:temp'],
+    },
   );
 }
