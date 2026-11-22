@@ -202,7 +202,19 @@ export function requirePermission(...permissions: Permission[]) {
     );
 
     if (!hasRequiredPermissions) {
-      auditLog.log({
+      // Emit only authorization context; never log tokens, session IDs, or credentials.
+      // This distinguishes a stale/incorrect persisted role from a missing RBAC grant.
+      const missingPermissions = permissions.filter(permission =>
+        !hasPermission(req.user!.role, permission)
+      );
+      console.warn('[Auth] Permission denied', {
+        role: req.user.role,
+        requiredPermissions: permissions,
+        missingPermissions,
+        path: req.path,
+        method: req.method,
+      });
+      void auditLog.log({
         userId: req.user.userId,
         action: 'UNAUTHORIZED_ACCESS',
         ipAddress: req.ip,
