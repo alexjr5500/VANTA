@@ -94,6 +94,14 @@ function clearCache(pattern?: string): void {
   }
 }
 
+// Prisma string filters treat '%' literally, not as a SQL wildcard.
+// Analytics patterns ending in '*' represent event-type prefixes.
+function eventTypeFilter(pattern: string): { startsWith: string } | { contains: string } {
+  return pattern.endsWith('*')
+    ? { startsWith: pattern.slice(0, -1) }
+    : { contains: pattern };
+}
+
 // ============================================================================
 // EVENT TRACKING & INGESTION
 // ============================================================================
@@ -499,7 +507,7 @@ export class AnalyticsEngine {
     const grain = this.getGranularity(start, end, granularity);
     const events = await prisma.analyticsEvent.findMany({
       where: {
-        eventType: { contains: eventPattern.replace('*', '%') },
+        eventType: eventTypeFilter(eventPattern),
         createdAt: { gte: start, lte: end },
         ...(filters?.userId ? { userId: filters.userId } : {}),
         ...(filters?.targetType ? { targetType: filters.targetType } : {}),
@@ -554,7 +562,7 @@ export class AnalyticsEngine {
     const grain = this.getGranularity(start, end, granularity);
     const events = await prisma.analyticsEvent.findMany({
       where: {
-        eventType: { contains: eventPattern.replace('*', '%') },
+        eventType: eventTypeFilter(eventPattern),
         createdAt: { gte: start, lte: end },
         ...(filters?.userId ? { userId: filters.userId } : {}),
         ...(filters?.targetType ? { targetType: filters.targetType } : {}),
@@ -587,7 +595,7 @@ export class AnalyticsEngine {
     const grain = this.getGranularity(start, end, granularity);
     const events = await prisma.analyticsEvent.findMany({
       where: {
-        eventType: { contains: eventPattern.replace('*', '%') },
+        eventType: eventTypeFilter(eventPattern),
         createdAt: { gte: start, lte: end },
         value: { not: null },
       },
@@ -617,10 +625,10 @@ export class AnalyticsEngine {
 
   private async computePercentage(numerator: string, denominator: string, start: Date, end: Date): Promise<any> {
     const numEvents = await prisma.analyticsEvent.count({
-      where: { eventType: { contains: numerator.replace('*', '%') }, createdAt: { gte: start, lte: end } },
+      where: { eventType: eventTypeFilter(numerator), createdAt: { gte: start, lte: end } },
     });
     const denEvents = await prisma.analyticsEvent.count({
-      where: { eventType: { contains: denominator.replace('*', '%') }, createdAt: { gte: start, lte: end } },
+      where: { eventType: eventTypeFilter(denominator), createdAt: { gte: start, lte: end } },
     });
 
     return {
@@ -969,7 +977,7 @@ export class AnalyticsEngine {
       const step = steps[i];
       const count = await prisma.analyticsEvent.count({
         where: {
-          eventType: { contains: step.eventPattern.replace('*', '%') },
+          eventType: eventTypeFilter(step.eventPattern),
           createdAt: { gte: start, lte: end },
         },
       });
@@ -1183,7 +1191,7 @@ export class AnalyticsEngine {
     const events = await prisma.analyticsEvent.groupBy({
       by: ['targetId', 'targetType'],
       where: {
-        eventType: { contains: metric.replace('*', '%') },
+        eventType: eventTypeFilter(metric),
         createdAt: { gte: start, lte: end },
         targetId: { not: null },
       },
