@@ -65,8 +65,7 @@ export default function StoryTray({
     } catch {
       if (!mountedRef.current) return;
       setError(true);
-      setGroups([]);
-      onStoriesChange?.([]);
+      // Retain the last successfully loaded stories during transient failures.
     } finally {
       if (mountedRef.current) setLoading(false);
     }
@@ -125,8 +124,8 @@ export default function StoryTray({
         className
       )}
     >
-      {error ? (
-        <div className="flex items-center gap-3 px-3 py-4">
+      {error && (
+        <div role="alert" className="flex items-center gap-3 px-3 py-2">
           <p className="text-xs leading-5 text-[#666]">Couldn&apos;t load Stories.</p>
           <button
             type="button"
@@ -137,8 +136,8 @@ export default function StoryTray({
             <RefreshCw size={13} /> Retry
           </button>
         </div>
-      ) : (
-        <div className={cn('flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide', compact ? (statusCollapsed ? 'px-1 gap-1' : 'px-1 gap-1.5') : 'px-2')}>
+      )}
+      <div className={cn('flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide', compact ? (statusCollapsed ? 'px-1 gap-1' : 'px-1 gap-1.5') : 'px-2')}>
           {/* Own Status card — always present */}
           {<StoryCard
             user={{
@@ -189,9 +188,6 @@ export default function StoryTray({
           )}
 
         </div>
-      )}
-
-
     </section>
   );
 }
