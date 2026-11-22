@@ -509,15 +509,20 @@ export default function ReelsPage() {
 
   const submitComment = async () => {
     if (!token || !commentsFor || !commentText.trim() || commentSending) return;
+    const reelId = commentsFor.id;
+    const requestId = commentsRequest.current;
+    const content = commentText.trim();
     setCommentSending(true);
     try {
-      const created = await apiPost<ReelComment>(`/api/reels/${commentsFor.id}/comments`, { content: commentText.trim() }, token);
-      setComments(items => [created, ...items]);
-      patch(commentsFor.id, { comments: commentsFor.comments + 1 });
-      setCommentsFor(current => current ? { ...current, comments: current.comments + 1 } : current);
-      setCommentText('');
+      const created = await apiPost<ReelComment>(`/api/reels/${reelId}/comments`, { content }, token);
+      setReels(items => items.map(item => item.id === reelId ? { ...item, comments: item.comments + 1 } : item));
+      if (commentsRequest.current === requestId) {
+        setComments(items => [created, ...items]);
+        setCommentsFor(current => current?.id === reelId ? { ...current, comments: current.comments + 1 } : current);
+        setCommentText('');
+      }
     } catch (reason: any) {
-      toast.error('Comment not saved', reason?.message);
+      if (commentsRequest.current === requestId) toast.error('Comment not saved', reason?.message);
     } finally {
       setCommentSending(false);
     }
@@ -525,15 +530,24 @@ export default function ReelsPage() {
 
   const deleteComment = async (comment: ReelComment): Promise<boolean> => {
     if (!token || !commentsFor) return false;
+    const reelId = commentsFor.id;
+    const requestId = commentsRequest.current;
+    const key = `comment-delete:${reelId}:${comment.id}`;
+    if (pendingActionsRef.current.has(key)) return false;
+    pendingActionsRef.current.add(key);
     try {
-      await apiDelete(`/api/reels/${commentsFor.id}/comments/${comment.id}`, token);
-      setComments(items => items.filter(item => item.id !== comment.id));
-      patch(commentsFor.id, { comments: Math.max(0, commentsFor.comments - 1) });
-      setCommentsFor(current => current ? { ...current, comments: Math.max(0, current.comments - 1) } : current);
+      await apiDelete(`/api/reels/${reelId}/comments/${comment.id}`, token);
+      setReels(items => items.map(item => item.id === reelId ? { ...item, comments: Math.max(0, item.comments - 1) } : item));
+      if (commentsRequest.current === requestId) {
+        setComments(items => items.filter(item => item.id !== comment.id));
+        setCommentsFor(current => current?.id === reelId ? { ...current, comments: Math.max(0, current.comments - 1) } : current);
+      }
       return true;
     } catch (reason: any) {
-      toast.error('Comment not deleted', reason?.message);
+      if (commentsRequest.current === requestId) toast.error('Comment not deleted', reason?.message);
       return false;
+    } finally {
+      pendingActionsRef.current.delete(key);
     }
   };
 
