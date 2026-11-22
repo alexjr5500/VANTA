@@ -469,7 +469,7 @@ export const getAuditLogs = (token: string, params?: {
 // ============================================================================
 
 export const getInfrastructure = (token: string): Promise<ServerInfrastructure> => {
-  return apiGet<ServerInfrastructure>('/api/admin/infrastructure', token);
+  return apiGet<ServerInfrastructure>('/api/admin/infrastructure', token, { skipCache: true, cacheTTL: 0 });
 };
 
 // ============================================================================
