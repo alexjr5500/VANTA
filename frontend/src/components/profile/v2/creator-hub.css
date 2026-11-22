@@ -1087,10 +1087,10 @@ html.light .tile-type { background: rgba(5, 5, 5, 0.78); }
 .profile-content { min-width: 0; }
 @media (max-width: 759px) {
   .profile-tabs {
-    width: 100vw;
-    max-width: 100vw;
-    margin-left: calc(50% - 50vw);
-    margin-right: calc(50% - 50vw);
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+    margin-right: 0;
     margin-top: 28px;
   }
   .profile-tabs button { gap: 5px; padding-inline: 3px; font-size: 11px; }
