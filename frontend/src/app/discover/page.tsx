@@ -261,11 +261,43 @@ export default function DiscoverPage() {
     catch { toast.error('Could not copy the link'); }
   };
   const mutatePost = async (post: Item, mode: 'like' | 'save') => {
-    if (!token) return; const key = mode === 'like' ? 'liked' : 'saved'; const was = Boolean(post[key]);
-    const update = (value: boolean) => { const apply = (rows: Item[]) => rows.map(item => item.id === post.id ? { ...item, [key]: value, ...(mode === 'like' ? { likes: Math.max(0, Number(item.likes || item._count?.likes || 0) + (value ? 1 : -1)) } : {}) } : item); setPosts(apply); setTrending(apply); setSearchResults(current => ({ ...current, posts: apply(current.posts || []) })); };
+    if (!token || !post.id) return;
+    const actionKey = `${mode}:${cleanId(post)}`;
+    if (pendingActionsRef.current.has(actionKey)) return;
+    pendingActionsRef.current.add(actionKey);
+    const key = mode === 'like' ? 'liked' : 'saved';
+    const was = Boolean(post[key]);
+    const originalLikes = Number(post.likes ?? post._count?.likes ?? 0);
+    const apply = (value: boolean, serverCount?: number) => (rows: Item[]) => rows.map(item => {
+      if (item.id !== post.id) return item;
+      const current = Boolean(item[key]);
+      const likes = serverCount ?? Math.max(0, Number(item.likes ?? item._count?.likes ?? 0) + (current === value ? 0 : value ? 1 : -1));
+      return { ...item, [key]: value, ...(mode === 'like' ? { likes } : {}) };
+    });
+    const update = (value: boolean, serverCount?: number) => {
+      setPosts(apply(value, serverCount));
+      setTrending(apply(value, serverCount));
+      setSearchResults(current => ({ ...current, posts: apply(value, serverCount)(current.posts || []) }));
+    };
     update(!was);
-    try { mode === 'like' ? await apiPost(`/api/feed/${cleanId(post)}/like`, {}, token) : was ? await apiDelete(`/api/feed/${cleanId(post)}/save`, token) : await apiPost(`/api/feed/${cleanId(post)}/save`, {}, token); }
-    catch (reason: any) { update(was); toast.error('Could not update post', reason?.message); }
+    try {
+      const endpoint = `/api/feed/${cleanId(post)}`;
+      if (mode === 'like') {
+        const result = await apiPost<any>(`${endpoint}/like`, {}, token);
+        const serverLikes = result?.likeCount ?? result?.likes;
+        update(typeof result?.liked === 'boolean' ? result.liked : !was,
+          serverLikes != null && Number.isFinite(Number(serverLikes)) ? Math.max(0, Number(serverLikes)) : undefined);
+      } else if (was) {
+        await apiDelete(`${endpoint}/save`, token);
+      } else {
+        await apiPost(`${endpoint}/save`, {}, token);
+      }
+    } catch (reason: any) {
+      update(was, mode === 'like' ? originalLikes : undefined);
+      toast.error('Could not update post', reason?.message);
+    } finally {
+      pendingActionsRef.current.delete(actionKey);
+    }
   };
   const share = async (destination: string) => {
     if (!shareFor || !token) return;
