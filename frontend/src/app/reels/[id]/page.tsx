@@ -16,6 +16,7 @@ import ReelShareSheet from '@/components/social/ReelShareSheet';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
+import { chooseReelPlaybackSource } from '@/lib/reelPlaybackSource';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
 import { renderTextWithLinks } from '@/lib/linkify';
 import { cn } from '@/lib/utils';
@@ -35,6 +36,7 @@ type Reel = {
   title?: string;
   description?: string;
   videoUrl: string;
+  hlsUrl?: string | null;
   thumbnailUrl?: string;
   createdAt?: string;
   views?: number;
@@ -101,6 +103,8 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
   const [paused, setPaused] = useState(false);
   const [videoLoading, setVideoLoading] = useState(true);
   const [videoFailed, setVideoFailed] = useState(false);
+  const [nativeHlsSupported, setNativeHlsSupported] = useState(false);
+  const [hlsFailed, setHlsFailed] = useState(false);
   const [progress, setProgress] = useState(0);
   const [expandedCaption, setExpandedCaption] = useState(false);
   const [likedPulse, setLikedPulse] = useState(false);
@@ -110,6 +114,25 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
   const tapTimerRef = useRef<number>();
   const lastTapRef = useRef(0);
   const id = useMemo(() => decodeURIComponent(routeId).trim(), [routeId]);
+
+  useEffect(() => {
+    const probe = document.createElement('video');
+    setNativeHlsSupported(Boolean(probe.canPlayType('application/vnd.apple.mpegurl')));
+  }, []);
+
+  // A new Reel may have a different HLS stream. Retry native HLS for that
+  // stream, but keep the original MP4 as the permanent fallback on failure.
+  useEffect(() => {
+    setHlsFailed(false);
+  }, [reel?.id, reel?.hlsUrl]);
+
+  useEffect(() => {
+    if (!hlsFailed) return;
+    const element = videoRef.current;
+    if (!element) return;
+    element.load();
+    void element.play().then(() => setPaused(false)).catch(() => setPaused(true));
+  }, [hlsFailed]);
 
   // Derived engagement state — declared before event handlers so the toggles
   // can read the current Reel state safely.
@@ -300,7 +323,9 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
       <ReelErrorState onRetry={loadReel} />
     </main>;
   }
-  const videoSrc = resolveMediaUrl(reel.videoUrl);
+  const videoSrc = resolveMediaUrl(chooseReelPlaybackSource(
+    reel.videoUrl, reel.hlsUrl, nativeHlsSupported, hlsFailed,
+  ));
   const posterSrc = resolveMediaUrl(reel.thumbnailUrl);
   const captionText = reel.description || reel.title || '';
 
@@ -322,7 +347,7 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
         />
       ) : (
         <video
-          src={videoSrc}
+          src={resolveMediaUrl(reel.videoUrl)}
           muted
           playsInline
           loop
@@ -359,7 +384,15 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
         onPlaying={() => { setVideoLoading(false); setVideoFailed(false); }}
         onCanPlay={() => setVideoLoading(false)}
         onTimeUpdate={event => { const element = event.currentTarget; setProgress(element.duration ? (element.currentTime / element.duration) * 100 : 0); }}
-        onError={() => { setVideoFailed(true); setVideoLoading(false); }}
+        onError={() => {
+          if (nativeHlsSupported && reel.hlsUrl && !hlsFailed) {
+            setHlsFailed(true);
+            setVideoLoading(true);
+            return;
+          }
+          setVideoFailed(true);
+          setVideoLoading(false);
+        }}
         className="absolute inset-0 h-full w-full object-contain"
         aria-label={`Reel by ${creator.username}`}
       />

@@ -14,6 +14,12 @@ describe('Reel HLS playback source selection', () => {
     expect(chooseReelPlaybackSource(mp4, hls, true, true)).toBe(mp4);
   });
 
+  it('does not repeatedly select a broken HLS source after a fallback', () => {
+    expect(chooseReelPlaybackSource(mp4, hls, true, true)).toBe(mp4);
+    expect(chooseReelPlaybackSource(mp4, '', true, false)).toBe(mp4);
+    expect(chooseReelPlaybackSource(mp4, hls, false, true)).toBe(mp4);
+  });
+
   it('retains MP4 for unprocessed Reels', () => {
     expect(chooseReelPlaybackSource(mp4, null, true, false)).toBe(mp4);
     expect(chooseReelPlaybackSource(mp4, undefined, true, false)).toBe(mp4);
