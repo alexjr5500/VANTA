@@ -222,31 +222,32 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     }
     finally { followInFlightRef.current = false; setFollowPending(false); }
   };
-  const updatePost = (id: string, patch: ProfileItem) => setContent(current => ({ ...current, [tab]: current[tab].map(item => cleanPostId(item) === id ? { ...item, ...patch } : item) }));
+  const updatePost = (targetTab: ProfileTab, id: string, patch: ProfileItem) => setContent(current => ({ ...current, [targetTab]: current[targetTab].map(item => cleanPostId(item) === id ? { ...item, ...patch } : item) }));
   const togglePost = async (item: ProfileItem, mode: 'like' | 'save') => {
     if (!token) return;
+    const targetTab = tab;
     const id = cleanPostId(item);
-    const actionKey = `${mode}:${id}`;
+    const actionKey = `${targetTab}:${mode}:${id}`;
     if (pendingPostActionsRef.current.has(actionKey)) return;
     pendingPostActionsRef.current.add(actionKey);
     const key = mode === 'like' ? 'liked' : 'saved';
     const was = Boolean(item[key]);
     const previousLikes = finite(item.likes ?? item._count?.likes);
-    updatePost(id, { [key]: !was, ...(mode === 'like' ? { likes: Math.max(0, previousLikes + (was ? -1 : 1)) } : {}) });
+    updatePost(targetTab, id, { [key]: !was, ...(mode === 'like' ? { likes: Math.max(0, previousLikes + (was ? -1 : 1)) } : {}) });
     try {
       if (mode === 'like') {
-        const result: any = await apiPost(tab === 'reposts' && item.repostKind !== 'post' ? `/api/reels/${id}/like` : `/api/feed/${id}/like`, {}, token);
-        updatePost(id, { liked: typeof result?.liked === 'boolean' ? result.liked : !was, likes: finite(result?.likeCount ?? result?.likes ?? previousLikes + (was ? -1 : 1)) });
+        const result: any = await apiPost(targetTab === 'reposts' && item.repostKind !== 'post' ? `/api/reels/${id}/like` : `/api/feed/${id}/like`, {}, token);
+        updatePost(targetTab, id, { liked: typeof result?.liked === 'boolean' ? result.liked : !was, likes: finite(result?.likeCount ?? result?.likes ?? previousLikes + (was ? -1 : 1)) });
       } else if (tab === 'reposts' && item.repostKind !== 'post') {
         const result: any = await apiPost(`/api/reels/${id}/save`, {}, token);
-        if (typeof result?.saved === 'boolean') updatePost(id, { saved: result.saved });
+        if (typeof result?.saved === 'boolean') updatePost(targetTab, id, { saved: result.saved });
       } else if (was) {
         await apiDelete(`/api/feed/${id}/save`, token);
       } else {
         await apiPost(`/api/feed/${id}/save`, {}, token);
       }
     } catch (reason: any) {
-      updatePost(id, { [key]: was, ...(mode === 'like' ? { likes: previousLikes } : {}) });
+      updatePost(targetTab, id, { [key]: was, ...(mode === 'like' ? { likes: previousLikes } : {}) });
       toast.error('Post update failed', reason?.message);
     } finally {
       pendingPostActionsRef.current.delete(actionKey);
