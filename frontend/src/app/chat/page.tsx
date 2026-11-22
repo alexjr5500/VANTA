@@ -809,12 +809,17 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     if (!token) return;
     try {
       const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50`, token);
+      if (activeConversationRef.current !== conversationId) return;
       const msgList = Array.isArray(data) ? data : data?.messages ?? data?.data ?? [];
       setMessages(msgList.map((msg: any) => normalizeMessageRecord(msg, user?.id)).filter((msg: Message) => !msg.deletedAt));
       setMessageCursor(data?.nextCursor ?? null);
       await apiPut<any>(`/api/messages/${conversationId}/read`, {}, token).catch(() => undefined);
-      setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation));
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Chat unavailable', message: errorMessage(err, { action: 'load this conversation', context: 'conversation', fallback: 'Could not load this conversation.' }) }); }
+      if (activeConversationRef.current === conversationId) {
+        setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation));
+      }
+    } catch (err: any) {
+      if (activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Chat unavailable', message: errorMessage(err, { action: 'load this conversation', context: 'conversation', fallback: 'Could not load this conversation.' }) });
+    }
   }, [token, user?.id, showToast]);
 
   useEffect(() => { fetchConversations(); }, [fetchConversations]);
