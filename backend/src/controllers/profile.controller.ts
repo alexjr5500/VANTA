@@ -543,7 +543,7 @@ export const getProfileReposts = async (req: AuthRequest, res: Response): Promis
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    res.status(200).json(await userService.getUserReposts(userId, cursor, limit));
+    res.status(200).json(await userService.getUserReposts(userId, cursor, limit, userId));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });

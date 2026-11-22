@@ -24,8 +24,8 @@ import { cleanPostId, finite, isVideoPost, postOnly, unwrap } from './profileTyp
 
 const TABS: Array<{ id: ProfileTab; label: string; icon: typeof Film; ownOnly?: boolean }> = [
   { id: 'posts', label: 'Posts', icon: MessageCircle },
-  { id: 'reels', label: 'Reels', icon: Film },
   { id: 'reposts', label: 'Reposts', icon: RefreshCw },
+  { id: 'reels', label: 'Reels', icon: Film },
   { id: 'media', label: 'Media', icon: ImageIcon },
   { id: 'likes', label: 'Likes', icon: Heart, ownOnly: true },
 ];
@@ -212,8 +212,11 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     updatePost(id, { [key]: !was, ...(mode === 'like' ? { likes: Math.max(0, previousLikes + (was ? -1 : 1)) } : {}) });
     try {
       if (mode === 'like') {
-        const result: any = await apiPost(`/api/feed/${id}/like`, {}, token);
+        const result: any = await apiPost(tab === 'reposts' ? `/api/reels/${id}/like` : `/api/feed/${id}/like`, {}, token);
         updatePost(id, { liked: typeof result?.liked === 'boolean' ? result.liked : !was, likes: finite(result?.likeCount ?? result?.likes ?? previousLikes + (was ? -1 : 1)) });
+      } else if (tab === 'reposts') {
+        const result: any = await apiPost(`/api/reels/${id}/save`, {}, token);
+        if (typeof result?.saved === 'boolean') updatePost(id, { saved: result.saved });
       } else if (was) {
         await apiDelete(`/api/feed/${id}/save`, token);
       } else {
@@ -300,7 +303,7 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     <ProfileHeader profile={profile} own={own} onFollow={() => { void follow(); }} onMessage={() => { void messageProfile(); }} onGift={() => { void openGift(profile); }} onCopy={() => { void copyProfile(); }} onPeople={setPeople} followPending={followPending} />
     {!own && <FollowerRewardGiftBox creatorUsername={profile.username} token={token} />}
     <nav className="profile-tabs" aria-label="Profile content">{TABS.filter(item => !item.ownOnly || own).map(({ id, label, icon: Icon }) => <button key={id} className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}><Icon size={16} strokeWidth={tab === id ? 2.4 : 1.9} /><span className="tab-label">{label}</span></button>)}</nav>
-    <section className="profile-content" aria-live="polite">{contentLoading ? <ContentSkeleton /> : contentError ? <ContentError message={contentError} retry={() => setContentRetry(value => value + 1)} /> : <><ProfileContent tab={tab} rows={content[tab]} profile={profile} own={own} router={router} currentUserId={user?.id} onLike={item => void togglePost(item, 'like')} onSave={item => void togglePost(item, 'save')} onComment={item => router.push(`/post/${encodeURIComponent(cleanPostId(item))}/reply`)} onGift={item => void openGift(item)} onDelete={item => void deletePost(item)} onShare={setRepostFor} onFollow={() => { void follow(); setContentRetry(value => value + 1); }} onMore={setMoreFor} onCreate={own ? openPostModal : undefined} />{nextCursor[tab] && <div className="profile-load-more"><button className="profile-button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</button></div>}</>}</section>
+    <section className="profile-content" aria-live="polite">{contentLoading ? <ContentSkeleton /> : contentError ? <ContentError message={contentError} retry={() => setContentRetry(value => value + 1)} /> : <><ProfileContent tab={tab} rows={content[tab]} profile={profile} own={own} router={router} currentUserId={user?.id} onLike={item => void togglePost(item, 'like')} onSave={item => void togglePost(item, 'save')} onComment={item => router.push(tab === 'reposts' || isVideoPost(item) ? `/reels/${encodeURIComponent(cleanPostId(item))}` : `/post/${encodeURIComponent(cleanPostId(item))}/reply`)} onGift={item => void openGift(item)} onDelete={item => void deletePost(item)} onShare={setRepostFor} onShareLink={item => { void navigator.clipboard?.writeText(`${location.origin}/reels/${cleanPostId(item)}`).then(() => toast.success('Link copied')).catch(() => toast.error('Could not copy link')); }} onFollow={() => { void follow(); setContentRetry(value => value + 1); }} onMore={setMoreFor} onCreate={own ? openPostModal : undefined} />{nextCursor[tab] && <div className="profile-load-more"><button className="profile-button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</button></div>}</>}</section>
     <AnimatePresence>{giftFor && token && <GiftPicker gifts={gifts} balance={balance} recipient={{ id: profile.id, username: profile.username, fullName: profile.fullName || profile.displayName || profile.username, avatar }} token={token} videoId={giftFor.id !== profile.id && (tab === 'reels' || tab === 'reposts' || isVideoPost(giftFor)) ? cleanPostId(giftFor) : undefined} initialGift={null} onClose={() => setGiftFor(undefined)} onSent={(remaining, _amount, _gift, quantity = 1) => { setBalance(remaining); const sent = giftFor; if (sent && sent.id !== profile.id) patchRow(cleanPostId(sent), { isGifted: true, tips: Number(sent.tips ?? sent.tipCount ?? sent.giftsReceived ?? sent.gifts ?? 0) + quantity, gifts: Number(sent.gifts ?? 0) + quantity }); }} />}{repostFor && token && <FeedPostRepostSheet close={() => setRepostFor(undefined)} repost={() => void repostPost(repostFor)} quote={() => quotePost(repostFor)} />}{moreFor && token && <FeedPostMoreSheet item={moreFor} download={canDownloadPostVideo(moreFor) ? () => void downloadPost(moreFor) : undefined} downloading={downloadingId === moreFor.id} share={destination => void sharePost(destination, moreFor)} isOwn={creatorOf(moreFor).id === user?.id} close={() => setMoreFor(undefined)} openProfile={() => { const creator = creatorOf(moreFor); setMoreFor(undefined); router.push(creator.username ? `/profile/${creator.username}` : '/profile'); }} save={() => { void togglePost(moreFor, 'save'); setMoreFor(undefined); }} remove={() => deletePost(moreFor)} />}</AnimatePresence>
     {people && <PeopleDialog kind={people} own={own} username={profile.username} token={token || undefined} currentUserId={user?.id} close={() => setPeople(null)} />}
     {unfollowOpen && <ConfirmDialog username={profile.username} onCancel={() => setUnfollowOpen(false)} onConfirm={() => { void follow(); }} />}

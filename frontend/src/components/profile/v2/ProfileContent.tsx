@@ -15,6 +15,7 @@ type Props = {
   onDelete: (_item: ProfileItem) => void; onShare: (_item: ProfileItem) => void;
   onFollow: (_item: ProfileItem) => void; onMore: (_item: ProfileItem) => void;
   onCreate?: () => void;
+  onShareLink?: (_item: ProfileItem) => void;
 };
 
 /**
@@ -26,14 +27,18 @@ type Props = {
  */
 export default function ProfileContent(props: Props) {
   const [preview, setPreview] = useState<{ src: string; alt: string } | null>(null);
-  const { tab, rows, profile, own, router, currentUserId, onLike, onSave, onComment, onGift, onDelete, onShare, onFollow, onMore, onCreate } = props;
+  const { tab, rows, profile, own, router, currentUserId, onLike, onSave, onComment, onGift, onDelete, onShare, onFollow, onMore, onCreate, onShareLink } = props;
   if (!rows.length) return <Empty tab={tab} own={own} onCreate={onCreate} />;
   if (tab === 'posts' || tab === 'likes') {
     return <div className="profile-post-feed">{rows.map(item => <FeedPostCard key={item.id} item={item} currentUserId={currentUserId} onLike={onLike} onSave={onSave} onComment={onComment} onShare={onShare} onGift={onGift} onFollow={onFollow} onMore={onMore} feedCompactMedia hideFollowButton />)}</div>;
   }
+  if (tab === 'reposts') {
+    const label = own ? 'You reposted' : `${profile.fullName || profile.displayName || profile.username} reposted`;
+    return <div className="profile-post-feed">{rows.map(item => <FeedPostCard key={item.repostId || item.id} item={{ ...item, type: 'reel' }} currentUserId={currentUserId} onLike={onLike} onSave={onSave} onComment={onComment} onShare={onShare} onGift={onGift} onFollow={onFollow} onMore={onMore} onShareLink={onShareLink} repostContext={label} feedCompactMedia hideFollowButton />)}</div>;
+  }
   // The grid renders the reels/media/live galleries. Keep the full ProfileTab type
   // so the (unreachable-for-posts) post/like tile branches below still typecheck.
-  const gridTab: ProfileTab = tab;
+  const gridTab = tab as ProfileTab;
   return <><div className="content-grid">{rows.map(item => {
     const image = mediaUrl(item);
     const isLive = gridTab === 'live';
