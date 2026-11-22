@@ -254,7 +254,7 @@ router.get('/system-logs', requirePermission(Permission.VIEW_SYSTEM_LOGS), getSy
 router.get('/audit', requirePermission(Permission.VIEW_AUDIT_LOGS), getAuditLogs);
 
 // Infrastructure
-router.get('/infrastructure', requirePermission(Permission.SYSTEM_CONFIG), getInfrastructure);
+router.get('/infrastructure', requirePermission(Permission.VIEW_SYSTEM_HEALTH), getInfrastructure);
 
 // Finance
 router.get('/finance/transactions', requirePermission(Permission.VIEW_TRANSACTIONS), getFinanceTransactions);
