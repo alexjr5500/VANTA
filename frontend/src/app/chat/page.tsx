@@ -416,6 +416,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const activeConversationRef = useRef<string | null>(null);
+  const entityInfoRequestRef = useRef(0);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingActiveRef = useRef(false);
   const typingRenewRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -695,6 +696,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   }, [router, searchParams]);
 
   const openConversationInfo = useCallback(async () => {
+    const requestId = ++entityInfoRequestRef.current;
     setDetailsOpen(true);
     setMemberBrowserOpen(false);
     setMemberBrowserQuery('');
@@ -707,11 +709,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     try {
       const entityId = conversation.entityId || conversation.id;
       const entity = await apiGet<any>(`/api/${conversation.type === 'group' ? 'groups' : 'channels'}/${entityId}`, token);
-      setManagedEntity(entity);
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversation.id) setManagedEntity(entity);
     } catch {
       // The overview remains usable from conversation data if extra info is unavailable.
     } finally {
-      setIsLoadingEntityInfo(false);
+      if (entityInfoRequestRef.current === requestId) setIsLoadingEntityInfo(false);
     }
   }, [activeConversation, conversations, pushChatView, token]);
 
@@ -1172,6 +1174,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setEditingMessage(null);
     setMessageInput('');
     if (activeConversationRef.current) socketRef.current?.emit('leave_conversation', activeConversationRef.current);
+    entityInfoRequestRef.current += 1;
     activeConversationRef.current = id;
     previousLastMessageIdRef.current = null;
     initialScrollDoneRef.current = false;
