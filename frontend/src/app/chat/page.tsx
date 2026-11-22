@@ -491,6 +491,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [managementBusy, setManagementBusy] = useState<string | null>(null);
   const [ownershipConfirm, setOwnershipConfirm] = useState<any | null>(null);
   const [isSavingEntity, setIsSavingEntity] = useState(false);
+  const entitySaveInFlightRef = useRef(false);
   const editAvatarInputRef = useRef<HTMLInputElement>(null);
   const [typingUserId, setTypingUserId] = useState<string | null>(null);
   const [typingByConversation, setTypingByConversation] = useState<Record<string, boolean>>({});
@@ -2360,16 +2361,24 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
 
   const saveEntityChanges = async () => {
-    if (!token || !activeConv || !editEntityId || !editName.trim() || !canEditEntityInfo) return;
+    if (!token || !activeConv || !editEntityId || !editName.trim() || !canEditEntityInfo || entitySaveInFlightRef.current) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
+    entitySaveInFlightRef.current = true;
     setIsSavingEntity(true);
     try {
       const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { name: editName.trim(), description: editDescription.trim(), avatar: editAvatar, ...((activeConv.type === 'group' && isGroupPrivileged) || (activeConv.type === 'channel' && isManagedOwner) ? { permissions: managedEntity?.permissions || {} } : {}), ...(activeConv.type === 'channel' ? { visibility: editVisibility, handle: editHandle.trim().replace(/^@/, '') } : {}) }, token);
-      setConversations(previous => previous.map(item => item.id === activeConv.id ? { ...item, name: updated.name || editName.trim(), description: updated.description ?? editDescription.trim(), avatar: updated.avatar ?? editAvatar ?? undefined } : item));
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
+      setConversations(previous => previous.map(item => item.id === conversationId ? { ...item, name: updated.name || editName.trim(), description: updated.description ?? editDescription.trim(), avatar: updated.avatar ?? editAvatar ?? undefined } : item));
       setManagedEntity(updated);
       setEditEntityOpen(false);
       showToast?.({ type: 'success', title: `${activeConv.type === 'group' ? 'Group' : 'Channel'} updated`, message: 'Changes are visible throughout Chat.' });
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Changes not saved', message: errorMessage(err, { action: 'save the changes', context: activeConv?.type === 'channel' ? 'channel' : 'group', fallback: 'Please try again.' }) }); }
-    finally { setIsSavingEntity(false); }
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Changes not saved', message: errorMessage(err, { action: 'save the changes', context: activeConv?.type === 'channel' ? 'channel' : 'group', fallback: 'Please try again.' }) });
+    } finally {
+      entitySaveInFlightRef.current = false;
+      setIsSavingEntity(false);
+    }
   };
 
   const searchManagementUsers = async (value: string) => {
