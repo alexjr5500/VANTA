@@ -539,20 +539,31 @@ export default function ReelsPage() {
 
   const toggleCommentLike = async (comment: ReelComment) => {
     if (!token || !commentsFor) { toast.error('Sign in to like comments'); return; }
+    const reelId = commentsFor.id;
+    const requestId = commentsRequest.current;
+    const key = `comment-like:${reelId}:${comment.id}`;
+    if (pendingActionsRef.current.has(key)) return;
+    pendingActionsRef.current.add(key);
     const wasLiked = Boolean(comment.liked);
-    const previousCount = Number(comment._count?.likes || 0);
+    const previousCount = Number(comment._count?.likes ?? 0);
     const optimisticLiked = !wasLiked;
     const optimisticCount = Math.max(0, previousCount + (wasLiked ? -1 : 1));
     const apply = (items: ReelComment[], liked: boolean, count: number) => items.map(item => item.id === comment.id
-      ? { ...item, liked, _count: { likes: count, replies: 0 } }
+      ? { ...item, liked, _count: { ...item._count, likes: count } }
       : item);
     setComments(items => apply(items, optimisticLiked, optimisticCount));
     try {
-      const result = await apiPost<{ liked: boolean; likes: number }>(`/api/reels/${commentsFor.id}/comments/${comment.id}/like`, {}, token);
-      setComments(items => apply(items, result.liked, result.likes));
+      const result = await apiPost<{ liked: boolean; likes: number }>(`/api/reels/${reelId}/comments/${comment.id}/like`, {}, token);
+      if (commentsRequest.current === requestId) {
+        setComments(items => apply(items, result.liked, result.likes));
+      }
     } catch (reason: any) {
-      setComments(items => apply(items, wasLiked, previousCount));
-      toast.error('Comment like failed', reason?.message);
+      if (commentsRequest.current === requestId) {
+        setComments(items => apply(items, wasLiked, previousCount));
+        toast.error('Comment like failed', reason?.message);
+      }
+    } finally {
+      pendingActionsRef.current.delete(key);
     }
   };
 
