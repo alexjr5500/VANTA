@@ -91,18 +91,36 @@ export const finalizeReel = async (req: AuthRequest, res: Response): Promise<voi
       ? Math.max(0, Math.min(req.body.duration, 86_400))
       : null;
 
-    const updated = await prisma.video.update({
-      where: { id: reel.id },
-      data: {
-        videoUrl: file.url,
-        thumbnailUrl: reel.thumbnailUrl || null,
-        duration: duration ?? reel.duration,
-        publishStatus: "PUBLISHED",
-      },
+    // Linking the upload and publishing the Reel must succeed together.
+    // Otherwise the Reel becomes public without a usable media association,
+    // leaving completed Cloudinary HLS derivatives missing from its feed.
+    const updated = await prisma.$transaction(async (tx) => {
+      const linked = await tx.uploadedFile.updateMany({
+        where: {
+          id: file.id,
+          userId,
+          fileType: "VIDEO",
+          deletedAt: null,
+          OR: [
+            { recordId: null },
+            { recordType: "Video", recordId: reel.id },
+          ],
+        },
+        data: { recordType: "Video", recordId: reel.id, category: "reel" },
+      });
+      if (linked.count !== 1) {
+        throw new Error("Uploaded Reel media is no longer available for this Reel");
+      }
+      return tx.video.update({
+        where: { id: reel.id, creatorId: userId },
+        data: {
+          videoUrl: file.url,
+          thumbnailUrl: reel.thumbnailUrl || null,
+          duration: duration ?? reel.duration,
+          publishStatus: "PUBLISHED",
+        },
+      });
     });
-    await prisma.uploadedFile
-      .update({ where: { id: file.id }, data: { recordType: "Video", recordId: updated.id, category: "reel" } })
-      .catch(() => undefined);
     res.status(200).json({ message: "Reel published", video: updated });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";

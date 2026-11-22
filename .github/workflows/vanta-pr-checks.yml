@@ -74,6 +74,7 @@ jobs:
           src/__tests__/private-media.controller.test.ts
           src/__tests__/chat.service.test.ts
           src/__tests__/upload.service.test.ts
+          src/__tests__/reel-media-finalization.test.ts
           src/__tests__/wallet.transfer-security.test.ts
           src/__tests__/wallet.withdrawal.test.ts
           src/__tests__/wallet.reconciliation.test.ts
