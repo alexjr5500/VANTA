@@ -121,6 +121,7 @@ export default function ReelsPage() {
   const [reels, setReels] = useState<Reel[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
   const [active, setActive] = useState(0);
   const muted = false;
   const [paused, setPaused] = useState(false);
@@ -155,7 +156,8 @@ export default function ReelsPage() {
   const hasReels = reels.length > 0;
 
   const load = useCallback(async (start = 0, append = false, background = false) => {
-    if (!append) Object.values(videos.current).forEach(video => video?.pause());
+    if (!append && !background) Object.values(videos.current).forEach(video => video?.pause());
+    if (append) setLoadMoreError(false);
     const requestId = ++loadRequest.current;
     if (!append && !background) { setLoading(true); setLoadError(false); }
     try {
@@ -189,7 +191,8 @@ export default function ReelsPage() {
       if (background) {
         if (reason?.statusCode !== 499) throw reason;
       } else if (reason?.statusCode !== 499) {
-        setLoadError(true);
+        if (append) setLoadMoreError(true);
+        else setLoadError(true);
       }
     } finally {
       if (requestId === loadRequest.current && !background) setLoading(false);
@@ -239,10 +242,10 @@ export default function ReelsPage() {
   }, [load]);
 
   const loadMore = useCallback(() => {
-    if (nextStart == null || loadingMoreRef.current || loading) return;
+    if (nextStart == null || loadingMoreRef.current || loading || loadMoreError) return;
     loadingMoreRef.current = true;
     void load(nextStart, true).finally(() => { loadingMoreRef.current = false; });
-  }, [nextStart, load, loading]);
+  }, [nextStart, load, loading, loadMoreError]);
 
   // Infinite scroll: preload the next page as the user approaches the end of the
   // loaded Reels. The order stays stable because the session seed is fixed and the
