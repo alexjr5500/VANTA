@@ -2766,7 +2766,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                       <div className={cn(
                         'chat-bubble-text w-fit max-w-full overflow-hidden text-[15px] leading-[1.45]',
                         msg.isOwn
-                           ? 'bg-transparent text-white'
+                           ? 'border-r-2 border-[#c9a227]/60 bg-transparent pr-2.5 text-white'
                            : 'bg-transparent text-white'
                       )}>
                         {msg.deletedAt ? null : msg.type === 'CALL' ? (
