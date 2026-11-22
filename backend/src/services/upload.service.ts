@@ -8,6 +8,7 @@ import { v2 as cloudinary } from "cloudinary";
 import { prisma } from "../prisma";
 import { imageOptimizer } from "./image-optimizer.service";
 import { createPrivateMediaUrl } from "./private-media.service";
+import { isCloudinaryStorageConfigured } from "./cloudinary-storage-config";
 
 const configuredUploadDir = process.env.UPLOAD_STORAGE_DIR;
 // Resolve relative storage paths against the backend project, not process.cwd().
@@ -117,9 +118,7 @@ if (!fs.existsSync(optimizedDir)) {
 }
 
 const uploadPublicBaseUrl = (process.env.UPLOAD_PUBLIC_BASE_URL || "").replace(/\/$/, "");
-const useCloudinary = Boolean(
-  process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET
-);
+const useCloudinary = isCloudinaryStorageConfigured(process.env);
 const execFileAsync = promisify(execFile);
 const maxVideoDurationSeconds = Number(process.env.MAX_VIDEO_DURATION_SECONDS || 600);
 
