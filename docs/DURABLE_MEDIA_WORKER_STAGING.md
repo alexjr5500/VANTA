@@ -8,7 +8,7 @@ This worker is deliberately separate from the HTTP backend and must not be enabl
 - Provision a dedicated staging PostgreSQL database with the QueueJob migration applied. Do not reuse the production database.
 - Attach a persistent volume at `/data/uploads`; set `UPLOAD_STORAGE_DIR=/data/uploads`. The producer and worker must see the **same** storage bytes; separate Railway service volumes are not shared.
 - Provide Node 22, FFmpeg with libx264 and AAC, and the Sharp native module in the worker image. Verify `ffmpeg -encoders` and `node -e "require('sharp')"` during build. CI tests FFmpeg but does not provision a production worker image.
-- Set `DATABASE_URL` to the isolated staging database, `VANTA_DURABLE_WORKER_ENABLED=true`, and `VANTA_DURABLE_QUEUE_MEDIA_HANDLERS=true`.
+- Ensure `/data/uploads` exists, is not a symlink, and is readable and writable before starting the worker. The entrypoint now refuses unsafe or missing storage. Set `DATABASE_URL` to the isolated staging database, `VANTA_DURABLE_WORKER_ENABLED=true`, and `VANTA_DURABLE_QUEUE_MEDIA_HANDLERS=true`.
 - Start with `node backend/dist/durable-worker.js` after `npm --prefix backend run build`. Do not start the HTTP server in this service.
 
 ## Acceptance checks
