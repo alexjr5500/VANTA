@@ -28,6 +28,7 @@ export default function EditProfilePage() {
   const [loadAttempt, setLoadAttempt] = useState(0); const [loadFailed, setLoadFailed] = useState(false);
   const profileRequest = useRef(0);
   const usernameCheck = useRef(0);
+  const saveInFlight = useRef(false);
 
   useEffect(() => {
     if (!token) {
@@ -62,7 +63,7 @@ export default function EditProfilePage() {
   useEffect(() => {
     const checkId = ++usernameCheck.current;
     const username = form.username.trim().toLowerCase();
-    if (username === original.username) { setAvailability('idle'); return; }
+    if (username === original.username.trim().toLowerCase()) { setAvailability('idle'); return; }
     if (!/^[a-z0-9_.]{3,30}$/.test(username)) { setAvailability('invalid'); return; }
     setAvailability('checking');
     let active = true;
@@ -89,8 +90,7 @@ export default function EditProfilePage() {
     const name = form.fullName.trim(); const username = form.username.trim().toLowerCase(); const website = form.website.trim();
     if (name.length < 1 || name.length > 50) return 'Display name must be between 1 and 50 characters.';
     if (!/^[a-z0-9_.]{3,30}$/.test(username)) return 'Username must be 3 to 30 letters, numbers, underscores, or periods.';
-    if (availability === 'taken') return 'That username is already taken.';
-    if (availability === 'checking' || availability === 'error') return 'Unable to verify username availability. Please try again.';
+    if (username !== original.username.trim().toLowerCase() && availability !== 'available') return availability === 'taken' ? 'That username is already taken.' : 'Please wait until your new username has been verified.';
     if (form.bio.length > 260) return 'Bio must be 260 characters or fewer.';
     if (form.city.trim().length > 100) return 'Location must be 100 characters or fewer.';
     if (form.dateOfBirth) {
@@ -102,7 +102,8 @@ export default function EditProfilePage() {
     return '';
   };
   const submit = async (event: FormEvent) => {
-    event.preventDefault(); if (!token || saving || !dirty) return; const validation = validate(); if (validation) { setError(validation); return; }
+    event.preventDefault(); if (!token || saving || saveInFlight.current || !dirty) return; const validation = validate(); if (validation) { setError(validation); return; }
+    saveInFlight.current = true;
     setSaving(true); setError(''); setSuccess('');
     try {
       let avatarUrl = initialMedia.avatar; let bannerUrl = initialMedia.cover;
@@ -118,7 +119,7 @@ export default function EditProfilePage() {
     } catch (reason: any) {
       const message = String(reason?.message || 'Unable to save changes. Check your connection and try again.');
       setError(/username.*(use|taken|exist)/i.test(message) ? 'That username is already taken.' : message);
-    } finally { setSaving(false); setProgress(''); }
+    } finally { saveInFlight.current = false; setSaving(false); setProgress(''); }
   };
 
   if (loading || authLoading) return <main className="edit-profile-page"><div className="edit-profile-loading"><i /><i /><i /></div></main>;
