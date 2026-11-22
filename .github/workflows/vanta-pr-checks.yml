@@ -191,6 +191,7 @@ jobs:
           src/__tests__/cloudinary-media-producer.test.ts
           src/__tests__/cloudinary-media-categories.test.ts
           src/__tests__/durable-media-job-routing.test.ts
+          src/__tests__/storage-diagnostics.test.ts
           src/__tests__/durable-media-handlers.test.ts
           src/__tests__/durable-queue.repository.test.ts
           src/__tests__/durable-queue.health.test.ts
