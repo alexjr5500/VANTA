@@ -49,6 +49,40 @@ describe('durable media cleanup and HLS validation', () => {
     })).rejects.toThrow('Incomplete existing HLS output');
   });
 
+  test('HLS retry rejects playlists that reference missing segment files', async () => {
+    const destination = path.join(root, 'videos', 'missing-segment');
+    const variant = path.join(destination, '360p');
+    fs.mkdirSync(variant, { recursive: true });
+    fs.writeFileSync(path.join(destination, 'master.m3u8'),
+      '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\n360p/playlist.m3u8\n');
+    fs.writeFileSync(path.join(variant, 'playlist.m3u8'),
+      '#EXTM3U\n#EXTINF:4.0,\nsegment-00000.ts\n#EXTINF:4.0,\nsegment-00001.ts\n#EXT-X-ENDLIST\n');
+    fs.writeFileSync(path.join(variant, 'segment-00000.ts'), 'data');
+    await expect(transcodeLocalHls(root, {
+      inputPath: 'original.mp4', outputName: 'missing-segment', qualities: ['360p'],
+    })).rejects.toThrow('Incomplete existing HLS output');
+  });
+
+  test('HLS retry rejects unlisted and symlinked segments', async () => {
+    const destination = path.join(root, 'videos', 'unsafe-segment');
+    const variant = path.join(destination, '360p');
+    fs.mkdirSync(variant, { recursive: true });
+    fs.writeFileSync(path.join(destination, 'master.m3u8'),
+      '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\n360p/playlist.m3u8\n');
+    fs.writeFileSync(path.join(variant, 'playlist.m3u8'),
+      '#EXTM3U\n#EXTINF:4.0,\nsegment-00000.ts\n#EXT-X-ENDLIST\n');
+    fs.symlinkSync(path.join(root, 'original.mp4'), path.join(variant, 'segment-00000.ts'));
+    await expect(transcodeLocalHls(root, {
+      inputPath: 'original.mp4', outputName: 'unsafe-segment', qualities: ['360p'],
+    })).rejects.toThrow('Incomplete existing HLS output');
+    fs.unlinkSync(path.join(variant, 'segment-00000.ts'));
+    fs.writeFileSync(path.join(variant, 'segment-00000.ts'), 'valid');
+    fs.writeFileSync(path.join(variant, 'segment-00001.ts'), 'not listed');
+    await expect(transcodeLocalHls(root, {
+      inputPath: 'original.mp4', outputName: 'unsafe-segment', qualities: ['360p'],
+    })).rejects.toThrow('Incomplete existing HLS output');
+  });
+
   test('HLS validates quality allow-list before invoking FFmpeg', async () => {
     await expect(transcodeLocalHls(root, {
       inputPath: 'original.mp4', outputName: 'test', qualities: ['1080p'],
