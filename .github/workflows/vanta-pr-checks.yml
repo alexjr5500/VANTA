@@ -158,3 +158,31 @@ jobs:
         env:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
         run: npm --prefix backend run test -- --runInBand src/__tests__/durable-queue.postgres.integration.test.ts
+
+  durable-media:
+    name: Durable media handlers and real FFmpeg integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install backend dependencies
+        run: npm --prefix backend install
+      - name: Install FFmpeg for real video integration
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Verify FFmpeg exists
+        run: ffmpeg -version
+      - name: Run durable media and queue unit tests
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_test?schema=public
+        run: >
+          npm --prefix backend run test -- --runInBand
+          src/__tests__/media-hls.ffmpeg.integration.test.ts
+          src/__tests__/media-operations.test.ts
+          src/__tests__/media-thumbnail-job.test.ts
+          src/__tests__/durable-media-handlers.test.ts
+          src/__tests__/durable-queue.repository.test.ts
+          src/__tests__/durable-queue.health.test.ts
