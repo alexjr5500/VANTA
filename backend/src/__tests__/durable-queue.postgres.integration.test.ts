@@ -45,6 +45,33 @@ describeWithDatabase('DurableQueueRepository PostgreSQL integration', () => {
 
   beforeEach(async () => { if (pool) await pool.query('TRUNCATE TABLE "QueueJob"'); });
 
+  it('leaves disabled media jobs pending while claiming eligible jobs', async () => {
+    await repository.enqueue('image:optimize', {}, { id: 'media-job', priority: 10 });
+    await repository.enqueue('push:deliver', {}, { id: 'push-job', priority: 0 });
+    const excluded = ['image:optimize', 'thumbnail:generate', 'video:transcode', 'cleanup:temp'];
+    await expect(repository.claim('worker-a', 60_000, excluded)).resolves.toMatchObject({
+      id: 'push-job', type: 'push:deliver',
+    });
+    const media = await pool.query('SELECT "status", "attempts" FROM "QueueJob" WHERE "id" = $1', ['media-job']);
+    expect(media.rows[0]).toMatchObject({ status: 'pending', attempts: 0 });
+    await expect(repository.claim('worker-b', 60_000, excluded)).resolves.toBeNull();
+    await expect(repository.claim('media-enabled-worker')).resolves.toMatchObject({
+      id: 'media-job', type: 'image:optimize',
+    });
+  });
+
+  it('does not exhaust disabled media jobs with expired leases', async () => {
+    await repository.enqueue('video:transcode', {}, { id: 'expired-media', maxAttempts: 1 });
+    await expect(repository.claim('media-worker')).resolves.toMatchObject({ id: 'expired-media' });
+    await pool.query(
+      `UPDATE "QueueJob" SET "lockedUntil" = NOW() - INTERVAL '1 second' WHERE "id" = $1`,
+      ['expired-media'],
+    );
+    await expect(repository.claim('disabled-worker', 60_000, ['video:transcode'])).resolves.toBeNull();
+    const media = await pool.query('SELECT "status", "attempts" FROM "QueueJob" WHERE "id" = $1', ['expired-media']);
+    expect(media.rows[0]).toMatchObject({ status: 'active', attempts: 1 });
+  });
+
   it('allows only one worker to claim a single job under concurrent contention', async () => {
     await repository.enqueue('integration:once', { value: 42 }, { id: 'single-job' });
     const claims = await Promise.all([repository.claim('worker-a'), repository.claim('worker-b')]);
