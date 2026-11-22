@@ -30,6 +30,13 @@ async function main(): Promise<void> {
     if (ffmpeg.error || ffmpeg.status !== 0) {
       throw new Error('Media worker requires an executable FFmpeg binary');
     }
+    const encoders = spawnSync(process.env.FFMPEG_PATH || 'ffmpeg', ['-hide_banner', '-encoders'], {
+      timeout: 5_000, encoding: 'utf8',
+    });
+    if (encoders.error || encoders.status !== 0 ||
+        !/\blibx264\b/.test(encoders.stdout) || !/\baac\b/.test(encoders.stdout)) {
+      throw new Error('Media worker requires FFmpeg with libx264 and AAC encoders');
+    }
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       require('sharp');
