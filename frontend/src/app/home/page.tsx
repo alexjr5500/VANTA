@@ -91,7 +91,7 @@ export default function HomePage() {
   const [storyRefreshKey, setStoryRefreshKey] = useState(0);
   // Per-session feed seed. A stable seed keeps pagination consistent within a
   // visit; a refresh generates a NEW seed so the discovery content reorders.
-  const [feedSeed, setFeedSeed] = useState(() => Math.random().toString(36).slice(2, 10));
+  const feedSeedRef = useRef(Math.random().toString(36).slice(2, 10));
   const [cursor, setCursor] = useState<string>();
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -121,7 +121,7 @@ export default function HomePage() {
       const query = new URLSearchParams({ limit: '12' });
       if (requestedCursor) query.set('cursor', requestedCursor);
       // Only the mixed home feed is seed-rotated; the Following tab is chronological.
-      const seedToUse = nextSeed ?? feedSeed;
+      const seedToUse = nextSeed ?? feedSeedRef.current;
       if (tab !== 'following') query.set('seed', seedToUse);
       const endpoint = tab === 'following' ? '/api/feed' : '/api/feed/home';
       const data = await apiGet<any>(`${endpoint}?${query}`, token, { skipCache: reset });
@@ -131,13 +131,13 @@ export default function HomePage() {
       setHasMore(Boolean(data?.nextCursor));
     } catch { if (reset) setError("Couldn't load your feed."); else setLoadMoreError(true); }
     finally { setLoading(false); setLoadingMore(false); }
-  }, [token, tab, feedSeed]);
+  }, [token, tab]);
 
   // Explicit refresh: start a NEW feed session (new seed) so the discovery
   // content reorders, and refresh the story tray too.
   const refreshFeed = useCallback(async () => {
     const nextSeed = Math.random().toString(36).slice(2, 10);
-    setFeedSeed(nextSeed);
+    feedSeedRef.current = nextSeed;
     setCursor(undefined);
     setHasMore(true);
     setStoryRefreshKey(key => key + 1);
@@ -165,7 +165,7 @@ export default function HomePage() {
     } : item));
     socket.on('social:post-updated', update); socket.on('social:comment-created', update); socket.connect();
     return () => { socket.off('social:post-updated', update); socket.off('social:comment-created', update); socket.disconnect(); };
-  }, [token]);
+  }, [token, user?.id]);
   useEffect(() => {
     if (!token) return;
     let current = true;
