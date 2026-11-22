@@ -6,6 +6,31 @@ import { promisify } from 'util';
 import { resolveLocalMediaInput, safeMediaOutputName } from './media-job-paths';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Check every referenced TS segment before treating an existing output as a
+ * successful retry. A playlist can reference a missing segment even when all
+ * the files that happen to be present are nonempty.
+ */
+function completeHlsVariant(variant: string): boolean {
+  const playlist = path.join(variant, 'playlist.m3u8');
+  if (!fs.existsSync(variant) || !fs.lstatSync(variant).isDirectory() ||
+      fs.realpathSync(variant) !== variant ||
+      !fs.existsSync(playlist) || !fs.lstatSync(playlist).isFile()) return false;
+  const lines = fs.readFileSync(playlist, 'utf8').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (lines[0] !== '#EXTM3U' || !lines.includes('#EXT-X-ENDLIST')) return false;
+  const referenced = lines.filter(line => !line.startsWith('#'));
+  const durationEntries = lines.filter(line => line.startsWith('#EXTINF:'));
+  if (referenced.length === 0 || referenced.length !== durationEntries.length ||
+      referenced.some(file => !/^segment-\d{5}\.ts$/.test(file)) ||
+      new Set(referenced).size !== referenced.length) return false;
+  const onDisk = fs.readdirSync(variant).filter(file => /^segment-\d{5}\.ts$/.test(file));
+  if (onDisk.length !== referenced.length) return false;
+  return referenced.every(file => {
+    const segment = path.join(variant, file);
+    return fs.existsSync(segment) && fs.lstatSync(segment).isFile() && fs.statSync(segment).size > 0;
+  });
+}
 const QUALITIES: Record<string, { width: number; height: number; bitrate: string; bandwidth: number }> = {
   '360p': { width: 640, height: 360, bitrate: '600k', bandwidth: 800000 },
   '480p': { width: 854, height: 480, bitrate: '1100k', bandwidth: 1400000 },
@@ -33,21 +58,11 @@ export async function transcodeLocalHls(storageRoot: string, job: TranscodeJob):
     }
     if (fs.existsSync(master) && fs.lstatSync(master).isFile() && fs.statSync(master).size > 0) {
       const masterText = fs.readFileSync(master, 'utf8');
-      const valid = requested.every(quality => {
-        if (!masterText.includes(`${quality}/playlist.m3u8`)) return false;
-        const variant = path.join(destination, quality);
-        const playlist = path.join(variant, 'playlist.m3u8');
-        if (!fs.existsSync(variant) || !fs.lstatSync(variant).isDirectory() ||
-            !fs.existsSync(playlist) || !fs.lstatSync(playlist).isFile()) return false;
-        const segments = fs.readdirSync(variant).filter(file => /^segment-\d{5}\.ts$/.test(file));
-        const playlistText = fs.readFileSync(playlist, 'utf8');
-        if (!playlistText.includes('#EXT-X-ENDLIST') || !playlistText.includes('#EXTINF')) return false;
-        return segments.length > 0 && segments.every(file => {
-          if (!playlistText.includes(file)) return false;
-          const segment = path.join(variant, file);
-          return fs.lstatSync(segment).isFile() && fs.statSync(segment).size > 0;
-        });
-      });
+      const masterLines = masterText.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      const masterEntries = masterLines.filter(line => !line.startsWith('#'));
+      const valid = masterLines[0] === '#EXTM3U' &&
+        requested.every(quality => masterEntries.includes(`${quality}/playlist.m3u8`) &&
+          completeHlsVariant(path.join(destination, quality)));
       if (valid) return '/uploads/videos/' + name + '/master.m3u8';
     }
     throw new Error('Incomplete existing HLS output requires manual recovery');
