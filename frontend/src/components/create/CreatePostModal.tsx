@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, X, Globe2, Camera, Image as ImageIcon, Video, Smile, AlertCircle, Loader2, Type, Paperclip } from 'lucide-react';
+import { X, Globe2, Camera, Image as ImageIcon, Video, Smile, AlertCircle, Loader2, Type, Paperclip } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { useContentCreation } from './ContentCreationContext';
@@ -142,7 +142,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
     setUploadSession((session) => session + 1);
     // Drafts do not contain original File bytes: attachments must be reselected.
     setVisibility('public');
-    setDraftNotice(draft.media.length ? 'Draft text loaded. Reattach photos or videos before posting.' : 'Draft loaded.');
+    setDraftNotice(draft.media.length ? 'Draft text loaded. This post is public; reattach photos or videos before posting.' : 'Draft loaded. This post will be public.');
     setShowDrafts(false);
     window.requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
   }, [hasContent]);
@@ -320,7 +320,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                 )}
 
                 {quoteTarget && !isStory && <QuoteEmbed quote={quoteTarget} />}
-                {!isStory && draftNotice && <p role="status" className="text-xs text-[#dfbd55]">{draftNotice}</p>
+                {!isStory && draftNotice && <p role="status" className="text-xs text-[#dfbd55]">{draftNotice}</p>}
 
                 {/* Clean VANTA error state */}
                 <AnimatePresence>
