@@ -11,6 +11,33 @@ val releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
 val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
 
+// A debug APK may target this project's Vercel preview so unmerged UI fixes
+// can be tested in the actual WebView. Release builds always use production.
+// Set with -PvantaDebugOrigin=https://<preview>-vanta-73db.vercel.app
+// or VANTA_DEBUG_ORIGIN. Do not trust arbitrary preview owners: the WebView
+// exposes first-party Android bridges to its configured origin.
+val vantaDebugOrigin = providers.gradleProperty("vantaDebugOrigin")
+    .orElse(providers.environmentVariable("VANTA_DEBUG_ORIGIN"))
+    .orNull
+    ?.trim()
+    ?.trimEnd('/')
+    ?.takeIf { it.isNotEmpty() }
+
+vantaDebugOrigin?.let { origin ->
+    val url = java.net.URI(origin)
+    require(
+        url.scheme == "https" &&
+        url.host?.endsWith("-vanta-73db.vercel.app") == true &&
+        url.port == -1 &&
+        url.rawPath.isNullOrEmpty() &&
+        url.rawQuery == null &&
+        url.rawFragment == null &&
+        url.userInfo == null
+    ) {
+        "Android debug preview origin must be an HTTPS VANTA Vercel preview host (no path or query)"
+    }
+}
+
 val vantaBrandingArchive = rootProject.file("../frontend/public/branding/vanta-original-logo-assets.zip")
 val installVantaLauncherIcons by tasks.registering {
     inputs.file(vantaBrandingArchive)
@@ -77,6 +104,9 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            if (vantaDebugOrigin != null) {
+                buildConfigField("String", "VANTA_ORIGIN", "\"$vantaDebugOrigin\"")
+            }
         }
         release {
             signingConfig = signingConfigs.getByName("release")
