@@ -12,10 +12,8 @@ import {
   Image as ImageIcon,
   Loader2,
   Plus,
-  Pencil,
   RefreshCw,
   Trash2,
-  Type,
   Video,
   X,
 } from 'lucide-react';
@@ -33,6 +31,7 @@ import {
   type UploadJob,
 } from '@/lib/uploads/store';
 import VideoTrimModal from '@/components/video/VideoTrimModal';
+import StatusGallerySheet from '@/components/story/StatusGallerySheet';
 import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 import {
   STATUS_MAX_CHARS,
@@ -531,15 +530,8 @@ useEffect(() => {
   const active = useMemo(() => items.find((item) => item.id === activeId) || items[0] || null, [items, activeId]);
   const isVerified = Boolean(user?.verified);
 
-  // Keep the Add status screen visible until the user chooses Text,
-  // Photo & Video, or Camera. This prevents the device picker from appearing
-  // unexpectedly as soon as the Status composer opens.
-const sourceLabel = source === 'camera-video' ? 'Record a video'
-    : source === 'camera-photo' ? 'Take a photo'
-    : 'Photo & Video Status';
-
   return (
-    <div className="flex h-full flex-col bg-[#1F2630]">
+    <div className={cn('flex h-full flex-col', items.length === 0 && !publishing ? 'bg-[#121719]' : 'bg-[#1F2630]')}>
       {/* Hidden inputs */}
       <input
         ref={galleryInputRef}
@@ -572,42 +564,27 @@ const sourceLabel = source === 'camera-video' ? 'Record a video'
         onChange={handleSingleCapture}
       />
 
-      {/* Header */}
-      <header className="flex shrink-0 items-center justify-between px-3 pt-[max(env(safe-area-inset-top,0px),6px)]">
+      {items.length === 0 && !publishing && (
+        <span aria-hidden="true" className="mx-auto mt-2 h-[5px] w-14 shrink-0 rounded-full bg-[#92999d]" />
+      )}
+      <header className="relative flex h-[76px] shrink-0 items-center justify-between px-4">
         <button
           type="button"
           onClick={() => (items.length > 0 ? discardAll() : onBack ? onBack() : onClose())}
-          aria-label={items.length > 0 ? 'Remove all media and go back' : 'Back to creation menu'}
-          className={cn(
-            'grid h-11 w-11 place-items-center rounded-full transition hover:bg-white/[0.06]',
-            items.length > 0 ? 'text-[#e5484d]' : 'text-[#8a8a8a] hover:text-white'
-          )}
+          aria-label={items.length > 0 ? 'Discard selected media' : 'Close Add status'}
+          className="grid h-11 w-11 place-items-center text-white transition hover:bg-white/[0.06]"
         >
-          {items.length > 0 ? <Trash2 size={18} /> : <ArrowLeft size={18} />}
+          {items.length > 0 ? <ArrowLeft size={24} /> : <X size={28} />}
         </button>
-        <div className="flex min-w-0 flex-col items-center">
-          <h2 className="text-sm font-semibold text-white">Add status</h2>
-          <p className="max-w-[220px] truncate text-[10px] text-white/40">{sourceLabel}</p>
-        </div>
-        {onText && items.length === 0 ? (
-          <button
-            type="button"
-            onClick={onText}
-            aria-label="Write a text Status"
-            title="Text Status"
-            className="grid h-11 w-11 place-items-center rounded-full text-[#dfbd55] transition hover:bg-white/[0.06]"
-          >
-            <Pencil size={19} />
+        <h2 className={cn('pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-white', items.length === 0 ? 'text-[24px] font-light' : 'text-base font-semibold')}>
+          Add status
+        </h2>
+        {items.length > 0 ? (
+          <button type="button" onClick={onClose} aria-label="Close Add status" className="grid h-11 w-11 place-items-center text-white/70 hover:text-white">
+            <X size={21} />
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close creation"
-            className="grid h-11 w-11 place-items-center rounded-full text-[#8a8a8a] transition hover:bg-white/[0.06] hover:text-white"
-          >
-            <X size={18} />
-          </button>
+          <span className="h-11 w-11" aria-hidden="true" />
         )}
       </header>
 
@@ -625,7 +602,7 @@ const sourceLabel = source === 'camera-video' ? 'Record a video'
           onClose={onClose}
         />
       ) : items.length === 0 ? (
-        <EmptyPicker
+        <StatusGallerySheet
           source={source}
           onGallery={openGalleryPicker}
           onCameraPhoto={openCameraPhoto}
@@ -1003,94 +980,5 @@ function MediaAction({
       <Icon size={14} />
       {label}
     </button>
-  );
-}
-function EmptyPicker({
-  source,
-  onGallery,
-  onCameraPhoto,
-  onCameraVideo,
-  onText,
-}: {
-  source: MediaStorySource;
-  onGallery: () => void;
-  onCameraPhoto: () => void;
-  onCameraVideo: () => void;
-  onText?: () => void;
-}) {
-  const camera = source === 'camera-photo' || source === 'camera-video';
-  const videoCamera = source === 'camera-video';
-  return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.96 }}
-      animate={{ opacity: 1, scale: 1 }}
-      className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto px-6 pb-[max(env(safe-area-inset-bottom,0px),16px)] text-center"
-    >
-      <span className="grid h-16 w-16 place-items-center rounded-2xl border border-white/[0.08] bg-white/[0.04] text-[#dfbd55]">
-        {camera ? <Camera size={32} /> : <ImageIcon size={32} />}
-      </span>
-      <div>
-        <h3 className="text-[17px] font-bold text-white">
-          {camera ? (videoCamera ? 'Record a Story video' : 'Take a Story photo') : 'Choose your media'}
-        </h3>
-        <p className="mt-1 text-[13px] leading-5 text-white/45">
-          {camera
-            ? 'Capture a photo or short video for your Status.'
-            : 'Select one or more photos and videos — they all post to the same Status.'}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center justify-center gap-2.5">
-        {onText && (
-          <button
-            type="button"
-            onClick={onText}
-            className="flex h-11 items-center gap-2 rounded-full border border-white/[0.12] bg-white/[0.04] px-4 text-[13px] font-semibold text-white transition hover:bg-white/[0.08] active:scale-[0.98]"
-          >
-            <Type size={15} />
-            Text
-          </button>
-        )}
-        {camera ? (
-          <>
-            <button
-              type="button"
-              onClick={videoCamera ? onCameraVideo : onCameraPhoto}
-              className="flex h-12 items-center gap-2 rounded-xl bg-[#c9a227] px-5 text-[15px] font-bold text-black transition hover:bg-[#dfbd55] active:scale-[0.98]"
-            >
-              <Camera size={16} />
-              {videoCamera ? 'Record video' : 'Take photo'}
-            </button>
-            <button
-              type="button"
-              onClick={onGallery}
-              className="flex h-12 items-center gap-2 rounded-xl border border-white/[0.12] bg-white/[0.06] px-5 text-[15px] font-semibold text-white transition hover:bg-white/[0.1] active:scale-[0.98]"
-            >
-              <ImageIcon size={16} />
-              Gallery
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={onGallery}
-              className="flex h-12 items-center gap-2 rounded-full bg-[#c9a227] px-5 text-[15px] font-bold text-black transition hover:bg-[#dfbd55] active:scale-[0.98]"
-            >
-              <ImageIcon size={16} />
-              Photo &amp; Video
-            </button>
-            <button
-              type="button"
-              onClick={onCameraPhoto}
-              className="flex h-12 items-center gap-2 rounded-full bg-white px-5 text-[15px] font-semibold text-black transition hover:bg-white/85 active:scale-[0.98]"
-            >
-              <Camera size={16} />
-              Camera
-            </button>
-          </>
-        )}
-      </div>
-      <p className="mt-1 text-[10.5px] leading-4 text-white/35">Up to 7 photos &amp; videos per Status · Stories vanish after 24 hours.</p>
-    </motion.div>
   );
 }

@@ -63,7 +63,7 @@ class MainActivity : Activity() {
         private val VANTA_ORIGIN: String
             get() = BuildConfig.VANTA_ORIGIN
         private val VANTA_HOSTS = setOfNotNull(Uri.parse(BuildConfig.VANTA_ORIGIN).host)
-        // Marker used only by the first-party Status media input to request Android Files.
+        // Marker used only by the first-party Status media input to open the secure gallery.
         private const val STATUS_MEDIA_PICKER = "application/x-vanta-status-picker"
         private const val FILE_CHOOSER_REQUEST = 4107
         private const val CAMERA_REQUEST = 4108
@@ -327,7 +327,7 @@ class MainActivity : Activity() {
                     val accepted = acceptedFileTypes
                     val mediaOnly = accepted.isNotEmpty() && accepted.all { it.startsWith("image/") || it.startsWith("video/") }
                     when {
-                        statusMediaPicker -> launchStatusFiles()
+                        statusMediaPicker -> launchPhotos(maxItems = 7)
                         mediaOnly && fileChooserParams.isCaptureEnabled -> launchCamera()
                         mediaOnly -> launchPhotos()
                         else -> launchFiles()
@@ -712,11 +712,11 @@ class MainActivity : Activity() {
         launchIntent(intent, CAMERA_REQUEST)
     }
 
-    private fun launchPhotos() {
+    private fun launchPhotos(maxItems: Int = 10) {
         val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             Intent(MediaStore.ACTION_PICK_IMAGES).apply {
                 type = "*/*"
-                putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, 10)
+                putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, maxItems)
             }
         } else {
             Intent(Intent.ACTION_GET_CONTENT).apply {
@@ -725,17 +725,6 @@ class MainActivity : Activity() {
                 putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
                 putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             }
-        }
-        launchIntent(intent, FILE_CHOOSER_REQUEST)
-    }
-
-    /** Native Android document picker for Status media, without changing other upload pickers. */
-    private fun launchStatusFiles() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "*/*"
-            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
-            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
         }
         launchIntent(intent, FILE_CHOOSER_REQUEST)
     }
