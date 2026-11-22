@@ -535,7 +535,9 @@ export class AnalyticsEngine {
       metric: `${entityType}.${periodType === 'day' ? 'dau' : periodType === 'week' ? 'wau' : 'mau'}`,
       period: grain,
       data: result,
-      total: result.reduce((sum, p) => sum + p.value, 0),
+      // A user active in multiple buckets counts once in the period total.
+      // Summing bucket values inflates WAU/MAU and executive dashboard KPIs.
+      total: new Set(events.map(event => event.userId).filter(Boolean)).size,
       average: result.length > 0 ? result.reduce((sum, p) => sum + p.value, 0) / result.length : 0,
     };
   }
