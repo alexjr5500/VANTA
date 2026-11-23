@@ -620,6 +620,7 @@ useEffect(() => {
           source={source}
           selected={items}
           selectionLimit={capacity}
+          error={mediaError || error}
           onGallery={openGalleryPicker}
           onCameraPhoto={openCameraPhoto}
           onCameraVideo={openCameraVideo}
