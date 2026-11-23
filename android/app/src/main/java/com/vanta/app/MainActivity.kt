@@ -185,7 +185,12 @@ class MainActivity : Activity() {
             addJavascriptInterface(VantaNativeGalleryBridge(), "VantaNativeGallery")
             addJavascriptInterface(VantaNativeVideoSaveBridge(), "VantaNativeVideo")
             settings.domStorageEnabled = true
-            settings.mediaPlaybackRequiresUserGesture = true
+            // Voice/video calls and remote LiveKit tracks may start after an
+            // incoming-call signal rather than a new browser click.
+            settings.mediaPlaybackRequiresUserGesture = false
+            // Chat Location uses navigator.geolocation inside this trusted WebView.
+            // Android app permissions alone cannot override disabled WebSettings.
+            settings.setGeolocationEnabled(true)
             settings.allowFileAccess = false
             settings.allowContentAccess = false
             settings.javaScriptCanOpenWindowsAutomatically = false
@@ -427,7 +432,14 @@ class MainActivity : Activity() {
         if (request.resources.contains(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE) && hasPermission(Manifest.permission.RECORD_AUDIO)) {
             allowed.add(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE)
         }
-        if (allowed.isNotEmpty()) request.grant(allowed.toTypedArray()) else request.deny()
+        // WebRTC needs all requested media resources. A partial grant (e.g.
+        // mic granted but camera denied) makes combined getUserMedia fail
+        // unpredictably, so explicitly deny instead of returning a bad stream.
+        if (allowed.size == androidPermissionsFor(request).size && allowed.isNotEmpty()) {
+            request.grant(allowed.toTypedArray())
+        } else {
+            request.deny()
+        }
     }
 
     private fun processPendingWebPermissions() {
