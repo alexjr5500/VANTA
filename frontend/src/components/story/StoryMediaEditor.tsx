@@ -202,6 +202,8 @@ export default function StoryMediaEditor({ source, initialFiles, onBack, onText,
   const toast = useToast();
 
   const [items, setItems] = useState<DraftMedia[]>([]);
+  // Choose media in the gallery before opening the photo/video editor.
+  const [showMediaPreview, setShowMediaPreview] = useState(false);
   const itemsRef = useRef<DraftMedia[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [caption, setCaption] = useState('');
@@ -381,6 +383,7 @@ useEffect(() => {
       const target = index >= 0 ? items[index] : undefined;
       const next = items.filter((item) => item.id !== id);
       setItems(next);
+      if (next.length === 0) setShowMediaPreview(false);
       if (target) {
         try {
           URL.revokeObjectURL(target.objectUrl);
@@ -410,6 +413,7 @@ useEffect(() => {
     itemsRef.current = [];
     setItems([]);
     setActiveId(null);
+    setShowMediaPreview(false);
     setCaption('');
     setError('');
     setMediaError('');
@@ -579,8 +583,8 @@ useEffect(() => {
       <header className="relative flex h-[76px] shrink-0 items-center justify-between px-4">
         <button
           type="button"
-          onClick={() => (items.length > 0 ? discardAll() : onBack ? onBack() : onClose())}
-          aria-label={items.length > 0 ? 'Discard selected media' : 'Close Add status'}
+          onClick={() => (showMediaPreview && !publishing ? setShowMediaPreview(false) : items.length > 0 ? discardAll() : onBack ? onBack() : onClose())}
+          aria-label={showMediaPreview && !publishing ? 'Back to selected media' : items.length > 0 ? 'Discard selected media' : 'Close Add status'}
           className="grid h-11 w-11 place-items-center text-white transition hover:bg-white/[0.06]"
         >
           {items.length > 0 ? <ArrowLeft size={24} /> : <X size={28} />}
@@ -611,12 +615,16 @@ useEffect(() => {
           cancellable={activeJobs.filter((job) => job.phase === 'starting' || job.phase === 'uploading').length}
           onClose={onClose}
         />
-      ) : items.length === 0 ? (
+      ) : !showMediaPreview ? (
         <StatusGallerySheet
           source={source}
+          selected={items}
+          selectionLimit={capacity}
           onGallery={openGalleryPicker}
           onCameraPhoto={openCameraPhoto}
           onCameraVideo={openCameraVideo}
+          onRemove={removeItem}
+          onNext={() => setShowMediaPreview(true)}
           onText={onText}
         />
       ) : (
@@ -665,7 +673,7 @@ useEffect(() => {
           )}
         </>
       )}
-{!publishing && items.length > 0 && (
+{!publishing && showMediaPreview && items.length > 0 && (
         <div className="flex shrink-0 items-center gap-2 overflow-x-auto px-3 pb-1 scrollbar-hide" aria-label="Selected media">
           {items.map((item, index) => (
             <div key={item.id} className="relative shrink-0">
@@ -723,7 +731,7 @@ useEffect(() => {
           </button>
         </div>
       )}
-{!publishing && items.length > 0 && (
+{!publishing && showMediaPreview && items.length > 0 && (
         <>
           {/* Media toolbar */}
           <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 px-4 pb-1.5">
@@ -785,7 +793,7 @@ useEffect(() => {
       )}
 
       {/* Publish bar */}
-      {!publishing && items.length > 0 && (
+      {!publishing && showMediaPreview && items.length > 0 && (
         <footer
           className="shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-4 pt-3"
           style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--vanta-kb, 0px) + 16px)' }}
