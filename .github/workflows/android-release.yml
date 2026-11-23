@@ -55,7 +55,7 @@ jobs:
 
       - name: Write release identity
         run: |
-          printf 'commit=%s\\nrun=%s\\nversionCode=%s\\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_NUMBER" > android/release-build-info.txt
+          printf 'commit=%s\nrun=%s\nversionCode=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_NUMBER" > android/release-build-info.txt
 
       - name: Upload production APK and AAB
         uses: actions/upload-artifact@v4
