@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ArrowRight, Camera, ChevronDown, Film, Image as ImageIcon, Pencil, Plus, X } from 'lucide-react';
+import { ArrowRight, ChevronDown, Film, Image as ImageIcon, Pencil, Plus, X } from 'lucide-react';
 import type { MediaStorySource } from '@/components/story/StoryMediaEditor';
 import { getStatusGallerySelection, type StatusGalleryMedia } from '@/lib/statusGallerySelection';
 import { formatVideoTime } from '@/lib/videoTrim';
@@ -44,7 +44,6 @@ export default function StatusGallerySheet({
   onPickRecent,
   onGrantGallery,
   onGallery,
-  onCameraPhoto,
   onRemove,
   onNext,
   onText,
@@ -69,11 +68,6 @@ export default function StatusGallerySheet({
         </div>
 
         <section className="grid grid-cols-3 gap-[3px]" aria-label="Recent and selected Status photos and videos">
-          <button type="button" onClick={onCameraPhoto} aria-label="Take a photo" className="flex aspect-square flex-col items-center justify-center gap-2 bg-[#0b1116] text-[#3aa66e] transition hover:bg-[#152027]">
-            <Camera size={31} />
-            <span className="text-sm text-white/60">Camera</span>
-          </button>
-
           {tiles.filter(item => nativeGalleryStatus !== 'ready' || !item.nativeMediaId).map((item) => (
             <div key={item.id} className="relative aspect-square overflow-hidden bg-[#1e262e]">
               {item.previewUrl ? (
@@ -144,7 +138,7 @@ export default function StatusGallerySheet({
       </div>
 
       {count > 0 && (
-        <footer className="shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-4 pt-3" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)' }}>
+        <footer className="shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-4 pt-3" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 6px)' }}>
           <button type="button" onClick={onNext} className="flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[#c9a227] text-[15px] font-bold text-black transition hover:bg-[#dfbd55] active:scale-[0.99]" aria-label={`Preview ${count} selected Status items`}>
             Next ({count}) <ArrowRight size={19} />
           </button>
