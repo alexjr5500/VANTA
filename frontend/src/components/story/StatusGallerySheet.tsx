@@ -1,21 +1,13 @@
 'use client';
 
 import React from 'react';
-import { ArrowRight, Camera, ChevronDown, Film, Image as ImageIcon, Pencil, Plus, Video, X } from 'lucide-react';
+import { ArrowRight, Camera, ChevronDown, Film, Image as ImageIcon, Pencil, Plus, X } from 'lucide-react';
 import type { MediaStorySource } from '@/components/story/StoryMediaEditor';
 import { getStatusGallerySelection, type StatusGalleryMedia } from '@/lib/statusGallerySelection';
 import { formatVideoTime } from '@/lib/videoTrim';
+import type { NativeRecentMedia, NativeGalleryStatus } from '@/lib/nativeStatusGallery';
 
 type SelectedStatusMedia = StatusGalleryMedia;
-
-export interface NativeRecentMedia {
-  id: string;
-  name: string;
-  mimeType: string;
-  size: number;
-  thumbnailUrl: string;
-  mediaUrl: string;
-}
 
 interface StatusGallerySheetProps {
   source: MediaStorySource;
@@ -23,7 +15,7 @@ interface StatusGallerySheetProps {
   selectionLimit: number;
   error?: string;
   recentMedia?: ReadonlyArray<NativeRecentMedia>;
-  nativeGalleryStatus?: 'loading' | 'permission' | 'ready' | 'unavailable' | 'error';
+  nativeGalleryStatus?: NativeGalleryStatus;
   pickingRecentId?: string | null;
   onPickRecent?: (item: NativeRecentMedia) => void;
   onGrantGallery?: () => void;
@@ -43,7 +35,6 @@ interface StatusGallerySheetProps {
  * permission: Recents explicitly invokes the native photo picker instead.
  */
 export default function StatusGallerySheet({
-  source,
   selected,
   selectionLimit,
   error,
@@ -54,7 +45,6 @@ export default function StatusGallerySheet({
   onGrantGallery,
   onGallery,
   onCameraPhoto,
-  onCameraVideo,
   onRemove,
   onNext,
   onText,
@@ -110,7 +100,7 @@ export default function StatusGallerySheet({
           ))}
 
           {recentMedia.map((item) => {
-            const selectedAlready = selected.some(file => file.name === item.name && file.file.size === item.size);
+            const selectedAlready = selected.some(file => file.name === item.name);
             return (
               <button
                 type="button"
@@ -129,19 +119,13 @@ export default function StatusGallerySheet({
             );
           })}
 
-          {canAddMore && (
+          {canAddMore && (nativeGalleryStatus !== 'ready' || recentMedia.length === 0) && (
             <button type="button" onClick={onGallery} aria-label={count ? 'Choose more photos and videos' : 'Browse recent photos and videos'} className="flex aspect-square flex-col items-center justify-center gap-2 bg-[#1e262e] text-white/85 transition hover:bg-[#2a3540]">
               {count ? <Plus size={29} /> : <ImageIcon size={30} />}
               <span className="px-1 text-center text-sm">{count ? 'Add more' : 'Photos & videos'}</span>
             </button>
           )}
 
-          {count === 0 && (
-            <button type="button" onClick={onCameraVideo} aria-label="Record a video" className="flex aspect-square flex-col items-center justify-center gap-2 bg-[#1e262e] text-white/85 transition hover:bg-[#2a3540]">
-              <Video size={30} />
-              <span className="text-sm">Record video</span>
-            </button>
-          )}
         </section>
 
         {error && <p role="alert" className="px-5 pt-4 text-center text-xs leading-5 text-[#ff9b9b]">{error}</p>}
