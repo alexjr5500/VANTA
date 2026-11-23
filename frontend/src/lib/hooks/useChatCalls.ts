@@ -195,7 +195,9 @@ function postToServiceWorker(message: Record<string, unknown>): void {
 const readPermissionError = (error: unknown): string => {
   const name = error instanceof DOMException ? error.name : (error as any)?.name;
   if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-    return 'Microphone/camera access was blocked. Allow access in your browser settings to use calling.';
+    return typeof navigator !== 'undefined' && navigator.userAgent.includes('VANTAAndroid')
+      ? 'Allow Microphone and Camera in Android Settings → Apps → VANTA → Permissions, then retry the call.'
+      : 'Microphone/camera access was blocked. Allow access in your browser settings to use calling.';
   }
   if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
     return 'No microphone or camera was found on this device.';
