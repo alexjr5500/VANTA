@@ -321,9 +321,18 @@ async function runUpload(
   } catch (error) {
     const cancelled = isAbortError(error) || (error instanceof ApiError && error.statusCode === 499);
     if (cancelled) {
-      // Cancelled sessions still own an unpublished Story/Reel draft. Clean
-      // it server-side (the fail endpoint explicitly preserves PUBLISHED rows).
-      // Finish the cleanup before showing Retry to avoid racing a new attempt.
+      // Cancel the server session only AFTER the client transfer has stopped.
+      // Cancellation may happen before init returns the session ID; cleaning up
+      // here prevents orphaned chunks in that case.
+      if (job.sessionId) {
+        try {
+          await withUploadAuth(auth, token => apiPost(`/api/upload/chunk/${job.sessionId}/abort`, {}, token));
+        } catch {
+          // May already be completed or network unavailable; safe to continue.
+        }
+      }
+      // Cancelled sessions still own an unpublished Story/Reel draft. Clean it
+      // server-side before showing Retry, avoiding a concurrent fail/uploading race.
       try {
         await withUploadAuth(auth, token => apiPost(`/api/${job.kind === 'story' ? 'stories' : 'reels'}/${job.draftId}/fail`, {}, token));
       } catch {
@@ -441,12 +450,9 @@ export function retryUpload(job: UploadJob): void {
 export function cancelUpload(job: UploadJob): void {
   const controller = running.get(job.id);
   if (controller) {
+    // runUpload owns the ordered abort -> fail cleanup, even if the session ID
+    // is not known until the pending /init call finishes.
     controller.abort();
-    const auth = jobCredentials.get(job.id);
-    if (job.sessionId && auth) {
-      void withUploadAuth(auth, token => apiPost(`/api/upload/chunk/${job.sessionId}/abort`, {}, token))
-        .catch(() => undefined);
-    }
   } else {
     jobList = jobList.filter((item) => item.id !== job.id);
     FILE_CACHE.delete(job.id);
