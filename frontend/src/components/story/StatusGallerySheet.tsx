@@ -131,25 +131,15 @@ export default function StatusGallerySheet({
 
         {error && <p role="alert" className="px-5 pt-4 text-center text-xs leading-5 text-[#ff9b9b]">{error}</p>}
 
-        {nativeGalleryStatus !== 'ready' && (
-          <div className="px-6 py-6 text-center">
-            <p className="text-sm text-white/60">
-              {nativeGalleryStatus === 'loading'
-                ? 'Loading your recent photos…'
-                : nativeGalleryStatus === 'permission'
-                  ? 'Allow VANTA access to your selected photos to show them here.'
-                  : 'Choose Photos & videos to browse your device gallery.'}
-            </p>
-            {nativeGalleryStatus === 'permission' && onGrantGallery && (
-              <button type="button" onClick={onGrantGallery} className="mt-3 rounded-lg bg-[#c9a227] px-4 py-2 text-sm font-semibold text-black">
-                Show recent photos
-              </button>
-            )}
-            <p className="mt-2 text-xs text-white/40">Photos stay on your phone until you choose to post them.</p>
+        {nativeGalleryStatus === 'permission' && onGrantGallery && (
+          <div className="flex justify-center px-5 py-4">
+            <button type="button" onClick={onGrantGallery} className="rounded-lg bg-[#c9a227] px-4 py-2 text-sm font-semibold text-black">
+              Show recent photos
+            </button>
           </div>
         )}
-        {nativeGalleryStatus === 'ready' && recentMedia.length === 0 && !count && (
-          <p className="px-6 py-6 text-center text-sm text-white/60">No accessible recent photos. Use Photos & videos to choose from Android.</p>
+        {nativeGalleryStatus === 'loading' && (
+          <p role="status" className="px-5 py-3 text-center text-xs text-white/50">Loading recent photos…</p>
         )}
       </div>
 
