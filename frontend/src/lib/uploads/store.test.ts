@@ -331,4 +331,41 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
     expect(store.getJobs().find(item => item.id === job.id)).toBeUndefined();
   });
 
+
+  test('recovers a missing provider access token before creating a Status draft', async () => {
+    let current: string | null = null;
+    const renew = vi.fn(async () => {
+      current = 'renewed';
+      return current;
+    });
+    const postDraft = vi.fn(async (accessToken: string) => ({ id: 'draft-renewed', accessToken }));
+    const result = await store.requestWithUploadAuth('old', () => current, renew, postDraft);
+    expect(result).toEqual({ id: 'draft-renewed', accessToken: 'renewed' });
+    expect(renew).toHaveBeenCalledTimes(1);
+    expect(postDraft).toHaveBeenCalledTimes(1);
+  });
+
+  test('replays only unauthorized draft requests, not validation errors', async () => {
+    const { ApiError } = await import('@/lib/api');
+    let token = 'old';
+    const renew = vi.fn(async () => {
+      token = 'new';
+      return token;
+    });
+    const draftRequest = vi.fn(async (accessToken: string) => {
+      if (accessToken === 'old') throw new ApiError(401, 'Expired access token');
+      return { id: 'draft-ok' };
+    });
+    await expect(store.requestWithUploadAuth('old', () => token, renew, draftRequest))
+      .resolves.toEqual({ id: 'draft-ok' });
+    expect(renew).toHaveBeenCalledTimes(1);
+    expect(draftRequest).toHaveBeenCalledTimes(2);
+
+    const badDraft = vi.fn(async () => { throw new ApiError(400, 'Invalid caption'); });
+    await expect(store.requestWithUploadAuth('new', () => token, renew, badDraft))
+      .rejects.toThrow('Invalid caption');
+    expect(renew).toHaveBeenCalledTimes(1);
+    expect(badDraft).toHaveBeenCalledTimes(1);
+  });
+
 });
