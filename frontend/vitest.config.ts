@@ -2,6 +2,9 @@ import { defineConfig } from "vitest/config";
 import path from "path";
 
 export default defineConfig({
+  // Next.js keeps JSX intact for SWC, while Vitest needs a Node-compatible
+  // transform to import React components in UI regression tests.
+  esbuild: { jsx: "automatic", jsxImportSource: "react" },
   test: {
     // Default to the `node` environment: the curated unit tests here (media URL
     // resolution, upload helpers) are pure logic. If a DOM is ever needed,
