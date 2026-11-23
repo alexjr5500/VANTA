@@ -32,6 +32,23 @@ describe('Cloudinary upload storage configuration', () => {
     expect(() => isCloudinaryStorageConfigured(env)).toThrow('Incomplete Cloudinary configuration');
   });
 
+  it('fails closed when Cloudinary storage mode is explicitly requested without credentials', () => {
+    expect(() => isCloudinaryStorageConfigured({
+      VANTA_DURABLE_QUEUE_MEDIA_STORAGE: 'cloudinary',
+    })).toThrow('Cloudinary storage mode requires all Cloudinary credentials');
+    expect(isCloudinaryStorageConfigured({
+      ...valid,
+      VANTA_DURABLE_QUEUE_MEDIA_STORAGE: 'cloudinary',
+    })).toBe(true);
+  });
+
+  it('preserves local fallback only when the Cloudinary mode was not requested', () => {
+    expect(isCloudinaryStorageConfigured({
+      VANTA_DURABLE_QUEUE_MEDIA_STORAGE: 'local',
+    })).toBe(false);
+    expect(isCloudinaryStorageConfigured({})).toBe(false);
+  });
+
   it('does not reveal provided secret values in errors', () => {
     expect(() => isCloudinaryStorageConfigured({
       CLOUDINARY_API_SECRET: 'never-expose-this-secret',

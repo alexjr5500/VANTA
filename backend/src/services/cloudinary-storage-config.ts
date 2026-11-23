@@ -14,5 +14,11 @@ export function isCloudinaryStorageConfigured(
       'CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET, or remove all three',
     );
   }
+  // An explicitly selected Cloudinary worker/producer topology must never
+  // silently fall back to ephemeral local disk while waiting for credentials.
+  // The default local mode remains valid for development and legacy services.
+  if (env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE === 'cloudinary' && configured.length === 0) {
+    throw new Error('Cloudinary storage mode requires all Cloudinary credentials');
+  }
   return configured.length === names.length;
 }

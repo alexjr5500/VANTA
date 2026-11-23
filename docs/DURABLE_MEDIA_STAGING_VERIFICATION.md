@@ -10,13 +10,14 @@ Green GitHub CI proves code-level regressions, not Cloudinary account access, su
 - The worker has a volume at `/data/uploads`; the HTTP backend has no volume. Railway service volumes are **not shared**. This disqualifies the local-filesystem worker path from end-to-end verification with the existing backend.
 - Neither the staging HTTP service nor the staging worker currently defines any `CLOUDINARY_*` variables. Do not add actual credentials to Git, CI logs, or documentation.
 - Worker media processing is not enabled. The enabled/disabled value should be checked from the staging runtime before attempting acceptance.
+- A separate `VANTA-Media-HTTP-Acceptance-Staging` service is **staged, not deployed** in Railway staging (service ID `810d5bba-675a-42be-b29f-91ab79e07eba`). Its source is pinned to the PR commit used when staging it; recheck and re-pin the exact final reviewed commit before any deployment. The staged patch changes only this new service, and all media flags are false. It deliberately has **no** database URL or Cloudinary credentials yet. Do not apply the patch until isolated database and credential provisioning is complete.
 
 ## Preferred isolated staging topology
 
 1. Create or reuse a **separately named staging-only HTTP test service** at the *exact PR #282 commit*, rather than changing the current staging backend. Confirm the test service uses a staging-only URL, JWT secrets, uploaded media, Cloudinary account/folder, and PostgreSQL database. Never use production credentials, volumes or database.
 2. Ensure the staging database has the durable queue migration and nullable `UploadedFile.optimizedUrl`, `thumbnailUrl`, `hlsUrl` columns. Record the migration versions and verify them against that staging database before uploading.
-3. Provision staging-only Cloudinary credentials in both isolated test HTTP and durable worker services: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`. They must all be set. Check names/presence without printing values.
-4. Confirm the worker is on the **same commit SHA and database** as the staging-only HTTP test service and configured with `VANTA_DURABLE_QUEUE_MEDIA_STORAGE=cloudinary`.
+3. Do not accept/deploy the staged HTTP test service before providing independent staging `DATABASE_URL`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `ENCRYPTION_KEY`, `ENCRYPTION_SALT`, and any other required startup variables via the Railway secure dashboard. The account/database must not be used by the existing staging backend or production. Provision staging-only Cloudinary credentials in both isolated test HTTP and durable worker services: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`. They must all be set. Check names/presence without printing values.
+4. Provision an isolated worker (or safely reconfigure a dedicated worker) on the **same commit SHA and isolated database** as the staging-only HTTP test service and configured with `VANTA_DURABLE_QUEUE_MEDIA_STORAGE=cloudinary`.
 5. Keep `VANTA_DURABLE_QUEUE_MEDIA_HANDLERS`, `VANTA_DURABLE_QUEUE_MEDIA_PRODUCER`, and `VANTA_DURABLE_QUEUE_MEDIA_DELIVERY` **unset/false** until the isolated services, migrations, Cloudinary account and rollback controls are independently verified. Then enable the required flags only in staging, in a controlled acceptance window.
 
 ## Cloudinary mode: end-to-end acceptance
@@ -42,7 +43,7 @@ For `VANTA_DURABLE_QUEUE_MEDIA_STORAGE=local`, backend uploads and worker output
 - PR #282 must have green frontend/backend/build/secret scans **at the final head commit**.
 - Finish staging upload-to-worker-to-playback acceptance, plus monitoring, error alerts, backup restore, resource/cost baselines and rollback evidence. Do not claim system phases 6.6–6.12 are finished from CI alone.
 - Investigate the previously reported missing production uploads using verified backups only; never silently remove their database references.
-- Do not change production configuration or start production media workers without a separately approved rollout.
+- An explicitly requested `VANTA_DURABLE_QUEUE_MEDIA_STORAGE=cloudinary` now fails startup if Cloudinary credentials are entirely absent, so the isolated test service cannot accidentally revert to disk storage. Partial credentials remain rejected. Do not change production configuration or start production media workers without a separately approved rollout.
 
 ## Read-only public HLS probe
 
