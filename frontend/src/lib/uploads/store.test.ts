@@ -274,4 +274,32 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
     chunkSends.mockRestore();
   });
 
+
+  test('reuses a token rotated by AuthProvider during an in-flight 401 without another refresh', async () => {
+    const { ApiError } = await import('@/lib/api');
+    let latestToken = 'old-token';
+    const renew = vi.fn(async () => 'unnecessarily-refreshed-token');
+    (apiPost as any).mockImplementation((path: string, _payload: unknown, token: string) => {
+      if (path.endsWith('/uploading') && token === 'old-token') {
+        latestToken = 'new-token';
+        return Promise.reject(new ApiError(401, 'Old request completed after token rotation'));
+      }
+      if (path.includes('/chunk/init')) return Promise.resolve({ sessionId: 'sess-rotated' });
+      if (path.includes('/chunk/complete')) return Promise.resolve({ id: 'file-rotated' });
+      return Promise.resolve({});
+    });
+    const job = store.startUpload({
+      kind: 'story',
+      file: new File(['photo'], 'status.jpg', { type: 'image/jpeg' }),
+      draftId: 'story-rotated',
+      token: latestToken,
+      getAccessToken: () => latestToken,
+      renewAccessToken: renew,
+      meta: { mimeType: 'image/jpeg' },
+    });
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('completed'));
+    expect(renew).not.toHaveBeenCalled();
+    expect(apiPost).toHaveBeenCalledWith('/api/upload/chunk/init', expect.anything(), 'new-token');
+  });
+
 });
