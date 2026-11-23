@@ -190,7 +190,9 @@ export function mapMediaError(error: unknown, kind: MediaPermission): Permission
     return {
       kind: 'DENIED',
       title: `${label} access is blocked`,
-      message: `To use the ${lower}, open the Chrome site permissions for VANTA and allow ${label} access, then try again.`,
+      message: typeof navigator !== 'undefined' && navigator.userAgent.includes('VANTAAndroid')
+        ? `Allow ${label} in Android Settings → Apps → VANTA → Permissions, then retry.`
+        : `To use the ${lower}, open the Chrome site permissions for VANTA and allow ${label} access, then try again.`,
       techDetail: rawMessage,
     };
   }
