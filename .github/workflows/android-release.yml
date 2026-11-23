@@ -51,7 +51,11 @@ jobs:
 
       - name: Build signed release APK and App Bundle
         working-directory: android
-        run: gradle --no-daemon --stacktrace assembleRelease bundleRelease
+        run: gradle --no-daemon --stacktrace -PvantaReleaseVersionCode="${GITHUB_RUN_NUMBER}" assembleRelease bundleRelease
+
+      - name: Write release identity
+        run: |
+          printf 'commit=%s\\nrun=%s\\nversionCode=%s\\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_NUMBER" > android/release-build-info.txt
 
       - name: Upload production APK and AAB
         uses: actions/upload-artifact@v4
@@ -60,5 +64,6 @@ jobs:
           path: |
             android/app/build/outputs/apk/release/*.apk
             android/app/build/outputs/bundle/release/*.aab
+            android/release-build-info.txt
           if-no-files-found: error
           retention-days: 14
