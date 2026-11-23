@@ -220,6 +220,7 @@ export class ChunkUploadService {
     const receivedChunks = receivedIndexes.length;
     return {
       sessionId,
+      status: session.status,
       totalChunks: session.totalChunks,
       chunkSize: session.chunkSize,
       fileSize: session.fileSize,
