@@ -26,6 +26,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -47,6 +48,8 @@ import java.util.UUID
 class MainActivity : Activity() {
     private lateinit var webView: WebView
     private val nativeShareNonce = UUID.randomUUID().toString()
+    private val nativeGallery by lazy { NativeStatusGallery(this, VANTA_ORIGIN) }
+    @Volatile private var galleryPageTrusted = false
     private var pendingFileCallback: android.webkit.ValueCallback<Array<Uri>>? = null
     private var pendingCameraUri: Uri? = null
     private var acceptedFileTypes: Array<String> = emptyArray()
@@ -70,6 +73,7 @@ class MainActivity : Activity() {
         private const val CAMERA_URI_STATE = "vanta.pending.camera.uri"
         private const val LOCATION_PERMISSION_REQUEST = 4109
         private const val WEB_MEDIA_PERMISSION_REQUEST = 4110
+        private const val STATUS_GALLERY_PERMISSION_REQUEST = 4112
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -178,6 +182,7 @@ class MainActivity : Activity() {
 
             settings.javaScriptEnabled = true
             addJavascriptInterface(VantaNativeShareBridge(), "VantaNative")
+            addJavascriptInterface(VantaNativeGalleryBridge(), "VantaNativeGallery")
             addJavascriptInterface(VantaNativeVideoSaveBridge(), "VantaNativeVideo")
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = true
@@ -196,6 +201,14 @@ class MainActivity : Activity() {
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
 
             webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                    galleryPageTrusted = false
+                    super.onPageStarted(view, url, favicon)
+                }
+
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+                    nativeGallery.intercept(request, galleryPageTrusted, hasStatusGalleryAccess())
+
                 override fun shouldOverrideUrlLoading(
                     view: WebView,
                     request: WebResourceRequest
@@ -212,8 +225,10 @@ class MainActivity : Activity() {
 
                 override fun onPageFinished(view: WebView, url: String?) {
                     super.onPageFinished(view, url)
+                    galleryPageTrusted = isTrustedPage(url)
                     applySystemBottomInset()
                     publishNativeShareNonce(view, url)
+                    publishNativeGalleryNonce(view, url)
                     publishNativeFcmToken()
                 }
 
@@ -366,6 +381,9 @@ class MainActivity : Activity() {
                 pendingGeolocationCallback = null
                 pendingGeolocationOrigin = null
             }
+            STATUS_GALLERY_PERMISSION_REQUEST -> {
+                notifyNativeGalleryChanged()
+            }
             WEB_MEDIA_PERMISSION_REQUEST -> {
                 val asked = webPermissionsAsked
                 webPermissionsAsked = emptySet()
@@ -452,6 +470,77 @@ class MainActivity : Activity() {
     private fun publishNativeShareNonce(view: WebView, url: String?) {
         if (!isTrustedPage(url)) return
         view.evaluateJavascript("window.__VANTA_NATIVE_SHARE_NONCE = '$nativeShareNonce';", null)
+    }
+
+    private fun hasStatusGalleryAccess(): Boolean {
+        return when {
+            Build.VERSION.SDK_INT >= 34 ->
+                hasPermission(Manifest.permission.READ_MEDIA_IMAGES) ||
+                    hasPermission(Manifest.permission.READ_MEDIA_VIDEO) ||
+                    hasPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+            Build.VERSION.SDK_INT >= 33 ->
+                hasPermission(Manifest.permission.READ_MEDIA_IMAGES) ||
+                    hasPermission(Manifest.permission.READ_MEDIA_VIDEO)
+            else -> hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+    }
+
+    private fun requestStatusGalleryAccess() {
+        if (!isTrustedPage(webView.url)) return
+        if (hasStatusGalleryAccess()) {
+            notifyNativeGalleryChanged()
+            return
+        }
+        val required = when {
+            Build.VERSION.SDK_INT >= 34 -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            )
+            Build.VERSION.SDK_INT >= 33 -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO
+            )
+            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        requestPermissions(required, STATUS_GALLERY_PERMISSION_REQUEST)
+    }
+
+    private fun notifyNativeGalleryChanged() {
+        if (!::webView.isInitialized || !isTrustedPage(webView.url)) return
+        webView.evaluateJavascript(
+            "window.dispatchEvent(new Event('vanta-native-gallery-changed'));", null
+        )
+    }
+
+    private fun publishNativeGalleryNonce(view: WebView, url: String?) {
+        if (!isTrustedPage(url)) return
+        view.evaluateJavascript(
+            "window.__VANTA_NATIVE_GALLERY_NONCE__ = '" + nativeGallery.nonce + "';" +
+                "window.dispatchEvent(new Event('vanta-native-gallery-ready'));",
+            null
+        )
+    }
+
+    /**
+     * Calls from iframes must not gain photo access. The nonce is delivered
+     * exclusively to the trusted top-level VANTA page, not returned by the bridge.
+     */
+    inner class VantaNativeGalleryBridge {
+        @JavascriptInterface
+        fun listRecent(nonce: String?): String {
+            if (nonce != nativeGallery.nonce || !galleryPageTrusted) {
+                return """{"status":"unavailable","items":[]}"""
+            }
+            return nativeGallery.listRecent(hasStatusGalleryAccess())
+        }
+
+        @JavascriptInterface
+        fun requestAccess(nonce: String?) {
+            if (nonce != nativeGallery.nonce || !galleryPageTrusted) return
+            runOnUiThread {
+                if (isTrustedPage(webView.url)) requestStatusGalleryAccess()
+            }
+        }
     }
 
     inner class VantaNativeShareBridge {
