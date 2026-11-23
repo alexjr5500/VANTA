@@ -2,6 +2,7 @@ import { MAX_STATUS_MEDIA_FILES } from '@/lib/storyMedia';
 
 export interface StatusGalleryMedia {
   id: string;
+  nativeMediaId?: string;
   name: string;
   kind: 'image' | 'video';
   thumbUrl: string | null;

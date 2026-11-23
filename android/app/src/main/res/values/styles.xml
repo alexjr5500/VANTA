@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Match the native starting window to VANTA's app-level --vanta-black. -->
+    <!-- Match the native starting window to VANTA's app-level dark background color. -->
     <color name="vanta_launch_background">#1F2630</color>
 
     <style name="Theme.Vanta" parent="@android:style/Theme.Material.NoActionBar">

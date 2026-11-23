@@ -1,0 +1,39 @@
+name: Android native compile check
+
+on:
+  push:
+    branches:
+      - fix/status-inline-android-gallery
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-compile-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  android-compile:
+    name: Compile Android production Kotlin and resources
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      # Ubuntu runners already ship Android SDK command line tools. Avoid the
+      # setup-android action's obsolete "sdkmanager tools" package request.
+      - name: Install Android SDK
+        run: |
+          SDKMANAGER="$(find /usr/local/lib/android/sdk/cmdline-tools -type f -name sdkmanager | head -n 1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Compile release Kotlin and Android resources
+        working-directory: android
+        run: gradle --no-daemon --stacktrace :app:compileReleaseKotlin :app:processReleaseResources
