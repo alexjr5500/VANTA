@@ -104,11 +104,11 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
   useEffect(() => {
     setConfirmedViews(null);
     const node = viewArticleRef.current;
-    if (!node || !token || !item.id || item.type === 'live' || typeof IntersectionObserver === 'undefined') return;
+    // A visible Post is an impression. Do not fake Reel watch time here:
+    // actual Reel views are recorded by its playback flow.
+    if (!node || !token || !item.id || item.type === 'live' || isVideoItem(item) || typeof IntersectionObserver === 'undefined') return;
     let requested = false;
     let impressionTimer: number | null = null;
-    const reel = isVideoItem(item);
-    const endpoint = reel ? '/api/reels' : '/api/feed';
     const observer = new IntersectionObserver(([entry]) => {
       if (entry.isIntersecting && entry.intersectionRatio >= 0.25) {
         if (impressionTimer !== null || requested) return;
@@ -116,8 +116,8 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
           impressionTimer = null;
           requested = true;
           void apiPost<{ counted: boolean; views: number }>(
-            `${endpoint}/${encodeURIComponent(cleanId(item))}/views`,
-            reel ? { watchTime: 2 } : {},
+            `/api/feed/${encodeURIComponent(cleanId(item))}/views`,
+            {},
             token,
           ).then(result => {
             if (Number.isFinite(Number(result.views))) setConfirmedViews(Number(result.views));
