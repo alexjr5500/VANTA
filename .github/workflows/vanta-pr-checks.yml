@@ -92,6 +92,7 @@ jobs:
           src/__tests__/account-status.test.ts
           src/__tests__/call-session.service.test.ts
           src/__tests__/story.service.test.ts
+          src/__tests__/chunk-upload.service.test.ts
           src/__tests__/live.service.test.ts
           src/__tests__/compliance.active-schema.test.ts
           src/__tests__/content-removal.service.test.ts
