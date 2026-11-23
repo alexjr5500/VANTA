@@ -207,7 +207,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
         for (const video of videos) {
           if (!video.uploadedId) throw new Error('Video upload is missing its file ID. Please retry the upload.');
           const draft = await apiPost<{ video: { id: string } }>('/api/reels', {
-            title: (content.trim().split('\\n')[0] || video.name || 'Reel').slice(0, 120),
+            title: (content.trim().split('\n')[0] || video.name || 'Reel').slice(0, 120),
             description: caption || undefined,
           }, token ?? undefined);
           if (!draft?.video?.id) throw new Error('Could not create a Reel draft.');
