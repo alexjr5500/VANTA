@@ -24,7 +24,7 @@ Green GitHub CI proves code-level regressions, not Cloudinary account access, su
 - [ ] Confirm direct and resumable/chunked authenticated uploads use the expected staging Cloudinary account and create one `UploadedFile` record.
 - [ ] Upload a staging-only public image; request `cloudinary:image:optimize` and `cloudinary:thumbnail:generate`; verify WebP MIME, actual response bytes, dimensions, HTTP status, and their persisted URLs.
 - [ ] Upload a staging-only short MP4 as a Reel draft; finalize it and verify `UploadedFile.recordType=Video`, `recordId`, and the original MP4 URL remain correct.
-- [ ] Verify `cloudinary:video:transcode` writes a source-bound `hlsUrl`, with a readable master playlist **and** working variant playlists/media segments. A returned `*.m3u8` URL alone is not proof of playable HLS.
+- [ ] Verify `cloudinary:video:transcode` writes a source-bound `hlsUrl`, with a readable master playlist **and** working variant playlists/media segments. A returned `*.m3u8` URL alone is not proof of playable HLS. Run the read-only HLS probe against a **public staging-only** URL and save its result (command below).
 - [ ] Enable staging-only HLS delivery; verify feed and detail responses expose HLS **only for the currently linked, non-deleted upload**. Confirm native HLS playback and automatic fallback to MP4 on unsupported browsers, errors and expired URLs.
 - [ ] Confirm private message attachments, moderated/deleted media, replaced upload paths and unrelated Cloudinary accounts never receive public derivative URLs.
 - [ ] Repeat jobs, interrupt the worker, exhaust retries, restart it, and run two workers against the queue. Verify idempotency, lease ownership, no cross-mode job claims, and no public asset leakage.
@@ -43,3 +43,16 @@ For `VANTA_DURABLE_QUEUE_MEDIA_STORAGE=local`, backend uploads and worker output
 - Finish staging upload-to-worker-to-playback acceptance, plus monitoring, error alerts, backup restore, resource/cost baselines and rollback evidence. Do not claim system phases 6.6–6.12 are finished from CI alone.
 - Investigate the previously reported missing production uploads using verified backups only; never silently remove their database references.
 - Do not change production configuration or start production media workers without a separately approved rollout.
+
+## Read-only public HLS probe
+
+After building the backend and obtaining the **staging** `UploadedFile.hlsUrl` (not a private message URL), run in an isolated staging shell:
+
+```bash
+VANTA_STAGING_MEDIA_ACCEPTANCE=yes \
+  CLOUDINARY_CLOUD_NAME=<staging-cloud-name> \
+  VANTA_STAGING_HLS_URL=<staging-public-hls-url> \
+  npm --prefix backend run media:verify-hls
+```
+
+The probe only GETs the public Cloudinary master, each variant playlist, and a small byte range from one segment per variant. It checks the expected account, HTTPS, media responses, playlist completion, and nonempty transport-stream bytes. It **does not** authenticate Cloudinary, create uploads, start workers, validate a user session, or prove mobile playback. It rejects cross-account/external references and redirects. Test with staged assets only; keep test media URLs and account names out of public CI logs. Its result is an additional acceptance artifact, not a release approval.

@@ -13,6 +13,7 @@
     "prestart": "prisma generate",
     "start": "node dist/index.js",
     "worker:durable": "node dist/durable-worker.js",
+    "media:verify-hls": "node dist/media-hls-acceptance-cli.js",
     "test": "jest --config jest.config.js",
     "test:coverage": "jest --config jest.config.js --coverage",
     "test:watch": "jest --config jest.config.js --watch",
