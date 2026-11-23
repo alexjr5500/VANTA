@@ -1,18 +1,32 @@
 'use client';
 
 import React from 'react';
-import { ArrowRight, Camera, ChevronDown, Film, Image as ImageIcon, LayoutTemplate, Mic, Pencil, Plus, Video, X } from 'lucide-react';
+import { ArrowRight, Camera, ChevronDown, Film, Image as ImageIcon, Pencil, Plus, Video, X } from 'lucide-react';
 import type { MediaStorySource } from '@/components/story/StoryMediaEditor';
 import { getStatusGallerySelection, type StatusGalleryMedia } from '@/lib/statusGallerySelection';
 import { formatVideoTime } from '@/lib/videoTrim';
 
 type SelectedStatusMedia = StatusGalleryMedia;
 
+export interface NativeRecentMedia {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  thumbnailUrl: string;
+  mediaUrl: string;
+}
+
 interface StatusGallerySheetProps {
   source: MediaStorySource;
   selected: ReadonlyArray<SelectedStatusMedia>;
   selectionLimit: number;
   error?: string;
+  recentMedia?: ReadonlyArray<NativeRecentMedia>;
+  nativeGalleryStatus?: 'loading' | 'permission' | 'ready' | 'unavailable' | 'error';
+  pickingRecentId?: string | null;
+  onPickRecent?: (item: NativeRecentMedia) => void;
+  onGrantGallery?: () => void;
   onGallery: () => void;
   onCameraPhoto: () => void;
   onCameraVideo: () => void;
@@ -33,6 +47,11 @@ export default function StatusGallerySheet({
   selected,
   selectionLimit,
   error,
+  recentMedia = [],
+  nativeGalleryStatus = 'unavailable',
+  pickingRecentId,
+  onPickRecent,
+  onGrantGallery,
   onGallery,
   onCameraPhoto,
   onCameraVideo,
@@ -40,24 +59,15 @@ export default function StatusGallerySheet({
   onNext,
   onText,
 }: StatusGallerySheetProps) {
-  const camera = source === 'camera-photo' || source === 'camera-video';
   const { count, limit, canAddMore, tiles } = getStatusGallerySelection(selected, selectionLimit);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-[#121719]">
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide">
-        <section className="mx-auto grid w-full max-w-[440px] grid-cols-3 gap-2 px-7 pb-6 pt-2" aria-label="Status type">
-          <button type="button" onClick={onText} disabled={!onText} className="flex flex-col items-center gap-2.5 text-white/90 disabled:opacity-40">
-            <span className="grid h-[76px] w-[76px] place-items-center rounded-full bg-[#2a3034]"><Pencil size={28} /></span>
-            <span className="text-sm font-light">Text</span>
-          </button>
-          <button type="button" onClick={onText} disabled={!onText} className="flex flex-col items-center gap-2.5 text-white/90 disabled:opacity-40" aria-label="Choose a text Status layout">
-            <span className="grid h-[76px] w-[76px] place-items-center rounded-full bg-[#2a3034]"><LayoutTemplate size={29} /></span>
-            <span className="text-sm font-light">Layout</span>
-          </button>
-          <button type="button" disabled aria-label="Voice status is not yet supported" title="Voice status is not yet supported" className="flex flex-col items-center gap-2.5 text-white/40">
-            <span className="grid h-[76px] w-[76px] place-items-center rounded-full bg-[#2a3034]"><Mic size={30} /></span>
-            <span className="text-sm font-light">Voice</span>
+        <section className="flex items-center justify-center py-3" aria-label="Status type">
+          <button type="button" onClick={onText} disabled={!onText} className="flex flex-col items-center gap-1.5 text-white/90 disabled:opacity-40">
+            <span className="grid h-[48px] w-[48px] place-items-center rounded-full bg-[#2a3034]"><Pencil size={19} /></span>
+            <span className="text-xs font-light">Text</span>
           </button>
         </section>
 
@@ -68,7 +78,7 @@ export default function StatusGallerySheet({
           <span className="text-[11px] text-white/55" aria-live="polite">{count} / {limit} selected</span>
         </div>
 
-        <section className="grid grid-cols-3 gap-[3px]" aria-label={count ? 'Selected Status photos and videos' : 'Choose Status media'}>
+        <section className="grid grid-cols-3 gap-[3px]" aria-label="Recent and selected Status photos and videos">
           <button type="button" onClick={onCameraPhoto} aria-label="Take a photo" className="flex aspect-square flex-col items-center justify-center gap-2 bg-[#0b1116] text-[#3aa66e] transition hover:bg-[#152027]">
             <Camera size={31} />
             <span className="text-sm text-white/60">Camera</span>
@@ -99,6 +109,26 @@ export default function StatusGallerySheet({
             </div>
           ))}
 
+          {recentMedia.map((item) => {
+            const selectedAlready = selected.some(file => file.name === item.name && file.file.size === item.size);
+            return (
+              <button
+                type="button"
+                key={item.id}
+                onClick={() => onPickRecent?.(item)}
+                disabled={!onPickRecent || !canAddMore || selectedAlready || pickingRecentId !== null && pickingRecentId !== undefined}
+                aria-label={selectedAlready ? `Already selected ${item.name}` : `Select ${item.name}`}
+                className="relative aspect-square overflow-hidden bg-[#1e262e] text-white disabled:opacity-60"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={item.thumbnailUrl} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
+                {item.mimeType.startsWith('video/') && <Film className="absolute bottom-2 left-2 drop-shadow" size={19} />}
+                {selectedAlready && <span className="absolute right-2 top-2 rounded-full bg-[#c9a227] px-2 py-0.5 text-xs font-bold text-black">✓</span>}
+                {pickingRecentId === item.id && <span className="absolute inset-0 grid place-items-center bg-black/55 text-xs">Adding…</span>}
+              </button>
+            );
+          })}
+
           {canAddMore && (
             <button type="button" onClick={onGallery} aria-label={count ? 'Choose more photos and videos' : 'Browse recent photos and videos'} className="flex aspect-square flex-col items-center justify-center gap-2 bg-[#1e262e] text-white/85 transition hover:bg-[#2a3540]">
               {count ? <Plus size={29} /> : <ImageIcon size={30} />}
@@ -116,14 +146,26 @@ export default function StatusGallerySheet({
 
         {error && <p role="alert" className="px-5 pt-4 text-center text-xs leading-5 text-[#ff9b9b]">{error}</p>}
 
-        <div className="px-6 py-6 text-center">
-          <p className="text-sm text-white/60">
-            {count ? 'Review the selected thumbnails, or add more media from your phone.' : camera ? 'Capture your moment, or open your recent photos and videos.' : 'Tap Recents to browse the real photos and videos on your device.'}
-          </p>
-          <p className="mt-2 text-xs text-white/40">
-            {count ? 'Tap Next to preview, add a caption, and post.' : 'Only photos and videos you choose are added to VANTA.'}
-          </p>
-        </div>
+        {nativeGalleryStatus !== 'ready' && (
+          <div className="px-6 py-6 text-center">
+            <p className="text-sm text-white/60">
+              {nativeGalleryStatus === 'loading'
+                ? 'Loading your recent photos…'
+                : nativeGalleryStatus === 'permission'
+                  ? 'Allow VANTA access to your selected photos to show them here.'
+                  : 'Choose Photos & videos to browse your device gallery.'}
+            </p>
+            {nativeGalleryStatus === 'permission' && onGrantGallery && (
+              <button type="button" onClick={onGrantGallery} className="mt-3 rounded-lg bg-[#c9a227] px-4 py-2 text-sm font-semibold text-black">
+                Show recent photos
+              </button>
+            )}
+            <p className="mt-2 text-xs text-white/40">Photos stay on your phone until you choose to post them.</p>
+          </div>
+        )}
+        {nativeGalleryStatus === 'ready' && recentMedia.length === 0 && !count && (
+          <p className="px-6 py-6 text-center text-sm text-white/60">No accessible recent photos. Use Photos & videos to choose from Android.</p>
+        )}
       </div>
 
       {count > 0 && (
