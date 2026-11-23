@@ -257,10 +257,13 @@ async function runUpload(
         job.sessionId = undefined;
       }
       if (job.sessionId) {
-        if (!state || !state.status) {
+        // Pre-rollout backends send receivedIndexes without a status field.
+        // Treat that legacy response as an ACTIVE session, but never infer a
+        // completed upload from its "complete" (staged-chunks-only) flag.
+        if (!state || !Array.isArray(state.receivedIndexes)) {
           throw new Error('Could not verify the current upload session. Retry to resume your upload.');
         }
-        if (state.status !== 'ACTIVE' && state.status !== 'COMPLETE') {
+        if (state.status && state.status !== 'ACTIVE' && state.status !== 'COMPLETE') {
           job.sessionId = undefined;
         } else if (state.status === 'COMPLETE') {
           // Completion/finalization errors must NOT reset the persisted session.
@@ -306,7 +309,8 @@ async function runUpload(
     const chunkState = await withUploadAuth(auth, token =>
       apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true })
     );
-    if (!chunkState || !Array.isArray(chunkState.receivedIndexes) || chunkState.status !== 'ACTIVE') {
+    if (!chunkState || !Array.isArray(chunkState.receivedIndexes) ||
+      (chunkState.status && chunkState.status !== 'ACTIVE')) {
       throw new Error('Upload progress could not be verified. Retry to resume safely.');
     }
     const receivedIndexes: number[] = chunkState.receivedIndexes;
