@@ -26,6 +26,7 @@ import {
   cancelUpload,
   getJobs,
   retryUpload,
+  requestWithUploadAuth,
   startUpload,
   subscribeUploads,
   type UploadJob,
@@ -453,7 +454,9 @@ useEffect(() => {
   const cancelAllPending = useCallback(() => {
     const ids = new Set(startedJobIdsRef.current);
     for (const job of getJobs()) {
-      if (ids.has(job.id) && (job.phase === 'starting' || job.phase === 'uploading' || job.phase === 'processing')) {
+      // Finalizing may have already persisted the file and published the
+      // Status; cancelling here would give the user an incorrect result.
+      if (ids.has(job.id) && (job.phase === 'starting' || job.phase === 'uploading')) {
         cancelUpload(job);
       }
     }
@@ -484,7 +487,9 @@ useEffect(() => {
       //    uploaded until EVERY draft exists, so a mid-way failure can never
       //    leave a partial-but-live Status.
       for (let index = 0; index < items.length; index += 1) {
-        const story = await createStoryDraft(token, normalizedCaption);
+        const story = await requestWithUploadAuth(token, getAccessToken, renewAccessToken, accessToken =>
+          createStoryDraft(accessToken, normalizedCaption)
+        );
         createdDraftIds.push(story.id);
       }
 
@@ -514,7 +519,9 @@ useEffect(() => {
       // block a retry (bounded server-side by the pending-draft cap).
       for (const draftId of createdDraftIds) {
         try {
-          await failStoryMedia(token, draftId);
+          await requestWithUploadAuth(token, getAccessToken, renewAccessToken, accessToken =>
+            failStoryMedia(accessToken, draftId)
+          );
         } catch {
           // best effort
         }
@@ -598,6 +605,7 @@ useEffect(() => {
           absentMessage={absentMessage}
           onRetry={retryFailedUploads}
           onCancel={cancelAllPending}
+          cancellable={activeJobs.filter((job) => job.phase === 'starting' || job.phase === 'uploading').length}
           onClose={onClose}
         />
       ) : items.length === 0 ? (
@@ -818,6 +826,7 @@ function PublishingPanel({
   absentMessage,
   onRetry,
   onCancel,
+  cancellable,
   onClose,
 }: {
   total: number;
@@ -829,6 +838,7 @@ function PublishingPanel({
   absentMessage: string;
   onRetry: () => void;
   onCancel: () => void;
+  cancellable: number;
   onClose: () => void;
 }) {
   const allDone = total > 0 && active === 0 && failed === 0;
@@ -934,7 +944,7 @@ function PublishingPanel({
               Retry failed
             </button>
           )}
-          {active > 0 && (
+          {cancellable > 0 && (
             <button
               type="button"
               onClick={onCancel}
