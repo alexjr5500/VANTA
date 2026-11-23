@@ -59,9 +59,10 @@ function mapError(err: unknown, kind: 'camera' | 'mic'): LiveCameraError {
     };
   }
   if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+    const androidApp = typeof navigator !== 'undefined' && navigator.userAgent.includes('VANTAAndroid');
     return kind === 'camera'
-      ? { code: 'CAMERA_PERMISSION_DENIED', message: 'Camera access was denied. Allow camera access in your browser settings, then try again.' }
-      : { code: 'MIC_PERMISSION_DENIED', message: 'Microphone access was denied. Allow microphone access in your browser settings, then try again.' };
+      ? { code: 'CAMERA_PERMISSION_DENIED', message: androidApp ? 'Allow Camera in Android Settings → Apps → VANTA → Permissions, then retry.' : 'Camera access was denied. Allow camera access in your browser settings, then try again.' }
+      : { code: 'MIC_PERMISSION_DENIED', message: androidApp ? 'Allow Microphone in Android Settings → Apps → VANTA → Permissions, then retry.' : 'Microphone access was denied. Allow microphone access in your browser settings, then try again.' };
   }
   if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
     return kind === 'camera'
