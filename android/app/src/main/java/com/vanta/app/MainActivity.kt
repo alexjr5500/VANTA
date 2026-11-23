@@ -185,7 +185,12 @@ class MainActivity : Activity() {
             addJavascriptInterface(VantaNativeGalleryBridge(), "VantaNativeGallery")
             addJavascriptInterface(VantaNativeVideoSaveBridge(), "VantaNativeVideo")
             settings.domStorageEnabled = true
-            settings.mediaPlaybackRequiresUserGesture = true
+            // LiveKit calls and incoming voice/video tracks can start after an
+            // asynchronous signaling event rather than a fresh user tap.
+            settings.mediaPlaybackRequiresUserGesture = false
+            // Geolocation is requested only by the trusted VANTA origin and
+            // still requires Android runtime location permission.
+            settings.setGeolocationEnabled(true)
             settings.allowFileAccess = false
             settings.allowContentAccess = false
             settings.javaScriptCanOpenWindowsAutomatically = false
