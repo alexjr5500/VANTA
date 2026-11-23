@@ -28,8 +28,15 @@ export const cleanId = (item: FeedItem | string) =>
   String(typeof item === 'string' ? item : item?.id ?? '').replace(PREFIX_RE, '');
 
 /** True when the item is a Reel (backed by prisma.video), never a Post. */
-export const isVideoItem = (item: FeedItem) =>
-  item?.type === 'reel' || item?.type === 'video' || Boolean(item?.playbackUrl || item?.videoUrl);
+export const isVideoItem = (item: FeedItem) => {
+  // A legacy Post with an MP4 attachment was serialized with type='video'.
+  // That is NOT a prisma.video Reel: it still has a Post id and must use
+  // /api/feed. Only explicit Reel identities or Video model URLs route as Reels.
+  if (item?.type === 'post') return false;
+  return item?.type === 'reel'
+    || (typeof item?.id === 'string' && item.id.startsWith('video-'))
+    || Boolean(item?.videoUrl || item?.playbackUrl);
+};
 
 /** API resource base for mutations: Reels -> /api/reels, Posts -> /api/feed. */
 export const actionEndpointFor = (item: FeedItem) => (isVideoItem(item) ? '/api/reels' : '/api/feed');
