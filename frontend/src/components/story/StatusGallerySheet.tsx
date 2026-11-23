@@ -44,7 +44,6 @@ export default function StatusGallerySheet({
   onPickRecent,
   onGrantGallery,
   onGallery,
-  onCameraPhoto,
   onRemove,
   onNext,
   onText,
