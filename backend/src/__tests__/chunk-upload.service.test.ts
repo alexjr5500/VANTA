@@ -126,6 +126,15 @@ describe('ChunkUploadService', () => {
     });
   });
 
+  describe('cancelChunkSession', () => {
+    it('does not downgrade a completed upload to CANCELLED', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, status: 'COMPLETE' });
+      const result = await chunkUploadService.cancelChunkSession('user-1', baseSession.id);
+      expect(result).toEqual({ cancelled: false });
+      expect(db.uploadSession.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('completeChunkSession', () => {
     it('throws when not all parts have arrived (incomplete upload)', async () => {
       (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, totalChunks: 2, fileSize: 8 });
