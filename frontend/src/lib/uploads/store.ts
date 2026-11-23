@@ -88,8 +88,11 @@ function currentAccessToken(auth: UploadCredentials): string {
 
 /** Use newer provider credentials first; refresh only when a fresh token still fails. */
 async function withUploadAuth<T>(auth: UploadCredentials, request: (token: string) => Promise<T>): Promise<T> {
-  const attempted = currentAccessToken(auth);
+  let attempted = auth.token;
   try {
+    // The provider may briefly have no access token while restoring a session;
+    // its refresh callback can still recover, so keep this INSIDE the 401 catch.
+    attempted = currentAccessToken(auth);
     return await request(attempted);
   } catch (error) {
     if (!(error instanceof ApiError) || error.statusCode !== 401) throw error;
@@ -110,6 +113,16 @@ async function withUploadAuth<T>(auth: UploadCredentials, request: (token: strin
     auth.token = renewed;
     return request(renewed);
   }
+}
+
+/** Auth recovery for draft creation, before a background upload job exists. */
+export function requestWithUploadAuth<T>(
+  token: string,
+  getAccessToken: () => string | null,
+  renewAccessToken: () => Promise<string | null>,
+  request: (accessToken: string) => Promise<T>,
+): Promise<T> {
+  return withUploadAuth({ token, getAccessToken, renewAccessToken }, request);
 }
 
 function finishUploadAttempt(jobId: string, controller: AbortController): void {
