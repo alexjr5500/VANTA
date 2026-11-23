@@ -33,6 +33,7 @@ import {
 } from '@/lib/uploads/store';
 import VideoTrimModal from '@/components/video/VideoTrimModal';
 import StatusGallerySheet from '@/components/story/StatusGallerySheet';
+import { nativeGalleryConnection, parseNativeGallery, type NativeRecentMedia, type NativeGalleryStatus } from '@/lib/nativeStatusGallery';
 import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 import {
   STATUS_MAX_CHARS,
@@ -41,6 +42,8 @@ import {
 } from '@/lib/statusLimits';
 import {
   MAX_STATUS_MEDIA_FILES,
+  STORY_MAX_IMAGE_BYTES,
+  STORY_MAX_VIDEO_BYTES,
   storyMediaCapacity,
   storyMediaKindOf,
   toUserFacingStoryError,
@@ -204,6 +207,11 @@ export default function StoryMediaEditor({ source, initialFiles, onBack, onText,
   const [items, setItems] = useState<DraftMedia[]>([]);
   // Choose media in the gallery before opening the photo/video editor.
   const [showMediaPreview, setShowMediaPreview] = useState(false);
+  const [nativeRecentMedia, setNativeRecentMedia] = useState<NativeRecentMedia[]>([]);
+  const [nativeGalleryStatus, setNativeGalleryStatus] = useState<NativeGalleryStatus>('unavailable');
+  const [pickingRecentId, setPickingRecentId] = useState<string | null>(null);
+  const nativeAccessAskedRef = useRef(false);
+  const recentPickLockedRef = useRef(false);
   const itemsRef = useRef<DraftMedia[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [caption, setCaption] = useState('');
@@ -340,6 +348,80 @@ useEffect(() => {
     },
     [capacity, items.length]
   );
+
+  // Android's scoped MediaStore bridge supplies thumbnails from the device
+  // only after permission. Older APKs and ordinary browsers use the picker.
+  useEffect(() => {
+    const refresh = () => {
+      const connection = nativeGalleryConnection();
+      if (!connection) {
+        setNativeGalleryStatus('unavailable');
+        return;
+      }
+      try {
+        const result = parseNativeGallery(
+          connection.bridge.listRecent(connection.nonce),
+          window.location.origin, connection.nonce
+        );
+        if (result.status === 'permission' && !nativeAccessAskedRef.current) {
+          nativeAccessAskedRef.current = true;
+          setNativeGalleryStatus('loading');
+          connection.bridge.requestAccess(connection.nonce);
+          return;
+        }
+        setNativeRecentMedia(result.items);
+        setNativeGalleryStatus(result.status);
+      } catch {
+        setNativeGalleryStatus('error');
+      }
+    };
+    window.addEventListener('vanta-native-gallery-ready', refresh);
+    window.addEventListener('vanta-native-gallery-changed', refresh);
+    refresh();
+    return () => {
+      window.removeEventListener('vanta-native-gallery-ready', refresh);
+      window.removeEventListener('vanta-native-gallery-changed', refresh);
+    };
+  }, []);
+
+  const grantNativeGallery = useCallback(() => {
+    const connection = nativeGalleryConnection();
+    if (!connection) {
+      galleryInputRef.current?.click();
+      return;
+    }
+    setNativeGalleryStatus('loading');
+    connection.bridge.requestAccess(connection.nonce);
+  }, []);
+
+  const pickNativeRecentMedia = useCallback(async (media: NativeRecentMedia) => {
+    if (publishingRef.current || recentPickLockedRef.current) return;
+    if (items.some(item => item.name === media.name)) return;
+    const maxBytes = media.mimeType.startsWith('video/') ? STORY_MAX_VIDEO_BYTES : STORY_MAX_IMAGE_BYTES;
+    if (media.size > maxBytes) {
+      setMediaError(media.mimeType.startsWith('video/')
+        ? 'This video is larger than the 100MB limit.'
+        : 'This image is larger than the 15MB limit.');
+      return;
+    }
+    recentPickLockedRef.current = true;
+    setPickingRecentId(media.id);
+    setMediaError('');
+    try {
+      // The URL resolves entirely inside the trusted Android WebView. No media
+      // is uploaded to VANTA until the user later confirms Post Status.
+      const response = await fetch(media.mediaUrl, { cache: 'no-store' });
+      if (!response.ok) throw new Error('Cannot open this device photo. Use Recents to choose it instead.');
+      const blob = await response.blob();
+      if (blob.size === 0) throw new Error('This device photo could not be read. Choose a different photo.');
+      await addFiles([new File([blob], media.name, { type: media.mimeType })]);
+    } catch (reason) {
+      setMediaError(reason instanceof Error ? reason.message : 'Unable to read the selected photo.');
+    } finally {
+      recentPickLockedRef.current = false;
+      setPickingRecentId(null);
+    }
+  }, [addFiles, items]);
 
   // Accept the media chosen directly from Android Files without reopening a picker.
   useEffect(() => {
@@ -621,6 +703,11 @@ useEffect(() => {
           selected={items}
           selectionLimit={capacity}
           error={mediaError || error}
+          recentMedia={nativeRecentMedia}
+          nativeGalleryStatus={nativeGalleryStatus}
+          pickingRecentId={pickingRecentId}
+          onPickRecent={media => void pickNativeRecentMedia(media)}
+          onGrantGallery={grantNativeGallery}
           onGallery={openGalleryPicker}
           onCameraPhoto={openCameraPhoto}
           onCameraVideo={openCameraVideo}
