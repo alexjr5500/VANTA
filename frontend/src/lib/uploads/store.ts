@@ -243,13 +243,28 @@ async function runUpload(
     //    create a fresh one. This is what lets an interrupted upload resume from
     //    the parts already received instead of restarting from zero.
     if (job.sessionId) {
+      let state: { status?: string; receivedIndexes?: number[] } | null = null;
       try {
-        const state = await withUploadAuth(auth, token => apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true }));
-        if (!state || (state.status && state.status !== 'ACTIVE' && state.status !== 'COMPLETE')) {
+        state = await withUploadAuth(auth, token => apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true }));
+      } catch (error) {
+        // Only an explicitly missing session justifies a fresh transfer.
+        // Timeouts, 401s, 5xx errors and other 400 responses must preserve
+        // the session ID so Retry can resume instead of duplicating chunks.
+        const missing = error instanceof ApiError &&
+          (error.statusCode === 404 ||
+            (error.statusCode === 400 && /upload session not found/i.test(error.message)));
+        if (!missing) throw error;
+        job.sessionId = undefined;
+      }
+      if (job.sessionId) {
+        if (!state || !state.status) {
+          throw new Error('Could not verify the current upload session. Retry to resume your upload.');
+        }
+        if (state.status !== 'ACTIVE' && state.status !== 'COMPLETE') {
           job.sessionId = undefined;
         } else if (state.status === 'COMPLETE') {
-          // Chunk completion succeeded before its response was lost. The API
-          // returns the existing uploadedFile by the original record ID.
+          // Completion/finalization errors must NOT reset the persisted session.
+          // A subsequent retry can safely recover the same uploaded file.
           const completed = await withUploadAuth(auth, token => apiPost<any>(
             '/api/upload/chunk/complete', { sessionId: job.sessionId }, token
           ));
@@ -260,11 +275,6 @@ async function runUpload(
           try { onCompleted?.(job); } catch { /* Notification callbacks must not invalidate a completed upload. */ }
           return;
         }
-      } catch (error) {
-        // A completed upload must keep its media ID even when finalizing fails.
-        // Retrying will call finalize with the same file instead of reuploading.
-        if (job.uploadedFileId) throw error;
-        job.sessionId = undefined;
       }
     }
     if (!job.sessionId) {
@@ -291,13 +301,15 @@ async function runUpload(
 
     // 3. Resume-aware chunk loop with byte-accurate progress.
     const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
-    let receivedIndexes: number[] = [];
-    try {
-      const state = await withUploadAuth(auth, token => apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true }));
-      if (state && Array.isArray(state.receivedIndexes)) receivedIndexes = state.receivedIndexes;
-    } catch {
-      // session not probeable — upload from the first chunk
+    // Fail closed if resume state is unavailable: blindly re-sending chunks
+    // would overwrite already staged parts and conceal authorization errors.
+    const chunkState = await withUploadAuth(auth, token =>
+      apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true })
+    );
+    if (!chunkState || !Array.isArray(chunkState.receivedIndexes) || chunkState.status !== 'ACTIVE') {
+      throw new Error('Upload progress could not be verified. Retry to resume safely.');
     }
+    const receivedIndexes: number[] = chunkState.receivedIndexes;
     throwIfAborted(signal);
 
     const received = new Set(receivedIndexes);
