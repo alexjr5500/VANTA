@@ -183,22 +183,44 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
           }, token ?? undefined);
         }
       } else {
-        // Publish EVERY selected attachment to the same post, in the order the
-        // user chose them. `mediaUrl`/`mediaFileId` are still sent as the
-        // primary attachment so older backend builds keep working unchanged.
+        // The Create Post and Upload Reel entry points share the same uploaded
+        // media and Reel publishing lifecycle. Video attachments become real
+        // published Video rows (visible in Home and Reels), not post-only URLs.
+        // Photos/text remain regular Posts. Mixed selections publish a photo
+        // post and one Reel for each video; never create a duplicate video Post.
         const attached = media.filter((item) => item.uploadedId || item.uploadedUrl);
-        const mediaUrls = attached.map((item) => item.uploadedUrl).filter((url): url is string => Boolean(url));
-        const mediaFileIds = attached.map((item) => item.uploadedId).filter((id): id is string => Boolean(id));
+        const photos = attached.filter(item => item.type === 'image');
+        const videos = attached.filter(item => item.type === 'video');
+        const caption = [content.trim(), quoteUrl].filter(Boolean).join('\n\n');
 
-        await apiPost('/api/feed', {
-          content: [content.trim(), quoteUrl].filter(Boolean).join('\n\n'),
-          mediaUrl: mediaUrls[0],
-          mediaFileId: mediaFileIds[0],
-          media: {
-            urls: mediaUrls,
-            fileIds: mediaFileIds,
-          },
-        }, token ?? undefined);
+        if (photos.length > 0 || videos.length === 0) {
+          const urls = photos.map(item => item.uploadedUrl).filter((url): url is string => Boolean(url));
+          const fileIds = photos.map(item => item.uploadedId).filter((id): id is string => Boolean(id));
+          await apiPost('/api/feed', {
+            content: caption,
+            mediaUrl: urls[0],
+            mediaFileId: fileIds[0],
+            media: { urls, fileIds },
+          }, token ?? undefined);
+        }
+
+        for (const video of videos) {
+          if (!video.uploadedId) throw new Error('Video upload is missing its file ID. Please retry the upload.');
+          const draft = await apiPost<{ video: { id: string } }>('/api/reels', {
+            title: (content.trim().split('\\n')[0] || video.name || 'Reel').slice(0, 120),
+            description: caption || undefined,
+          }, token ?? undefined);
+          if (!draft?.video?.id) throw new Error('Could not create a Reel draft.');
+          try {
+            await apiPost(`/api/reels/${encodeURIComponent(draft.video.id)}/finalize`, {
+              fileId: video.uploadedId,
+            }, token ?? undefined);
+          } catch (publishError) {
+            // Keep a failed draft out of public feeds and available for retry.
+            void apiPost(`/api/reels/${encodeURIComponent(draft.video.id)}/fail`, {}, token ?? undefined).catch(() => undefined);
+            throw publishError;
+          }
+        }
       }
 
       // The server confirmed creation - invalidate cached feed data so the
@@ -212,8 +234,10 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
       setDraftNotice('');
       onClose();
       closeAll();
-    } catch {
-      setError("Couldn't publish your post. Check your connection and try again.");
+    } catch (publishError) {
+      setError(publishError instanceof Error && publishError.message
+        ? publishError.message
+        : "Couldn't publish your post. Check your connection and try again.");
     } finally {
       setIsSubmitting(false);
     }
