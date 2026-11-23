@@ -115,4 +115,96 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
     store.dismissUpload(job.id);
     expect(store.getJobs().find((j) => j.id === job.id)).toBeUndefined();
   });
+  test('refreshes a stale access token on a 401 before the upload begins', async () => {
+    const { ApiError } = await import('@/lib/api');
+    let liveToken = 'expired-access-token';
+    const renewAccessToken = vi.fn(async () => {
+      liveToken = 'fresh-access-token';
+      return liveToken;
+    });
+    (apiPost as any).mockImplementation((path: string, _payload: unknown, token: string) => {
+      if (path.endsWith('/uploading') && token === 'expired-access-token') {
+        return Promise.reject(new ApiError(401, 'Unauthorized'));
+      }
+      if (path.includes('/chunk/init')) return Promise.resolve({ sessionId: 'sess-auth' });
+      if (path.includes('/chunk/complete')) return Promise.resolve({ id: 'file-auth' });
+      return Promise.resolve({});
+    });
+
+    const job = store.startUpload({
+      kind: 'story',
+      file: new File(['jpeg'], 'photo.jpg', { type: 'image/jpeg' }),
+      draftId: 'story-auth',
+      token: liveToken,
+      getAccessToken: () => liveToken,
+      renewAccessToken,
+      meta: { mimeType: 'image/jpeg' },
+    });
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('completed'));
+    expect(renewAccessToken).toHaveBeenCalledTimes(1);
+    expect(apiPost).toHaveBeenCalledWith('/api/upload/chunk/init', expect.anything(), 'fresh-access-token');
+    expect(apiPost).toHaveBeenCalledWith('/api/stories/story-auth/finalize', { fileId: 'file-auth' }, 'fresh-access-token');
+  });
+
+  test('recovers from a 401 on the XHR chunk POST without losing the media file', async () => {
+    let liveToken = 'old';
+    let attempts = 0;
+    class AuthenticatedXHR extends FakeXHR {
+      private authHeader = '';
+      setRequestHeader(name: string, value: string) {
+        if (name === 'Authorization') this.authHeader = value;
+      }
+      send() {
+        attempts += 1;
+        this.status = this.authHeader === 'Bearer new' ? 200 : 401;
+        this.responseText = this.status === 401 ? JSON.stringify({ error: 'Unauthorized' }) : '{}';
+        super.send();
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', AuthenticatedXHR);
+    const renewAccessToken = vi.fn(async () => {
+      liveToken = 'new';
+      return liveToken;
+    });
+    const job = store.startUpload({
+      kind: 'story',
+      file: new File(['photo'], 'photo.jpg', { type: 'image/jpeg' }),
+      draftId: 'story-part',
+      token: liveToken,
+      getAccessToken: () => liveToken,
+      renewAccessToken,
+      meta: { mimeType: 'image/jpeg' },
+    });
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('completed'));
+    expect(attempts).toBe(2);
+    expect(renewAccessToken).toHaveBeenCalledTimes(1);
+    expect(apiPost).toHaveBeenCalledWith('/api/stories/story-part/finalize', expect.anything(), 'new');
+  });
+
+  test('keeps failed upload credentials and the selected file for a real Retry', async () => {
+    let failFirstInit = true;
+    (apiPost as any).mockImplementation((path: string) => {
+      if (path.includes('/chunk/init')) {
+        if (failFirstInit) {
+          failFirstInit = false;
+          return Promise.reject(new Error('Temporary upload failure'));
+        }
+        return Promise.resolve({ sessionId: 'sess-retry' });
+      }
+      if (path.includes('/chunk/complete')) return Promise.resolve({ id: 'file-retry' });
+      return Promise.resolve({});
+    });
+    const job = store.startUpload({
+      kind: 'story',
+      file: new File(['photo'], 'photo.jpg', { type: 'image/jpeg' }),
+      draftId: 'story-retry',
+      token: 'tok',
+      meta: { mimeType: 'image/jpeg' },
+    });
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('failed'));
+    store.retryUpload(job);
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('completed'));
+    expect(apiPost).toHaveBeenCalledWith('/api/stories/story-retry/finalize', { fileId: 'file-retry' }, 'tok');
+  });
+
 });
