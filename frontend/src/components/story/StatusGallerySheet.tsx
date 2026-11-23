@@ -12,6 +12,7 @@ interface StatusGallerySheetProps {
   source: MediaStorySource;
   selected: ReadonlyArray<SelectedStatusMedia>;
   selectionLimit: number;
+  error?: string;
   onGallery: () => void;
   onCameraPhoto: () => void;
   onCameraVideo: () => void;
@@ -31,6 +32,7 @@ export default function StatusGallerySheet({
   source,
   selected,
   selectionLimit,
+  error,
   onGallery,
   onCameraPhoto,
   onCameraVideo,
@@ -112,6 +114,8 @@ export default function StatusGallerySheet({
             </button>
           )}
         </section>
+
+        {error && <p role="alert" className="px-5 pt-4 text-center text-xs leading-5 text-[#ff9b9b]">{error}</p>}
 
         <div className="px-6 py-6 text-center">
           <p className="text-sm text-white/60">
