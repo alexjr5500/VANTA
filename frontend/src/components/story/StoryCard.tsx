@@ -23,7 +23,7 @@ const TRUNCATE = (text: string, max: number) => (text.length > max ? `${text.sli
 /**
  * One premium VANTA Story card. Distinctive treatment: refined gold ring for
  * unseen stories, faint silver ring for fully-viewed, a segmented arc ring for
- * multi-story users, a NEW dot, a story-count pill, and the owner's "add" card.
+ * multi-story users, a NEW dot, and the owner's "add" card.
  */
 export default function StoryCard({
   user,
@@ -36,7 +36,6 @@ export default function StoryCard({
   collapsed = false,
 }: StoryCardProps) {
   const segments = (stories || []).map(story => ({ id: story.id, viewed: Boolean(story.viewed) }));
-  const unviewedCount = (stories || []).filter(story => !story.viewed).length;
   const name = TRUNCATE(user.fullName || user.username || 'VANTA', compact ? 12 : 14);
 
   if (isOwn) {
@@ -99,16 +98,6 @@ export default function StoryCard({
           segments={segments}
           size={collapsed ? 'xs' : compact ? 'sm' : 'md'}
         />
-        {(stories.length > 1) && !hasUnviewed && (
-          <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-[#101014]/95 px-1.5 py-px text-[9px] font-bold tabular-nums text-white/70">
-            {stories.length}
-          </span>
-        )}
-        {hasUnviewed && unviewedCount > 1 && (
-          <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full border border-[#c9a227]/40 bg-[#201a08]/95 px-1.5 py-px text-[9px] font-bold tabular-nums text-[#dfbd55]">
-            {unviewedCount} new
-          </span>
-        )}
       </span>
       <span className={cn("flex max-w-[78px] items-center gap-0.5 text-[11px] leading-tight text-[#8a8a8a] transition-all duration-200", collapsed && "h-0 max-w-0 overflow-hidden opacity-0")}>
         <span className={cn('truncate transition-colors', hasUnviewed ? 'font-semibold text-[#e8e8e8]' : 'group-hover:text-[#c8c8cc]')}>
