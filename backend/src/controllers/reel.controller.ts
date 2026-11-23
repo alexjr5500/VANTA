@@ -4,6 +4,7 @@ import { prisma } from "../prisma";
 import { uploadService } from "../services";
 import { contentViewService } from "../services/content-view.service";
 import { buildReelFeed } from "../services/reel-feed.service";
+import { mapCurrentReelHls } from "../services/reel-hls-mapping";
 import { BADGE_USER_SELECT, enrichItemAuthors, enrichPublicUser } from "../services/public-verification";
 
 // This response field is enabled only after HLS acceptance testing.
@@ -202,10 +203,11 @@ export const getReels = async (req: AuthRequest, res: Response): Promise<void> =
       ? await prisma.uploadedFile.findMany({
         where: { recordType: "Video", recordId: { in: pageReelIds },
           category: "reel", fileType: "VIDEO", deletedAt: null, hlsUrl: { not: null } },
-        select: { recordId: true, hlsUrl: true },
+        select: { recordId: true, url: true, hlsUrl: true },
       }) : [];
-    const hlsByReel = new Map(hlsFiles.filter(file => file.recordId && file.hlsUrl)
-      .map(file => [file.recordId!, file.hlsUrl!]));
+    // A Reel may have had an upload replaced while older records are still
+    // linked. Never pair the current MP4 with a stale upload's HLS manifest.
+    const hlsByReel = mapCurrentReelHls(reels, hlsFiles);
 
     const giftTotals = pageReelIds.length ? await prisma.giftTransaction.groupBy({
       by: ["videoId"],
@@ -307,10 +309,10 @@ export const getReelById = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    const derivative = reelHlsDeliveryEnabled
+    const derivative = reelHlsDeliveryEnabled && reel.videoUrl
       ? await prisma.uploadedFile.findFirst({
         where: { recordType: "Video", recordId: reel.id, category: "reel",
-          fileType: "VIDEO", deletedAt: null, hlsUrl: { not: null } },
+          fileType: "VIDEO", deletedAt: null, url: reel.videoUrl, hlsUrl: { not: null } },
         select: { hlsUrl: true },
       }) : null;
 
