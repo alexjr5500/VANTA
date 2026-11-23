@@ -30,7 +30,10 @@ jobs:
       # setup-android action's obsolete "sdkmanager tools" package request.
       - name: Install Android SDK
         run: |
-          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0'
+          SDKMANAGER="$(find /usr/local/lib/android/sdk/cmdline-tools -type f -name sdkmanager | head -n 1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install 'platforms;android-36' 'build-tools;36.0.0'
       - name: Compile release Kotlin and Android resources
         working-directory: android
         run: gradle --no-daemon --stacktrace :app:compileReleaseKotlin :app:processReleaseResources
