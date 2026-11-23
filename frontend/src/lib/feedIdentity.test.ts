@@ -82,6 +82,13 @@ describe('Reels are detected and routed through /api/reels (not /api/feed)', () 
     expect(isVideoItem(homePost)).toBe(false);
   });
 
+  test('a legacy video-bearing Post stays a Post even if its type was video', () => {
+    const postWithMp4 = { id: 'post-with-clip', type: 'video', media: '/uploads/clip.mp4' };
+    expect(isVideoItem(postWithMp4)).toBe(false);
+    expect(actionEndpointFor(postWithMp4)).toBe('/api/feed');
+    expect(detailPathFor(postWithMp4)).toBe('/post/post-with-clip');
+  });
+
   test('a Reel routes its mutations to /api/reels (never /api/feed) [Test B root cause]', () => {
     expect(actionEndpointFor(homeReel)).toBe('/api/reels');
     expect(actionEndpointFor(reelsPageReel)).toBe('/api/reels');
