@@ -135,7 +135,7 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
     (apiPost as any).mockImplementation((path: string) => {
       if (path.includes('/chunk/init')) return Promise.resolve({ sessionId: 'saved-session' });
       if (path.includes('/chunk/complete')) return Promise.resolve({ id: 'saved-file' });
-      if (path.includes('/finalize')) {
+      if (path.endsWith('/finalize')) {
         finalizeAttempts += 1;
         return finalizeAttempts === 1 ? Promise.reject(new Error('Finalize interrupted')) : Promise.resolve({});
       }
