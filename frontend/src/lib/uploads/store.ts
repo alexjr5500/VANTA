@@ -99,8 +99,8 @@ async function withUploadAuth<T>(auth: UploadCredentials, request: (token: strin
   }
 }
 
-function finishUploadAttempt(jobId: string): void {
-  running.delete(jobId);
+function finishUploadAttempt(jobId: string, controller: AbortController): void {
+  if (running.get(jobId) === controller) running.delete(jobId);
   const phase = jobList.find((job) => job.id === jobId)?.phase;
   if (phase === 'completed') {
     jobCredentials.delete(jobId);
@@ -170,7 +170,7 @@ export function startUpload(input: StartUploadInput): UploadJob {
   const controller = new AbortController();
   running.set(job.id, controller);
   void runUpload(job, input.file, credentials, input.meta, controller.signal, input.onCompleted)
-    .finally(() => finishUploadAttempt(job.id));
+    .finally(() => finishUploadAttempt(job.id, controller));
   return job;
 }
 
@@ -311,12 +311,14 @@ async function runUpload(
       patchJob(job.id, { phase: 'cancelled', disabled: false });
     } else {
       const message = error instanceof Error ? error.message : 'Upload failed unexpectedly';
-      patchJob(job.id, { phase: 'failed', error: message, disabled: false });
       try {
         await withUploadAuth(auth, token => apiPost(`/api/${job.kind === 'story' ? 'stories' : 'reels'}/${job.draftId}/fail`, {}, token));
       } catch {
         // server may be unreachable — the client failure state is still shown
       }
+      // Show Retry only after the server's failed-draft update settles, so a
+      // rapid retry cannot race with the previous attempt's fail request.
+      patchJob(job.id, { phase: 'failed', error: message, disabled: false });
     }
   }
 }
@@ -411,7 +413,7 @@ export function retryUpload(job: UploadJob): void {
   const controller = new AbortController();
   running.set(job.id, controller);
   void runUpload(job, file, auth, metaOf(job), controller.signal)
-    .finally(() => finishUploadAttempt(job.id));
+    .finally(() => finishUploadAttempt(job.id, controller));
 }
 
 /** Cancel an in-progress upload (aborts the transfer + cleans the server session). */
