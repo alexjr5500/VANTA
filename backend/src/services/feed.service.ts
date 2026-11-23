@@ -551,7 +551,7 @@ export class FeedService {
   private formatPost(post: any, userId: string) {
     return {
       id: post.id,
-      type: post.mediaUrl ? (post.mediaUrl.includes('.mp4') || post.mediaUrl.includes('.webm') ? 'video' : 'post') : 'post',
+      type: 'post', // A media Post is never a Video/Reel database row.
       content: post.content,
       media: post.mediaUrl,
       // Full ordered media set for multi-attachment posts. Single-media posts
