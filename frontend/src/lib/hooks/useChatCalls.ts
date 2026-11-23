@@ -6,6 +6,7 @@ import { apiPost } from '@/lib/apiClient';
 import { API_BASE_URL, authHeaders } from '@/lib/api';
 import type { AuthUser } from '@/lib/authApi';
 import { applyContinuousAutofocus, pickPrimaryCamera, pickVideoConstraints } from '@/lib/cameraCapture';
+import { getUserMediaWithFallback } from '@/lib/captureWithFallback';
 
 // ============================================================================
 // VANTA private 1-to-1 voice/video calling
@@ -195,7 +196,9 @@ function postToServiceWorker(message: Record<string, unknown>): void {
 const readPermissionError = (error: unknown): string => {
   const name = error instanceof DOMException ? error.name : (error as any)?.name;
   if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-    return 'Microphone/camera access was blocked. Allow access in your browser settings to use calling.';
+    return typeof navigator !== 'undefined' && navigator.userAgent.includes('VANTAAndroid')
+      ? 'Allow Microphone and Camera in Android Settings → Apps → VANTA → Permissions, then retry the call.'
+      : 'Microphone/camera access was blocked. Allow access in your browser settings to use calling.';
   }
   if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
     return 'No microphone or camera was found on this device.';
@@ -549,7 +552,7 @@ const answerCallFromPush = useCallback(async (intent: CallAnswerIntent) => {
       const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
       const input = pickPrimaryCamera(videoInputs);
       const videoConstraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
-      stream = await navigator.mediaDevices.getUserMedia({
+      stream = await getUserMediaWithFallback({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: intent.callType === 'video' ? videoConstraints : false,
       });
@@ -630,7 +633,7 @@ const startCall = useCallback(async (type: CallType) => {
       const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
       const input = pickPrimaryCamera(videoInputs);
       const videoConstraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
-      stream = await navigator.mediaDevices.getUserMedia({
+      stream = await getUserMediaWithFallback({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: type === 'video' ? videoConstraints : false,
       });
@@ -739,7 +742,7 @@ const startCall = useCallback(async (type: CallType) => {
       const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
       const input = pickPrimaryCamera(videoInputs);
       const videoConstraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
-      stream = await navigator.mediaDevices.getUserMedia({
+      stream = await getUserMediaWithFallback({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: session.type === 'video' ? videoConstraints : false,
       });
@@ -899,7 +902,7 @@ const declineCall = useCallback(() => {
     const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
     const input = pickPrimaryCamera(videoInputs);
     const constraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
-    const media = await navigator.mediaDevices.getUserMedia({
+    const media = await getUserMediaWithFallback({
       video: constraints,
       audio: false,
     });
@@ -1057,7 +1060,7 @@ const declineCall = useCallback(() => {
         deviceId: next.deviceId,
         forceFacingMode: wantFront ? 'user' : 'environment',
       });
-      const replacement = await navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
+      const replacement = await getUserMediaWithFallback({ video: constraints, audio: false });
       const newTrack = replacement.getVideoTracks()[0];
       if (!newTrack || newTrack.readyState !== 'live') {
         replacement.getTracks().forEach(t => t.stop());
