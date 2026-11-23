@@ -26,6 +26,7 @@ import {
   cancelUpload,
   getJobs,
   retryUpload,
+  requestWithUploadAuth,
   startUpload,
   subscribeUploads,
   type UploadJob,
@@ -197,7 +198,7 @@ async function buildDraftItems(files: File[]): Promise<DraftMedia[]> {
  *  - guards against double-submission with an immediate ref-based lock.
  */
 export default function StoryMediaEditor({ source, initialFiles, onBack, onText, onClose }: StoryMediaEditorProps) {
-  const { token, user } = useAuth();
+  const { token, user, getAccessToken, renewAccessToken } = useAuth();
   const toast = useToast();
 
   const [items, setItems] = useState<DraftMedia[]>([]);
@@ -262,10 +263,7 @@ useEffect(() => {
   }, [token]);
 
   // Live upload progress — re-read the job store whenever any job changes.
-  useEffect(() => {
-    if (!publishing) return;
-    return subscribeUploads(() => setJobsTick((tick) => tick + 1));
-  }, [publishing]);
+  useEffect(() => subscribeUploads(() => setJobsTick((tick) => tick + 1)), []);
 
   // jobsTick is the re-render trigger: the upload store is a module singleton,
   // so the memo re-reads it whenever any upload job changes.
@@ -287,16 +285,16 @@ useEffect(() => {
     if (failedJobs.length > 0) {
       setError(
         failedJobs.length === 1
-          ? `${failedJobs[0].fileName || 'One upload'} failed. Retry it or post the remaining files.`
-          : `${failedJobs.length} uploads failed. Retry them or post the remaining files.`
+          ? `${failedJobs[0].fileName || 'One upload'} failed: ${toUserFacingStoryError(failedJobs[0].error)} Retry below.`
+          : `${failedJobs.length} uploads failed. Retry the failed items below.`
       );
       setDraftFailed(true);
       publishingRef.current = false;
-      // Keep the progress panel open so the user can see the true reason and
-      // tap "Retry failed". Leaving it used to hide the only in-page retry.
+      // Preserve the progress panel so the user sees the actual error and
+      // can retry only the failed files without creating a new Status draft.
       return;
     }
-    // No success toast until every expected file has genuinely finalized.
+    // Never show the success toast while the expected uploads are incomplete.
     if (completedCount !== totalJobs || relatedJobs.length !== totalJobs) return;
     if (successShownRef.current) return;
     successShownRef.current = true;
@@ -459,7 +457,9 @@ useEffect(() => {
   const cancelAllPending = useCallback(() => {
     const ids = new Set(startedJobIdsRef.current);
     for (const job of getJobs()) {
-      if (ids.has(job.id) && (job.phase === 'starting' || job.phase === 'uploading' || job.phase === 'processing')) {
+      // Finalizing may have already persisted the file and published the
+      // Status; cancelling here would give the user an incorrect result.
+      if (ids.has(job.id) && (job.phase === 'starting' || job.phase === 'uploading')) {
         cancelUpload(job);
       }
     }
@@ -490,7 +490,9 @@ useEffect(() => {
       //    uploaded until EVERY draft exists, so a mid-way failure can never
       //    leave a partial-but-live Status.
       for (let index = 0; index < items.length; index += 1) {
-        const story = await createStoryDraft(token, normalizedCaption);
+        const story = await requestWithUploadAuth(token, getAccessToken, renewAccessToken, accessToken =>
+          createStoryDraft(accessToken, normalizedCaption)
+        );
         createdDraftIds.push(story.id);
       }
 
@@ -503,6 +505,8 @@ useEffect(() => {
           file: item.file,
           draftId: createdDraftIds[index],
           token,
+          getAccessToken,
+          renewAccessToken,
           meta: { caption: normalizedCaption, mimeType: resolveStoryMime(item) },
         });
         jobIds.push(job.id);
@@ -518,7 +522,9 @@ useEffect(() => {
       // block a retry (bounded server-side by the pending-draft cap).
       for (const draftId of createdDraftIds) {
         try {
-          await failStoryMedia(token, draftId);
+          await requestWithUploadAuth(token, getAccessToken, renewAccessToken, accessToken =>
+            failStoryMedia(accessToken, draftId)
+          );
         } catch {
           // best effort
         }
@@ -528,7 +534,7 @@ useEffect(() => {
       publishingRef.current = false;
       setPublishing(false);
     }
-  }, [token, items, caption, toast]);
+  }, [token, items, caption, toast, getAccessToken, renewAccessToken]);
 
   const active = useMemo(() => items.find((item) => item.id === activeId) || items[0] || null, [items, activeId]);
   const isVerified = Boolean(user?.verified);
@@ -602,6 +608,7 @@ useEffect(() => {
           absentMessage={absentMessage}
           onRetry={retryFailedUploads}
           onCancel={cancelAllPending}
+          cancellable={activeJobs.filter((job) => job.phase === 'starting' || job.phase === 'uploading').length}
           onClose={onClose}
         />
       ) : items.length === 0 ? (
@@ -622,7 +629,7 @@ useEffect(() => {
             >
               {active?.kind === 'image' ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={active.objectUrl} alt="Status media preview" className="absolute inset-0 h-full w-full object-cover" />
+                <img src={active.objectUrl} alt="Status media preview" className="absolute inset-0 h-full w-full object-contain" />
               ) : active ? (
                 <video src={active.objectUrl} playsInline muted loop className="absolute inset-0 h-full w-full object-cover" />
               ) : null}
@@ -773,25 +780,25 @@ useEffect(() => {
         </p>
       )}
 
-      {error && publishing && (
+      {error && !publishing && (
         <p role="alert" className="shrink-0 px-4 pb-1 text-center text-xs leading-4 text-[#ff9b9b]">{error}</p>
       )}
 
       {/* Publish bar */}
-      {!publishing && (
+      {!publishing && items.length > 0 && (
         <footer
           className="shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-4 pt-3"
           style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--vanta-kb, 0px) + 16px)' }}
         >
           <button
             type="button"
-            onClick={() => void publish()}
+            onClick={() => failedJobs.length > 0 ? retryFailedUploads() : void publish()}
             disabled={items.length === 0 || atQuota}
-            aria-label="Post Status"
+            aria-label={failedJobs.length > 0 ? 'Retry failed Status uploads' : 'Post Status'}
             className="flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[#c9a227] text-[15px] font-bold text-black transition hover:bg-[#dfbd55] active:scale-[0.99] disabled:opacity-30"
           >
-            {publishing ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
-            Post Status
+            {failedJobs.length > 0 ? <RefreshCw size={18} /> : <Check size={18} />}
+            {failedJobs.length > 0 ? 'Retry failed uploads' : 'Post Status'}
             {items.length > 0 && <span className="text-black/50">({items.length})</span>}
           </button>
         </footer>
@@ -822,6 +829,7 @@ function PublishingPanel({
   absentMessage,
   onRetry,
   onCancel,
+  cancellable,
   onClose,
 }: {
   total: number;
@@ -833,6 +841,7 @@ function PublishingPanel({
   absentMessage: string;
   onRetry: () => void;
   onCancel: () => void;
+  cancellable: number;
   onClose: () => void;
 }) {
   const allDone = total > 0 && completed === total && active === 0 && failed === 0;
@@ -938,7 +947,7 @@ function PublishingPanel({
               Retry failed
             </button>
           )}
-          {active > 0 && (
+          {cancellable > 0 && (
             <button
               type="button"
               onClick={onCancel}

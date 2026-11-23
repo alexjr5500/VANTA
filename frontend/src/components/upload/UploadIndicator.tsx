@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Check,
@@ -53,9 +53,12 @@ export default function UploadIndicator() {
   const { jobs, activeCount, retryUpload, cancelUpload, dismissUpload } = useUploadManager();
   const [open, setOpen] = useState(false);
 
-  const visible = useMemo(() => jobs.filter((job) => job.phase !== 'cancelled'), [jobs]);
+  // Cancelled jobs must remain visible until dismissed: otherwise their in-memory
+  // File/token caches have no user-facing cleanup action or retry path.
+  const visible = jobs;
   const hasActive = visible.some((job) => job.phase === 'starting' || job.phase === 'uploading' || job.phase === 'processing');
   const hasFailed = visible.some((job) => job.phase === 'failed');
+  const hasCancelled = visible.some((job) => job.phase === 'cancelled');
 
   // Auto-clear completed jobs once idle (no active/failed jobs left) so the
   // tray never accumulates stale "done" rows.
@@ -76,6 +79,7 @@ export default function UploadIndicator() {
 
   const statusLabel = (() => {
     if (hasFailed && !hasActive) return `${visible.filter((j) => j.phase === 'failed').length} upload needs attention`;
+    if (hasCancelled && !hasActive) return `${visible.filter((j) => j.phase === 'cancelled').length} upload cancelled`;
     if (primary.phase === 'starting') return `Preparing ${primary.label.toLowerCase()}…`;
     if (primary.phase === 'processing') return `Finalizing ${primary.label.toLowerCase()}…`;
     if (primary.phase === 'uploading') return `Uploading ${primary.label} · ${Math.round(primary.progress)}%`;
@@ -83,7 +87,7 @@ export default function UploadIndicator() {
     return `${visible.length} uploads`;
   })();
 
-  const isIdle = !hasActive && !hasFailed;
+  const isIdle = !hasActive && !hasFailed && !hasCancelled;
 
   return (
     <div className="pointer-events-none fixed inset-x-0 z-[95] flex flex-col items-center px-4" style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 76px)' }}>
@@ -130,14 +134,16 @@ export default function UploadIndicator() {
                               ? '…'
                               : job.phase === 'failed'
                                 ? 'Failed'
-                                : 'Done'}
+                                : job.phase === 'cancelled'
+                                  ? 'Cancelled'
+                                  : 'Done'}
                         </span>
                       </div>
                       <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/[0.08]">
                         <div
                           className={cn(
                             'h-full rounded-full transition-[width] duration-150',
-                            job.phase === 'failed'
+                            job.phase === 'failed' || job.phase === 'cancelled'
                               ? 'bg-[#e5484d]'
                               : job.phase === 'completed'
                                 ? 'bg-emerald-500'
@@ -156,7 +162,7 @@ export default function UploadIndicator() {
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
-                      {job.phase === 'failed' && (
+                      {(job.phase === 'failed' || job.phase === 'cancelled') && (
                         <button
                           type="button"
                           onClick={() => retryUpload(job)}
@@ -167,7 +173,7 @@ export default function UploadIndicator() {
                           <RefreshCw size={14} className={job.disabled ? 'animate-spin' : ''} />
                         </button>
                       )}
-                      {(job.phase === 'uploading' || job.phase === 'starting' || job.phase === 'processing') && (
+                      {(job.phase === 'uploading' || job.phase === 'starting') && (
                         <button
                           type="button"
                           onClick={() => cancelUpload(job)}
@@ -177,7 +183,7 @@ export default function UploadIndicator() {
                           <X size={15} />
                         </button>
                       )}
-                      {(job.phase === 'completed' || job.phase === 'failed') && (
+                      {(job.phase === 'completed' || job.phase === 'failed' || job.phase === 'cancelled') && (
                         <button
                           type="button"
                           onClick={() => dismissUpload(job.id)}
@@ -203,7 +209,7 @@ export default function UploadIndicator() {
         aria-label="Upload progress"
         className={cn(
           'pointer-events-auto flex min-h-[44px] items-center gap-2.5 rounded-full border px-3.5 py-1.5 shadow-[0_10px_30px_rgba(0,0,0,0.45)] backdrop-blur-xl transition active:scale-[0.98]',
-          hasFailed && !hasActive ? 'border-[#e5484d]/40 bg-[#2a1214]/95 text-white' : 'border-white/[0.1] bg-[#101012]/95 text-white'
+          (hasFailed || hasCancelled) && !hasActive ? 'border-[#e5484d]/40 bg-[#2a1214]/95 text-white' : 'border-white/[0.1] bg-[#101012]/95 text-white'
         )}
       >
         <span className="relative grid h-9 w-9 place-items-center">
@@ -213,10 +219,10 @@ export default function UploadIndicator() {
             <span
               className={cn(
                 'grid h-8 w-8 place-items-center rounded-full',
-                hasFailed && !hasActive ? 'bg-[#e5484d]/20 text-[#ff8b93]' : 'bg-[#c9a227]/15 text-[#dfbd55]'
+                (hasFailed || hasCancelled) && !hasActive ? 'bg-[#e5484d]/20 text-[#ff8b93]' : 'bg-[#c9a227]/15 text-[#dfbd55]'
               )}
             >
-              {hasFailed && !hasActive ? <RefreshCw size={15} /> : isIdle ? <Check size={15} /> : <CloudUpload size={15} />}
+              {(hasFailed || hasCancelled) && !hasActive ? <RefreshCw size={15} /> : isIdle ? <Check size={15} /> : <CloudUpload size={15} />}
             </span>
           )}
           {activeCount > 0 && (

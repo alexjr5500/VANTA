@@ -19,7 +19,8 @@ describe('StoryService privacy enforcement', () => {
 });
 
 jest.mock('../prisma', () => ({ prisma: {
-  story: { create: jest.fn(), count: jest.fn(), findUnique: jest.fn() },
+  story: { create: jest.fn(), count: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+  uploadedFile: { findUnique: jest.fn(), update: jest.fn() },
   user: { findUnique: jest.fn() },
   userSettings: { findUnique: jest.fn() },
   follow: { findUnique: jest.fn() },
@@ -249,5 +250,66 @@ describe('StoryService Status hard limits (700 chars / 10 lines)', () => {
       service.reshareStory('user-1', 'orig-1', Array.from({ length: STATUS_MAX_LINES + 1 }, () => 'line').join('\n'), { isVerified: false })
     ).rejects.toThrow('Status caption cannot exceed');
     expect(db.story.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('StoryService safe retry after a lost publish response', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('does not reopen a Status that was already published', async () => {
+    const published = {
+      id: 'story-retry', userId: 'owner', publishStatus: 'PUBLISHED',
+      mediaUrl: 'https://cdn.example/photo.jpg', user: { id: 'owner' },
+    };
+    (db.story.findUnique as jest.Mock).mockResolvedValue(published);
+    const result = await service.setStoryUploading('owner', 'story-retry');
+    expect(result).toEqual(published);
+    expect(db.story.update).not.toHaveBeenCalled();
+  });
+
+  it('re-finalizes the same uploaded file idempotently without re-consuming quota', async () => {
+    const url = 'https://cdn.example/photo.jpg';
+    const published = {
+      id: 'story-retry', userId: 'owner', publishStatus: 'PUBLISHED',
+      mediaUrl: url, user: { id: 'owner' },
+    };
+    (db.uploadedFile.findUnique as jest.Mock).mockResolvedValue({
+      id: 'file-1', userId: 'owner', url, deletedAt: null, fileType: 'IMAGE',
+    });
+    (db.uploadedFile.update as jest.Mock).mockResolvedValue({});
+    const txStoryCount = jest.fn();
+    const txStoryUpdate = jest.fn();
+    (db.$transaction as jest.Mock).mockImplementation(async (callback: any) => callback({
+      story: {
+        findUnique: jest.fn().mockResolvedValue(published),
+        count: txStoryCount,
+        update: txStoryUpdate,
+      },
+    }));
+
+    const result = await service.finalizeStoryMedia('owner', 'story-retry', 'file-1');
+    expect(result).toEqual(published);
+    expect(txStoryUpdate).not.toHaveBeenCalled();
+    expect(txStoryCount).not.toHaveBeenCalled();
+  });
+
+  it('rejects replacing an already-published Status with a different media file', async () => {
+    (db.uploadedFile.findUnique as jest.Mock).mockResolvedValue({
+      id: 'file-other', userId: 'owner',
+      url: 'https://cdn.example/other.jpg', deletedAt: null, fileType: 'IMAGE',
+    });
+    const txStoryUpdate = jest.fn();
+    (db.$transaction as jest.Mock).mockImplementation(async (callback: any) => callback({
+      story: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'story-retry', userId: 'owner', publishStatus: 'PUBLISHED',
+          mediaUrl: 'https://cdn.example/photo.jpg',
+        }),
+        update: txStoryUpdate,
+      },
+    }));
+    await expect(service.finalizeStoryMedia('owner', 'story-retry', 'file-other'))
+      .rejects.toThrow('already published with different media');
+    expect(txStoryUpdate).not.toHaveBeenCalled();
   });
 });
