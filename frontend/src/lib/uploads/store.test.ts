@@ -302,4 +302,32 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
     expect(apiPost).toHaveBeenCalledWith('/api/upload/chunk/init', expect.anything(), 'new-token');
   });
 
+
+  test('cancelling an active Story upload closes its unpublished draft before offering Retry', async () => {
+    let resolveInit: ((value: { sessionId: string }) => void) | undefined;
+    (apiPost as any).mockImplementation((path: string) => {
+      if (path.includes('/chunk/init')) {
+        return new Promise<{ sessionId: string }>((resolve) => { resolveInit = resolve; });
+      }
+      return Promise.resolve({});
+    });
+
+    const job = store.startUpload({
+      kind: 'story',
+      file: new File(['photo'], 'photo.jpg', { type: 'image/jpeg' }),
+      draftId: 'story-cancel',
+      token: 'tok',
+      meta: { mimeType: 'image/jpeg' },
+    });
+    await vi.waitFor(() => expect(resolveInit).toBeDefined());
+    store.cancelUpload(job);
+    resolveInit!({ sessionId: 'sess-cancel' });
+
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('cancelled'));
+    expect(apiPost).toHaveBeenCalledWith('/api/stories/story-cancel/fail', {}, 'tok');
+    expect(store.getJobs().find(item => item.id === job.id)?.disabled).toBe(false);
+    store.dismissUpload(job.id);
+    expect(store.getJobs().find(item => item.id === job.id)).toBeUndefined();
+  });
+
 });
