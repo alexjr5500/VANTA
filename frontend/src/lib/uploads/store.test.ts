@@ -207,4 +207,71 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
     expect(apiPost).toHaveBeenCalledWith('/api/stories/story-retry/finalize', { fileId: 'file-retry' }, 'tok');
   });
 
+
+  test('retries a failed finalize using the already uploaded file without transferring it twice', async () => {
+    let failFirstFinalize = true;
+    (apiPost as any).mockImplementation((path: string) => {
+      if (path.includes('/chunk/init')) return Promise.resolve({ sessionId: 'sess-finalize' });
+      if (path.includes('/chunk/complete')) return Promise.resolve({ id: 'file-stored' });
+      if (path.includes('/finalize') && failFirstFinalize) {
+        failFirstFinalize = false;
+        return Promise.reject(new Error('Publish response was lost'));
+      }
+      return Promise.resolve({});
+    });
+    const job = store.startUpload({
+      kind: 'story',
+      file: new File(['picture'], 'status.jpg', { type: 'image/jpeg' }),
+      draftId: 'story-finalize',
+      token: 'tok',
+      meta: { mimeType: 'image/jpeg' },
+    });
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('failed'));
+    const failed = store.getJobs().find(item => item.id === job.id)!;
+    expect(failed.uploadedFileId).toBe('file-stored');
+    store.retryUpload(failed);
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('completed'));
+    const calls = (apiPost as any).mock.calls;
+    expect(calls.filter(([path]: [string]) => path.includes('/chunk/init'))).toHaveLength(1);
+    expect(calls.filter(([path]: [string]) => path.includes('/chunk/complete'))).toHaveLength(1);
+    expect(calls.filter(([path]: [string]) => path.includes('/finalize'))).toHaveLength(2);
+  });
+
+  test('recovers a completed session whose completion response was lost without uploading chunks again', async () => {
+    let firstComplete = true;
+    (apiPost as any).mockImplementation((path: string) => {
+      if (path.includes('/chunk/init')) return Promise.resolve({ sessionId: 'sess-complete' });
+      if (path.includes('/chunk/complete')) {
+        if (firstComplete) {
+          firstComplete = false;
+          return Promise.reject(new Error('Upload completion response lost'));
+        }
+        return Promise.resolve({ id: 'file-complete' });
+      }
+      return Promise.resolve({});
+    });
+    (apiGet as any).mockResolvedValue({
+      status: 'COMPLETE',
+      receivedIndexes: [],
+      complete: false,
+    });
+    const chunkSends = vi.spyOn(FakeXHR.prototype, 'send');
+    const job = store.startUpload({
+      kind: 'story',
+      file: new File(['picture'], 'status.jpg', { type: 'image/jpeg' }),
+      draftId: 'story-complete',
+      token: 'tok',
+      meta: { mimeType: 'image/jpeg' },
+    });
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('failed'));
+    const failed = store.getJobs().find(item => item.id === job.id)!;
+    store.retryUpload(failed);
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('completed'));
+    const calls = (apiPost as any).mock.calls;
+    expect(calls.filter(([path]: [string]) => path.includes('/chunk/init'))).toHaveLength(1);
+    expect(calls.filter(([path]: [string]) => path.includes('/chunk/complete'))).toHaveLength(2);
+    expect(chunkSends).toHaveBeenCalledTimes(1);
+    chunkSends.mockRestore();
+  });
+
 });
