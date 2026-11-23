@@ -324,6 +324,7 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
     resolveInit!({ sessionId: 'sess-cancel' });
 
     await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('cancelled'));
+    expect(apiPost).toHaveBeenCalledWith('/api/upload/chunk/sess-cancel/abort', {}, 'tok');
     expect(apiPost).toHaveBeenCalledWith('/api/stories/story-cancel/fail', {}, 'tok');
     expect(store.getJobs().find(item => item.id === job.id)?.disabled).toBe(false);
     store.dismissUpload(job.id);
