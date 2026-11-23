@@ -285,7 +285,7 @@ useEffect(() => {
       setError(
         failedJobs.length === 1
           ? `${failedJobs[0].fileName || 'One upload'} failed: ${toUserFacingStoryError(failedJobs[0].error)} Retry below.`
-          : `${failedJobs.length} uploads failed. Retry them or post the remaining files.`
+          : `${failedJobs.length} uploads failed. Retry the failed items below.`
       );
       setDraftFailed(true);
       publishingRef.current = false;
@@ -618,7 +618,7 @@ useEffect(() => {
             >
               {active?.kind === 'image' ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={active.objectUrl} alt="Status media preview" className="absolute inset-0 h-full w-full object-cover" />
+                <img src={active.objectUrl} alt="Status media preview" className="absolute inset-0 h-full w-full object-contain" />
               ) : active ? (
                 <video src={active.objectUrl} playsInline muted loop className="absolute inset-0 h-full w-full object-cover" />
               ) : null}
