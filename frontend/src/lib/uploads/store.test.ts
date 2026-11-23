@@ -25,7 +25,7 @@ class FakeXHR {
   responseText = '{}';
   private listeners: Record<string, Array<(...args: any[]) => void>> = {};
   open() {}
-  setRequestHeader() {}
+  setRequestHeader(_name: string, _value: string) {}
   send() {
     for (const fn of this.listeners['load'] ?? []) fn();
   }
