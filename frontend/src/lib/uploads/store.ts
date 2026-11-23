@@ -454,7 +454,7 @@ function uploadPart(
 /** Retry a failed (or cancelled) job. Resumes from chunks already on the server. */
 export function retryUpload(job: UploadJob): void {
   const existing = jobList.find((item) => item.id === job.id);
-  if (!existing || existing.disabled || (existing.phase !== 'failed' && existing.phase !== 'cancelled')) return;
+  if (!existing || existing.disabled || running.has(job.id) || (existing.phase !== 'failed' && existing.phase !== 'cancelled')) return;
   const auth = jobCredentials.get(job.id);
   const file = FILE_CACHE.get(job.id);
   if (!auth || !file) {
@@ -468,7 +468,7 @@ export function retryUpload(job: UploadJob): void {
 
   // Cancelled sessions cannot be resumed; a failed session is probed first.
   if (existing.phase === 'cancelled') job.sessionId = undefined;
-  patchJob(job.id, { phase: 'starting', progress: 0, error: undefined, disabled: true });
+  patchJob(job.id, { phase: 'starting', progress: 0, bytesSent: 0, sessionId: job.sessionId, error: undefined, disabled: true });
   const controller = new AbortController();
   running.set(job.id, controller);
   void runUpload(job, file, auth, metaOf(job), controller.signal)
