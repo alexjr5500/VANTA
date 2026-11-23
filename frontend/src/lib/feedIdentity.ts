@@ -29,7 +29,9 @@ export const cleanId = (item: FeedItem | string) =>
 
 /** True when the item is a Reel (backed by prisma.video), never a Post. */
 export const isVideoItem = (item: FeedItem) =>
-  item?.type === 'reel' || item?.type === 'video' || Boolean(item?.playbackUrl || item?.videoUrl);
+  item?.type === 'reel' ||
+  (typeof item?.id === 'string' && item.id.startsWith('video-')) ||
+  Boolean(item?.playbackUrl || item?.videoUrl);
 
 /** API resource base for mutations: Reels -> /api/reels, Posts -> /api/feed. */
 export const actionEndpointFor = (item: FeedItem) => (isVideoItem(item) ? '/api/reels' : '/api/feed');
