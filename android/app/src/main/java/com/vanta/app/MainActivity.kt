@@ -185,7 +185,12 @@ class MainActivity : Activity() {
             addJavascriptInterface(VantaNativeGalleryBridge(), "VantaNativeGallery")
             addJavascriptInterface(VantaNativeVideoSaveBridge(), "VantaNativeVideo")
             settings.domStorageEnabled = true
-            settings.mediaPlaybackRequiresUserGesture = true
+            // Calls, livestreams, and camera previews attach MediaStreams after
+            // the user's call / Go Live action. Do not require a second playback
+            // gesture for remote audio or live video in the Android WebView.
+            settings.mediaPlaybackRequiresUserGesture = false
+            // The OS runtime permission and trusted-origin prompt remain required.
+            settings.setGeolocationEnabled(true)
             settings.allowFileAccess = false
             settings.allowContentAccess = false
             settings.javaScriptCanOpenWindowsAutomatically = false
