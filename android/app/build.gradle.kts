@@ -12,6 +12,12 @@ val releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
 val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
 val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
 
+// The signed GitHub release workflow supplies a monotonically increasing run
+// number. Local/CI debug builds retain the baseline instead of accidentally
+// distributing production APKs with indistinguishable fixed versionCode=1.
+val releaseVersionCode = providers.gradleProperty("vantaReleaseVersionCode")
+    .orNull?.toIntOrNull()?.takeIf { it > 0 } ?: 1
+
 // A debug APK may target this project's Vercel preview so unmerged UI fixes
 // can be tested in the actual WebView. Release builds always use production.
 // Set with -PvantaDebugOrigin=https://<preview>-vanta-73db.vercel.app
@@ -87,8 +93,8 @@ android {
         applicationId = "com.vanta.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = releaseVersionCode
+        versionName = "0.1.$releaseVersionCode"
         buildConfigField("String", "VANTA_ORIGIN", "\"https://vanta-nu.vercel.app\"")
     }
 
