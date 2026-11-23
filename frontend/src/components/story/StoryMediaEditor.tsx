@@ -64,6 +64,8 @@ export interface StoryMediaEditorProps {
 
 export interface DraftMedia {
   id: string;
+  /** Stable Android MediaStore identity, when added from the native Recents grid. */
+  nativeMediaId?: string;
   file: File;
   kind: 'image' | 'video';
   /** Full-resolution blob preview URL (main canvas + upload source). */
@@ -316,7 +318,7 @@ useEffect(() => {
 
   /** Validate + append files, generating lightweight thumbnails. */
   const addFiles = useCallback(
-    async (files: ReadonlyArray<File | null | undefined>) => {
+    async (files: ReadonlyArray<File | null | undefined>, nativeMediaId?: string) => {
       if (publishingRef.current) return;
       setMediaError('');
       setError('');
@@ -342,6 +344,7 @@ useEffect(() => {
         return;
       }
       const created = await buildDraftItems(valid);
+      if (nativeMediaId && created.length === 1) created[0].nativeMediaId = nativeMediaId;
       setItems((previous) => [...previous, ...created]);
       setActiveId(created[created.length - 1].id);
       if (issues.length > 0) setMediaError(issues.join(' '));
@@ -396,7 +399,7 @@ useEffect(() => {
 
   const pickNativeRecentMedia = useCallback(async (media: NativeRecentMedia) => {
     if (publishingRef.current || recentPickLockedRef.current) return;
-    if (items.some(item => item.name === media.name)) return;
+    if (items.some(item => item.nativeMediaId === media.id)) return;
     const maxBytes = media.mimeType.startsWith('video/') ? STORY_MAX_VIDEO_BYTES : STORY_MAX_IMAGE_BYTES;
     if (media.size > maxBytes) {
       setMediaError(media.mimeType.startsWith('video/')
@@ -414,7 +417,7 @@ useEffect(() => {
       if (!response.ok) throw new Error('Cannot open this device photo. Use Recents to choose it instead.');
       const blob = await response.blob();
       if (blob.size === 0) throw new Error('This device photo could not be read. Choose a different photo.');
-      await addFiles([new File([blob], media.name, { type: media.mimeType })]);
+      await addFiles([new File([blob], media.name, { type: media.mimeType })], media.id);
     } catch (reason) {
       setMediaError(reason instanceof Error ? reason.message : 'Unable to read the selected photo.');
     } finally {
