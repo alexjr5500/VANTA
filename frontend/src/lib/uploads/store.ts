@@ -86,12 +86,25 @@ function currentAccessToken(auth: UploadCredentials): string {
   return auth.token;
 }
 
-/** Re-authenticate and replay the exact failed operation once on a genuine 401. */
+/** Use newer provider credentials first; refresh only when a fresh token still fails. */
 async function withUploadAuth<T>(auth: UploadCredentials, request: (token: string) => Promise<T>): Promise<T> {
+  const attempted = currentAccessToken(auth);
   try {
-    return await request(currentAccessToken(auth));
+    return await request(attempted);
   } catch (error) {
-    if (!(error instanceof ApiError) || error.statusCode !== 401 || !auth.renewAccessToken) throw error;
+    if (!(error instanceof ApiError) || error.statusCode !== 401) throw error;
+    // Another request may have refreshed AuthProvider while this one was in
+    // flight. Reuse that token instead of rotating credentials once more.
+    const latest = auth.getAccessToken?.();
+    if (latest && latest !== attempted) {
+      auth.token = latest;
+      try {
+        return await request(latest);
+      } catch (retryError) {
+        if (!(retryError instanceof ApiError) || retryError.statusCode !== 401) throw retryError;
+      }
+    }
+    if (!auth.renewAccessToken) throw error;
     const renewed = await auth.renewAccessToken();
     if (!renewed) throw new ApiError(401, 'Your session has expired. Sign in again before retrying.');
     auth.token = renewed;
