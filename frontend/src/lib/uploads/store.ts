@@ -234,7 +234,10 @@ async function runUpload(
           try { onCompleted?.(job); } catch { /* Notification callbacks must not invalidate a completed upload. */ }
           return;
         }
-      } catch {
+      } catch (error) {
+        // A completed upload must keep its media ID even when finalizing fails.
+        // Retrying will call finalize with the same file instead of reuploading.
+        if (job.uploadedFileId) throw error;
         job.sessionId = undefined;
       }
     }
