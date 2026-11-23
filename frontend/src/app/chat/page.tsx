@@ -33,6 +33,7 @@ import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 import { VoiceNotePlayer, VideoFullscreenPlayer } from '@/components/messages/ChatMediaPlayer';
 import EmojiPicker from '@/components/create/EmojiPicker';
 import { activeReplyFor, createReply, type ReplyState } from '@/lib/replyState';
+import { hasVisibleReadReceipt, outgoingReceiptState, shouldRefreshReadReceipts } from '@/lib/messageReceipt';
 import { isSecureMediaContext, mapMediaError } from '@/lib/mediaPermissions';
 import { addDrafts, hasBusyDraft, readyDraftCount, removeDraft, type AttachmentDraft } from '@/lib/attachmentDrafts';
 import { renderTextWithLinks } from '@/lib/linkify';
@@ -185,7 +186,7 @@ const normalizeMessageRecord = (msg: any, currentUserId?: string): Message => {
     conversationId: msg.conversationId,
     timestamp: msg.createdAt ?? msg.timestamp,
     createdAt: msg.createdAt ?? msg.timestamp,
-    read: Boolean(msg.read ?? msg.isRead ?? msg.reads?.some((read: any) => read.userId !== currentUserId)),
+    read: hasVisibleReadReceipt(msg, currentUserId),
     isOwn: (msg.senderId ?? msg.sender?.id) === currentUserId,
     attachments,
     reactions: msg.reactions ?? [],
@@ -1067,7 +1068,31 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       }
       fetchConversations();
     };
-    const onRead = (data: any) => { if (data.readerId !== user.id) setMessages(previous => previous.map(item => item.isOwn ? { ...item, read: true } : item)); fetchConversations(); };
+    const onRead = (data: any) => {
+      if (!shouldRefreshReadReceipts(data, activeConversationRef.current, user.id)) return;
+      // A socket event only tells us a participant opened the thread; it does
+      // not prove every message was read, nor that the reader permits receipts.
+      // Ask the authenticated API for privacy-filtered receipt rows before
+      // changing any visible tick. Never mark a whole conversation as read.
+      const conversationId = data.conversationId as string;
+      void apiGet<any>(`/api/messages/${encodeURIComponent(conversationId)}?limit=100`, token)
+        .then(response => {
+          if (activeConversationRef.current !== conversationId) return;
+          const confirmed = new Map<string, boolean>(
+            (response?.messages ?? []).map((raw: any) => [
+              String(raw.id),
+              hasVisibleReadReceipt(raw, user.id),
+            ])
+          );
+          setMessages(previous => previous.map(message =>
+            message.isOwn && confirmed.has(message.id)
+              ? { ...message, read: confirmed.get(message.id) === true }
+              : message
+          ));
+        })
+        .catch(() => undefined);
+      fetchConversations();
+    };
     const onPresence = (data: any) => setConversations(previous => previous.map(conversation => {
       if (conversation.type === 'direct') {
         return conversation.partnerId === data.userId ? {
@@ -3013,13 +3038,13 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                               </>
                             );
                           })()}
-                          {(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg)).trim() && <p className="px-3 py-2 max-w-[min(420px,65vw)] whitespace-pre-wrap break-normal [overflow-wrap:break-word]">{showMessageTime && !msg.deletedAt && !(msg.isOwn && hasAudioAttachment) && <span className={cn('float-right ml-2 inline-flex translate-y-[3px] items-center gap-1 select-none text-[10px] leading-none tabular-nums', msg.isOwn ? 'text-white/75' : 'text-white/40')}>{currentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}{msg.isOwn && (msg.failed ? <button onClick={() => retryFailedMessage(msg)} className="text-[9px] text-red-100">Retry</button> : msg.pending ? <Loader2 size={10} className="animate-spin" /> : <CheckCheck size={11} />)}</span>}{renderTextWithLinks(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg), 'linkify', { mentions: true, hashtags: true })}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}</p>}
+                          {(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg)).trim() && <p className="px-3 py-2 max-w-[min(420px,65vw)] whitespace-pre-wrap break-normal [overflow-wrap:break-word]">{showMessageTime && !msg.deletedAt && !(msg.isOwn && hasAudioAttachment) && <span className={cn('float-right ml-2 inline-flex translate-y-[3px] items-center gap-1 select-none text-[10px] leading-none tabular-nums', msg.isOwn ? 'text-white/75' : 'text-white/40')}>{currentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}{msg.isOwn && (msg.failed ? <button onClick={() => retryFailedMessage(msg)} className="text-[9px] text-red-100">Retry</button> : msg.pending ? <Loader2 size={10} className="animate-spin" /> : outgoingReceiptState(msg) === 'read' ? <CheckCheck size={12} aria-label="Read" /> : <Check size={12} aria-label="Sent" />)}</span>}{renderTextWithLinks(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg), 'linkify', { mentions: true, hashtags: true })}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}</p>}
                           {!msg.deletedAt && chatMediaLinksOf(visibleMessageText(msg)).map(link => <div key={link.url} className="w-[min(320px,65vw)] max-w-full px-2 pb-2 pt-1">{link.kind === 'video' ? <video src={link.url} controls playsInline preload="metadata" className="max-h-64 w-full rounded-xl bg-black object-cover" /> : link.kind === 'image' ? <a href={link.url} target="_blank" rel="noreferrer"><img src={link.url} alt="" loading="lazy" className="max-h-64 w-full rounded-xl object-cover" /></a> : <a href={link.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-xl border border-white/[.12] bg-white/[.04] px-3 py-2 text-[13px] text-white"><FileText size={16} className="shrink-0 text-[#f2c75c]" /><span className="truncate">{link.name}</span></a>}</div>)}
                           {chatQuoteOf(msg) && <div className="w-[min(320px,65vw)] max-w-full px-2 pb-2 pt-1"><QuoteEmbed quote={chatQuoteOf(msg)!.ref} /></div>}
                           {!(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg)).trim() && showMessageTime && !msg.deletedAt && !(msg.isOwn && hasAudioAttachment) && (
                           <div className={cn('flex items-center gap-1 px-3 pb-1.5 pt-0.5 text-[10px] tabular-nums', msg.isOwn ? 'justify-end text-white/75' : 'text-white/40')}>
                             <span>{currentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</span>
-                            {msg.isOwn && (msg.failed ? <button onClick={() => retryFailedMessage(msg)} className="text-[9px] text-red-100">Retry</button> : msg.pending ? <Loader2 size={10} className="animate-spin" /> : <CheckCheck size={11} />)}
+                            {msg.isOwn && (msg.failed ? <button onClick={() => retryFailedMessage(msg)} className="text-[9px] text-red-100">Retry</button> : msg.pending ? <Loader2 size={10} className="animate-spin" /> : outgoingReceiptState(msg) === 'read' ? <CheckCheck size={12} aria-label="Read" /> : <Check size={12} aria-label="Sent" />)}
                           </div>
                         )}{msg.uploading && <div className="mt-1 flex items-center gap-1.5 px-3 pb-2 text-[10px] text-[#6aa5ff]"><Loader2 size={10} className="animate-spin" /><span className="tabular-nums">Uploading {msg.uploadProgress ?? 0}%</span></div>}
                         </>)}
