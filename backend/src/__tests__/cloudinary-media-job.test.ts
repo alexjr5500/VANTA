@@ -23,7 +23,7 @@ describe('Cloudinary durable media processing', () => {
     const { store, client } = createDeps();
     await prepareCloudinaryMedia('cloudinary:image:optimize', { fileId: 'file_123', maxWidth: 800 }, store, client);
     expect(store.findById).toHaveBeenCalledWith('file_123');
-    expect(store.saveDerivative).toHaveBeenCalledWith(expect.objectContaining({ id: 'file_123', path: 'cloudinary:image:vanta/post-image/asset_1', category: 'post-image', fileType: 'IMAGE' }), 'cloudinary:image:optimize', 'https://res.cloudinary.com/test-cloud/image/upload/vanta/output.webp');
+    expect(store.saveDerivative).toHaveBeenCalledWith(expect.objectContaining({ id: 'file_123', path: 'cloudinary:image:vanta/post-image/asset_1', category: 'post-image', fileType: 'IMAGE' }), 'cloudinary:image:optimize', 'https://res.cloudinary.com/test-cloud/image/upload/c_limit,w_800/vanta/post-image/asset_1.webp');
     expect(client.explicit).toHaveBeenCalledWith('vanta/post-image/asset_1', {
       resource_type: 'image', type: 'upload', eager_async: false,
       eager: [{ width: 800, crop: 'limit', quality: 80, format: 'webp' }],
