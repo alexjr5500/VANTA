@@ -321,6 +321,14 @@ async function runUpload(
   } catch (error) {
     const cancelled = isAbortError(error) || (error instanceof ApiError && error.statusCode === 499);
     if (cancelled) {
+      // Cancelled sessions still own an unpublished Story/Reel draft. Clean
+      // it server-side (the fail endpoint explicitly preserves PUBLISHED rows).
+      // Finish the cleanup before showing Retry to avoid racing a new attempt.
+      try {
+        await withUploadAuth(auth, token => apiPost(`/api/${job.kind === 'story' ? 'stories' : 'reels'}/${job.draftId}/fail`, {}, token));
+      } catch {
+        // If offline, the user can still retry or dismiss the cancelled job.
+      }
       patchJob(job.id, { phase: 'cancelled', disabled: false });
     } else {
       const message = error instanceof Error ? error.message : 'Upload failed unexpectedly';
@@ -408,7 +416,7 @@ function uploadPart(
 /** Retry a failed (or cancelled) job. Resumes from chunks already on the server. */
 export function retryUpload(job: UploadJob): void {
   const existing = jobList.find((item) => item.id === job.id);
-  if (!existing || existing.disabled) return;
+  if (!existing || existing.disabled || (existing.phase !== 'failed' && existing.phase !== 'cancelled')) return;
   const auth = jobCredentials.get(job.id);
   const file = FILE_CACHE.get(job.id);
   if (!auth || !file) {
@@ -443,6 +451,7 @@ export function cancelUpload(job: UploadJob): void {
     jobList = jobList.filter((item) => item.id !== job.id);
     FILE_CACHE.delete(job.id);
     META_CACHE.delete(job.id);
+    jobCredentials.delete(job.id);
     emit();
   }
 }
