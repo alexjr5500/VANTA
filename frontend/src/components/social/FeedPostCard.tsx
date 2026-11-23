@@ -143,7 +143,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
     const key = `${viewerId}:POST:${id}`;
     if (recordedFeedViews.has(key)) return;
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;
     const observer = new IntersectionObserver(([entry]) => {
       if (timer) window.clearTimeout(timer);
       if (!entry || entry.intersectionRatio < 0.25 || document.visibilityState !== 'visible') return;
