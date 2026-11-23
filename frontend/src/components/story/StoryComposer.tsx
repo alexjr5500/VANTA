@@ -105,20 +105,18 @@ export default function StoryComposer({ open, onClose, onRequestOpen }: StoryCom
   const [mediaSource, setMediaSource] = useState<MediaStorySource>('gallery-mixed');
   const [usage, setUsage] = useState<StoryUsage | null>(null);
   const wasOpenRef = useRef(false);
-  const statusPickerRef = useRef<HTMLInputElement>(null);
-  const [initialFiles, setInitialFiles] = useState<File[]>([]);
   const [mediaSession, setMediaSession] = useState(0);
 
-  // Mounted even while the modal is closed: click synchronously from the
-  // user's Status + tap so Android WebView can open ACTION_OPEN_DOCUMENT.
+  // Enter the in-app Status gallery first. The secure Android photo picker
+  // is opened by a deliberate tap on Recents, not automatically on Status +.
+  // This prevents the duplicate picker flow while keeping device access
+  // consent-based and requiring no broad media-library permissions.
   useEffect(() => {
     const openPicker = () => {
-      setInitialFiles([]);
       setMediaSession(value => value + 1);
       setMediaSource('gallery-mixed');
       setMode('media');
       onRequestOpen?.();
-      statusPickerRef.current?.click();
     };
     statusPickerCommand = openPicker;
     return () => {
@@ -173,7 +171,6 @@ export default function StoryComposer({ open, onClose, onRequestOpen }: StoryCom
   }, [open, onClose]);
 
   const handleClose = () => {
-    setInitialFiles([]);
     setMode('menu');
     onClose();
   };
@@ -181,20 +178,6 @@ export default function StoryComposer({ open, onClose, onRequestOpen }: StoryCom
   const closed = !open;
   return (
     <>
-      <input
-        ref={statusPickerRef}
-        type="file"
-        accept="image/*,video/*,application/x-vanta-status-picker"
-        multiple
-        className="hidden"
-        tabIndex={-1}
-        aria-hidden="true"
-        onChange={event => {
-          const selected = Array.from(event.currentTarget.files || []);
-          event.currentTarget.value = '';
-          if (selected.length) setInitialFiles(selected);
-        }}
-      />
     <AnimatePresence>
       {open && (
         <motion.div
@@ -264,7 +247,6 @@ export default function StoryComposer({ open, onClose, onRequestOpen }: StoryCom
               >
                 <StoryMediaEditor
                   key={mediaSession}
-                  initialFiles={initialFiles}
                   source={mediaSource}
                   onBack={handleClose}
                   onText={() => setMode('text')}
