@@ -5,6 +5,8 @@ import { BarChart2, Bookmark, Gift, Heart, MessageCircle, MoreHorizontal, Repeat
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import Avatar from '@/components/ui/Avatar';
+import { useAuth } from '@/context/AuthContext';
+import { apiPost } from '@/lib/apiClient';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import PostMedia, { PostMediaCarousel, type PostAttachment } from '@/components/social/PostMedia';
 import { cn } from '@/lib/utils';
@@ -93,7 +95,49 @@ const postAttachments = (item: Item): PostAttachment[] => {
 };
 export default function FeedPostCard({ item, currentUserId, onLike, onSave, onComment, onShare, onGift, onMore, feedCompactMedia = false, repostContext, onShareLink }: FeedPostCardProps) {
   const router = useRouter();
+  const { token } = useAuth();
   const { prefs: contentPrefs, hydrated: contentPrefsHydrated } = useContentPrefs();
+  const articleRef = useRef<HTMLElement | null>(null);
+  const [displayViews, setDisplayViews] = useState(Number(item.views ?? 0));
+
+  useEffect(() => {
+    setDisplayViews(Number(item.views ?? 0));
+  }, [item.id, item.views]);
+
+  // Count a genuine feed impression, not a quick scroll past. The server's
+  // ContentView unique constraint deduplicates across Home, Profile and detail
+  // pages so opening post/[id] never double-counts this same viewer.
+  useEffect(() => {
+    const element = articleRef.current;
+    if (!token || !element || !item.id || isVideoItem(item) || typeof IntersectionObserver === 'undefined') return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let sent = false;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some(entry => entry.isIntersecting && entry.intersectionRatio >= 0.5)) {
+        if (sent || timer) return;
+        timer = setTimeout(() => {
+          timer = null;
+          sent = true;
+          observer.disconnect();
+          void apiPost<{ counted: boolean; views: number }>(
+            `/api/feed/${encodeURIComponent(String(item.id))}/views`, {}, token
+          ).then(result => {
+            if (Number.isFinite(result.views)) setDisplayViews(result.views);
+          }).catch(() => {
+            // The next mounted impression can retry a transient network failure.
+          });
+        }, 650);
+      } else if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    }, { threshold: [0, 0.5, 1] });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      if (timer) clearTimeout(timer);
+    };
+  }, [item.id, token]);
   // Feed video autoplay follows the persisted Video Autoplay preference.
   // Before localStorage hydrates it stays OFF, so default-off users never
   // see a video start on first paint.
@@ -161,7 +205,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
     router.push(detailPathFor(item));
   };
 
-  return <motion.article initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .24 }} onClick={openDetail} className="flex min-w-0 flex-col pt-2 pb-0.5 cursor-pointer">
+  return <motion.article ref={articleRef} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .24 }} onClick={openDetail} className="flex min-w-0 flex-col pt-2 pb-0.5 cursor-pointer">
     {repostContext && <div className="flex items-center gap-1.5 pb-1 pl-[54px] text-[11px] font-semibold text-[#777]"><Repeat2 size={13}/><span>{repostContext}</span></div>}
     <header className="grid min-w-0 grid-cols-[44px_minmax(0,1fr)] items-start gap-2.5">
       <button
@@ -211,7 +255,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
             <button type="button" onClick={() => onComment(item)} aria-label="Open comments" className={actionClass}><MessageCircle size={17}/><span>{formatCount(item.comments)}</span></button>
             <button type="button" onClick={() => onShare(item)} aria-label="Repost" aria-pressed={Boolean(item.isReposted)} className={cn(actionClass, 'transition-colors', item.isReposted && 'text-[#f2c75c]')}><Repeat2 size={17}/><span>{formatCount(item.reposts ?? item.shares)}</span></button>
             {!isOwn ? <button type="button" onClick={() => onGift(item)} aria-label="Send gift" className={cn(actionClass, 'transition-colors hover:text-[#c9a227]', item.isGifted && 'text-[#f2c75c]')}><Gift size={17} className={item.isGifted ? 'fill-current' : ''}/><span>{formatCount(item.tips ?? item.tipCount ?? item.giftsReceived ?? 0)}</span></button> : <span className={cn(actionClass, 'pointer-events-none', item.isGifted && 'text-[#f2c75c]')} aria-label="Tips"><Gift size={17} className={item.isGifted ? 'fill-current' : ''}/><span>{formatCount(item.tips ?? item.tipCount ?? item.giftsReceived ?? 0)}</span></span>}
-            <span className={cn(actionClass, 'pointer-events-none')} aria-label="Views"><BarChart2 size={17}/><span>{formatCount(item.views ?? 0)}</span></span>
+            <span className={cn(actionClass, 'pointer-events-none')} aria-label="Views"><BarChart2 size={17}/><span>{formatCount(displayViews)}</span></span>
           </div>
           <button type="button" onClick={() => onSave(item)} aria-label={item.saved ? 'Remove saved post' : 'Save post'} aria-pressed={item.saved} className={cn(actionClass, item.saved && 'text-white')}><Bookmark size={17} className={item.saved ? 'fill-current' : ''}/><span className="sr-only">{item.saved ? 'Saved' : 'Save'}</span></button>
           {repostContext && onShareLink && <button type="button" onClick={() => onShareLink(item)} aria-label="Share" className={actionClass}><Share size={17}/></button>}
