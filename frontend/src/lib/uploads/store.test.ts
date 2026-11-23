@@ -443,4 +443,15 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
     expect(store.getJobs().find(j => j.id === job.id)?.sessionId).toBe('sess-2');
   });
 
+
+  test('accepts legacy ACTIVE chunk state responses during a staged backend rollout', async () => {
+    (apiGet as any).mockResolvedValue({ receivedIndexes: [], complete: false });
+    const job = store.startUpload({
+      kind: 'story', file: new File(['photo'], 'status.jpg', { type: 'image/jpeg' }),
+      draftId: 'story-legacy', token: 'tok', meta: { mimeType: 'image/jpeg' },
+    });
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('completed'));
+    expect(apiPost).toHaveBeenCalledWith('/api/stories/story-legacy/finalize', { fileId: 'file-1' }, 'tok');
+  });
+
 });
