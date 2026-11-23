@@ -74,7 +74,7 @@ export default function StatusGallerySheet({
             <span className="text-sm text-white/60">Camera</span>
           </button>
 
-          {tiles.map((item) => (
+          {tiles.filter(item => nativeGalleryStatus !== 'ready' || !item.nativeMediaId).map((item) => (
             <div key={item.id} className="relative aspect-square overflow-hidden bg-[#1e262e]">
               {item.previewUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -100,20 +100,21 @@ export default function StatusGallerySheet({
           ))}
 
           {recentMedia.map((item) => {
-            const selectedAlready = selected.some(file => file.name === item.name);
+            const selectedIndex = selected.findIndex(file => file.nativeMediaId === item.id);
+            const selectedAlready = selectedIndex >= 0;
             return (
               <button
                 type="button"
                 key={item.id}
-                onClick={() => onPickRecent?.(item)}
-                disabled={!onPickRecent || !canAddMore || selectedAlready || pickingRecentId !== null && pickingRecentId !== undefined}
-                aria-label={selectedAlready ? `Already selected ${item.name}` : `Select ${item.name}`}
+                onClick={() => selectedAlready ? onRemove(selected[selectedIndex].id) : onPickRecent?.(item)}
+                disabled={((!selectedAlready && (!onPickRecent || !canAddMore)) || Boolean(pickingRecentId))}
+                aria-label={selectedAlready ? `Remove ${item.name} from Status` : `Select ${item.name}`}
                 className="relative aspect-square overflow-hidden bg-[#1e262e] text-white disabled:opacity-60"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={item.thumbnailUrl} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
                 {item.mimeType.startsWith('video/') && <Film className="absolute bottom-2 left-2 drop-shadow" size={19} />}
-                {selectedAlready && <span className="absolute right-2 top-2 rounded-full bg-[#c9a227] px-2 py-0.5 text-xs font-bold text-black">✓</span>}
+                {selectedAlready && <span className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-[#c9a227] text-xs font-bold text-black">{selectedIndex + 1}</span>}
                 {pickingRecentId === item.id && <span className="absolute inset-0 grid place-items-center bg-black/55 text-xs">Adding…</span>}
               </button>
             );
