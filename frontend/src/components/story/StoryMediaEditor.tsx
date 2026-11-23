@@ -197,7 +197,7 @@ async function buildDraftItems(files: File[]): Promise<DraftMedia[]> {
  *  - guards against double-submission with an immediate ref-based lock.
  */
 export default function StoryMediaEditor({ source, initialFiles, onBack, onText, onClose }: StoryMediaEditorProps) {
-  const { token, user } = useAuth();
+  const { token, user, getAccessToken, renewAccessToken } = useAuth();
   const toast = useToast();
 
   const [items, setItems] = useState<DraftMedia[]>([]);
@@ -262,10 +262,7 @@ useEffect(() => {
   }, [token]);
 
   // Live upload progress — re-read the job store whenever any job changes.
-  useEffect(() => {
-    if (!publishing) return;
-    return subscribeUploads(() => setJobsTick((tick) => tick + 1));
-  }, [publishing]);
+  useEffect(() => subscribeUploads(() => setJobsTick((tick) => tick + 1)), []);
 
   // jobsTick is the re-render trigger: the upload store is a module singleton,
   // so the memo re-reads it whenever any upload job changes.
@@ -287,7 +284,7 @@ useEffect(() => {
     if (failedJobs.length > 0) {
       setError(
         failedJobs.length === 1
-          ? `${failedJobs[0].fileName || 'One upload'} failed. Retry it or post the remaining files.`
+          ? `${failedJobs[0].fileName || 'One upload'} failed: ${toUserFacingStoryError(failedJobs[0].error)} Retry below.`
           : `${failedJobs.length} uploads failed. Retry them or post the remaining files.`
       );
       setDraftFailed(true);
@@ -500,6 +497,8 @@ useEffect(() => {
           file: item.file,
           draftId: createdDraftIds[index],
           token,
+          getAccessToken,
+          renewAccessToken,
           meta: { caption: normalizedCaption, mimeType: resolveStoryMime(item) },
         });
         jobIds.push(job.id);
@@ -507,7 +506,7 @@ useEffect(() => {
       startedJobIdsRef.current = jobIds;
       setJobsTick((tick) => tick + 1);
       toast.info(
-        'Posting your Status',
+        'Status upload started',
         `Uploading ${jobIds.length} file${jobIds.length === 1 ? '' : 's'} — you can close this screen; it continues in the background.`
       );
     } catch (reason) {
@@ -525,7 +524,7 @@ useEffect(() => {
       publishingRef.current = false;
       setPublishing(false);
     }
-  }, [token, items, caption, toast]);
+  }, [token, items, caption, toast, getAccessToken, renewAccessToken]);
 
   const active = useMemo(() => items.find((item) => item.id === activeId) || items[0] || null, [items, activeId]);
   const isVerified = Boolean(user?.verified);
@@ -782,13 +781,13 @@ useEffect(() => {
         >
           <button
             type="button"
-            onClick={() => void publish()}
+            onClick={() => failedJobs.length > 0 ? retryFailedUploads() : void publish()}
             disabled={items.length === 0 || atQuota}
-            aria-label="Post Status"
+            aria-label={failedJobs.length > 0 ? 'Retry failed Status uploads' : 'Post Status'}
             className="flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[#c9a227] text-[15px] font-bold text-black transition hover:bg-[#dfbd55] active:scale-[0.99] disabled:opacity-30"
           >
-            {publishing ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
-            Post Status
+            {failedJobs.length > 0 ? <RefreshCw size={18} /> : <Check size={18} />}
+            {failedJobs.length > 0 ? 'Retry failed uploads' : 'Post Status'}
             {items.length > 0 && <span className="text-black/50">({items.length})</span>}
           </button>
         </footer>

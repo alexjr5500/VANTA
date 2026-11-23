@@ -54,6 +54,9 @@ export interface StartUploadInput {
   file: File;
   draftId: string;
   token: string;
+  /** Provider callbacks keep long-running transfers authenticated after refresh. */
+  getAccessToken?: () => string | null;
+  renewAccessToken?: () => Promise<string | null>;
   meta: UploadJobMeta;
   /** Called once when the whole publish (upload + finalize) completes. */
   onCompleted?: (job: UploadJob) => void;
@@ -65,7 +68,45 @@ const API = (path: string) => `${API_BASE_URL}${path}`;
 
 let jobList: UploadJob[] = [];
 const running = new Map<string, AbortController>();
-const jobTokens = new Map<string, string>();
+interface UploadCredentials {
+  token: string;
+  getAccessToken?: () => string | null;
+  renewAccessToken?: () => Promise<string | null>;
+}
+const jobCredentials = new Map<string, UploadCredentials>();
+
+function currentAccessToken(auth: UploadCredentials): string {
+  if (auth.getAccessToken) {
+    const latest = auth.getAccessToken();
+    if (!latest) throw new ApiError(401, 'Your session has expired. Sign in again before retrying.');
+    auth.token = latest;
+  }
+  return auth.token;
+}
+
+/** Re-authenticate and replay the exact failed operation once on a genuine 401. */
+async function withUploadAuth<T>(auth: UploadCredentials, request: (token: string) => Promise<T>): Promise<T> {
+  try {
+    return await request(currentAccessToken(auth));
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.statusCode !== 401 || !auth.renewAccessToken) throw error;
+    const renewed = await auth.renewAccessToken();
+    if (!renewed) throw new ApiError(401, 'Your session has expired. Sign in again before retrying.');
+    auth.token = renewed;
+    return request(renewed);
+  }
+}
+
+function finishUploadAttempt(jobId: string): void {
+  running.delete(jobId);
+  const phase = jobList.find((job) => job.id === jobId)?.phase;
+  if (phase === 'completed') {
+    jobCredentials.delete(jobId);
+    FILE_CACHE.delete(jobId);
+    META_CACHE.delete(jobId);
+  }
+  // Failed/cancelled jobs retain file + credentials only until Retry/Dismiss.
+}
 const listeners = new Set<() => void>();
 
 const emit = () => {
@@ -115,23 +156,26 @@ export function startUpload(input: StartUploadInput): UploadJob {
     disabled: false,
   };
   jobList = [job, ...jobList];
-  jobTokens.set(job.id, input.token);
+  const credentials: UploadCredentials = {
+    token: input.token,
+    getAccessToken: input.getAccessToken,
+    renewAccessToken: input.renewAccessToken,
+  };
+  jobCredentials.set(job.id, credentials);
   cacheUploadAssets(job.id, input.file, input.meta);
   emit();
 
   const controller = new AbortController();
   running.set(job.id, controller);
-  void runUpload(job, input.file, input.token, input.meta, controller.signal, input.onCompleted).finally(() => {
-    running.delete(job.id);
-    jobTokens.delete(job.id);
-  });
+  void runUpload(job, input.file, credentials, input.meta, controller.signal, input.onCompleted)
+    .finally(() => finishUploadAttempt(job.id));
   return job;
 }
 
 async function runUpload(
   job: UploadJob,
   file: File,
-  token: string,
+  auth: UploadCredentials,
   meta: UploadJobMeta,
   signal: AbortSignal,
   onCompleted?: (job: UploadJob) => void
@@ -139,14 +183,14 @@ async function runUpload(
   try {
     // 1. Re-open the draft for this upload attempt (idempotent; also re-opens a
     //    FAILED draft on retry).
-    await apiPost(`/api/${job.kind === 'story' ? 'stories' : 'reels'}/${job.draftId}/uploading`, {}, token);
+    await withUploadAuth(auth, token => apiPost(`/api/${job.kind === 'story' ? 'stories' : 'reels'}/${job.draftId}/uploading`, {}, token));
 
     // 2. Reuse the existing resumable session when it is still active, otherwise
     //    create a fresh one. This is what lets an interrupted upload resume from
     //    the parts already received instead of restarting from zero.
     if (job.sessionId) {
       try {
-        const state = await apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true });
+        const state = await withUploadAuth(auth, token => apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true }));
         if (!state || state.complete) job.sessionId = undefined;
       } catch {
         job.sessionId = undefined;
@@ -157,7 +201,7 @@ async function runUpload(
         meta.mimeType ||
         file.type ||
         (file.name.toLowerCase().endsWith('.mp4') ? 'video/mp4' : file.name.toLowerCase().endsWith('.webm') ? 'video/webm' : 'image/jpeg');
-      const init = await apiPost<any>(
+      const init = await withUploadAuth(auth, token => apiPost<any>(
         '/api/upload/chunk/init',
         {
           fileName: file.name,
@@ -168,7 +212,7 @@ async function runUpload(
           recordId: job.draftId,
         },
         token
-      );
+      ));
       job.sessionId = init.sessionId;
     }
     throwIfAborted(signal);
@@ -178,7 +222,7 @@ async function runUpload(
     const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
     let receivedIndexes: number[] = [];
     try {
-      const state = await apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true });
+      const state = await withUploadAuth(auth, token => apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true }));
       if (state && Array.isArray(state.receivedIndexes)) receivedIndexes = state.receivedIndexes;
     } catch {
       // session not probeable — upload from the first chunk
@@ -195,7 +239,7 @@ async function runUpload(
         continue;
       }
       const chunk = file.slice(start, end);
-      await uploadPart(job, token, chunk, i, start, signal);
+      await withUploadAuth(auth, token => uploadPart(job, token, chunk, i, start, signal));
       patchJob(job.id, { bytesSent: end, progress: Math.round((end / file.size) * 100) });
     }
 
@@ -203,21 +247,21 @@ async function runUpload(
     patchJob(job.id, { phase: 'processing', progress: 100, bytesSent: file.size });
 
     // 4. Reassemble + persist through the existing storage pipeline server-side.
-    const completed = await apiPost<any>('/api/upload/chunk/complete', { sessionId: job.sessionId }, token);
+    const completed = await withUploadAuth(auth, token => apiPost<any>('/api/upload/chunk/complete', { sessionId: job.sessionId }, token));
     throwIfAborted(signal);
 
     // 5. Finalize the record — the Story/Reel becomes PUBLISHED only now, when
     //    its media URL actually exists. Never before.
     if (job.kind === 'story') {
-      await apiPost(`/api/stories/${job.draftId}/finalize`, { fileId: completed.id }, token);
+      await withUploadAuth(auth, token => apiPost(`/api/stories/${job.draftId}/finalize`, { fileId: completed.id }, token));
       notifyStoryFeedChanged();
       invalidateCache('stories');
     } else {
-      await apiPost(
+      await withUploadAuth(auth, token => apiPost(
         `/api/reels/${job.draftId}/finalize`,
         { fileId: completed.id, duration: typeof meta.duration === 'number' ? meta.duration : undefined },
         token
-      );
+      ));
       invalidateCache('reels');
     }
 
@@ -231,7 +275,7 @@ async function runUpload(
       const message = error instanceof Error ? error.message : 'Upload failed unexpectedly';
       patchJob(job.id, { phase: 'failed', error: message, disabled: false });
       try {
-        await apiPost(`/api/${job.kind === 'story' ? 'stories' : 'reels'}/${job.draftId}/fail`, {}, token);
+        await withUploadAuth(auth, token => apiPost(`/api/${job.kind === 'story' ? 'stories' : 'reels'}/${job.draftId}/fail`, {}, token));
       } catch {
         // server may be unreachable — the client failure state is still shown
       }
@@ -312,9 +356,9 @@ function uploadPart(
 export function retryUpload(job: UploadJob): void {
   const existing = jobList.find((item) => item.id === job.id);
   if (!existing || existing.disabled) return;
-  const token = jobTokens.get(job.id);
+  const auth = jobCredentials.get(job.id);
   const file = FILE_CACHE.get(job.id);
-  if (!token || !file) {
+  if (!auth || !file) {
     patchJob(job.id, {
       phase: 'failed',
       error: 'The original file is no longer available. Start a new upload instead.',
@@ -323,12 +367,13 @@ export function retryUpload(job: UploadJob): void {
     return;
   }
 
+  // Cancelled sessions cannot be resumed; a failed session is probed first.
+  if (existing.phase === 'cancelled') job.sessionId = undefined;
   patchJob(job.id, { phase: 'starting', progress: 0, error: undefined, disabled: true });
   const controller = new AbortController();
   running.set(job.id, controller);
-  void runUpload(job, file, token, metaOf(job), controller.signal).finally(() => {
-    running.delete(job.id);
-  });
+  void runUpload(job, file, auth, metaOf(job), controller.signal)
+    .finally(() => finishUploadAttempt(job.id));
 }
 
 /** Cancel an in-progress upload (aborts the transfer + cleans the server session). */
@@ -336,13 +381,10 @@ export function cancelUpload(job: UploadJob): void {
   const controller = running.get(job.id);
   if (controller) {
     controller.abort();
-    const token = jobTokens.get(job.id);
-    if (job.sessionId && token) {
-      try {
-        void apiPost(`/api/upload/chunk/${job.sessionId}/abort`, {}, token).catch(() => undefined);
-      } catch {
-        // best effort — the transfer abort is already in flight
-      }
+    const auth = jobCredentials.get(job.id);
+    if (job.sessionId && auth) {
+      void withUploadAuth(auth, token => apiPost(`/api/upload/chunk/${job.sessionId}/abort`, {}, token))
+        .catch(() => undefined);
     }
   } else {
     jobList = jobList.filter((item) => item.id !== job.id);
@@ -357,7 +399,7 @@ export function dismissUpload(jobId: string): void {
   jobList = jobList.filter((item) => item.id !== jobId);
   FILE_CACHE.delete(jobId);
   META_CACHE.delete(jobId);
-  jobTokens.delete(jobId);
+  jobCredentials.delete(jobId);
   running.get(jobId)?.abort();
   running.delete(jobId);
   emit();
