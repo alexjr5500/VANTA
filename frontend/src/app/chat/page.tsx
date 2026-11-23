@@ -14,7 +14,7 @@ import {
   Loader2, Users, ArrowLeft, X, UserPlus, Camera, BellOff, AtSign,
   Pin, Image as ImageIcon, FileText, Info, ChevronRight, Flag, Ban, Pencil, RefreshCw,
   Shield, Trash2, Crown, Globe2, Lock, UserMinus, Copy, Forward, Smile, MoreVertical, MapPin, BarChart3, Music2, Wallet as WalletIcon,
-  Mic, Square, Phone, Video, Play, Clock3, Volume2, VolumeX,
+  Mic, Square, Phone, Video, Play,
 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import PullToRefresh from '@/components/ui/PullToRefresh';
@@ -2800,34 +2800,6 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                  <button onClick={handleOpenConversationActions} className="btn-icon h-9 w-9" aria-label={activeConv.type === 'direct' ? 'Open conversation actions' : `Open ${activeConv.type === 'group' ? 'group' : 'channel'} information`}><MoreVertical size={17} /></button>
               </div>
             </header>
-            {activeConv.type === 'direct' && selectedMessageIds.size === 0 && (
-              <div className="vanta-direct-shortcuts relative z-20 mx-2.5 mb-2 grid h-[54px] shrink-0 grid-cols-4 items-center rounded-[22px] bg-[#263446] px-1" role="toolbar" aria-label="Chat shortcuts">
-                <button type="button" onClick={() => void toggleMute()} aria-label={activeConv.muted ? 'Unmute notifications' : 'Mute notifications'} title={activeConv.muted ? 'Unmute notifications' : 'Mute notifications'} className="grid h-11 place-items-center text-[#8da3b5] transition hover:text-white">
-                  {activeConv.muted ? <VolumeX size={24} /> : <Volume2 size={24} />}
-                </button>
-                <button type="button"
-                  disabled={!messages.some(msg => msg.attachments?.some(att => (att.fileType === 'IMAGE' || att.fileType === 'VIDEO') && Boolean(att.url)))}
-                  onClick={() => {
-                    const recent = [...messages].reverse().flatMap(msg => msg.attachments ?? []).find(att => att.url && (att.fileType === 'IMAGE' || att.fileType === 'VIDEO'));
-                    if (recent?.url) openMediaViewer({ ...recent, url: recent.url });
-                  }}
-                  aria-label="View recent chat media" title="View recent chat media"
-                  className="grid h-11 place-items-center text-[#8da3b5] transition hover:text-white disabled:opacity-30">
-                  <ImageIcon size={23} />
-                </button>
-                <button type="button" onClick={() => {
-                  const viewport = messagesViewportRef.current;
-                  if (viewport) viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
-                }} aria-label="Jump to latest message" title="Jump to latest message"
-                  className="grid h-11 place-items-center text-[#8da3b5] transition hover:text-white">
-                  <Clock3 size={23} />
-                </button>
-                <button type="button" onClick={() => setMessageSearchOpen(value => !value)} aria-label="Search chat" title="Search chat"
-                  className="grid h-11 place-items-center text-[#8da3b5] transition hover:text-white">
-                  <Search size={23} />
-                </button>
-              </div>
-            )}
 
             {messageSearchOpen && <div className="border-b border-white/[0.08] bg-[#101010] px-4 py-2"><form onSubmit={event => { event.preventDefault(); void searchWithinChat(); }} className="flex items-center gap-2"><Search size={14} className="shrink-0 text-white/35" /><input autoFocus value={messageSearchQuery} onChange={event => setMessageSearchQuery(event.target.value)} placeholder="Search this chat" className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/30" /><button type="submit" disabled={!messageSearchQuery.trim() || searchingMessages} className="text-[11px] font-medium text-white disabled:text-white/25">Search</button><button type="button" onClick={() => { setMessageSearchOpen(false); setMessageSearchQuery(''); setMessageSearchResults([]); }} aria-label="Close chat search" className="text-white/40"><X size={14}/></button></form></div>}
 
@@ -3197,7 +3169,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                         <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => attachmentInputRef.current?.click()); }} className="m-4 rounded-xl bg-white/10 px-4 py-3 text-sm text-white">Browse device photos and videos</button>
                       )}
                     </div>
-                    <nav aria-label="Attachment options" className="flex shrink-0 gap-1.5 overflow-x-auto border-t border-white/10 bg-[#1d2b38] px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <nav aria-label="Attachment options" className="vanta-chat-attachment-tabs flex shrink-0 gap-1.5 overflow-x-auto border-t border-white/10 bg-[#1d2b38] px-3 pt-2 pb-[env(safe-area-inset-bottom,0px)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                       <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => attachmentInputRef.current?.click()); }} className="flex min-w-[80px] shrink-0 flex-col items-center gap-1 rounded-2xl bg-[#254666] px-3 py-2 text-xs font-semibold text-[#51b7ff]"><ImageIcon size={24}/>Gallery</button>
                       <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => fileInputRef.current?.click()); }} className="flex min-w-[70px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white"><FileText size={24}/>File</button>
                       <button type="button" onClick={() => { setShowAttachmentSheet(false); openWallet(); }} disabled={specialSending} className="flex min-w-[70px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white disabled:opacity-40"><WalletIcon size={24}/>Money</button>

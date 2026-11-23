@@ -138,7 +138,7 @@ export default function StatusGallerySheet({
       </div>
 
       {count > 0 && (
-        <footer className="shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-4 pt-3" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 6px)' }}>
+        <footer className="vanta-status-action-footer mt-auto shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-3 pt-1" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
           <button type="button" onClick={onNext} className="flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[#c9a227] text-[15px] font-bold text-black transition hover:bg-[#dfbd55] active:scale-[0.99]" aria-label={`Preview ${count} selected Status items`}>
             Next ({count}) <ArrowRight size={19} />
           </button>

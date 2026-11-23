@@ -660,7 +660,7 @@ useEffect(() => {
       {items.length === 0 && !publishing && (
         <span aria-hidden="true" className="mx-auto mt-2 h-[5px] w-14 shrink-0 rounded-full bg-[#92999d]" />
       )}
-      <header className="relative flex h-[76px] shrink-0 items-center justify-between px-4">
+      <header className="relative flex h-14 shrink-0 items-center justify-between px-4" aria-label="Status editor navigation">
         <button
           type="button"
           onClick={() => (showMediaPreview && !publishing ? setShowMediaPreview(false) : items.length > 0 ? discardAll() : onBack ? onBack() : onClose())}
@@ -669,9 +669,6 @@ useEffect(() => {
         >
           {items.length > 0 ? <ArrowLeft size={24} /> : <X size={28} />}
         </button>
-        <h2 className={cn('pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-white', items.length === 0 ? 'text-[24px] font-light' : 'text-base font-semibold')}>
-          Add status
-        </h2>
         {items.length > 0 ? (
           <button type="button" onClick={onClose} aria-label="Close Add status" className="grid h-11 w-11 place-items-center text-white/70 hover:text-white">
             <X size={21} />
@@ -860,8 +857,8 @@ useEffect(() => {
       {/* Publish bar */}
       {!publishing && showMediaPreview && items.length > 0 && (
         <footer
-          className="shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-4 pt-3"
-          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--vanta-kb, 0px) + 6px)' }}
+          className="vanta-status-action-footer mt-auto shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-3 pt-1"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--vanta-kb, 0px))' }}
         >
           <button
             type="button"

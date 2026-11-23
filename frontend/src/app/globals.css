@@ -3464,6 +3464,17 @@ html.vanta-native-android .vanta-chat-composer {
   padding-bottom: 6px !important;
 }
 
+/* The Android FrameLayout already reserves the OS navigation buttons. Bottom
+   actions belong flush against that usable WebView edge, not above a second
+   web safe-area spacer. Browser views still retain their own safe-area inset. */
+html.vanta-native-android .vanta-status-action-footer {
+  padding-bottom: var(--vanta-kb, 0px) !important;
+}
+
+html.vanta-native-android .vanta-chat-attachment-tabs {
+  padding-bottom: 0 !important;
+}
+
 html.vanta-native-android .vanta-entity-create {
   height: var(--chat-viewport-height, 100dvh) !important;
   min-height: 0;
