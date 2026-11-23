@@ -35,66 +35,78 @@ internal class NativeStatusGallery(private val activity: Activity, private val o
         val size: Long
     )
 
+    /**
+     * Query Photos and Videos separately: scoped/selected-photo Android grants
+     * may allow one collection but not the other. Files.getContentUri does not
+     * reliably expose partial grants across all Android versions.
+     */
     fun listRecent(allowed: Boolean): String {
         val result = JSONObject()
         val items = JSONArray()
         if (!allowed) return result.put("status", "permission").put("items", items).toString()
-        try {
-            val columns = arrayOf(
-                MediaStore.Files.FileColumns._ID,
-                MediaStore.Files.FileColumns.MEDIA_TYPE,
-                MediaStore.MediaColumns.DISPLAY_NAME,
-                MediaStore.MediaColumns.MIME_TYPE,
-                MediaStore.MediaColumns.SIZE
-            )
-            val selection = MediaStore.Files.FileColumns.MEDIA_TYPE + " IN (?, ?)"
-            val args = arrayOf(
-                MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(),
-                MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString()
-            )
-            val current = HashMap<String, MediaEntry>()
-            activity.contentResolver.query(
-                MediaStore.Files.getContentUri("external"),
-                columns,
-                selection,
-                args,
-                MediaStore.MediaColumns.DATE_ADDED + " DESC"
-            )?.use { cursor ->
-                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
-                val typeColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MEDIA_TYPE)
-                val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
-                val mimeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
-                val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
-                while (cursor.moveToNext() && current.size < 120) {
-                    val id = cursor.getLong(idColumn)
-                    val video = cursor.getInt(typeColumn) == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
-                    val mime = cursor.getString(mimeColumn) ?: if (video) "video/mp4" else "image/jpeg"
-                    if (!mime.startsWith("image/") && !mime.startsWith("video/")) continue
-                    val key = (if (video) "v" else "i") + id
-                    val uri = ContentUris.withAppendedId(
-                        if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id
-                    )
-                    val name = (cursor.getString(nameColumn) ?: key).take(160)
-                    val size = cursor.getLong(sizeColumn).coerceAtLeast(0)
-                    val entry = MediaEntry(key, uri, name, mime, size)
-                    current[key] = entry
-                    items.put(JSONObject()
-                        .put("id", key).put("name", name).put("mimeType", mime).put("size", size)
-                        .put("thumbnailUrl", origin + prefix + "thumb/" + key)
-                        .put("mediaUrl", origin + prefix + "full/" + key)
-                    )
+
+        val candidates = mutableListOf<Pair<Long, MediaEntry>>()
+        var permissionFailures = 0
+        val projection = arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.MIME_TYPE,
+            MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.DATE_ADDED
+        )
+
+        for ((collection, video) in listOf(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI to false,
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI to true
+        )) {
+            try {
+                activity.contentResolver.query(
+                    collection, projection, null, null,
+                    MediaStore.MediaColumns.DATE_ADDED + " DESC"
+                )?.use { cursor ->
+                    val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                    val nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                    val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
+                    val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
+                    val dateCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+                    var count = 0
+                    while (cursor.moveToNext() && count < 120) {
+                        val id = cursor.getLong(idCol)
+                        val mime = cursor.getString(mimeCol) ?: if (video) "video/mp4" else "image/jpeg"
+                        if (!(if (video) mime.startsWith("video/") else mime.startsWith("image/"))) continue
+                        val key = (if (video) "v" else "i") + id
+                        val uri = ContentUris.withAppendedId(collection, id)
+                        val name = (cursor.getString(nameCol) ?: key).take(160)
+                        val size = cursor.getLong(sizeCol).coerceAtLeast(0)
+                        val dateAdded = cursor.getLong(dateCol)
+                        candidates.add(dateAdded to MediaEntry(key, uri, name, mime, size))
+                        count++
+                    }
                 }
+            } catch (_: SecurityException) {
+                permissionFailures++
+            } catch (_: Exception) {
+                // Keep items from the other collection, if one is readable.
             }
-            entries.clear()
-            entries.putAll(current)
-            result.put("status", "ready")
-        } catch (_: SecurityException) {
-            entries.clear()
-            result.put("status", "permission")
-        } catch (_: Exception) {
-            result.put("status", "error")
         }
-        return result.put("items", items).toString()
+
+        if (permissionFailures == 2) {
+            entries.clear()
+            return result.put("status", "permission").put("items", items).toString()
+        }
+
+        val current = candidates.sortedByDescending { it.first }.take(120).map { it.second }
+        entries.clear()
+        entries.putAll(current.associateBy { it.key })
+        for (entry in current) {
+            items.put(JSONObject()
+                .put("id", entry.key).put("name", entry.name)
+                .put("mimeType", entry.mime).put("size", entry.size)
+                .put("thumbnailUrl", origin + prefix + "thumb/" + entry.key)
+                .put("mediaUrl", origin + prefix + "full/" + entry.key)
+            )
+        }
+        return result.put("status", "ready").put("items", items).toString()
     }
 
     /** Serve only previously enumerated MediaStore entries to the trusted WebView. */
