@@ -102,8 +102,17 @@ describe('ChunkUploadService', () => {
 
       const state = await chunkUploadService.getChunkState('user-1', baseSession.id);
       expect(state.complete).toBe(false);
+      expect(state.status).toBe('ACTIVE');
       expect(state.receivedIndexes.sort()).toEqual([0, 2]);
     });
+  });
+
+  it('reports a completed upload even when its staging parts were cleaned up', async () => {
+    (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, status: 'COMPLETE' });
+    const state = await chunkUploadService.getChunkState('user-1', baseSession.id);
+    expect(state.status).toBe('COMPLETE');
+    expect(state.receivedIndexes).toEqual([]);
+    expect(state.complete).toBe(false); // byte-staging flag is not the persistence status
   });
 
   describe('acceptChunkPart', () => {
