@@ -55,7 +55,7 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
       if (path.includes('/finalize')) return Promise.resolve({});
       return Promise.resolve({});
     });
-    (apiGet as any).mockResolvedValue({ receivedIndexes: [], complete: false });
+    (apiGet as any).mockResolvedValue({ status: 'ACTIVE', receivedIndexes: [], complete: false });
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -239,22 +239,24 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
 
   test('recovers a completed session whose completion response was lost without uploading chunks again', async () => {
     let firstComplete = true;
+    let persistedOnServer = false;
     (apiPost as any).mockImplementation((path: string) => {
       if (path.includes('/chunk/init')) return Promise.resolve({ sessionId: 'sess-complete' });
       if (path.includes('/chunk/complete')) {
         if (firstComplete) {
           firstComplete = false;
+          persistedOnServer = true;
           return Promise.reject(new Error('Upload completion response lost'));
         }
         return Promise.resolve({ id: 'file-complete' });
       }
       return Promise.resolve({});
     });
-    (apiGet as any).mockResolvedValue({
-      status: 'COMPLETE',
+    (apiGet as any).mockImplementation(async () => ({
+      status: persistedOnServer ? 'COMPLETE' : 'ACTIVE',
       receivedIndexes: [],
       complete: false,
-    });
+    }));
     const chunkSends = vi.spyOn(FakeXHR.prototype, 'send');
     const job = store.startUpload({
       kind: 'story',
@@ -366,6 +368,79 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
       .rejects.toThrow('Invalid caption');
     expect(renew).toHaveBeenCalledTimes(1);
     expect(badDraft).toHaveBeenCalledTimes(1);
+  });
+
+
+  test('preserves the resumable session when the Retry probe hits a transient outage', async () => {
+    const { ApiError } = await import('@/lib/api');
+    let firstComplete = true;
+    let outage = false;
+    let sessionChecks = 0;
+    (apiPost as any).mockImplementation((path: string) => {
+      if (path.includes('/chunk/init')) return Promise.resolve({ sessionId: 'sess-stable' });
+      if (path.includes('/chunk/complete')) {
+        if (firstComplete) {
+          firstComplete = false;
+          return Promise.reject(new Error('Temporary completion timeout'));
+        }
+        return Promise.resolve({ id: 'file-stable' });
+      }
+      return Promise.resolve({});
+    });
+    (apiGet as any).mockImplementation(async () => {
+      sessionChecks += 1;
+      if (outage) throw new ApiError(503, 'Upload service temporarily unavailable');
+      return { status: 'ACTIVE', receivedIndexes: [0], complete: true };
+    });
+    const job = store.startUpload({
+      kind: 'story', file: new File(['picture'], 'photo.jpg', { type: 'image/jpeg' }),
+      draftId: 'story-stable', token: 'tok', meta: { mimeType: 'image/jpeg' },
+    });
+    await vi.waitFor(() => expect(store.getJobs().find(j => j.id === job.id)?.phase).toBe('failed'));
+    outage = true;
+    store.retryUpload(job);
+    await vi.waitFor(() => expect(store.getJobs().find(j => j.id === job.id)?.phase).toBe('failed'));
+    expect(store.getJobs().find(j => j.id === job.id)?.sessionId).toBe('sess-stable');
+    expect((apiPost as any).mock.calls.filter(([path]: [string]) => path.includes('/chunk/init'))).toHaveLength(1);
+    expect(sessionChecks).toBeGreaterThanOrEqual(2);
+    outage = false;
+    store.retryUpload(job);
+    await vi.waitFor(() => expect(store.getJobs().find(j => j.id === job.id)?.phase).toBe('completed'));
+    expect((apiPost as any).mock.calls.filter(([path]: [string]) => path.includes('/chunk/init'))).toHaveLength(1);
+  });
+
+  test('only starts a new session when the old upload session is explicitly missing', async () => {
+    const { ApiError } = await import('@/lib/api');
+    let firstComplete = true;
+    let oldSessionMissing = false;
+    let sessionsCreated = 0;
+    (apiPost as any).mockImplementation((path: string) => {
+      if (path.includes('/chunk/init')) return Promise.resolve({ sessionId: `sess-${++sessionsCreated}` });
+      if (path.includes('/chunk/complete')) {
+        if (firstComplete) {
+          firstComplete = false;
+          return Promise.reject(new Error('Temporary interruption'));
+        }
+        return Promise.resolve({ id: 'file-recreated' });
+      }
+      return Promise.resolve({});
+    });
+    (apiGet as any).mockImplementation(async (path: string) => {
+      if (oldSessionMissing && path.endsWith('sess-1')) {
+        throw new ApiError(400, 'Upload session not found.');
+      }
+      return { status: 'ACTIVE', receivedIndexes: [], complete: false };
+    });
+    const job = store.startUpload({
+      kind: 'story', file: new File(['photo'], 'photo.jpg', { type: 'image/jpeg' }),
+      draftId: 'story-missing-session', token: 'tok', meta: { mimeType: 'image/jpeg' },
+    });
+    await vi.waitFor(() => expect(store.getJobs().find(j => j.id === job.id)?.phase).toBe('failed'));
+    oldSessionMissing = true;
+    store.retryUpload(job);
+    await vi.waitFor(() => expect(store.getJobs().find(j => j.id === job.id)?.phase).toBe('completed'));
+    expect(sessionsCreated).toBe(2);
+    expect(store.getJobs().find(j => j.id === job.id)?.sessionId).toBe('sess-2');
   });
 
 });
