@@ -74,10 +74,7 @@ export const createPost = async (req: AuthRequest, res: Response): Promise<void>
 
     const { content, mediaUrl, mediaFileId, media } = req.body;
 
-    if (!content || !content.trim()) {
-      res.status(400).json({ error: "Content is required" });
-      return;
-    }
+    const text = typeof content === "string" ? content.trim() : "";
 
     // Multi-attachment contract (additive + backward compatible).
     //   media.fileIds / media.urls  -> ordered VANTA multi-media post
@@ -97,7 +94,14 @@ export const createPost = async (req: AuthRequest, res: Response): Promise<void>
     const primaryUrl =
       mediaUrls[0] ?? (typeof mediaUrl === "string" ? mediaUrl : undefined);
 
-    const post = await feedService.createPost(userId, content.trim(), primaryUrl);
+    // Photo-only posts are valid. Do not force a caption just because the
+    // composer contains attachments; require at least text or real media.
+    if (!text && !primaryUrl && mediaFileIds.length === 0) {
+      res.status(400).json({ error: "A caption or media attachment is required" });
+      return;
+    }
+
+    const post = await feedService.createPost(userId, text, primaryUrl);
 
     // Link EVERY selected upload to this post. UploadedFile rows already key on
     // (recordType, recordId), so N attachments per post need no schema change.
