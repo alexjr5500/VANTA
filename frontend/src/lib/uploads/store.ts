@@ -43,6 +43,8 @@ export interface UploadJob {
   error?: string;
   draftId: string;
   sessionId?: string;
+  /** Persisted media file ID: a failed finalize can be retried without reuploading bytes. */
+  uploadedFileId?: string;
   createdAt: number;
   updatedAt: number;
   /** true while a retry is already running for this job. */
@@ -172,6 +174,21 @@ export function startUpload(input: StartUploadInput): UploadJob {
   return job;
 }
 
+/** Finalize using the uploaded File ID; safe to rerun after a lost response. */
+async function finalizeUploadedFile(job: UploadJob, auth: UploadCredentials, meta: UploadJobMeta, fileId: string): Promise<void> {
+  if (job.kind === 'story') {
+    await withUploadAuth(auth, token => apiPost(`/api/stories/${job.draftId}/finalize`, { fileId }, token));
+    notifyStoryFeedChanged();
+    invalidateCache('stories');
+  } else {
+    await withUploadAuth(auth, token => apiPost(
+      `/api/reels/${job.draftId}/finalize`,
+      { fileId, duration: typeof meta.duration === 'number' ? meta.duration : undefined }, token
+    ));
+    invalidateCache('reels');
+  }
+}
+
 async function runUpload(
   job: UploadJob,
   file: File,
@@ -185,13 +202,38 @@ async function runUpload(
     //    FAILED draft on retry).
     await withUploadAuth(auth, token => apiPost(`/api/${job.kind === 'story' ? 'stories' : 'reels'}/${job.draftId}/uploading`, {}, token));
 
+    // If only finalization failed, the file has ALREADY been stored. Do not
+    // re-send it or consume another upload session on Retry.
+    if (job.uploadedFileId) {
+      throwIfAborted(signal);
+      patchJob(job.id, { phase: 'processing', progress: 100, bytesSent: file.size });
+      await finalizeUploadedFile(job, auth, meta, job.uploadedFileId);
+      patchJob(job.id, { phase: 'completed', progress: 100, bytesSent: file.size, error: undefined, disabled: false });
+      try { onCompleted?.(job); } catch { /* Callback must not turn a published Status into a failed one. */ }
+      return;
+    }
+
     // 2. Reuse the existing resumable session when it is still active, otherwise
     //    create a fresh one. This is what lets an interrupted upload resume from
     //    the parts already received instead of restarting from zero.
     if (job.sessionId) {
       try {
         const state = await withUploadAuth(auth, token => apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true }));
-        if (!state || state.complete) job.sessionId = undefined;
+        if (!state || (state.status && state.status !== 'ACTIVE' && state.status !== 'COMPLETE')) {
+          job.sessionId = undefined;
+        } else if (state.status === 'COMPLETE') {
+          // Chunk completion succeeded before its response was lost. The API
+          // returns the existing uploadedFile by the original record ID.
+          const completed = await withUploadAuth(auth, token => apiPost<any>(
+            '/api/upload/chunk/complete', { sessionId: job.sessionId }, token
+          ));
+          job.uploadedFileId = completed.id;
+          patchJob(job.id, { phase: 'processing', uploadedFileId: completed.id, progress: 100, bytesSent: file.size });
+          await finalizeUploadedFile(job, auth, meta, completed.id);
+          patchJob(job.id, { phase: 'completed', progress: 100, bytesSent: file.size, error: undefined, disabled: false });
+          try { onCompleted?.(job); } catch { /* Notification callbacks must not invalidate a completed upload. */ }
+          return;
+        }
       } catch {
         job.sessionId = undefined;
       }
@@ -252,21 +294,14 @@ async function runUpload(
 
     // 5. Finalize the record — the Story/Reel becomes PUBLISHED only now, when
     //    its media URL actually exists. Never before.
-    if (job.kind === 'story') {
-      await withUploadAuth(auth, token => apiPost(`/api/stories/${job.draftId}/finalize`, { fileId: completed.id }, token));
-      notifyStoryFeedChanged();
-      invalidateCache('stories');
-    } else {
-      await withUploadAuth(auth, token => apiPost(
-        `/api/reels/${job.draftId}/finalize`,
-        { fileId: completed.id, duration: typeof meta.duration === 'number' ? meta.duration : undefined },
-        token
-      ));
-      invalidateCache('reels');
-    }
+    // Retain the persisted file before finalization: retrying a finalize or
+    // recovering from a dropped response must NEVER upload the same bytes twice.
+    job.uploadedFileId = completed.id;
+    patchJob(job.id, { uploadedFileId: completed.id });
+    await finalizeUploadedFile(job, auth, meta, completed.id);
 
     patchJob(job.id, { phase: 'completed', progress: 100, bytesSent: file.size, error: undefined, disabled: false });
-    onCompleted?.(job);
+    try { onCompleted?.(job); } catch { /* A user-provided callback cannot undo published media. */ }
   } catch (error) {
     const cancelled = isAbortError(error) || (error instanceof ApiError && error.statusCode === 499);
     if (cancelled) {
