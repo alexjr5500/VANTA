@@ -41,6 +41,7 @@ import { extractQuoteRef } from '@/lib/quotePost';
 import QuoteEmbed from '@/components/social/QuoteEmbed';
 import { friendlyError, errorMessage } from '@/lib/errors';
 import type { VerificationType } from '@/types/verification';
+import { nativeGalleryConnection, parseNativeGallery, type NativeRecentMedia, type NativeGalleryStatus } from '@/lib/nativeStatusGallery';
 
 interface Conversation {
   id: string;
@@ -437,42 +438,34 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [newChatResults, setNewChatResults] = useState<any[]>([]);
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [attachmentDrafts, setAttachmentDrafts] = useState<AttachmentDraft[]>([]);
-  // Toggles the compact Camera / Photos / Files attachment sheet above the composer.
+  // Gallery-first chat attachment sheet. Native Android MediaStore is read-only;
+  // the OS picker remains the fallback outside the VANTA Android app.
   const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
+  const [recentChatMedia, setRecentChatMedia] = useState<NativeRecentMedia[]>([]);
+  const [chatGalleryStatus, setChatGalleryStatus] = useState<NativeGalleryStatus>('unavailable');
+  const [chatPickingMediaId, setChatPickingMediaId] = useState<string | null>(null);
   const [composerEmojiOpen, setComposerEmojiOpen] = useState(false);
-  const [cameraPreviewError, setCameraPreviewError] = useState<string | null>(null);
-  const cameraPreviewRef = useRef<HTMLVideoElement>(null);
-  const cameraPreviewStreamRef = useRef<MediaStream | null>(null);
   useEffect(() => {
-    let cancelled = false;
-    const stopPreview = () => {
-      cameraPreviewStreamRef.current?.getTracks().forEach(track => track.stop());
-      cameraPreviewStreamRef.current = null;
-      if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
+    if (!showAttachmentSheet) return;
+    const refresh = () => {
+      const connection = nativeGalleryConnection();
+      if (!connection) { setChatGalleryStatus('unavailable'); setRecentChatMedia([]); return; }
+      try {
+        const result = parseNativeGallery(connection.bridge.listRecent(connection.nonce), window.location.origin, connection.nonce);
+        setChatGalleryStatus(result.status);
+        setRecentChatMedia(result.items);
+      } catch {
+        setChatGalleryStatus('error');
+        setRecentChatMedia([]);
+      }
     };
-    if (!showAttachmentSheet) {
-      stopPreview();
-      setCameraPreviewError(null);
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraPreviewError('Live camera preview is not available here. Use Camera to open your device camera.');
-      return;
-    }
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
-      .then(stream => {
-        if (cancelled) { stream.getTracks().forEach(track => track.stop()); return; }
-        cameraPreviewStreamRef.current = stream;
-        if (cameraPreviewRef.current) {
-          cameraPreviewRef.current.srcObject = stream;
-          void cameraPreviewRef.current.play().catch(() => undefined);
-        }
-        setCameraPreviewError(null);
-      })
-      .catch(() => {
-        if (!cancelled) setCameraPreviewError('Allow camera access to use the live preview, or tap Camera to open the device camera.');
-      });
-    return () => { cancelled = true; stopPreview(); };
+    refresh();
+    window.addEventListener('vanta-native-gallery-ready', refresh);
+    window.addEventListener('vanta-native-gallery-changed', refresh);
+    return () => {
+      window.removeEventListener('vanta-native-gallery-ready', refresh);
+      window.removeEventListener('vanta-native-gallery-changed', refresh);
+    };
   }, [showAttachmentSheet]);
 
   const uploadAbortRef = useRef<AbortController | null>(null);
@@ -1656,26 +1649,39 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
   };
 
-  const captureLivePhoto = () => {
-    const video = cameraPreviewRef.current;
-    if (!video || !video.videoWidth || !video.videoHeight) {
-      showToast?.({ type: 'error', title: 'Camera not ready', message: 'Wait for the live preview, then try again.' });
-      return;
+  const pickChatRecentMedia = async (item: NativeRecentMedia) => {
+    if (chatPickingMediaId || isUploadingAttachment || hasBusyDraft(attachmentDrafts)) return;
+    setChatPickingMediaId(item.id);
+    try {
+      // The native bridge only serves files through a trusted, nonce-scoped URL.
+      const response = await fetch(item.mediaUrl);
+      if (!response.ok) throw new Error('Media could not be opened');
+      const blob = await response.blob();
+      const file = new File([blob], item.name, { type: item.mimeType });
+      const limit = item.mimeType.startsWith('video/') ? 100 * 1024 * 1024 : 15 * 1024 * 1024;
+      if (file.size > limit) {
+        showToast?.({ type: 'error', title: 'File too large', message: `Choose a file smaller than ${limit / 1024 / 1024} MB.` });
+        return;
+      }
+      if (item.mimeType.startsWith('video/')) setTrimVideoFile(file);
+      else setAttachmentDrafts(previous => addDrafts(previous, [{ file, fileType: 'IMAGE' }], selected => URL.createObjectURL(selected)));
+      setShowAttachmentSheet(false);
+    } catch {
+      showToast?.({ type: 'error', title: 'Could not open media', message: 'Select the photo or video using Gallery instead.' });
+    } finally {
+      setChatPickingMediaId(null);
     }
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const context = canvas.getContext('2d');
-    if (!context) return;
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob(blob => {
-      if (!blob) { showToast?.({ type: 'error', title: 'Photo failed', message: 'Could not capture this photo. Try again.' }); return; }
-      const file = new File([blob], `vanta-photo-${Date.now()}.jpg`, { type: 'image/jpeg' });
-      setAttachmentDrafts(previous => [...previous, {
-        file, previewUrl: URL.createObjectURL(file), fileType: 'IMAGE', progress: 0, status: 'ready',
-        id: typeof crypto !== 'undefined' && crypto?.randomUUID ? crypto.randomUUID() : `draft-${Date.now()}`,
-      }]);
-    }, 'image/jpeg', 0.92);
+  };
+
+  const requestChatGalleryAccess = () => {
+    const connection = nativeGalleryConnection();
+    if (connection) {
+      setChatGalleryStatus('loading');
+      connection.bridge.requestAccess(connection.nonce);
+    } else {
+      setShowAttachmentSheet(false);
+      window.requestAnimationFrame(() => attachmentInputRef.current?.click());
+    }
   };
 
   /** Open the native device camera for a photo or video. */
@@ -3161,34 +3167,45 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   })()}
                 </div>
               )}
-              {/* Unified attachment sheet: live camera preview plus one compact action strip. */}
+              {/* Gallery-first bottom sheet: real recent media, camera tile, attachment categories. */}
               {showAttachmentSheet && (
                 <>
-                  <button type="button" aria-label="Close attachment picker" onClick={() => setShowAttachmentSheet(false)} className="fixed inset-0 z-[60] bg-black/55" />
-                  <section role="dialog" aria-label="Choose an attachment" className="fixed inset-x-3 bottom-[calc(var(--vanta-kb,0px)+5.25rem)] z-[70] mx-auto w-[calc(100%-1.5rem)] max-w-lg rounded-2xl border border-white/[0.09] bg-[#1F2630] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.65)] backdrop-blur-2xl">
-                    <div className="mb-4 flex items-center justify-between">
-                      <div>
-                        <h3 className="text-sm font-semibold text-white">Share a file</h3>
-                        <p className="mt-1 text-[11px] text-white/45">Choose how you want to attach it</p>
+                  <button type="button" aria-label="Close attachment picker" onClick={() => setShowAttachmentSheet(false)} className="fixed inset-0 z-[60] bg-black/60" />
+                  <section role="dialog" aria-modal="true" aria-label="Choose an attachment" className="fixed inset-x-0 bottom-0 z-[70] flex h-[min(68dvh,640px)] flex-col overflow-hidden rounded-t-[26px] bg-[#17232e] shadow-[0_-16px_60px_rgba(0,0,0,0.55)]">
+                    <div className="flex h-10 shrink-0 items-center justify-center">
+                      <span className="h-1.5 w-14 rounded-full bg-white/20" aria-hidden="true" />
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                      <div className="grid grid-cols-3 gap-[3px]" aria-label="Recent device photos and videos">
+                        <button type="button" onClick={openCamera} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} aria-label="Open camera" className="relative flex aspect-[3/4] items-start justify-end bg-[#0e141b] p-3 text-white disabled:opacity-50">
+                          <Camera size={25} />
+                        </button>
+                        {recentChatMedia.map(item => (
+                          <button type="button" key={item.id} onClick={() => void pickChatRecentMedia(item)} disabled={Boolean(chatPickingMediaId) || isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="relative aspect-[3/4] overflow-hidden bg-[#101820] disabled:opacity-50" aria-label={`Attach ${item.name}`}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={item.thumbnailUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                            {item.mimeType.startsWith('video/') && <span className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/65 px-1.5 py-0.5 text-xs text-white"><Play size={12} fill="currentColor" /> Video</span>}
+                            {chatPickingMediaId === item.id && <Loader2 className="absolute right-3 top-3 animate-spin text-white" size={22} />}
+                          </button>
+                        ))}
                       </div>
-                      <button type="button" onClick={() => setShowAttachmentSheet(false)} className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-white/60" aria-label="Close"><X size={16}/></button>
+                      {chatGalleryStatus === 'permission' && (
+                        <button type="button" onClick={requestChatGalleryAccess} className="m-4 rounded-xl bg-white/10 px-4 py-3 text-sm text-white">Allow access to recent photos</button>
+                      )}
+                      {chatGalleryStatus === 'loading' && <p className="px-4 py-3 text-sm text-white/60">Loading recent media…</p>}
+                      {(chatGalleryStatus === 'unavailable' || chatGalleryStatus === 'error' || (chatGalleryStatus === 'ready' && recentChatMedia.length === 0)) && (
+                        <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => attachmentInputRef.current?.click()); }} className="m-4 rounded-xl bg-white/10 px-4 py-3 text-sm text-white">Browse device photos and videos</button>
+                      )}
                     </div>
-                    <div className="mb-3 overflow-hidden rounded-xl bg-black">
-                      <video ref={cameraPreviewRef} autoPlay playsInline muted className="max-h-52 min-h-32 w-full object-cover" />
-                      {cameraPreviewError && <p className="px-3 py-2 text-[10px] text-white/55">{cameraPreviewError}</p>}
-                      <div className="flex items-center justify-center gap-3 border-t border-white/10 px-3 py-2">
-                        <button type="button" onClick={captureLivePhoto} disabled={Boolean(cameraPreviewError) || isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-black disabled:opacity-40">Take photo</button>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 overflow-x-auto border-t border-white/[0.07] pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => attachmentInputRef.current?.click()); }} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="flex shrink-0 items-center gap-2 rounded-full bg-[#26384a] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-40"><ImageIcon size={15}/> Gallery</button>
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => fileInputRef.current?.click()); }} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold text-white/75 hover:bg-white/[0.06] disabled:opacity-40"><FileText size={15}/> Files</button>
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); sendLocationMessage(); }} disabled={specialSending} className="flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold text-white/75 hover:bg-white/[0.06] disabled:opacity-40"><MapPin size={15}/> Location</button>
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); setPollDraft({ question: '', options: ['', ''], allowMultiple: false, imageFile: null }); }} disabled={specialSending} className="flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold text-white/75 hover:bg-white/[0.06] disabled:opacity-40"><BarChart3 size={15}/> Poll</button>
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); setContactPickerOpen(true); }} disabled={specialSending} className="flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold text-white/75 hover:bg-white/[0.06] disabled:opacity-40"><User size={15}/> Contact</button>
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); musicInputRef.current?.click(); }} disabled={specialSending} className="flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold text-white/75 hover:bg-white/[0.06] disabled:opacity-40"><Music2 size={15}/> Music</button>
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); openWallet(); }} disabled={specialSending} className="flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold text-white/75 hover:bg-white/[0.06] disabled:opacity-40"><WalletIcon size={15}/> Wallet</button>
-                    </div>
+                    <nav aria-label="Attachment options" className="flex shrink-0 gap-1.5 overflow-x-auto border-t border-white/10 bg-[#1d2b38] px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => attachmentInputRef.current?.click()); }} className="flex min-w-[80px] shrink-0 flex-col items-center gap-1 rounded-2xl bg-[#254666] px-3 py-2 text-xs font-semibold text-[#51b7ff]"><ImageIcon size={24}/>Gallery</button>
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => fileInputRef.current?.click()); }} className="flex min-w-[70px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white"><FileText size={24}/>File</button>
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); openWallet(); }} disabled={specialSending} className="flex min-w-[70px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white disabled:opacity-40"><WalletIcon size={24}/>Money</button>
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); sendLocationMessage(); }} disabled={specialSending} className="flex min-w-[80px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white disabled:opacity-40"><MapPin size={24}/>Location</button>
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); setPollDraft({ question: '', options: ['', ''], allowMultiple: false, imageFile: null }); }} disabled={specialSending} className="flex min-w-[75px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white disabled:opacity-40"><BarChart3 size={24}/>Poll</button>
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); setContactPickerOpen(true); }} disabled={specialSending} className="flex min-w-[80px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white disabled:opacity-40"><User size={24}/>Contact</button>
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); musicInputRef.current?.click(); }} disabled={specialSending} className="flex min-w-[70px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white disabled:opacity-40"><Music2 size={24}/>Music</button>
+                    </nav>
                   </section>
                 </>
               )}
