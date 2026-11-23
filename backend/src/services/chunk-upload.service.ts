@@ -200,6 +200,9 @@ export class ChunkUploadService {
       totalChunks: session.totalChunks,
       chunkSize: session.chunkSize,
       complete: receivedChunks >= session.totalChunks,
+      // A COMPLETE session has no staged chunks left, but can be re-completed.
+      status: session.status,
+      expiresAt: session.expiresAt.toISOString(),
     };
   }
 

@@ -123,7 +123,13 @@ export function startUpload(input: StartUploadInput): UploadJob {
   running.set(job.id, controller);
   void runUpload(job, input.file, input.token, input.meta, controller.signal, input.onCompleted).finally(() => {
     running.delete(job.id);
-    jobTokens.delete(job.id);
+    // Retain the in-memory auth token and File only for failed/cancelled jobs
+    // so the Retry button can resume. Clear after success or explicit dismiss.
+    if (jobList.find((item) => item.id === job.id)?.phase === 'completed') {
+      jobTokens.delete(job.id);
+      FILE_CACHE.delete(job.id);
+      META_CACHE.delete(job.id);
+    }
   });
   return job;
 }
@@ -144,10 +150,17 @@ async function runUpload(
     // 2. Reuse the existing resumable session when it is still active, otherwise
     //    create a fresh one. This is what lets an interrupted upload resume from
     //    the parts already received instead of restarting from zero.
+    let alreadyPersisted = false;
     if (job.sessionId) {
       try {
         const state = await apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true });
-        if (!state || state.complete) job.sessionId = undefined;
+        if (!state || state.status === 'FAILED' || state.status === 'CANCELLED' ||
+          (state.expiresAt && Date.parse(state.expiresAt) <= Date.now())) {
+          job.sessionId = undefined;
+        } else {
+          // A stored file may only need its Story/Reel finalize call retried.
+          alreadyPersisted = state.status === 'COMPLETE';
+        }
       } catch {
         job.sessionId = undefined;
       }
@@ -175,30 +188,32 @@ async function runUpload(
     patchJob(job.id, { phase: 'uploading', sessionId: job.sessionId, bytesTotal: file.size, error: undefined });
 
     // 3. Resume-aware chunk loop with byte-accurate progress.
-    const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
-    let receivedIndexes: number[] = [];
-    try {
-      const state = await apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true });
-      if (state && Array.isArray(state.receivedIndexes)) receivedIndexes = state.receivedIndexes;
-    } catch {
-      // session not probeable — upload from the first chunk
-    }
-    throwIfAborted(signal);
-
-    const received = new Set(receivedIndexes);
-    for (let i = 0; i < totalChunks; i++) {
-      throwIfAborted(signal);
-      const start = i * CHUNK_SIZE;
-      const end = Math.min(file.size, start + CHUNK_SIZE);
-      if (received.has(i)) {
-        patchJob(job.id, { bytesSent: end, progress: Math.round((end / file.size) * 100) });
-        continue;
+    if (!alreadyPersisted) {
+      const totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+      let receivedIndexes: number[] = [];
+      try {
+        const state = await apiGet<any>(`/api/upload/chunk/${job.sessionId}`, token, { skipCache: true });
+        if (state && Array.isArray(state.receivedIndexes)) receivedIndexes = state.receivedIndexes;
+      } catch {
+        // session not probeable — upload from the first chunk
       }
-      const chunk = file.slice(start, end);
-      await uploadPart(job, token, chunk, i, start, signal);
-      patchJob(job.id, { bytesSent: end, progress: Math.round((end / file.size) * 100) });
-    }
+      throwIfAborted(signal);
 
+      const received = new Set(receivedIndexes);
+      for (let i = 0; i < totalChunks; i++) {
+        throwIfAborted(signal);
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(file.size, start + CHUNK_SIZE);
+        if (received.has(i)) {
+          patchJob(job.id, { bytesSent: end, progress: Math.round((end / file.size) * 100) });
+          continue;
+        }
+        const chunk = file.slice(start, end);
+        await uploadPart(job, token, chunk, i, start, signal);
+        patchJob(job.id, { bytesSent: end, progress: Math.round((end / file.size) * 100) });
+      }
+
+    }
     throwIfAborted(signal);
     patchJob(job.id, { phase: 'processing', progress: 100, bytesSent: file.size });
 
@@ -229,12 +244,13 @@ async function runUpload(
       patchJob(job.id, { phase: 'cancelled', disabled: false });
     } else {
       const message = error instanceof Error ? error.message : 'Upload failed unexpectedly';
-      patchJob(job.id, { phase: 'failed', error: message, disabled: false });
       try {
         await apiPost(`/api/${job.kind === 'story' ? 'stories' : 'reels'}/${job.draftId}/fail`, {}, token);
       } catch {
-        // server may be unreachable — the client failure state is still shown
+        // A failed API call must not hide the local retry action.
       }
+      // Avoid racing a quick retry with the previous server /fail call.
+      patchJob(job.id, { phase: 'failed', error: message, disabled: false });
     }
   }
 }
@@ -311,7 +327,7 @@ function uploadPart(
 /** Retry a failed (or cancelled) job. Resumes from chunks already on the server. */
 export function retryUpload(job: UploadJob): void {
   const existing = jobList.find((item) => item.id === job.id);
-  if (!existing || existing.disabled) return;
+  if (!existing || existing.disabled || (existing.phase !== 'failed' && existing.phase !== 'cancelled')) return;
   const token = jobTokens.get(job.id);
   const file = FILE_CACHE.get(job.id);
   if (!token || !file) {
@@ -323,11 +339,18 @@ export function retryUpload(job: UploadJob): void {
     return;
   }
 
-  patchJob(job.id, { phase: 'starting', progress: 0, error: undefined, disabled: true });
+  // A cancelled job has had its upload session aborted on the server.
+  if (existing.phase === 'cancelled') job.sessionId = undefined;
+  patchJob(job.id, { phase: 'starting', progress: 0, bytesSent: 0, error: undefined, disabled: true, sessionId: job.sessionId });
   const controller = new AbortController();
   running.set(job.id, controller);
   void runUpload(job, file, token, metaOf(job), controller.signal).finally(() => {
     running.delete(job.id);
+    if (jobList.find((item) => item.id === job.id)?.phase === 'completed') {
+      jobTokens.delete(job.id);
+      FILE_CACHE.delete(job.id);
+      META_CACHE.delete(job.id);
+    }
   });
 }
 

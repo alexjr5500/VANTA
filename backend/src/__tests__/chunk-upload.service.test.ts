@@ -117,6 +117,15 @@ describe('ChunkUploadService', () => {
     });
   });
 
+  describe('getChunkState', () => {
+    it('reports server COMPLETE even after chunk staging is cleaned', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, status: 'COMPLETE' });
+      const state = await chunkUploadService.getChunkState('user-1', baseSession.id);
+      expect(state.status).toBe('COMPLETE');
+      expect(state.expiresAt).toBe(baseSession.expiresAt.toISOString());
+    });
+  });
+
   describe('completeChunkSession', () => {
     it('throws when not all parts have arrived (incomplete upload)', async () => {
       (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, totalChunks: 2, fileSize: 8 });

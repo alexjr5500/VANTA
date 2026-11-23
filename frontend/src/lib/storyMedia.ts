@@ -62,6 +62,7 @@ export function storyMediaKindOf(file: Pick<File, 'name' | 'type'>): StoryMediaK
 export function validateStoryMediaFile(file: File | null | undefined): string | null {
   if (!file) return 'No file was selected.';
   const kind = storyMediaKindOf(file);
+  if (file.size <= 0) return 'This photo or video is empty. Choose a different file.';
   if (!kind) {
     return 'Unsupported file. Choose a photo (JPG, PNG, WebP, GIF, AVIF, BMP, TIFF, HEIC) or a short video (MP4, WebM, MOV, M4V).';
   }

@@ -287,12 +287,13 @@ useEffect(() => {
     if (failedJobs.length > 0) {
       setError(
         failedJobs.length === 1
-          ? `${failedJobs[0].fileName || 'One upload'} failed. Retry it or post the remaining files.`
-          : `${failedJobs.length} uploads failed. Retry them or post the remaining files.`
+          ? `${failedJobs[0].fileName || 'One upload'} failed. Retry this file below.`
+          : `${failedJobs.length} uploads failed. Retry the failed files below.`
       );
       setDraftFailed(true);
       publishingRef.current = false;
-      setPublishing(false);
+      // Stay on the progress panel so the user can retry the same draft and
+      // can read the actual per-file error instead of creating duplicate drafts.
       return;
     }
     if (successShownRef.current) return;
@@ -619,7 +620,7 @@ useEffect(() => {
             >
               {active?.kind === 'image' ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={active.objectUrl} alt="Status media preview" className="absolute inset-0 h-full w-full object-cover" />
+                <img src={active.objectUrl} alt="Status media preview" className="absolute inset-0 h-full w-full object-contain" />
               ) : active ? (
                 <video src={active.objectUrl} playsInline muted loop className="absolute inset-0 h-full w-full object-cover" />
               ) : null}
@@ -775,7 +776,7 @@ useEffect(() => {
       )}
 
       {/* Publish bar */}
-      {!publishing && (
+      {!publishing && items.length > 0 && (
         <footer
           className="shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-4 pt-3"
           style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--vanta-kb, 0px) + 16px)' }}

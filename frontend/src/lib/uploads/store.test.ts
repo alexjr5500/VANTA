@@ -105,6 +105,59 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
     expect(apiPost).toHaveBeenCalledWith(`/api/reels/reel-1/fail`, {}, 'tok');
   });
 
+
+  test('retries a failed Status using its original photo and authentication token', async () => {
+    let initAttempts = 0;
+    (apiPost as any).mockImplementation((path: string) => {
+      if (path.includes('/chunk/init')) {
+        initAttempts += 1;
+        return initAttempts === 1
+          ? Promise.reject(new Error('Temporary upload interruption'))
+          : Promise.resolve({ sessionId: 'photo-session' });
+      }
+      if (path.includes('/chunk/complete')) return Promise.resolve({ id: 'photo-file' });
+      return Promise.resolve({});
+    });
+    const job = store.startUpload({
+      kind: 'story', file: new File(['photo-data'], '347293.jpg', { type: 'image/jpeg' }),
+      draftId: 'photo-story', token: 'token', meta: { mimeType: 'image/jpeg' },
+    });
+    await vi.waitFor(() => expect(store.getJobs().find(j => j.id === job.id)?.phase).toBe('failed'));
+    store.retryUpload(job);
+    await vi.waitFor(() => expect(store.getJobs().find(j => j.id === job.id)?.phase).toBe('completed'));
+    expect(initAttempts).toBe(2);
+    expect(apiPost).toHaveBeenCalledWith('/api/stories/photo-story/finalize', { fileId: 'photo-file' }, 'token');
+    store.dismissUpload(job.id);
+  });
+
+  test('retries finalization without reuploading bytes from a COMPLETE server session', async () => {
+    let finalizeAttempts = 0;
+    (apiPost as any).mockImplementation((path: string) => {
+      if (path.includes('/chunk/init')) return Promise.resolve({ sessionId: 'saved-session' });
+      if (path.includes('/chunk/complete')) return Promise.resolve({ id: 'saved-file' });
+      if (path.includes('/finalize')) {
+        finalizeAttempts += 1;
+        return finalizeAttempts === 1 ? Promise.reject(new Error('Finalize interrupted')) : Promise.resolve({});
+      }
+      return Promise.resolve({});
+    });
+    (apiGet as any).mockImplementation(() =>
+      Promise.resolve(finalizeAttempts > 0
+        ? { status: 'COMPLETE', receivedIndexes: [], complete: false }
+        : { status: 'ACTIVE', receivedIndexes: [], complete: false })
+    );
+    const job = store.startUpload({
+      kind: 'story', file: new File(['photo-data'], 'picture.jpg', { type: 'image/jpeg' }),
+      draftId: 'finalize-story', token: 'token', meta: { mimeType: 'image/jpeg' },
+    });
+    await vi.waitFor(() => expect(store.getJobs().find(j => j.id === job.id)?.phase).toBe('failed'));
+    store.retryUpload(job);
+    await vi.waitFor(() => expect(store.getJobs().find(j => j.id === job.id)?.phase).toBe('completed'));
+    expect(finalizeAttempts).toBe(2);
+    expect((apiPost as any).mock.calls.filter(([path]: [string]) => path.includes('/chunk/init'))).toHaveLength(1);
+    store.dismissUpload(job.id);
+  });
+
   test('dismissUpload removes a finished job from the tray', async () => {
     const file = new File(['abc'], 'clip.mp4', { type: 'video/mp4' });
     const job = store.startUpload({ kind: 'story', file, draftId: 'story-9', token: 'tok', meta: { mimeType: 'video/mp4' } });
