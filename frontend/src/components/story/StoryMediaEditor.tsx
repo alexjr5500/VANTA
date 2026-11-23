@@ -716,16 +716,15 @@ useEffect(() => {
       ) : (
 <>
           {/* Main preview */}
-          <div className="flex min-h-0 flex-1 items-center justify-center px-4 py-1">
+          <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
             <div
-              className="relative flex w-full max-w-[380px] items-center justify-center overflow-hidden rounded-2xl border border-white/[0.08] bg-black"
-              style={{ aspectRatio: '9 / 16', maxHeight: '100%' }}
+              className="relative h-full w-full overflow-hidden bg-black"
             >
               {active?.kind === 'image' ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={active.objectUrl} alt="Status media preview" className="absolute inset-0 h-full w-full object-contain" />
               ) : active ? (
-                <video src={active.objectUrl} playsInline muted loop className="absolute inset-0 h-full w-full object-cover" />
+                <video src={active.objectUrl} playsInline muted loop className="absolute inset-0 h-full w-full object-contain" />
               ) : null}
 
               {/* Selected index + kind chip */}
@@ -819,15 +818,12 @@ useEffect(() => {
       )}
 {!publishing && showMediaPreview && items.length > 0 && (
         <>
-          {/* Media toolbar */}
-          <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 px-4 pb-1.5">
-            <MediaAction label="Photo & Video" icon={ImageIcon} onClick={openGalleryPicker} />
-            <MediaAction label="Camera" icon={Camera} onClick={openCameraPhoto} />
-            <MediaAction label="Record" icon={Video} onClick={openCameraVideo} />
-            {active && active.kind === 'video' && (
+          {/* Trim remains available for videos; redundant media shortcuts are hidden. */}
+          {active?.kind === 'video' && (
+            <div className="flex shrink-0 justify-center px-4 pb-1.5">
               <MediaAction label="Trim" icon={Clock} onClick={() => setTrimItem(active)} />
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Compact caption composer — character limits remain enforced by normalization. */}
           <div className="shrink-0 px-4 pb-1.5">
@@ -865,7 +861,7 @@ useEffect(() => {
       {!publishing && showMediaPreview && items.length > 0 && (
         <footer
           className="shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-4 pt-3"
-          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--vanta-kb, 0px) + 16px)' }}
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--vanta-kb, 0px) + 6px)' }}
         >
           <button
             type="button"
