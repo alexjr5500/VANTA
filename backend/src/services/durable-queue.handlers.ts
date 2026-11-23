@@ -79,6 +79,7 @@ export function createDurableQueueHandlers(
         },
       };
       const client = {
+        cloudName: process.env.CLOUDINARY_CLOUD_NAME!,
         explicit: (id: string, options: Parameters<typeof cloudinary.uploader.explicit>[1]) =>
           cloudinary.uploader.explicit(id, options),
       };

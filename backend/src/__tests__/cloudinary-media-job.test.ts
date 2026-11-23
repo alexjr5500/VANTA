@@ -11,8 +11,9 @@ describe('Cloudinary durable media processing', () => {
       }),
     };
     const client: jest.Mocked<CloudinaryMediaClient> = {
+      cloudName: 'test-cloud',
       explicit: jest.fn().mockResolvedValue({
-        eager: [{ secure_url: 'https://res.cloudinary.com/test-cloud/image/upload/vanta/output.webp' }],
+        eager: [{ secure_url: 'https://res.cloudinary.com/test-cloud/image/upload/c_limit,w_800/vanta/post-image/asset_1.webp' }],
       }),
     };
     return { store, client };
@@ -114,6 +115,9 @@ describe('Cloudinary durable media processing', () => {
       'https://evil.example/image/upload/asset.webp',
       'http://res.cloudinary.com/test-cloud/image/upload/asset.webp',
       'https://res.cloudinary.com/test-cloud/image/upload/asset.mp4',
+      'https://res.cloudinary.com/other-cloud/image/upload/vanta/post-image/asset_1.webp',
+      'https://res.cloudinary.com/test-cloud/image/upload/vanta/post-image/different_asset.webp',
+      'https://res.cloudinary.com/test-cloud/image/upload/vanta/post-image/asset_1.webp?public=true',
     ]) {
       client.explicit.mockResolvedValue({ eager: [{ secure_url: url }] });
       await expect(prepareCloudinaryMedia('cloudinary:image:optimize',

@@ -13,6 +13,8 @@ export interface CloudinaryMediaStore {
   saveDerivative(source: CloudinaryMediaRecord, kind: CloudinaryJobKind, url: string): Promise<boolean>;
 }
 export interface CloudinaryMediaClient {
+  /** The configured Cloudinary account; used to verify provider result URLs. */
+  cloudName: string;
   explicit(publicId: string, options: {
     resource_type: 'image' | 'video';
     type: 'upload' | 'authenticated';
@@ -102,10 +104,14 @@ export async function prepareCloudinaryMedia(
     throw new Error('Cloudinary did not confirm a prepared media derivative');
   }
   const expectedExt = kind === 'cloudinary:video:transcode' ? '.m3u8' : '.webp';
-  if (verified.protocol !== 'https:' || verified.hostname !== 'res.cloudinary.com' ||
-      verified.username || verified.password || verified.search || verified.hash ||
-      !verified.pathname.includes(`/${resourceType}/upload/`) ||
-      !verified.pathname.endsWith(expectedExt)) {
+  // The provider response must match this Cloudinary account *and* the
+  // original VANTA public ID. A URL for a different account or asset must
+  // never become a public media URL in the database.
+  if (!/^[a-zA-Z0-9_-]+$/.test(client.cloudName) ||
+      verified.protocol !== 'https:' || verified.hostname !== 'res.cloudinary.com' ||
+      verified.port || verified.username || verified.password || verified.search || verified.hash ||
+      !verified.pathname.startsWith(`/${client.cloudName}/${resourceType}/upload/`) ||
+      !verified.pathname.endsWith(`/${match[2]}${expectedExt}`)) {
     throw new Error('Cloudinary did not confirm a safe media derivative URL');
   }
   const updated = await store.saveDerivative(record, kind, url);
