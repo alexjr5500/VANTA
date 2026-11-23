@@ -149,8 +149,14 @@ export class StoryService {
 
   /** Re-open a failed draft for another upload attempt. */
   async setStoryUploading(userId: string, storyId: string) {
-    const story = await prisma.story.findUnique({ where: { id: storyId } });
+    const story = await prisma.story.findUnique({
+      where: { id: storyId },
+      include: { user: { select: { id: true, username: true, avatar: true } } },
+    });
     if (!story || story.userId !== userId) throw new Error("Story not found");
+    // A successful finalize may have reached the server even if its response
+    // never reached the phone. Never unpublish an already-live Status on Retry.
+    if (story.publishStatus === "PUBLISHED") return story;
     await prisma.story.update({
       where: { id: storyId },
       data: { publishStatus: "UPLOADING", mediaUrl: null },
@@ -177,8 +183,17 @@ export class StoryService {
     }
 
     const story = await prisma.$transaction(async (tx) => {
-      const draft = await tx.story.findUnique({ where: { id: storyId } });
+      const draft = await tx.story.findUnique({
+        where: { id: storyId },
+        include: { user: { select: { id: true, username: true, avatar: true } } },
+      });
       if (!draft || draft.userId !== userId) throw new Error("Story not found");
+      if (draft.publishStatus === "PUBLISHED") {
+        // Idempotent completion of the SAME file. Do not consume daily quota
+        // twice or replace another published media asset on a lost response.
+        if (draft.mediaUrl !== file.url) throw new Error("Story already published with different media.");
+        return draft;
+      }
       await this.assertCanCreateStory(tx, userId, isVerified);
       return tx.story.update({
         where: { id: storyId },

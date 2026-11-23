@@ -220,16 +220,13 @@ export class ChunkUploadService {
     const receivedChunks = receivedIndexes.length;
     return {
       sessionId,
+      status: session.status,
       totalChunks: session.totalChunks,
       chunkSize: session.chunkSize,
       fileSize: session.fileSize,
       receivedChunks,
       receivedIndexes,
       complete: receivedChunks >= session.totalChunks,
-      // COMPLETE sessions no longer have chunk files on disk, but can still
-      // safely re-return their persisted UploadedFile during retry.
-      status: session.status,
-      expiresAt: session.expiresAt.toISOString(),
     };
   }
 
@@ -361,6 +358,9 @@ export class ChunkUploadService {
     if (!session || session.userId !== userId) {
       throw new Error("Upload session not found.");
     }
+    // Media is already persisted: a late cancellation must not roll back the
+    // completed session or compromise an idempotent finalize retry.
+    if (session.status === "COMPLETE") return { cancelled: false };
     await prisma.uploadSession.update({ where: { id: sessionId }, data: { status: "CANCELLED" } });
     try {
       fs.rmSync(chunkStagingDir(sessionId), { recursive: true, force: true });
