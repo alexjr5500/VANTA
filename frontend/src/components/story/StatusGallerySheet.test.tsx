@@ -46,6 +46,15 @@ describe('Status gallery-first selection', () => {
     expect(html).toContain('1 / 7 selected');
   });
 
+  test('shows file validation errors before opening the editor', () => {
+    const html = renderToStaticMarkup(
+      <StatusGallerySheet {...baseProps} error="This image is larger than the 15MB limit." />
+    );
+    expect(html).toContain('role="alert"');
+    expect(html).toContain('larger than the 15MB limit');
+    expect(html).not.toContain('Next (');
+  });
+
   test('does not offer another gallery slot when the selection reaches its limit', () => {
     const html = renderToStaticMarkup(
       <StatusGallerySheet
