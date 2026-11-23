@@ -292,16 +292,19 @@ useEffect(() => {
       );
       setDraftFailed(true);
       publishingRef.current = false;
-      setPublishing(false);
+      // Keep the progress panel open so the user can see the true reason and
+      // tap "Retry failed". Leaving it used to hide the only in-page retry.
       return;
     }
+    // No success toast until every expected file has genuinely finalized.
+    if (completedCount !== totalJobs || relatedJobs.length !== totalJobs) return;
     if (successShownRef.current) return;
     successShownRef.current = true;
     notifyStoryFeedChanged();
     toast.success('Status posted', `${totalJobs} media item${totalJobs === 1 ? '' : 's'} live on your Status.`);
     if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
     closeTimerRef.current = window.setTimeout(() => onClose(), 900);
-  }, [jobsTick, publishing, totalJobs, activeJobs, failedJobs, onClose, toast]);
+  }, [jobsTick, publishing, totalJobs, completedCount, relatedJobs.length, activeJobs, failedJobs, onClose, toast]);
 
   /** Validate + append files, generating lightweight thumbnails. */
   const addFiles = useCallback(
@@ -507,8 +510,8 @@ useEffect(() => {
       startedJobIdsRef.current = jobIds;
       setJobsTick((tick) => tick + 1);
       toast.info(
-        'Posting your Status',
-        `Uploading ${jobIds.length} file${jobIds.length === 1 ? '' : 's'} — you can close this screen; it continues in the background.`
+        'Uploading your Status',
+        `${jobIds.length} file${jobIds.length === 1 ? '' : 's'} queued. Your Status will appear once the uploads finish.`
       );
     } catch (reason) {
       // Mark created-but-unposted drafts FAILED so they never surface and never
@@ -832,7 +835,7 @@ function PublishingPanel({
   onCancel: () => void;
   onClose: () => void;
 }) {
-  const allDone = total > 0 && active === 0 && failed === 0;
+  const allDone = total > 0 && completed === total && active === 0 && failed === 0;
   const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
 
   return (

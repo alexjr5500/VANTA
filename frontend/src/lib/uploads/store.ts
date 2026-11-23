@@ -123,7 +123,10 @@ export function startUpload(input: StartUploadInput): UploadJob {
   running.set(job.id, controller);
   void runUpload(job, input.file, input.token, input.meta, controller.signal, input.onCompleted).finally(() => {
     running.delete(job.id);
-    jobTokens.delete(job.id);
+    // A failed Status/Reel must retain its original File and token for Retry.
+    // Previously deleting the token here made every failed Retry impossible.
+    // Only successful jobs release their in-memory upload assets immediately.
+    releaseCompletedUploadAssets(job.id);
   });
   return job;
 }
@@ -222,19 +225,23 @@ async function runUpload(
     }
 
     patchJob(job.id, { phase: 'completed', progress: 100, bytesSent: file.size, error: undefined, disabled: false });
-    onCompleted?.(job);
+    // An optional UI callback must never turn an already-published draft into
+    // a failed upload. Publishing was acknowledged by the server above.
+    try { onCompleted?.(job); } catch { /* already published */ }
   } catch (error) {
     const cancelled = isAbortError(error) || (error instanceof ApiError && error.statusCode === 499);
     if (cancelled) {
       patchJob(job.id, { phase: 'cancelled', disabled: false });
     } else {
       const message = error instanceof Error ? error.message : 'Upload failed unexpectedly';
-      patchJob(job.id, { phase: 'failed', error: message, disabled: false });
       try {
         await apiPost(`/api/${job.kind === 'story' ? 'stories' : 'reels'}/${job.draftId}/fail`, {}, token);
       } catch {
-        // server may be unreachable — the client failure state is still shown
+        // Keep the original upload error when the backend is unreachable.
       }
+      // Expose Retry only after the server's fail transition has settled.
+      // Otherwise retry can race with fail and put the draft back in FAILED.
+      patchJob(job.id, { phase: 'failed', error: message, disabled: false });
     }
   }
 }
@@ -311,7 +318,8 @@ function uploadPart(
 /** Retry a failed (or cancelled) job. Resumes from chunks already on the server. */
 export function retryUpload(job: UploadJob): void {
   const existing = jobList.find((item) => item.id === job.id);
-  if (!existing || existing.disabled) return;
+  if (!existing || existing.disabled || running.has(job.id)) return;
+  if (existing.phase !== 'failed' && existing.phase !== 'cancelled') return;
   const token = jobTokens.get(job.id);
   const file = FILE_CACHE.get(job.id);
   if (!token || !file) {
@@ -323,11 +331,20 @@ export function retryUpload(job: UploadJob): void {
     return;
   }
 
-  patchJob(job.id, { phase: 'starting', progress: 0, error: undefined, disabled: true });
+  // An aborted session has been closed server-side: retry it from a fresh one.
+  // Failed (non-cancelled) uploads may resume their already received chunks.
+  if (existing.phase === 'cancelled') {
+    job.sessionId = undefined;
+  }
+  patchJob(job.id, {
+    phase: 'starting', progress: 0, bytesSent: 0, error: undefined,
+    sessionId: job.sessionId, disabled: true,
+  });
   const controller = new AbortController();
   running.set(job.id, controller);
   void runUpload(job, file, token, metaOf(job), controller.signal).finally(() => {
     running.delete(job.id);
+    releaseCompletedUploadAssets(job.id);
   });
 }
 
@@ -368,6 +385,14 @@ export function dismissUpload(jobId: string): void {
 const FILE_CACHE = new Map<string, File>();
 const META_CACHE = new Map<string, UploadJobMeta>();
 const metaOf = (job: UploadJob): UploadJobMeta => META_CACHE.get(job.id) ?? { mimeType: '' };
+
+/** Retain assets on failure so retry reuses the same file and authenticated session. */
+function releaseCompletedUploadAssets(jobId: string): void {
+  if (jobList.find(item => item.id === jobId)?.phase !== 'completed') return;
+  jobTokens.delete(jobId);
+  FILE_CACHE.delete(jobId);
+  META_CACHE.delete(jobId);
+}
 
 /** Store the File + meta so a Retry later in the same session still works.
  *  In-memory only — SPA navigation keeps the module singleton alive. */

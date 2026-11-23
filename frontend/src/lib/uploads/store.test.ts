@@ -105,6 +105,56 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
     expect(apiPost).toHaveBeenCalledWith(`/api/reels/reel-1/fail`, {}, 'tok');
   });
 
+  test('retries a failed Status using its original file and token, then publishes it', async () => {
+    let initAttempts = 0;
+    (apiPost as any).mockImplementation((route: string, _payload: unknown, token: string) => {
+      if (route.includes('/chunk/init')) {
+        initAttempts += 1;
+        if (initAttempts === 1) return Promise.reject(new Error('Temporary upload outage'));
+        return Promise.resolve({ sessionId: 'retry-session' });
+      }
+      if (route.includes('/chunk/complete')) return Promise.resolve({ id: 'uploaded-photo', url: '/uploads/photo.jpg' });
+      return Promise.resolve({});
+    });
+
+    const file = new File(['photo-bytes'], 'photo.jpg', { type: 'image/jpeg' });
+    const job = store.startUpload({
+      kind: 'story', file, draftId: 'retry-story', token: 'original-token',
+      meta: { mimeType: 'image/jpeg' },
+    });
+
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('failed'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    store.retryUpload(store.getJobs().find(item => item.id === job.id)!);
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('completed'));
+
+    expect(initAttempts).toBe(2);
+    expect(apiPost).toHaveBeenCalledWith('/api/stories/retry-story/uploading', {}, 'original-token');
+    expect(apiPost).toHaveBeenCalledWith('/api/stories/retry-story/finalize', { fileId: 'uploaded-photo' }, 'original-token');
+  });
+
+  test('ignores duplicate Retry requests while a job is active', async () => {
+    let initAttempts = 0;
+    (apiPost as any).mockImplementation((route: string) => {
+      if (route.includes('/chunk/init')) {
+        initAttempts += 1;
+        return Promise.reject(new Error('Temporary upload outage'));
+      }
+      return Promise.resolve({});
+    });
+
+    const job = store.startUpload({
+      kind: 'story',
+      file: new File(['x'], 'photo.jpg', { type: 'image/jpeg' }),
+      draftId: 'duplicate-retry-story', token: 'tok', meta: { mimeType: 'image/jpeg' },
+    });
+
+    store.retryUpload(job); // A starting job must not be restarted.
+    await vi.waitFor(() => expect(store.getJobs().find(item => item.id === job.id)?.phase).toBe('failed'));
+    expect(initAttempts).toBe(1);
+  });
+
   test('dismissUpload removes a finished job from the tray', async () => {
     const file = new File(['abc'], 'clip.mp4', { type: 'video/mp4' });
     const job = store.startUpload({ kind: 'story', file, draftId: 'story-9', token: 'tok', meta: { mimeType: 'video/mp4' } });
