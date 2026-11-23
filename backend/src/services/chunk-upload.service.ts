@@ -200,9 +200,6 @@ export class ChunkUploadService {
       totalChunks: session.totalChunks,
       chunkSize: session.chunkSize,
       complete: receivedChunks >= session.totalChunks,
-      // A COMPLETE session has no staged chunks left, but can be re-completed.
-      status: session.status,
-      expiresAt: session.expiresAt.toISOString(),
     };
   }
 
@@ -229,6 +226,10 @@ export class ChunkUploadService {
       receivedChunks,
       receivedIndexes,
       complete: receivedChunks >= session.totalChunks,
+      // COMPLETE sessions no longer have chunk files on disk, but can still
+      // safely re-return their persisted UploadedFile during retry.
+      status: session.status,
+      expiresAt: session.expiresAt.toISOString(),
     };
   }
 
