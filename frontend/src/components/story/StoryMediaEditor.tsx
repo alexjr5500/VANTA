@@ -36,12 +36,9 @@ import StatusGallerySheet from '@/components/story/StatusGallerySheet';
 import { nativeGalleryConnection, parseNativeGallery, type NativeRecentMedia, type NativeGalleryStatus } from '@/lib/nativeStatusGallery';
 import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 import {
-  STATUS_MAX_CHARS,
   normalizeStatusEditorValue,
-  statusCounts,
 } from '@/lib/statusLimits';
 import {
-  MAX_STATUS_MEDIA_FILES,
   STORY_MAX_IMAGE_BYTES,
   STORY_MAX_VIDEO_BYTES,
   storyMediaCapacity,
@@ -252,7 +249,6 @@ useEffect(() => {
     itemsRef.current = [];
   }, []);
 
-  const counts = useMemo(() => statusCounts(caption), [caption]);
 
   // Quota: the server stays authoritative, this only shapes the UX. Verified
   // users are unlimited; every media file publishes its own Story row, so a
@@ -626,7 +622,6 @@ useEffect(() => {
   }, [token, items, caption, toast, getAccessToken, renewAccessToken]);
 
   const active = useMemo(() => items.find((item) => item.id === activeId) || items[0] || null, [items, activeId]);
-  const isVerified = Boolean(user?.verified);
 
   return (
     <div className={cn('flex h-full flex-col', items.length === 0 && !publishing ? 'bg-[#121719]' : 'bg-[#1F2630]')}>
@@ -834,9 +829,9 @@ useEffect(() => {
             )}
           </div>
 
-          {/* Caption field with live status counter */}
+          {/* Compact caption composer — character limits remain enforced by normalization. */}
           <div className="shrink-0 px-4 pb-1.5">
-            <div className="flex items-end gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2">
+            <div className="flex items-end gap-2 rounded-full border border-white/[0.06] bg-[#11191e] px-4 py-2.5">
               <textarea
                 value={caption}
                 onChange={(event) => setCaption(normalizeStatusEditorValue(event.target.value))}
@@ -845,31 +840,14 @@ useEffect(() => {
                   const pasted = event.clipboardData?.getData('text/plain') || '';
                   setCaption((previous) => normalizeStatusEditorValue(previous + pasted));
                 }}
-                placeholder="Add a caption to your Status…"
+                placeholder="Add a caption…"
                 aria-label="Status caption"
                 rows={1}
-                className="max-h-24 min-h-[38px] flex-1 resize-none bg-transparent text-[15px] leading-tight text-white outline-none placeholder:text-white/30"
+                className="max-h-24 min-h-[38px] flex-1 resize-none bg-transparent text-[15px] leading-tight text-white outline-none placeholder:text-white/45"
               />
-              <span className={cn('shrink-0 text-[11px] tabular-nums', counts.overChars ? 'text-[#e5484d]' : 'text-white/35')}>
-                {counts.chars}/{STATUS_MAX_CHARS}
-              </span>
             </div>
           </div>
 
-          {/* Quota + limits hint */}
-          <div className="flex shrink-0 items-center justify-center gap-1.5 px-4 pb-1 text-center text-[10.5px] leading-4 text-white/35">
-            {isVerified ? (
-              <span className="flex items-center gap-1 rounded-full border border-[#c9a227]/35 bg-[#c9a227]/10 px-2 py-0.5 font-semibold text-[#dfbd55]">
-                <Check size={10} /> Verified — unlimited
-              </span>
-            ) : (
-              usage && <span>Today: {usage.used} / {usage.limit} used</span>
-            )}
-            <span aria-hidden="true">·</span>
-            <span>
-              Up to {MAX_STATUS_MEDIA_FILES} photos &amp; videos per Status · vanishes in 24 hours
-            </span>
-          </div>
         </>
       )}
 
