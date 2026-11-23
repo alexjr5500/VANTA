@@ -2,11 +2,11 @@
 
 import React from 'react';
 import { ArrowRight, Camera, ChevronDown, Film, Image as ImageIcon, LayoutTemplate, Mic, Pencil, Plus, Video, X } from 'lucide-react';
-import type { DraftMedia, MediaStorySource } from '@/components/story/StoryMediaEditor';
-import { MAX_STATUS_MEDIA_FILES } from '@/lib/storyMedia';
+import type { MediaStorySource } from '@/components/story/StoryMediaEditor';
+import { getStatusGallerySelection, type StatusGalleryMedia } from '@/lib/statusGallerySelection';
 import { formatVideoTime } from '@/lib/videoTrim';
 
-type SelectedStatusMedia = Pick<DraftMedia, 'id' | 'name' | 'kind' | 'thumbUrl' | 'objectUrl' | 'duration'>;
+type SelectedStatusMedia = StatusGalleryMedia;
 
 interface StatusGallerySheetProps {
   source: MediaStorySource;
@@ -41,8 +41,7 @@ export default function StatusGallerySheet({
   onText,
 }: StatusGallerySheetProps) {
   const camera = source === 'camera-photo' || source === 'camera-video';
-  const count = selected.length;
-  const limit = Math.min(MAX_STATUS_MEDIA_FILES, Math.max(0, selectionLimit));
+  const { count, limit, canAddMore, tiles } = getStatusGallerySelection(selected, selectionLimit);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-[#121719]">
@@ -75,15 +74,15 @@ export default function StatusGallerySheet({
             <span className="text-sm text-white/60">Camera</span>
           </button>
 
-          {selected.map((item, index) => (
+          {tiles.map((item) => (
             <div key={item.id} className="relative aspect-square overflow-hidden bg-[#1e262e]">
-              {item.kind === 'image' || item.thumbUrl ? (
+              {item.previewUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={item.thumbUrl || item.objectUrl} alt={item.name} className="absolute inset-0 h-full w-full object-cover" />
+                <img src={item.previewUrl} alt={item.name} className="absolute inset-0 h-full w-full object-cover" />
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center text-white/65"><Film size={26} /></div>
               )}
-              <span className="absolute bottom-1 left-1 flex h-6 min-w-6 items-center justify-center rounded-full bg-[#c9a227] px-1 text-[11px] font-bold text-black" aria-label={`Selected media ${index + 1}`}>{index + 1}</span>
+              <span className="absolute bottom-1 left-1 flex h-6 min-w-6 items-center justify-center rounded-full bg-[#c9a227] px-1 text-[11px] font-bold text-black" aria-label={`Selected media ${item.selectionNumber}`}>{item.selectionNumber}</span>
               {item.kind === 'video' && (
                 <span className="absolute bottom-1 right-1 rounded bg-black/75 px-1.5 py-0.5 text-[10px] text-white">
                   {item.duration ? formatVideoTime(item.duration) : 'Video'}
@@ -100,7 +99,7 @@ export default function StatusGallerySheet({
             </div>
           ))}
 
-          {count < limit && (
+          {canAddMore && (
             <button type="button" onClick={onGallery} aria-label={count ? 'Choose more photos and videos' : 'Browse recent photos and videos'} className="flex aspect-square flex-col items-center justify-center gap-2 bg-[#1e262e] text-white/85 transition hover:bg-[#2a3540]">
               {count ? <Plus size={29} /> : <ImageIcon size={30} />}
               <span className="px-1 text-center text-sm">{count ? 'Add more' : 'Photos & videos'}</span>
