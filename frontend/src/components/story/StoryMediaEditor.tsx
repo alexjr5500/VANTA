@@ -769,12 +769,12 @@ useEffect(() => {
         </p>
       )}
 
-      {error && publishing && (
+      {error && !publishing && (
         <p role="alert" className="shrink-0 px-4 pb-1 text-center text-xs leading-4 text-[#ff9b9b]">{error}</p>
       )}
 
       {/* Publish bar */}
-      {!publishing && (
+      {!publishing && items.length > 0 && (
         <footer
           className="shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-4 pt-3"
           style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--vanta-kb, 0px) + 16px)' }}
