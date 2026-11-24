@@ -113,9 +113,10 @@ export default function StoryTray({
       className={cn(
         // Keep the Home top strip fully opaque. On installed web apps, extend
         // that same slate surface through the iOS safe-area/status-bar inset.
+        // Native Android already reserves the status bar in the WebView host.
         'sticky top-0 z-30 border-b border-white/[0.07] bg-[var(--header-surface)] transition-[padding] duration-300',
         compact
-          ? (statusCollapsed ? 'pt-[env(safe-area-inset-top)] pb-0.5' : 'pt-[env(safe-area-inset-top)] pb-1.5')
+          ? (statusCollapsed ? 'pt-[env(safe-area-inset-top)] pb-0.5 [html.vanta-native-android_&]:pt-0.5' : 'pt-[max(4px,env(safe-area-inset-top))] pb-1 [html.vanta-native-android_&]:pt-1')
           : 'px-0 py-2',
         className
       )}
@@ -148,7 +149,7 @@ export default function StoryTray({
           {loading ? (
             SKELETON.map(index => (
               <div key={index} className={cn("flex shrink-0 flex-col items-center transition-all duration-300", statusCollapsed ? "w-14 gap-0.5" : "w-[74px] gap-1.5")}>
-                <span className={cn('block animate-pulse rounded-full bg-white/[0.05]', statusCollapsed ? 'h-11 w-11' : compact ? 'h-[52px] w-[52px]' : 'h-[66px] w-[66px]')} />
+                <span className={cn('block animate-pulse rounded-full bg-white/[0.05]', statusCollapsed ? 'h-11 w-11' : compact ? 'h-[55px] w-[55px]' : 'h-[66px] w-[66px]')} />
                 <span className="h-2.5 w-12 animate-pulse rounded bg-white/[0.04]" />
               </div>
             ))
