@@ -7,6 +7,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import { publishTextStory } from '@/lib/storyApi';
 import { notifyStoryFeedChanged } from '@/lib/storyEvents';
+import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
+import { MentionTextarea } from '@/components/social/MentionTextarea';
 import {
   STATUS_MAX_CHARS,
   STATUS_MAX_LINES,
@@ -32,6 +34,7 @@ export default function StatusComposer({ onBack, onClose }: StatusComposerProps)
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const mentions = useMentionSuggestions({ value: text, onChange: value => setText(normalizeStatusEditorValue(value)), token, inputRef: textareaRef });
   const counts = useMemo(() => statusCounts(text), [text]);
   const limitReached = counts.chars >= STATUS_MAX_CHARS || counts.lines >= STATUS_MAX_LINES;
 
@@ -107,11 +110,14 @@ export default function StatusComposer({ onBack, onClose }: StatusComposerProps)
 
       {/* Composer surface — the text is the focus */}
       <div className="flex min-h-0 flex-1 flex-col px-6 pt-6">
-        <div className="flex min-h-0 flex-1 items-stretch">
-          <textarea
+        <div className="flex min-h-0 flex-1 flex-col">
+          <MentionTextarea
             ref={textareaRef}
             value={text}
-            onChange={event => setText(normalizeStatusEditorValue(event.target.value))}
+            onChange={event => { setText(normalizeStatusEditorValue(event.target.value)); mentions.syncCaret(event.currentTarget); }}
+            onClick={event => mentions.syncCaret(event.currentTarget)}
+            onKeyUp={event => mentions.syncCaret(event.currentTarget)}
+            onKeyDown={event => { mentions.onKeyDown(event); }}
             onPaste={event => {
               event.preventDefault();
               const pasted = event.clipboardData?.getData('text/plain') || '';
@@ -120,8 +126,9 @@ export default function StatusComposer({ onBack, onClose }: StatusComposerProps)
             placeholder="Share what's on your mind…"
             aria-label="Write your Status"
             className="min-h-0 w-full resize-none bg-transparent text-[26px] leading-snug text-white outline-none placeholder:text-white/25"
-            style={{ minHeight: '40vh' }}
+            style={{ minHeight: mentions.open ? '6rem' : '40vh' }}
           />
+          <MentionSuggestions mention={mentions} className="mb-2 rounded-xl" />
         </div>
 
         {/* Live counters */}
