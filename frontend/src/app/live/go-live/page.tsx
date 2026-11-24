@@ -77,6 +77,9 @@ import GiftAnimationOverlay from '@/components/gifts/GiftAnimationOverlay';
 import { useGiftAnimationQueue } from '@/components/gifts/useGiftAnimationQueue';
 import LiveParticipantGrid, { type StageParticipant } from '@/components/live/LiveParticipantGrid';
 import { reconcileLiveChat } from '@/lib/liveChatDedupe';
+import { renderTextWithLinks } from '@/lib/linkify';
+import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
+import { MentionTextarea } from '@/components/social/MentionTextarea';
 
 type Phase =
   | 'IDLE'
@@ -311,6 +314,8 @@ export default function GoLivePage() {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
   const [chatInput, setChatInput] = useState('');
+  const hostChatRef = useRef<HTMLTextAreaElement>(null);
+  const hostMentions = useMentionSuggestions({ value: chatInput, onChange: setChatInput, token, inputRef: hostChatRef });
   const [chatPaused, setChatPaused] = useState(false);
   const [reactions, setReactions] = useState<{ id: string; emoji: string }[]>([]);
   const [liveGiftCount, setLiveGiftCount] = useState(0);
@@ -1186,23 +1191,28 @@ export default function GoLivePage() {
                   ) : (
                     <p key={line.id} className="truncate text-[12px] leading-snug text-white/95 drop-shadow-md">
                       <span className="font-bold text-[#F2C75C]">{line.user?.username || 'Viewer'}: </span>
-                      <span className="text-white/90">{line.message}</span>
+                      <span className="text-white/90">{renderTextWithLinks(line.message, 'linkify', { mentions: true, hashtags: true })}</span>
                     </p>
                   ),
                 )}
               </div>
             )}
             {chatOpen ? (
-              <div className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-white/10 bg-black/60 py-1 pl-3 pr-1 backdrop-blur-xl">
-                <input
+              <div className="pointer-events-auto relative flex items-center gap-2 rounded-2xl border border-white/10 bg-black/60 py-1 pl-3 pr-1 backdrop-blur-xl">
+                <div className="absolute bottom-full left-0 right-0 mb-2 z-[90]"><MentionSuggestions mention={hostMentions} className="rounded-2xl" /></div>
+                <MentionTextarea
+                  ref={hostChatRef}
+                  rows={1}
                   value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') sendChat(); }}
+                  onChange={(e) => { setChatInput(e.target.value); hostMentions.syncCaret(e.currentTarget); }}
+                  onClick={e => hostMentions.syncCaret(e.currentTarget)}
+                  onKeyUp={e => hostMentions.syncCaret(e.currentTarget)}
+                  onKeyDown={(e) => { if (hostMentions.onKeyDown(e)) return; if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
                   placeholder={chatPaused ? 'Chat is paused' : 'Say something…'}
                   disabled={chatPaused}
                   autoFocus
                   aria-label="Chat message"
-                  className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/40"
+                  className="min-h-9 max-h-9 w-full resize-none overflow-hidden bg-transparent py-1.5 text-sm leading-5 text-white outline-none placeholder:text-white/40"
                 />
                 <button
                   type="button"

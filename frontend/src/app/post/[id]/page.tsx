@@ -141,6 +141,14 @@ export default function PostDetailPage({ params }: { params: Promise<{ id: strin
     conversationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  // After submitting a reply in the focused composer, open the discussion
+  // itself instead of dropping the user back at the top of the post.
+  useEffect(() => {
+    if (!post?.id || typeof window === 'undefined' || window.location.hash !== '#comments') return;
+    const frame = window.requestAnimationFrame(() => conversationRef.current?.scrollIntoView({ block: 'start' }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [post?.id]);
+
   const confirmDelete = async () => {
     if (!token || !post || deleting) return;
     setDeleting(true);
@@ -309,6 +317,7 @@ export default function PostDetailPage({ params }: { params: Promise<{ id: strin
         </section>
 
         <aside
+          id="comments"
           ref={conversationRef}
           aria-label="Post comments"
           className="min-w-0 scroll-mt-12 bg-[var(--background)]"

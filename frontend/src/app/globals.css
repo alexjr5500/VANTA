@@ -1293,6 +1293,20 @@
     cursor: pointer;
   }
 
+  /* Both user mentions and hashtags are VANTA gold everywhere — post, reply,
+     story, live and chat text. External URLs retain their ordinary link color. */
+  .vanta-inline-tag {
+    color: var(--vanta-gold-bright) !important;
+    text-decoration: none;
+  }
+
+  /* Show native placeholders even while real textarea glyphs are transparent
+     and the non-interactive gold-token mirror provides their visible text. */
+  .vanta-highlighted-input::placeholder {
+    -webkit-text-fill-color: var(--text-muted);
+    opacity: 1;
+  }
+
   /* ═══ Gift Animation Container ═══ */
   .gift-animation {
     @apply fixed inset-0 pointer-events-none z-[var(--z-toast)];
