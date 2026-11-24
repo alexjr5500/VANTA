@@ -20,6 +20,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { storage } from '@/lib/platformStorage';
+import { useLocalizedUiText } from '@/lib/i18n/ui-labels';
 
 /* Accent — driven by the user's selected Accent setting (Gold/Monochrome).
    The `--settings-accent*` tokens are re-mapped at the <html> root by the
@@ -231,6 +232,7 @@ export function SettingsGroup({
   children: ReactNode;
   right?: ReactNode;
 }) {
+  const tr = useLocalizedUiText();
   return (
     <section className="space-y-2.5">
       {(title || description) && (
@@ -246,12 +248,12 @@ export function SettingsGroup({
           <div className="min-w-0 flex-1">
             {title && (
               <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/45">
-                {title}
+                {tr(title)}
               </h2>
             )}
             {description && (
               <p className="mt-0.5 text-xs leading-relaxed text-white/30">
-                {description}
+                {tr(description)}
               </p>
             )}
           </div>
@@ -283,6 +285,7 @@ export function SettingsLink({
   trailing?: ReactNode;
 }) {
   const saveScroll = useScrollRestore();
+  const tr = useLocalizedUiText();
   return (
     <Link
       href={href}
@@ -299,11 +302,11 @@ export function SettingsLink({
       )}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium text-white">
-          {title}
+          {tr(title)}
         </span>
         {description && (
           <span className="mt-0.5 block truncate text-xs text-white/30">
-            {description}
+            {tr(description)}
           </span>
         )}
       </span>
