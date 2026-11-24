@@ -3,6 +3,7 @@ import { AuthRequest } from "../middleware/auth.middleware";
 import { channelService } from "../services";
 import { sendError, AppError, badRequest } from "../utils/api-error";
 import { broadcastMessageEvent } from "../sockets/chat.socket";
+import { logCommunityUpdate } from "../services/community-insights";
 
 const parseLimit = (value: unknown, defaultLimit = 20) => {
   const parsed = typeof value === "string" ? parseInt(value, 10) : NaN;
@@ -64,6 +65,7 @@ export const updateChannel = async (req: AuthRequest, res: Response): Promise<vo
       memberRoles: memberRoles && typeof memberRoles === "object" ? memberRoles : undefined,
       permissions: permissions && typeof permissions === "object" ? permissions : undefined,
     });
+    await logCommunityUpdate("channel", req.params.id, userId, { name: typeof name === "string" ? name : undefined, description: typeof description === "string" ? description : undefined, avatar: typeof avatar === "string" || avatar === null ? avatar : undefined, memberIds, memberRoles, permissions, category, visibility, handle });
     res.status(200).json(channel);
   } catch (error) {
     sendError(res, error, { diagnostic: { action: "updateChannel", id: req.params.id } });

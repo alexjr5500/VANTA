@@ -56,3 +56,23 @@
 @keyframes edit-shimmer { to { background-position: -200%; } }
 @media (min-width:640px) { .edit-profile-page { padding-top: 0; } .edit-profile-header { padding-inline: 12px; } .edit-cover { height: 210px; } .edit-fields { padding-inline: 18px; } .media-copy { padding-inline: 18px; } .edit-profile-form footer { padding-inline: 18px; } }
 @media (prefers-reduced-motion:reduce) { .edit-profile-page * { animation: none !important; transition: none !important; } }
+
+/* Match the compact cover/avatar and inline identity editor while preserving
+   the app's theme variables and the VANTA gold action accent. */
+.edit-media { padding-bottom: 12px; }
+.edit-cover { height: auto; aspect-ratio: 3 / 1; min-height: 0; }
+.edit-cover.has-photo:after { background: rgba(0,0,0,.08); }
+.edit-cover > button { width: 44px; height: 44px; background: rgba(0,0,0,.54); color: #f2c75c; }
+.edit-avatar { width: 86px; height: 86px; margin-top: -38px; }
+.edit-avatar button { inset: auto -3px -3px auto; width: 34px; height: 34px; border: 2px solid var(--background); background: #d6a83f; color: #17130a; opacity: 1; }
+.edit-avatar button:hover { background: #f2c75c; }
+.media-copy { padding-top: 8px; }
+.media-copy b { color: #f2c75c; }
+.media-copy span { font-size: 11px; color: var(--text-secondary, #a2a2a2); }
+.edit-fields { padding-inline: 16px; }
+.edit-field { gap: 4px; padding: 10px 0 8px; }
+.edit-field > span { color: #f2c75c; font-size: 11px; font-weight: 600; }
+.edit-field input, .edit-field textarea { min-height: 38px; font-size: 15px; }
+.edit-field textarea { min-height: 72px; }
+.edit-field:focus-within { border-bottom-color: #d6a83f; }
+.edit-profile-form footer { padding-top: 12px; }

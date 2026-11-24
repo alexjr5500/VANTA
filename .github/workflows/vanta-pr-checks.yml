@@ -99,7 +99,7 @@ jobs:
           src/__tests__/privacy-permissions.test.ts
           src/__tests__/user.service.test.ts
           src/__tests__/group-ownership.test.ts
-          src/__tests__/channel-ownership.test.ts
+          src/__tests__/channel-ownership.test.ts src/__tests__/community-settings.test.ts src/__tests__/community-insights.test.ts
           src/__tests__/feed.moderation-guards.test.ts
           src/__tests__/feed.video-publication.test.ts
           src/__tests__/replyAudience.test.ts
