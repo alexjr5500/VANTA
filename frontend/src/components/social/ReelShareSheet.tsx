@@ -1,8 +1,10 @@
 'use client';
 
+import BookmarkIcon from '@/components/ui/BookmarkIcon';
+
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
-import { Bookmark, Check, Download, Flag, Link2, RefreshCw, Search, Send, Share2, X } from 'lucide-react';
+import { Check, Download, Flag, Link2, RefreshCw, Search, Send, Share2, X } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import { apiGet } from '@/lib/apiClient';
 import { cn } from '@/lib/utils';
@@ -127,7 +129,7 @@ export default function ReelShareSheet({ token, url, title, reposted, saved, clo
       {token && (
         <div className="flex gap-4 overflow-x-auto border-t border-white/[.07] px-4 pt-4 [scrollbar-width:none]">
           {onDownload && <Target label={downloadProgress !== null ? `${Math.round(downloadProgress * 100)}%` : 'Save video'} color="bg-white/10 text-white/80" onClick={downloadProgress !== null ? () => undefined : onDownload}><Download size={21} className={downloadProgress !== null ? 'animate-pulse' : ''} /></Target>}
-          <Target label={saved ? 'Unsave' : 'Save'} color="bg-white/10 text-white/80" onClick={onSave}><Bookmark size={21} className={saved ? 'fill-current' : ''} /></Target>
+          <Target label={saved ? 'Unsave' : 'Save'} color={saved ? 'bg-[#dfbd55]/10 text-[#dfbd55]' : 'bg-white/10 text-white/80'} onClick={onSave}><BookmarkIcon size={21} saved={saved} /></Target>
           <Target label="Report" color="bg-white/10 text-white/80" onClick={onReport}><Flag size={21} /></Target>
         </div>
       )}
