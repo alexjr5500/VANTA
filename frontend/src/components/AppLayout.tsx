@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
+import { notificationDestination } from '@/lib/notificationDestination';
 import {
   MessageCircle,
   Video,
@@ -42,21 +43,6 @@ import ChatCallOverlay from '@/components/messages/ChatCallOverlay';
 import GlobalGiftAnimations from '@/components/gifts/GlobalGiftAnimations';
 import { useToast } from '@/components/ui/Toast';
 import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
-
-const notificationDestination = (notification: any) => {
-  let data: any = notification?.data;
-  if (typeof data === 'string') {
-    try { data = JSON.parse(data); } catch { data = {}; }
-  }
-  data ||= {};
-  if (data.streamId) return `/live/${data.streamId}`;
-  if (data.postId) return `/home?post=${data.postId}${data.commentId ? `&comment=${data.commentId}` : ''}`;
-  if (data.conversationId || data.groupId || data.channelId) return '/chat';
-  const type = typeof notification?.type === 'string' ? notification.type.toLowerCase() : '';
-  if (data.transactionId || type === 'wallet' || type.startsWith('wallet_')) return '/balance/transactions';
-  if (data.followerUsername) return `/profile/${data.followerUsername}`;
-  return '/notifications';
-};
 
 // Secondary destinations live in one compact mobile sheet. The permanent
 // navigation below stays focused on the five primary product actions.
@@ -480,10 +466,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           {notificationToast && !isChatPage && (
             <motion.button
               initial={{ opacity: 0, y: -16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -12 }}
-              onClick={() => { router.push(notificationDestination(notificationToast)); dismissLatestNotification(); }}
+              onClick={() => { router.push(notificationDestination(notificationToast) ?? '/notifications'); dismissLatestNotification(); }}
               className="fixed right-4 top-4 z-[100] w-[min(360px,calc(100vw-2rem))] rounded-xl border border-white/10 bg-[#1F2630]/95 p-4 text-left shadow-2xl backdrop-blur-xl"
             >
-              <span className="flex items-start gap-3"><Bell className="mt-0.5 text-[#b8b8b8]" size={18} /><span><strong className="block text-sm text-white">{notificationToast.title || 'New notification'}</strong><span className="mt-1 block text-xs text-white/60">{notificationToast.message}</span></span><X onClick={(event) => { event.stopPropagation(); dismissLatestNotification(); }} className="ml-auto text-white/40" size={15} /></span>
+              <span className="flex items-start gap-3"><Bell className="mt-0.5 text-[#dfbd55]" size={18} /><span><strong className="block text-sm text-white">{notificationToast.title || 'New notification'}</strong><span className="mt-1 block text-xs text-white/60">{notificationToast.message}</span></span><X onClick={(event) => { event.stopPropagation(); dismissLatestNotification(); }} className="ml-auto text-white/40" size={15} /></span>
             </motion.button>
           )}
         </AnimatePresence>
