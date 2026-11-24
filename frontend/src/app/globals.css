@@ -3570,3 +3570,19 @@ a.vanta-inline-tag, a.vanta-inline-tag:visited, a.vanta-inline-tag:hover, a.vant
   text-decoration: none;
 }
 html.vanta-native-android .vanta-reply-toolbar { padding-bottom: 0 !important; }
+
+/* Compact clickable URL preview fallback for all shared text surfaces. */
+a.vanta-link-preview {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 6px 10px;
+  color: #dfbd55;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+a.vanta-link-preview:hover { text-decoration: underline; }
