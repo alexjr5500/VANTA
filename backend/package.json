@@ -15,6 +15,7 @@
     "worker:durable": "node dist/durable-worker.js",
     "queue:monitor": "node dist/durable-queue-monitor.js",
     "media:verify-hls": "node dist/media-hls-acceptance-cli.js",
+    "media:audit-storage": "node dist/media-storage-audit-cli.js",
     "test": "jest --config jest.config.js",
     "test:coverage": "jest --config jest.config.js --coverage",
     "test:watch": "jest --config jest.config.js --watch",

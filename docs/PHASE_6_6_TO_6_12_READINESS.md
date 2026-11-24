@@ -20,6 +20,7 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 - [ ] Verify Railway volume mounting and uploads across restart/deploy.
 - [ ] Define object-storage migration, private-media authorization, backup and restoration tests.
 - [ ] Alert on missing files; do not infer all assets are healthy from a sample.
+- [x] Add isolated, bounded, aggregate-only local original audit (CI and real restore evidence tracked separately). See `docs/MEDIA_STORAGE_RECOVERY_AUDIT.md`.
 
 ## 6.9 — Observability
 - [ ] Queue backlog age, attempts, dead jobs, processing latency and worker liveness.

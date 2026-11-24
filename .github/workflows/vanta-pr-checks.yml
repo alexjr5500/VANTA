@@ -189,6 +189,7 @@ jobs:
           src/__tests__/media-operations.test.ts
           src/__tests__/media-thumbnail-job.test.ts
           src/__tests__/media-storage-readiness.test.ts
+          src/__tests__/media-storage-audit.test.ts
           src/__tests__/cloudinary-storage-config.test.ts
           src/__tests__/cloudinary-media-job.test.ts
           src/__tests__/cloudinary-hls-acceptance.test.ts
