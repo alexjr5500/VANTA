@@ -1367,14 +1367,19 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     navigator.geolocation.getCurrentPosition(
       position => void sendSpecialMessage('LOCATION', { lat: position.coords.latitude, lng: position.coords.longitude }, 'Location'),
       error => {
+        const androidApp = navigator.userAgent.includes('VANTAAndroid');
         const message = error.code === error.PERMISSION_DENIED
-          ? 'Location permission was denied. Allow location access in your device or browser settings, or type an address in chat.'
+          ? androidApp
+            ? 'Allow Location for VANTA in Android Settings → Apps → VANTA → Permissions. Then retry sharing your location.'
+            : 'Location permission was denied. Allow location access in your browser settings, or type an address in chat.'
           : error.code === error.TIMEOUT
-            ? 'Location lookup timed out. Try again, or type an address in chat.'
-            : 'Could not read your location. Check that location access is allowed, or type an address in chat.';
+            ? 'Location lookup timed out. Turn on device Location and try again.'
+            : 'Could not read your location. Turn on device Location and check VANTA location access.';
         showToast?.({ type: 'error', title: 'Location unavailable', message });
       },
-      { enableHighAccuracy: true, timeout: 15000 }
+      // Coarse/network location works even when Android users choose
+      // "approximate" permission. Do not require a slow GPS fix to share.
+      { enableHighAccuracy: false, timeout: 20000, maximumAge: 30000 }
     );
   };
 

@@ -185,11 +185,11 @@ class MainActivity : Activity() {
             addJavascriptInterface(VantaNativeGalleryBridge(), "VantaNativeGallery")
             addJavascriptInterface(VantaNativeVideoSaveBridge(), "VantaNativeVideo")
             settings.domStorageEnabled = true
-            // Voice/video calls and remote LiveKit tracks may start after an
-            // incoming-call signal rather than a new browser click.
+            // Calls, livestreams, and camera previews attach MediaStreams after
+            // the user's call / Go Live action. Do not require a second playback
+            // gesture for remote audio or live video in the Android WebView.
             settings.mediaPlaybackRequiresUserGesture = false
-            // Chat Location uses navigator.geolocation inside this trusted WebView.
-            // Android app permissions alone cannot override disabled WebSettings.
+            // The OS runtime permission and trusted-origin prompt remain required.
             settings.setGeolocationEnabled(true)
             settings.allowFileAccess = false
             settings.allowContentAccess = false
@@ -432,10 +432,9 @@ class MainActivity : Activity() {
         if (request.resources.contains(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE) && hasPermission(Manifest.permission.RECORD_AUDIO)) {
             allowed.add(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE)
         }
-        // WebRTC needs all requested media resources. A partial grant (e.g.
-        // mic granted but camera denied) makes combined getUserMedia fail
-        // unpredictably, so explicitly deny instead of returning a bad stream.
-        if (allowed.size == androidPermissionsFor(request).size && allowed.isNotEmpty()) {
+        // A WebRTC capture request is valid only when all requested audio/video
+        // resources have Android permission; avoid partial grants.
+        if (allowed.isNotEmpty() && allowed.size == androidPermissionsFor(request).size) {
             request.grant(allowed.toTypedArray())
         } else {
             request.deny()
