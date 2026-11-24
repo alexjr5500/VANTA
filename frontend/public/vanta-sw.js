@@ -98,11 +98,8 @@ function buildTargetUrl(data) {
   if (!data) return origin + '/notifications';
   if (data.conversationId) return origin + '/chat?conversation=' + encodeURIComponent(data.conversationId);
   if (data.streamId) return origin + '/live/' + encodeURIComponent(data.streamId);
-  if (data.postId) {
-    var url = origin + '/home?post=' + encodeURIComponent(data.postId);
-    if (data.commentId) url += '&comment=' + encodeURIComponent(data.commentId);
-    return url;
-  }
+  if (data.reelId || data.videoId) return origin + '/reels/' + encodeURIComponent(data.reelId || data.videoId);
+  if (data.postId) return origin + '/post/' + encodeURIComponent(data.postId) + (data.commentId ? '#comments' : '');
   if (data.followerUsername) return origin + '/profile/' + encodeURIComponent(data.followerUsername);
   if (data.transactionId) return origin + '/balance/transactions';
   return origin + '/notifications';
