@@ -101,6 +101,7 @@ jobs:
           src/__tests__/group-ownership.test.ts
           src/__tests__/channel-ownership.test.ts
           src/__tests__/feed.moderation-guards.test.ts
+          src/__tests__/feed.video-publication.test.ts
           src/__tests__/post.service.test.ts
           src/ai/__tests__/privacy.middleware.test.ts
 

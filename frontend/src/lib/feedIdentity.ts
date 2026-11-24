@@ -30,8 +30,10 @@ export const cleanId = (item: FeedItem | string) =>
 /** True when the item is a Reel (backed by prisma.video), never a Post. */
 export const isVideoItem = (item: FeedItem) =>
   item?.type === 'reel' ||
-  (typeof item?.id === 'string' && item.id.startsWith('video-')) ||
-  Boolean(item?.playbackUrl || item?.videoUrl);
+  /^video-/.test(String(item?.id ?? '')) ||
+  // Raw Reel API responses have videoUrl. Older VIDEO Posts in the Home
+  // feed use type: 'video' but are backed by prisma.post, NOT prisma.video.
+  (Boolean(item?.videoUrl) && item?.type !== 'post' && item?.type !== 'video' && item?.type !== 'live');
 
 /** API resource base for mutations: Reels -> /api/reels, Posts -> /api/feed. */
 export const actionEndpointFor = (item: FeedItem) => (isVideoItem(item) ? '/api/reels' : '/api/feed');

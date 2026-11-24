@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { feedService, uploadService } from "../services";
+import { prisma } from "../prisma";
+import { cacheService, CACHE_KEYS } from "../services/cache.service";
 
 const parseLimit = (value: unknown, defaultLimit = 20) => {
   const parsed = typeof value === "string" ? parseInt(value, 10) : NaN;
@@ -74,10 +76,7 @@ export const createPost = async (req: AuthRequest, res: Response): Promise<void>
 
     const { content, mediaUrl, mediaFileId, media } = req.body;
 
-    if (!content || !content.trim()) {
-      res.status(400).json({ error: "Content is required" });
-      return;
-    }
+    const caption = typeof content === "string" ? content.trim() : "";
 
     // Multi-attachment contract (additive + backward compatible).
     //   media.fileIds / media.urls  -> ordered VANTA multi-media post
@@ -97,7 +96,93 @@ export const createPost = async (req: AuthRequest, res: Response): Promise<void>
     const primaryUrl =
       mediaUrls[0] ?? (typeof mediaUrl === "string" ? mediaUrl : undefined);
 
-    const post = await feedService.createPost(userId, content.trim(), primaryUrl);
+    // A video uploaded through Create Post is a Reel, not a second kind of
+    // video hidden inside Posts. Split mixed selections without duplicating
+    // media: image files remain a Post; each video becomes a published Reel.
+    // Existing Upload Reel uses the same Video table and appears in the same
+    // Reels feed. Use the trusted UploadedFile rows, never client-supplied URLs.
+    const uniqueFileIds = [...new Set(mediaFileIds)];
+    if (uniqueFileIds.length > 10) {
+      res.status(400).json({ error: "Choose up to 10 media files per post" });
+      return;
+    }
+    if (!caption && !uniqueFileIds.length && !primaryUrl) {
+      res.status(400).json({ error: "Content or media is required" });
+      return;
+    }
+
+    if (uniqueFileIds.length) {
+      const owned = await prisma.uploadedFile.findMany({
+        where: { id: { in: uniqueFileIds }, userId, deletedAt: null },
+        select: { id: true, url: true, fileType: true, category: true, recordType: true },
+      });
+      if (owned.length !== uniqueFileIds.length) {
+        res.status(400).json({ error: "One or more media uploads are missing or not owned by you" });
+        return;
+      }
+      const byId = new Map(owned.map(file => [file.id, file]));
+      const ordered = uniqueFileIds.map(id => byId.get(id)!);
+      const videos = ordered.filter(file => file.fileType === "VIDEO");
+      if (videos.length) {
+        if (ordered.some(file =>
+          (file.fileType !== "VIDEO" && file.fileType !== "IMAGE") ||
+          !["post-image", "post-video", "post-media", "generic"].includes(file.category) ||
+          file.recordType !== null || !file.url
+        )) {
+          res.status(400).json({ error: "Select new photo and video uploads before publishing" });
+          return;
+        }
+        const photos = ordered.filter(file => file.fileType === "IMAGE");
+        // Publish atomically. A failure must never leave a visible Reel
+        // without a linked file or a half-created mixed-media Post.
+        const created = await prisma.$transaction(async tx => {
+          const photoPost = photos.length
+            ? await tx.post.create({ data: { authorId: userId, content: caption, mediaUrl: photos[0].url } })
+            : null;
+          for (const file of photos) {
+            const linked = await tx.uploadedFile.updateMany({
+              where: { id: file.id, userId, deletedAt: null, recordType: null },
+              data: { recordType: "Post", recordId: photoPost!.id },
+            });
+            if (linked.count !== 1) throw new Error("Photo upload was already used");
+          }
+          const reels = [];
+          for (const file of videos) {
+            const reel = await tx.video.create({
+              data: {
+                creatorId: userId,
+                title: caption.slice(0, 120) || "Reel",
+                description: caption || undefined,
+                videoUrl: file.url,
+                publishStatus: "PUBLISHED",
+              },
+            });
+            const linked = await tx.uploadedFile.updateMany({
+              where: { id: file.id, userId, deletedAt: null, recordType: null },
+              data: { recordType: "Video", recordId: reel.id, category: "reel" },
+            });
+            if (linked.count !== 1) throw new Error("Video upload was already used");
+            reels.push(reel);
+          }
+          return { photoPost, reels };
+        });
+        await Promise.allSettled([
+          cacheService.delPattern(`feed:${userId}:*`),
+          cacheService.delPattern("homefeed:*"),
+          cacheService.del(CACHE_KEYS.TRENDING),
+          cacheService.del(CACHE_KEYS.EXPLORE),
+        ]);
+        res.status(201).json({
+          id: created.photoPost?.id ?? `video-${created.reels[0].id}`,
+          type: created.photoPost ? "post" : "reel",
+          post: created.photoPost,
+          reels: created.reels,
+        });
+        return;
+      }
+    }
+
+    const post = await feedService.createPost(userId, caption, primaryUrl);
 
     // Link EVERY selected upload to this post. UploadedFile rows already key on
     // (recordType, recordId), so N attachments per post need no schema change.

@@ -173,6 +173,9 @@ export function mapMediaError(error: unknown, kind: MediaPermission): Permission
   const lower = kind === 'camera' ? 'camera' : 'microphone';
   const name = asName(error);
   const rawMessage = asMessage(error);
+  const appPermissions = typeof navigator !== 'undefined' && navigator.userAgent.includes('VANTAAndroid')
+    ? `open Android Settings → Apps → VANTA → Permissions and allow ${label}`
+    : `open the Chrome site permissions for VANTA and allow ${label} access`;
 
   // Secure context — check first because the browser may surface it as a
   // generic SecurityError that otherwise reads like a device problem.
@@ -190,9 +193,7 @@ export function mapMediaError(error: unknown, kind: MediaPermission): Permission
     return {
       kind: 'DENIED',
       title: `${label} access is blocked`,
-      message: typeof navigator !== 'undefined' && navigator.userAgent.includes('VANTAAndroid')
-        ? `Allow ${label} in Android Settings → Apps → VANTA → Permissions, then retry.`
-        : `To use the ${lower}, open the Chrome site permissions for VANTA and allow ${label} access, then try again.`,
+      message: `To use the ${lower}, ${appPermissions}, then try again.`,
       techDetail: rawMessage,
     };
   }
@@ -202,9 +203,7 @@ export function mapMediaError(error: unknown, kind: MediaPermission): Permission
     return {
       kind: 'BLOCKED',
       title: `${label} access is blocked`,
-      message: typeof navigator !== 'undefined' && navigator.userAgent.includes('VANTAAndroid')
-        ? `Allow ${label} in Android Settings → Apps → VANTA → Permissions, then retry.`
-        : `To use the ${lower}, open the Chrome site permissions for VANTA and allow ${label} access, then try again.`,
+      message: `To use the ${lower}, ${appPermissions}, then try again.`,
       techDetail: rawMessage,
     };
   }
@@ -255,7 +254,9 @@ export function mapMediaError(error: unknown, kind: MediaPermission): Permission
 
 /** Convenience: the user-facing "Microphone access is blocked" style message. */
 export function microphoneBlockedMessage(): string {
-  return 'Microphone access is blocked. Please allow microphone access for VANTA in Chrome site permissions and try again.';
+  return typeof navigator !== 'undefined' && navigator.userAgent.includes('VANTAAndroid')
+    ? 'Microphone access is blocked. Allow Microphone for VANTA in Android Settings → Apps → VANTA → Permissions and retry.'
+    : 'Microphone access is blocked. Please allow microphone access for VANTA in Chrome site permissions and try again.';
 }
 // ============================================================================
 // Notification API

@@ -1364,32 +1364,22 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       return;
     }
     showToast?.({ type: 'info', title: 'Getting location', message: 'Sharing your current location...' });
-    const onLocated = (position: GeolocationPosition) =>
-      void sendSpecialMessage('LOCATION', { lat: position.coords.latitude, lng: position.coords.longitude }, 'Location');
-    const onFailed = (error: GeolocationPositionError) => {
-      const androidApp = navigator.userAgent.includes('VANTAAndroid');
-      const permissionHelp = androidApp
-        ? 'Allow Location in Android Settings → Apps → VANTA → Permissions, then try again.'
-        : 'Allow location access in your browser settings, then try again.';
-      const message = error.code === error.PERMISSION_DENIED
-        ? permissionHelp
-        : error.code === error.TIMEOUT
-          ? 'Location lookup timed out. Enable device Location and try again.'
-          : 'Could not read your location. Enable device Location and try again.';
-      showToast?.({ type: 'error', title: 'Location unavailable', message });
-    };
-    // GPS can take a long time to lock indoors on Android WebView. Retry with
-    // network/coarse positioning before treating a timeout as a failure.
     navigator.geolocation.getCurrentPosition(
-      onLocated,
+      position => void sendSpecialMessage('LOCATION', { lat: position.coords.latitude, lng: position.coords.longitude }, 'Location'),
       error => {
-        if (error.code === error.PERMISSION_DENIED) { onFailed(error); return; }
-        navigator.geolocation.getCurrentPosition(
-          onLocated, onFailed,
-          { enableHighAccuracy: false, timeout: 12000, maximumAge: 30000 },
-        );
+        const androidApp = navigator.userAgent.includes('VANTAAndroid');
+        const message = error.code === error.PERMISSION_DENIED
+          ? androidApp
+            ? 'Allow Location for VANTA in Android Settings → Apps → VANTA → Permissions. Then retry sharing your location.'
+            : 'Location permission was denied. Allow location access in your browser settings, or type an address in chat.'
+          : error.code === error.TIMEOUT
+            ? 'Location lookup timed out. Turn on device Location and try again.'
+            : 'Could not read your location. Turn on device Location and check VANTA location access.';
+        showToast?.({ type: 'error', title: 'Location unavailable', message });
       },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 },
+      // Coarse/network location works even when Android users choose
+      // "approximate" permission. Do not require a slow GPS fix to share.
+      { enableHighAccuracy: false, timeout: 20000, maximumAge: 30000 }
     );
   };
 

@@ -4,18 +4,18 @@ import { motion } from 'framer-motion';
 import { BarChart2, Bookmark, Gift, Heart, MessageCircle, MoreHorizontal, Repeat2, Share } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { useAuth } from '@/context/AuthContext';
-import { apiPost } from '@/lib/apiClient';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import PostMedia, { PostMediaCarousel, type PostAttachment } from '@/components/social/PostMedia';
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
-import { isVideoItem, detailPathFor, cleanId } from '@/lib/feedIdentity';
+import { isVideoItem, detailPathFor } from '@/lib/feedIdentity';
 import { useContentPrefs } from '@/lib/useContentPrefs';
 import { renderTextWithLinks } from '@/lib/linkify';
 import QuoteEmbed from '@/components/social/QuoteEmbed';
 import { extractQuoteRef } from '@/lib/quotePost';
+import { useAuth } from '@/context/AuthContext';
+import { apiPost } from '@/lib/apiClient';
 
 /**
  * FeedPostCard
@@ -40,6 +40,11 @@ import { extractQuoteRef } from '@/lib/quotePost';
  */
 
 type Item = Record<string, any>;
+
+// A post view is unique per account on the backend. Avoid repeat requests
+// when the same item appears in multiple cards or remounts during a visit.
+const recordedFeedViews = new Set<string>();
+const pendingFeedViews = new Set<string>();
 
 type FeedPostCardProps = {
   item: Item;
@@ -95,48 +100,9 @@ const postAttachments = (item: Item): PostAttachment[] => {
 };
 export default function FeedPostCard({ item, currentUserId, onLike, onSave, onComment, onShare, onGift, onMore, feedCompactMedia = false, repostContext, onShareLink }: FeedPostCardProps) {
   const router = useRouter();
-  const { token } = useAuth();
-  const viewArticleRef = useRef<HTMLElement>(null);
-  const [confirmedViews, setConfirmedViews] = useState<number | null>(null);
-  // Count a genuine feed impression, not just a tap on /post/[id].
-  // The server enforces one ContentView per viewer/content, so moving
-  // between Home, Profile and the detail page never double-counts.
-  useEffect(() => {
-    setConfirmedViews(null);
-    const node = viewArticleRef.current;
-    // A visible Post is an impression. Do not fake Reel watch time here:
-    // actual Reel views are recorded by its playback flow.
-    if (!node || !token || !item.id || item.type === 'live' || isVideoItem(item) || typeof IntersectionObserver === 'undefined') return;
-    let requested = false;
-    let impressionTimer: number | null = null;
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting && entry.intersectionRatio >= 0.25) {
-        if (impressionTimer !== null || requested) return;
-        impressionTimer = window.setTimeout(() => {
-          impressionTimer = null;
-          requested = true;
-          void apiPost<{ counted: boolean; views: number }>(
-            `/api/feed/${encodeURIComponent(cleanId(item))}/views`,
-            {},
-            token,
-          ).then(result => {
-            if (Number.isFinite(Number(result.views))) setConfirmedViews(Number(result.views));
-          }).catch(() => {
-            // Permit a retry after the next genuine visible impression.
-            requested = false;
-          });
-        }, 700);
-      } else if (impressionTimer !== null) {
-        window.clearTimeout(impressionTimer);
-        impressionTimer = null;
-      }
-    }, { threshold: [0, 0.25, 0.5] });
-    observer.observe(node);
-    return () => {
-      observer.disconnect();
-      if (impressionTimer !== null) window.clearTimeout(impressionTimer);
-    };
-  }, [item.id, item.type, token]);
+  const { token, user } = useAuth();
+  const cardRef = useRef<HTMLElement | null>(null);
+  const [viewSnapshot, setViewSnapshot] = useState<{ id: string; views: number } | null>(null);
   const { prefs: contentPrefs, hydrated: contentPrefsHydrated } = useContentPrefs();
   // Feed video autoplay follows the persisted Video Autoplay preference.
   // Before localStorage hydrates it stays OFF, so default-off users never
@@ -162,6 +128,44 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [likePulse, setLikePulse] = useState(0);
   const [captionOverflows, setCaptionOverflows] = useState(false);
+  const shownViews = viewSnapshot?.id === String(item.id)
+    ? Math.max(Number(item.views ?? 0), viewSnapshot.views)
+    : Number(item.views ?? 0);
+
+  // Count a feed impression after the viewer actually sees the Post for a
+  // second; visiting /post/:id is no longer the only way to record a view.
+  // Reels use their existing watch-time endpoint instead of this Post API.
+  useEffect(() => {
+    const id = String(item.id ?? '');
+    const viewerId = user?.id ?? currentUserId;
+    const element = cardRef.current;
+    if (!id || !viewerId || !token || !element || isVideoItem(item) || typeof IntersectionObserver === 'undefined') return;
+    const key = `${viewerId}:POST:${id}`;
+    if (recordedFeedViews.has(key)) return;
+
+    let timer: number | undefined;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (timer) window.clearTimeout(timer);
+      if (!entry || entry.intersectionRatio < 0.25 || document.visibilityState !== 'visible') return;
+      timer = window.setTimeout(() => {
+        if (document.visibilityState !== 'visible' || recordedFeedViews.has(key) || pendingFeedViews.has(key)) return;
+        pendingFeedViews.add(key);
+        void apiPost<{ counted: boolean; views: number }>(`/api/feed/${encodeURIComponent(id)}/views`, {}, token)
+          .then(result => {
+            recordedFeedViews.add(key);
+            if (Number.isFinite(result.views)) setViewSnapshot({ id, views: result.views });
+            observer.disconnect();
+          })
+          .catch(() => undefined)
+          .finally(() => pendingFeedViews.delete(key));
+      }, 1000);
+    }, { threshold: [0, 0.25, 0.5, 0.75] });
+    observer.observe(element);
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [item.id, item.type, item.videoUrl, currentUserId, token, user?.id]);
 
   // Measure the real rendered text so the expand control appears only when
   // the five-line preview actually clips content at the current screen width.
@@ -205,7 +209,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
     router.push(detailPathFor(item));
   };
 
-  return <motion.article ref={viewArticleRef} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .24 }} onClick={openDetail} className="flex min-w-0 flex-col pt-2 pb-0.5 cursor-pointer">
+  return <motion.article ref={cardRef} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .24 }} onClick={openDetail} className="flex min-w-0 flex-col pt-2 pb-0.5 cursor-pointer">
     {repostContext && <div className="flex items-center gap-1.5 pb-1 pl-[54px] text-[11px] font-semibold text-[#777]"><Repeat2 size={13}/><span>{repostContext}</span></div>}
     <header className="grid min-w-0 grid-cols-[44px_minmax(0,1fr)] items-start gap-2.5">
       <button
@@ -255,7 +259,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
             <button type="button" onClick={() => onComment(item)} aria-label="Open comments" className={actionClass}><MessageCircle size={17}/><span>{formatCount(item.comments)}</span></button>
             <button type="button" onClick={() => onShare(item)} aria-label="Repost" aria-pressed={Boolean(item.isReposted)} className={cn(actionClass, 'transition-colors', item.isReposted && 'text-[#f2c75c]')}><Repeat2 size={17}/><span>{formatCount(item.reposts ?? item.shares)}</span></button>
             {!isOwn ? <button type="button" onClick={() => onGift(item)} aria-label="Send gift" className={cn(actionClass, 'transition-colors hover:text-[#c9a227]', item.isGifted && 'text-[#f2c75c]')}><Gift size={17} className={item.isGifted ? 'fill-current' : ''}/><span>{formatCount(item.tips ?? item.tipCount ?? item.giftsReceived ?? 0)}</span></button> : <span className={cn(actionClass, 'pointer-events-none', item.isGifted && 'text-[#f2c75c]')} aria-label="Tips"><Gift size={17} className={item.isGifted ? 'fill-current' : ''}/><span>{formatCount(item.tips ?? item.tipCount ?? item.giftsReceived ?? 0)}</span></span>}
-            <span className={cn(actionClass, 'pointer-events-none')} aria-label="Views"><BarChart2 size={17}/><span>{formatCount(confirmedViews ?? item.views ?? 0)}</span></span>
+            <span className={cn(actionClass, 'pointer-events-none')} aria-label="Views"><BarChart2 size={17}/><span>{formatCount(shownViews)}</span></span>
           </div>
           <button type="button" onClick={() => onSave(item)} aria-label={item.saved ? 'Remove saved post' : 'Save post'} aria-pressed={item.saved} className={cn(actionClass, item.saved && 'text-white')}><Bookmark size={17} className={item.saved ? 'fill-current' : ''}/><span className="sr-only">{item.saved ? 'Saved' : 'Save'}</span></button>
           {repostContext && onShareLink && <button type="button" onClick={() => onShareLink(item)} aria-label="Share" className={actionClass}><Share size={17}/></button>}

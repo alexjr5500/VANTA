@@ -190,37 +190,15 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
         const mediaUrls = attached.map((item) => item.uploadedUrl).filter((url): url is string => Boolean(url));
         const mediaFileIds = attached.map((item) => item.uploadedId).filter((id): id is string => Boolean(id));
 
-        // One-video posts and the Reel uploader now share the same canonical
-        // Video record. The mixed Home feed already includes published Reels,
-        // so creating a separate Post here would duplicate the video on Home.
-        // Keep mixed photo/video carousels and quote posts on the Post path.
-        const oneVideo = attached.length === 1 && attached[0].type === 'video' && !quoteUrl;
-        if (oneVideo) {
-          const fileId = attached[0].uploadedId;
-          if (!fileId) throw new Error('The video upload has not finished.');
-          const draft = await apiPost<{ video: { id: string } }>('/api/reels', {
-            title: content.trim().slice(0, 120) || 'Video',
-            description: content.trim(),
-          }, token ?? undefined);
-          if (!draft?.video?.id) throw new Error('Could not create the video draft.');
-          try {
-            await apiPost(`/api/reels/${encodeURIComponent(draft.video.id)}/finalize`, { fileId }, token ?? undefined);
-          } catch (error) {
-            // Never expose a broken, unpublished draft in the Reel feed.
-            await apiPost(`/api/reels/${encodeURIComponent(draft.video.id)}/fail`, {}, token ?? undefined).catch(() => undefined);
-            throw error;
-          }
-        } else {
-          await apiPost('/api/feed', {
-            content: [content.trim(), quoteUrl].filter(Boolean).join('\n\n'),
-            mediaUrl: mediaUrls[0],
-            mediaFileId: mediaFileIds[0],
-            media: {
-              urls: mediaUrls,
-              fileIds: mediaFileIds,
-            },
-          }, token ?? undefined);
-        }
+        await apiPost('/api/feed', {
+          content: [content.trim(), quoteUrl].filter(Boolean).join('\n\n'),
+          mediaUrl: mediaUrls[0],
+          mediaFileId: mediaFileIds[0],
+          media: {
+            urls: mediaUrls,
+            fileIds: mediaFileIds,
+          },
+        }, token ?? undefined);
       }
 
       // The server confirmed creation - invalidate cached feed data so the
