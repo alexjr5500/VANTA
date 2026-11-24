@@ -9,6 +9,9 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import { apiGet, apiPost, apiUpload } from '@/lib/apiClient';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
+import PostMedia, { PostMediaCarousel, isVideoSource, type PostAttachment } from '@/components/social/PostMedia';
+import QuoteEmbed from '@/components/social/QuoteEmbed';
+import { extractQuoteRef } from '@/lib/quotePost';
 import { renderTextWithLinks } from '@/lib/linkify';
 import type { VerificationType } from '@/types/verification';
 import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
@@ -18,6 +21,9 @@ type Post = {
   id: string;
   content?: string;
   mediaUrl?: string | null;
+  mediaType?: string | null;
+  thumbnailUrl?: string | null;
+  attachments?: (PostAttachment & { thumbnailUrl?: string; posterUrl?: string })[];
   createdAt?: string;
   author: {
     id: string;
@@ -147,6 +153,11 @@ export default function DirectPostReplyPage({ params }: { params: Promise<{ id: 
   };
 
   const author = post?.author;
+  const quote = post?.content && typeof window !== 'undefined' ? extractQuoteRef(post.content, window.location.host) : null;
+  const originalText = quote ? quote.rest : post?.content;
+  const originalAttachments = (post?.attachments || []).filter(item => Boolean(item.url)).map(item => ({ ...item, poster: item.poster || item.thumbnailUrl || item.posterUrl }));
+  const originalMedia = originalAttachments[0]?.url || post?.mediaUrl;
+  const originalIsVideo = Boolean(originalMedia && (/video/i.test(originalAttachments[0]?.type || originalAttachments[0]?.mimeType || post?.mediaType || '') || isVideoSource(originalMedia) || /\.m3u8(?:\?|$)/i.test(originalMedia)));
   const avatar = user?.avatar || user?.avatarUrl || (user?.profile as { avatar?: string; avatarUrl?: string } | undefined)?.avatar || (user?.profile as { avatarUrl?: string } | undefined)?.avatarUrl;
   const date = post?.createdAt && !Number.isNaN(new Date(post.createdAt).getTime())
     ? new Date(post.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
@@ -194,14 +205,15 @@ export default function DirectPostReplyPage({ params }: { params: Promise<{ id: 
                 <span className="truncate text-[var(--text-muted)]">@{author.username}</span>
                 {date && <span className="text-[var(--text-muted)]">· {date}</span>}
               </div>
-              {post.content && (
+              {originalText && (
                 <p className="mt-2 line-clamp-5 whitespace-pre-wrap break-words text-[15px] leading-6 text-[var(--text-primary)]">
-                  {renderTextWithLinks(post.content, 'linkify', { mentions: true, hashtags: true })}
+                  {renderTextWithLinks(originalText, 'linkify', { mentions: true, hashtags: true })}
                 </p>
               )}
-              {post.mediaUrl && (
-                <div className="mt-3 max-w-[108px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-                  <img src={resolveMediaUrl(post.mediaUrl)} alt="Original post attachment" className="max-h-24 w-full object-cover" />
+              {quote && <QuoteEmbed quote={quote.ref} className="mt-2" />}
+              {originalMedia && (
+                <div className="mt-3 w-full max-w-[280px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+                  {originalAttachments.length > 1 ? <PostMediaCarousel attachments={originalAttachments} alt="Original post attachments" autoplayOnView={false} /> : <PostMedia src={resolveMediaUrl(originalMedia)} poster={originalAttachments[0]?.poster || post.thumbnailUrl || undefined} isVideo={originalIsVideo} alt="Original post attachment" autoplayOnView={false} feedCompact />}
                 </div>
               )}
               <p className="mt-4 text-sm text-[var(--text-muted)]">
@@ -237,7 +249,6 @@ export default function DirectPostReplyPage({ params }: { params: Promise<{ id: 
             </div>
           </form>
 
-          <MentionSuggestions mention={mentions} className="mb-3 rounded-xl" />
 
           {previews.length > 0 && (
             <div className="ml-[60px] flex flex-wrap gap-2 pb-3" aria-label="Selected attachments">
@@ -262,8 +273,9 @@ export default function DirectPostReplyPage({ params }: { params: Promise<{ id: 
       )}
 
       {post && token && (
-        <div className="relative shrink-0 border-t border-[var(--border)] bg-[var(--background)] px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-6">
-          {emojiOpen && (
+        <div className="vanta-reply-toolbar relative z-20 shrink-0 border-t border-[var(--border)] bg-[var(--background)] px-4 pb-[var(--vanta-native-safe-bottom,env(safe-area-inset-bottom))] pt-1 sm:px-6">
+          {mentions.open && <div className="absolute inset-x-3 bottom-full z-[130] mb-1"><MentionSuggestions mention={mentions} className="rounded-xl" /></div>}
+          {emojiOpen && !mentions.open && (
             <div className="absolute bottom-full left-4 right-4 mb-2 grid grid-cols-6 gap-1 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-xl">
               {EMOJIS.map(emoji => (
                 <button key={emoji} type="button" aria-label={`Insert ${emoji}`} onClick={() => insertText(emoji)} className="grid h-10 place-items-center rounded-lg text-xl hover:bg-white/[0.06]">{emoji}</button>
