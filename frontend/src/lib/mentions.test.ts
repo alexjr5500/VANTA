@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyMention, mentionAtCaret } from '../components/social/MentionSuggestions';
-import { highlightedParts } from '../components/social/MentionTextarea';
+import { applyMention, mentionAtCaret, highlightedParts } from './mentionTokens';
 
 describe('shared VANTA mention autocomplete', () => {
   it('opens on one typed character after @', () => {
