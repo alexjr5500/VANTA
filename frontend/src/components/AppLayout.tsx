@@ -41,6 +41,7 @@ import IncomingCallBanner from '@/components/messages/IncomingCallBanner';
 import ChatCallOverlay from '@/components/messages/ChatCallOverlay';
 import GlobalGiftAnimations from '@/components/gifts/GlobalGiftAnimations';
 import { useToast } from '@/components/ui/Toast';
+import { useLocalizedUiText } from '@/lib/i18n/ui-labels';
 
 const notificationDestination = (notification: any) => {
   let data: any = notification?.data;
@@ -92,6 +93,7 @@ const MobileMenu = memo(function MobileMenu({
 }) {
   const { unreadCount: notificationUnread } = useNotifications();
   const { chatUnreadCount: chatUnread } = useChatUnread();
+  const tr = useLocalizedUiText();
   const navBadgeFor = (href: string) => {
     if (href === '/chat') return chatUnread;
     if (href === '/notifications') return notificationUnread;
@@ -177,7 +179,7 @@ const MobileMenu = memo(function MobileMenu({
                           </span>
                         )}
                       </span>
-                      <span className="text-sm">{item.label}</span>
+                      <span className="text-sm">{tr(item.label)}</span>
                     </Link>
                   );
                 })}
@@ -193,7 +195,7 @@ const MobileMenu = memo(function MobileMenu({
                 aria-label="Logout"
               >
                 <LogOut size={16} />
-                Logout
+                {tr('Logout')}
               </button>
             </div>
           </motion.aside>
@@ -209,6 +211,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const tr = useLocalizedUiText();
   const { unreadCount: notificationUnread } = useNotifications();
   const { chatUnreadCount: chatUnread } = useChatUnread();
   const { chatCalls } = useCalls();
@@ -627,7 +630,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                         </span>
                       )}
                     </span>
-                    <span>{item.label}</span>
+                    <span>{tr(item.label)}</span>
                   </Link>
                 );
               })}
