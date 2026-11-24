@@ -45,7 +45,7 @@ export function requestNativeLocation(timeoutMs = 20000): Promise<VantaCoordinat
       const detail = (event as CustomEvent<NativeLocationResult>).detail;
       if (!detail || detail.requestId !== requestId) return;
       if (detail.error) { finish(undefined, detail.error); return; }
-      if (!Number.isFinite(detail.lat) || !Number.isFinite(detail.lng)) {
+      if (!Number.isFinite(Number(detail.lat)) || !Number.isFinite(Number(detail.lng))) {
         finish(undefined, 'Location unavailable');
         return;
       }
