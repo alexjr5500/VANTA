@@ -1,5 +1,7 @@
 'use client';
 
+import BookmarkIcon from '@/components/ui/BookmarkIcon';
+
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -17,7 +19,7 @@ import { API_BASE_URL } from '@/lib/api';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import {
   MapPin, Bed, Bath, Home, Play, Share2, Phone, MessageCircle,
-  AlertCircle, User, ChevronLeft, ChevronRight, Maximize2, Bookmark,
+  AlertCircle, User, ChevronLeft, ChevronRight, Maximize2,
   CalendarDays, Building2, Wallet, Shield, ArrowLeft, Flag,
 } from 'lucide-react';
 
@@ -433,7 +435,7 @@ export default function HomeDetailPage() {
           <button type="button" onClick={() => router.push('/homes')} className="inline-flex min-h-10 items-center gap-2 text-sm text-white/55 transition hover:text-white"><ArrowLeft size={16} /> All homes</button>
           <div className="flex items-center gap-1 sm:gap-2">
             <button type="button" onClick={() => void handleShare()} aria-label="Share property" className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-xs text-white/65 transition hover:bg-white/[.06] hover:text-white sm:px-3 sm:text-sm"><Share2 size={15} /><span>Share</span></button>
-            {!isOwner && <button type="button" onClick={() => void handleSave()} disabled={saving} aria-pressed={saved} className={"inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-xs transition sm:px-3 sm:text-sm " + (saved ? "text-[#e4c65d]" : "text-white/65 hover:text-white")}><Bookmark size={15} fill={saved ? 'currentColor' : 'none'} /><span>{saved ? 'Saved' : 'Save'}</span></button>}
+            {!isOwner && <button type="button" onClick={() => void handleSave()} disabled={saving} aria-pressed={saved} className={"inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-xs transition sm:px-3 sm:text-sm " + (saved ? "text-[#dfbd55]" : "text-white/65 hover:text-white")}><BookmarkIcon size={15} saved={saved} /><span>{saved ? 'Saved' : 'Save'}</span></button>}
             {!isOwner && <button type="button" onClick={() => setReportOpen((open) => !open)} className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-xs text-white/55 transition hover:bg-white/[.06] hover:text-white sm:px-3 sm:text-sm"><Flag size={14} /><span className="hidden sm:inline">Report</span></button>}
           </div>
         </div>
