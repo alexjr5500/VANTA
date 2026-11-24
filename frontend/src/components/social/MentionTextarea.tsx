@@ -1,30 +1,12 @@
 'use client';
 
 import { forwardRef, useEffect, useRef, useState, type CSSProperties, type TextareaHTMLAttributes } from 'react';
+import { highlightedParts } from '@/lib/mentionTokens';
 
 /** Render @username and #hashtag in VANTA gold *while typing* in a native
  * textarea. Native editing/selection/IME remains intact; the visual mirror
  * never intercepts clicks, never inserts HTML and cannot execute input text.
  */
-const TOKEN = /(?:^|[\s([{])([@#])([a-zA-Z0-9_]{1,30})(?=$|[^a-zA-Z0-9_])/g;
-
-export function highlightedParts(value: string): Array<{ text: string; highlighted: boolean }> {
-  const parts: Array<{ text: string; highlighted: boolean }> = [];
-  let cursor = 0;
-  TOKEN.lastIndex = 0;
-  let found: RegExpExecArray | null;
-  while ((found = TOKEN.exec(value)) !== null) {
-    const offset = found[0].lastIndexOf(found[1]);
-    const start = found.index + offset;
-    const end = start + 1 + found[2].length;
-    if (start > cursor) parts.push({ text: value.slice(cursor, start), highlighted: false });
-    parts.push({ text: value.slice(start, end), highlighted: true });
-    cursor = end;
-  }
-  if (cursor < value.length) parts.push({ text: value.slice(cursor), highlighted: false });
-  return parts;
-}
-
 type Props = TextareaHTMLAttributes<HTMLTextAreaElement> & {
   value: string;
   surfaceClassName?: string;
