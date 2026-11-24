@@ -33,7 +33,7 @@ import {
   type UploadJob,
 } from '@/lib/uploads/store';
 import StatusVideoPreview from '@/components/story/StatusVideoPreview';
-import { prepareStatusVideo, type StatusTrimRange } from '@/lib/statusVideoTrim';
+import { prepareStatusVideo, statusRangeNeedsTrim, type StatusTrimRange } from '@/lib/statusVideoTrim';
 import StatusGallerySheet from '@/components/story/StatusGallerySheet';
 import { nativeGalleryConnection, parseNativeGallery, type NativeRecentMedia, type NativeGalleryStatus } from '@/lib/nativeStatusGallery';
 import {
@@ -558,8 +558,8 @@ useEffect(() => {
       const prepared: DraftMedia[] = [];
       for (const item of items) {
         const range = trimRanges[item.id];
-        const needsTrim = item.kind === 'video' && range && (range.start > 0.01 || item.duration == null || range.end < item.duration - 0.01);
-        const file = needsTrim ? await prepareStatusVideo(item.file, item.objectUrl, range, abort.signal) : item.file;
+        const needsTrim = item.kind === 'video' && range && statusRangeNeedsTrim(range, item.duration);
+        const file = needsTrim && range ? await prepareStatusVideo(item.file, item.objectUrl, range, abort.signal) : item.file;
         prepared.push({ ...item, file, size: file.size, name: file.name });
       }
       if (abort.signal.aborted) throw new DOMException('Trimming cancelled', 'AbortError');
@@ -660,7 +660,7 @@ useEffect(() => {
       <header className="relative flex h-14 shrink-0 items-center justify-between px-4" aria-label="Status editor navigation">
         <button
           type="button"
-          onClick={() => (showMediaPreview && !publishing ? setShowMediaPreview(false) : items.length > 0 ? discardAll() : onBack ? onBack() : onClose())}
+          onClick={() => (preparing ? trimAbortRef.current?.abort() : showMediaPreview && !publishing ? setShowMediaPreview(false) : items.length > 0 ? discardAll() : onBack ? onBack() : onClose())}
           aria-label={showMediaPreview && !publishing ? 'Back to selected media' : items.length > 0 ? 'Discard selected media' : 'Close Add status'}
           className="grid h-11 w-11 place-items-center text-white transition hover:bg-white/[0.06]"
         >
@@ -730,11 +730,12 @@ useEffect(() => {
         </>
       )}
 {!publishing && showMediaPreview && items.length > 0 && (
-        <div className="flex shrink-0 items-center justify-center gap-1.5 overflow-x-auto px-3 py-1 scrollbar-hide" aria-label="Selected media">
+        <div className={cn("flex shrink-0 items-center gap-1.5 overflow-x-auto px-3 py-1 scrollbar-hide", items.length <= 4 ? "justify-center" : "justify-start")} aria-label="Selected media">
           {items.map((item, index) => (
             <div key={item.id} className="relative shrink-0">
               <button
                 type="button"
+                disabled={preparing}
                 onClick={() => setActiveId(item.id)}
                 aria-pressed={item.id === activeId}
                 aria-label={`Preview ${item.name}`}
@@ -764,6 +765,7 @@ useEffect(() => {
               </button>
               <button
                 type="button"
+                disabled={preparing}
                 onClick={() => removeItem(item.id)}
                 aria-label={`Remove ${item.name}`}
                 className="absolute -right-1.5 -top-1.5 z-10 grid h-6 w-6 place-items-center rounded-full border border-white/20 bg-black/80 text-white/80 transition hover:bg-[#e5484d] hover:text-white active:scale-90"
@@ -775,6 +777,7 @@ useEffect(() => {
           <button
             type="button"
             onClick={openGalleryPicker}
+            disabled={preparing || items.length >= capacity}
             aria-label="Add more photos or videos"
             className={cn(
               'flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-dashed',
