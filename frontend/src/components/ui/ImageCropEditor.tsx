@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Check, Loader2, Minus, Plus, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Check, Loader2 } from 'lucide-react';
 
 type Props = { file: File; aspect?: number; circular?: boolean; onCancel: () => void; onApply: (file: File) => void };
 type Point = { x: number; y: number };
@@ -106,27 +106,18 @@ export default function ImageCropEditor({ file, aspect = 1, circular = false, on
     } finally { if (mounted.current) setBusy(false); }
   };
   if (typeof document === 'undefined') return null;
-  return createPortal(<div role="dialog" aria-modal="true" aria-label="Crop photo" className="fixed inset-0 z-[9999] flex h-[100dvh] flex-col bg-[#1F2630] text-white" onKeyDown={event => { if (event.key === 'Escape' && !busy) onCancel(); }}>
-    <header className="flex shrink-0 items-center gap-3 border-b border-white/10 px-4 pb-3 pt-[max(12px,env(safe-area-inset-top))]">
+  return createPortal(<div role="dialog" aria-modal="true" aria-label="Crop photo" className="vanta-photo-crop fixed inset-0 z-[9999] flex h-[100dvh] flex-col bg-[#1F2630] text-white" onKeyDown={event => { if (event.key === 'Escape' && !busy) onCancel(); }}>
+    <header className="vanta-community-compact-header flex shrink-0 items-center gap-3 border-b border-white/10 px-4">
       <button type="button" disabled={busy} onClick={onCancel} aria-label="Cancel cropping" className="grid h-11 w-11 place-items-center text-[#f2c75c]"><ArrowLeft size={22}/></button>
       <h2 className="flex-1 text-base font-semibold">Adjust photo</h2>
       <button type="button" disabled={!natural || !width || busy} onClick={() => void apply()} className="flex h-11 items-center gap-2 rounded-xl bg-[#d6a83f] px-4 text-sm font-semibold text-black disabled:opacity-50">{busy ? <Loader2 size={17} className="animate-spin"/> : <Check size={17}/>}Apply</button>
     </header>
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#15191f] p-4">
-      <div ref={frame} style={{ aspectRatio: aspect, width: '100%', maxWidth: 'min(600px, 76dvh)' }} className="relative touch-none select-none overflow-hidden border border-white/25 bg-black" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onLostPointerCapture={up} onWheel={event => changeZoom(zoom + (event.deltaY < 0 ? 0.1 : -0.1))}>
+      <div ref={frame} style={{ aspectRatio: aspect, width: '100%', maxWidth: 'min(600px, 76dvh)' }} className="relative touch-none select-none overflow-hidden border border-white/25 bg-black" tabIndex={0} aria-label="Adjust photo by pinching, dragging, or using arrow and plus or minus keys" onKeyDown={event => { if (event.key === "+" || event.key === "=" || event.key === "-") { event.preventDefault(); changeZoom(zoom + (event.key === "-" ? -0.1 : 0.1)); } else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) { event.preventDefault(); setOffset(current => bounded({ x: current.x + (event.key === "ArrowLeft" ? -10 : event.key === "ArrowRight" ? 10 : 0), y: current.y + (event.key === "ArrowUp" ? -10 : event.key === "ArrowDown" ? 10 : 0) }, zoom)); } }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onLostPointerCapture={up} onWheel={event => changeZoom(zoom + (event.deltaY < 0 ? 0.1 : -0.1))}>
         {url && <img ref={image} src={url} alt="Photo to crop" draggable={false} onLoad={event => setNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} onError={() => { setNatural(null); setError('This image format could not be opened. Choose a JPG, PNG or WebP photo.'); }} className="pointer-events-none absolute left-1/2 top-1/2 !max-w-none" style={natural && base ? { width: natural.width * base * zoom, height: natural.height * base * zoom, transform: `translate(calc(-50% + ${position.x}px), calc(-50% + ${position.y}px))` } : { opacity: 0 }}/>}
         {circular ? <div aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-full border-2 border-[#f2c75c] shadow-[0_0_0_999px_rgba(0,0,0,.62)]"/> : <div aria-hidden="true" className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3 border-2 border-[#f2c75c]">{Array.from({length:9}, (_, index) => <span key={index} className="border border-white/25"/>)}</div>}
       </div>
     </div>
-    <footer className="shrink-0 space-y-3 px-5 pt-4 pb-[max(20px,env(safe-area-inset-bottom))]">
-      <p className="text-center text-xs text-white/65">Pinch to zoom or use the slider. Drag to position the photo.</p>
-      <div className="mx-auto flex max-w-lg items-center gap-3">
-        <button type="button" aria-label="Zoom out" disabled={zoom <= 1 || busy} onClick={() => changeZoom(zoom - .25)} className="grid h-11 w-11 place-items-center rounded-full bg-white/5 text-[#f2c75c] disabled:opacity-40"><Minus size={20}/></button>
-        <input aria-label="Photo zoom" type="range" min={1} max={4} step={0.01} value={zoom} onChange={event => changeZoom(Number(event.target.value))} className="min-w-0 flex-1 accent-[#d6a83f]"/>
-        <button type="button" aria-label="Zoom in" disabled={zoom >= 4 || busy} onClick={() => changeZoom(zoom + .25)} className="grid h-11 w-11 place-items-center rounded-full bg-white/5 text-[#f2c75c] disabled:opacity-40"><Plus size={20}/></button>
-        <button type="button" aria-label="Reset crop" disabled={busy} onClick={() => { setZoom(1); setOffset({x:0,y:0}); }} className="grid h-11 w-11 place-items-center rounded-full bg-white/5 text-[#f2c75c]"><RotateCcw size={18}/></button>
-      </div>
-      {error && <p role="alert" className="text-center text-xs text-red-300">{error}</p>}
-    </footer>
+    {error && <p role="alert" className="shrink-0 px-4 py-3 text-center text-xs text-red-300">{error}</p>}
   </div>, document.body);
 }
