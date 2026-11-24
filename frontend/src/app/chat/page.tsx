@@ -1273,8 +1273,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       }
       if (activeConversation) return handled(handleCloseConversation);
     };
-    window.addEventListener('vanta-native-back', onNativeBack);
-    return () => window.removeEventListener('vanta-native-back', onNativeBack);
+    window.addEventListener('vanta-native-back', onNativeBack, true);
+    return () => window.removeEventListener('vanta-native-back', onNativeBack, true);
     // closeMessageSelection is intentionally called via the latest render;
     // the effect re-registers when transient chat state changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
