@@ -58,6 +58,8 @@ import { useGiftAnimationQueue } from '@/components/gifts/useGiftAnimationQueue'
 import LiveParticipantGrid, { type StageParticipant } from '@/components/live/LiveParticipantGrid';
 import { reconcileLiveChat, type ChatLineLike } from '@/lib/liveChatDedupe';
 import { renderTextWithLinks } from '@/lib/linkify';
+import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
+import { MentionTextarea } from '@/components/social/MentionTextarea';
 
 type ViewerPhase = 'LOADING' | 'LIVE' | 'ENDED' | 'ERROR';
 type SheetId = 'none' | 'chat' | 'viewers' | 'more' | 'gift';
@@ -230,6 +232,8 @@ export default function LiveViewerPage() {
   const [viewers, setViewers] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [comment, setComment] = useState('');
+  const liveChatRef = useRef<HTMLTextAreaElement>(null);
+  const liveMentions = useMentionSuggestions({ value: comment, onChange: setComment, token, inputRef: liveChatRef });
   const [sendingComment, setSendingComment] = useState(false);
   const [sheet, setSheet] = useState<SheetId>('none');
   const [chatPaused, setChatPaused] = useState(false);
@@ -1186,7 +1190,9 @@ const sendComment = useCallback(() => {
             </motion.div>
           )}
         </AnimatePresence>
-        <div className="mx-auto flex w-full max-w-[720px] items-center gap-1.5 rounded-full live-glass-strong p-1.5">
+        <div className="relative mx-auto w-full max-w-[720px]">
+          <div className="absolute bottom-full left-0 right-0 mb-2 z-[90] pointer-events-auto"><MentionSuggestions mention={liveMentions} className="rounded-2xl" /></div>
+        <div className="flex w-full items-center gap-1.5 rounded-full live-glass-strong p-1.5">
           <button
             type="button"
             onClick={() => setEmojiOpen((v) => !v)}
@@ -1196,14 +1202,18 @@ const sendComment = useCallback(() => {
           >
             😊
           </button>
-          <input
+          <MentionTextarea
+            ref={liveChatRef}
+            rows={1}
             value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') sendComment(); }}
+            onChange={(e) => { setComment(e.target.value); liveMentions.syncCaret(e.currentTarget); }}
+            onClick={e => liveMentions.syncCaret(e.currentTarget)}
+            onKeyUp={e => liveMentions.syncCaret(e.currentTarget)}
+            onKeyDown={(e) => { if (liveMentions.onKeyDown(e)) return; if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendComment(); } }}
             disabled={chatPaused}
             placeholder={chatPaused ? 'Chat is paused by the host' : `Message ${stream.host.username}'s live…`}
             aria-label="Send a message to the live chat"
-            className="min-w-0 flex-1 bg-transparent py-2.5 text-sm text-white outline-none placeholder:text-white/40"
+            className="min-h-10 max-h-10 w-full resize-none overflow-hidden bg-transparent py-2.5 text-sm text-white outline-none placeholder:text-white/40"
           />
           {comment.trim() && (
             <button
@@ -1216,6 +1226,7 @@ const sendComment = useCallback(() => {
               <Send size={17} />
             </button>
           )}
+        </div>
         </div>
       </div>
       {/* Viewers sheet */}
