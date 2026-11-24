@@ -17,7 +17,7 @@ import { apiGet, apiPut } from '@/lib/apiClient';
 import { useToast } from '@/components/ui/Toast';
 import { SettingsGroup } from '@/components/settings/SettingsUI';
 import { cn } from '@/lib/utils';
-import { useLocalizedUiText } from '@/lib/i18n/ui-labels';
+import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 
 const LANGUAGES: { value: string; label: string }[] = locales.map((code) => ({
   value: code,
