@@ -3997,7 +3997,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                       </div>
                       <div>
                         <label className="mb-2 block text-xs font-semibold text-white/65">Who can access it?</label>
-                        <div className="grid grid-cols-2 gap-2">{(['PUBLIC', 'PRIVATE'] as const).map(vis => <button key={vis} type="button" onClick={() => setCreateVisibility(vis)} className={cn('min-h-12 rounded-xl px-3 text-left transition', createVisibility === vis ? 'bg-[#d6a83f]/15 text-[#f2c75c] ring-1 ring-[#d6a83f]/45' : 'bg-[#202b37] text-white/60 hover:bg-[#293746]')}><span className="block text-xs font-semibold">{vis === 'PUBLIC' ? 'Public' : 'Private'}</span><span className="mt-0.5 block text-[10px] opacity-65">{vis === 'PUBLIC' ? 'Discoverable' : 'Invite only'}</span></button>)}</div>
+                        <div className="grid grid-cols-2 gap-2">{(['PUBLIC', 'PRIVATE'] as const).map(vis => <button key={vis} type="button" onClick={() => setCreateVisibility(vis)} className={cn('min-h-12 rounded-xl px-3 text-left transition', createVisibility === vis ? 'bg-[#d6a83f]/15 text-[#f2c75c] ring-1 ring-[#d6a83f]/45' : 'bg-[#202b37] text-white/60 hover:bg-[#293746]')}><span className="block text-xs font-semibold">{vis === 'PUBLIC' ? 'Public' : 'Private'}</span><span className="mt-0.5 block text-[10px] opacity-65">{vis === 'PUBLIC' ? 'Discoverable' : 'Added members only'}</span></button>)}</div>
                       </div>
                     </section>
                   )}
