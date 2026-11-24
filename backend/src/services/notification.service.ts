@@ -1,4 +1,6 @@
 import { prisma } from "../prisma";
+import { canReceiveMention } from "../security/privacyPermissions";
+import { postMentionNames } from "./post-mentions";
 import { BADGE_USER_SELECT, enrichPublicUser } from "./public-verification";
 import { pushNotificationService } from "./push/push-notification.service";
 
@@ -301,6 +303,34 @@ export class NotificationService {
       `${followerUsername} started following you`,
       { actorId: followerId, followerId, followerUsername, entityType: "profile", entityId: followerId, referenceKey: `follow:${followerId}` }
     );
+  }
+
+  /** Invoke only after the content and its attachments are committed. */
+  async notifyPublishedMentions(authorId: string, content: string, target: { kind: "post" | "reel"; id: string }) {
+    const names = postMentionNames(content);
+    if (!names.length) return;
+    const [author, recipients] = await Promise.all([
+      prisma.user.findUnique({ where: { id: authorId }, select: { username: true } }),
+      prisma.user.findMany({ where: { username: { in: names }, status: "ACTIVE", id: { not: authorId } }, select: { id: true } }),
+    ]);
+    if (!author || !recipients.length) return;
+    const ids = recipients.map(user => user.id);
+    const [settings, follows, blocks] = await Promise.all([
+      prisma.userSettings.findMany({ where: { userId: { in: ids } }, select: { userId: true, mentionPermissions: true } }),
+      prisma.follow.findMany({ where: { followerId: authorId, followingId: { in: ids } }, select: { followingId: true } }),
+      prisma.blockedUser.findMany({ where: { OR: [{ userId: authorId, targetId: { in: ids } }, { targetId: authorId, userId: { in: ids } }] }, select: { userId: true, targetId: true } }),
+    ]);
+    const preferences = new Map(settings.map(row => [row.userId, row.mentionPermissions]));
+    const following = new Set(follows.map(row => row.followingId));
+    const blocked = new Set(blocks.map(row => row.userId === authorId ? row.targetId : row.userId));
+    const eligible = recipients.filter(user => !blocked.has(user.id) && canReceiveMention(preferences.get(user.id), following.has(user.id)));
+    const results = await Promise.allSettled(eligible.map(user => this.createNotification(user.id, "mention", "You were mentioned",
+      `@${author.username} mentioned you in a ${target.kind === "post" ? "post" : "Reel"}`,
+      { actorId: authorId, entityType: target.kind, entityId: target.id,
+        ...(target.kind === "post" ? { postId: target.id } : { reelId: target.id }),
+        referenceKey: `publish-mention:${target.kind}:${target.id}:${user.id}` }
+    )));
+    if (results.some(result => result.status === "rejected")) console.error("[mentions] one or more published mention deliveries failed", { targetId: target.id });
   }
 
   async notifyLike(userId: string, likerUsername: string, postId: string, likerId?: string) {
