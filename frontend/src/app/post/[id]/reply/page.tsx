@@ -155,7 +155,7 @@ export default function DirectPostReplyPage({ params }: { params: Promise<{ id: 
   const author = post?.author;
   const quote = post?.content && typeof window !== 'undefined' ? extractQuoteRef(post.content, window.location.host) : null;
   const originalText = quote ? quote.rest : post?.content;
-  const originalAttachments = (post?.attachments || []).filter(item => Boolean(item.url)).map(item => ({ ...item, poster: item.poster || item.thumbnailUrl || item.posterUrl }));
+  const originalAttachments = (Array.isArray(post?.attachments) ? post.attachments : []).filter(item => Boolean(item.url)).map(item => ({ ...item, poster: item.poster || item.thumbnailUrl || item.posterUrl }));
   const originalMedia = originalAttachments[0]?.url || post?.mediaUrl;
   const originalIsVideo = Boolean(originalMedia && (/video/i.test(originalAttachments[0]?.type || originalAttachments[0]?.mimeType || post?.mediaType || '') || isVideoSource(originalMedia) || /\.m3u8(?:\?|$)/i.test(originalMedia)));
   const avatar = user?.avatar || user?.avatarUrl || (user?.profile as { avatar?: string; avatarUrl?: string } | undefined)?.avatar || (user?.profile as { avatarUrl?: string } | undefined)?.avatarUrl;
@@ -274,7 +274,7 @@ export default function DirectPostReplyPage({ params }: { params: Promise<{ id: 
 
       {post && token && (
         <div className="vanta-reply-toolbar relative z-20 shrink-0 border-t border-[var(--border)] bg-[var(--background)] px-4 pb-[var(--vanta-native-safe-bottom,env(safe-area-inset-bottom))] pt-1 sm:px-6">
-          {mentions.open && <div className="absolute inset-x-3 bottom-full z-[130] mb-1"><MentionSuggestions mention={mentions} className="rounded-xl" /></div>}
+          {mentions.open && <div className="absolute inset-x-3 bottom-full z-[130] mb-1"><MentionSuggestions mention={mentions} className="rounded-xl !max-h-[min(32dvh,calc(var(--vanta-vh,100dvh)*0.45),320px)]" /></div>}
           {emojiOpen && !mentions.open && (
             <div className="absolute bottom-full left-4 right-4 mb-2 grid grid-cols-6 gap-1 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-xl">
               {EMOJIS.map(emoji => (
