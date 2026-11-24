@@ -31,7 +31,7 @@ export function previewUrl(raw: unknown): URL | null {
         url.port || !host.includes('.') || host.endsWith('.') || isIP(host) ||
         /(?:^|\.)(localhost|local|internal|lan|home|test|invalid|onion|example)$/.test(host)) return null;
     // Never prefetch common credential-bearing, recovery or signed URLs.
-    if (/(?:^|\/)(?:reset-password|verify-email|magic-link|oauth|password-reset)(?:\/|$)/i.test(url.pathname)) return null;
+    if (/(?:^|\/)(?:reset-password|verify-email|magic-link|oauth|password-reset|private|invite|invites|unsubscribe|confirm-email)(?:\/|$)/i.test(url.pathname)) return null;
     for (const key of url.searchParams.keys()) {
       if (/(?:token|secret|password|signature|credential|session|auth|api[_-]?key|access[_-]?key|^key$|^code$|^sig$|^x-amz-|^x-goog-)/i.test(key)) return null;
     }
@@ -43,19 +43,19 @@ export function previewUrl(raw: unknown): URL | null {
 async function withDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {
   const remaining = deadline - Date.now();
   if (remaining <= 0) throw new Error('Preview deadline');
-  let timer: ReturnType<typeof setTimeout>;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([promise, new Promise<T>((_, reject) => {
       timer = setTimeout(() => reject(new Error('Preview deadline')), remaining);
     })]);
-  } finally { clearTimeout(timer); }
+  } finally { if (timer) clearTimeout(timer); }
 }
 
 type Download = { body: Buffer; mime: string; url: URL };
 async function fetchPublic(raw: string, kind: 'html' | 'image', deadline: number, redirects = 0): Promise<Download> {
   const url = previewUrl(raw);
   if (!url || redirects > REDIRECT_LIMIT) throw new Error('Invalid preview URL');
-  const addresses = await withDeadline(lookup(url.hostname, { family: 4, all: true }), deadline);
+  const addresses = await withDeadline(lookup(url.hostname + '.', { family: 4, all: true }), deadline);
   if (!addresses.length || addresses.some(a => !isPublicIPv4(a.address))) throw new Error('Non-public address');
   // Connect to the exact validated IP. No second DNS lookup, no proxy, no
   // cookies, auth headers or viewer IP. Preserve HTTP Host and TLS SNI.
@@ -65,14 +65,15 @@ async function fetchPublic(raw: string, kind: 'html' | 'image', deadline: number
   const result = await new Promise<{ body?: Buffer; mime?: string; redirect?: string }>((resolve, reject) => {
     const transport = url.protocol === 'https:' ? https : http;
     let timer: ReturnType<typeof setTimeout>;
-    const req = transport.request({
+    const options: https.RequestOptions = {
       hostname: addresses[0].address,
       port: url.protocol === 'https:' ? 443 : 80,
       servername: url.hostname,
       method: 'GET', path: url.pathname + url.search,
       agent: false,
       headers: { Host: url.hostname, 'User-Agent': 'VANTA-LinkPreview/1.0', Accept: kind === 'html' ? 'text/html,application/xhtml+xml' : 'image/jpeg,image/png,image/webp', 'Accept-Encoding': 'identity' },
-    }, res => {
+    };
+    const req = transport.request(options, res => {
       const status = res.statusCode || 0;
       if ([301,302,303,307,308].includes(status) && res.headers.location) {
         resolve({ redirect: res.headers.location }); res.destroy(); return;
