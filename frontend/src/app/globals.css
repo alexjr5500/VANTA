@@ -3562,3 +3562,11 @@ html.vanta-native-android .vanta-entity-create footer {
   .vanta-direct-input-row { gap: 4px; }
   .vanta-direct-input-row > button { width: 32px !important; }
 }
+
+/* Keep published mentions and hashtags gold even when a generic anchor style wins. */
+a.vanta-inline-tag, a.vanta-inline-tag:visited, a.vanta-inline-tag:hover, a.vanta-inline-tag:active {
+  color: #dfbd55 !important;
+  -webkit-text-fill-color: #dfbd55 !important;
+  text-decoration: none;
+}
+html.vanta-native-android .vanta-reply-toolbar { padding-bottom: 0 !important; }
