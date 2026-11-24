@@ -53,7 +53,7 @@ describe('feed comment moderation guards', () => {
 
     expect(prisma.post.findUnique).toHaveBeenCalledWith({
       where: { id: 'post-removed', moderationRemovedAt: null },
-      select: { authorId: true },
+      select: { authorId: true, content: true, replyAudience: true },
     });
   });
 
