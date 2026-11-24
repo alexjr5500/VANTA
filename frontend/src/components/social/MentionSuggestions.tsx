@@ -50,6 +50,7 @@ export function useMentionSuggestions({ value, onChange, token, inputRef }: Args
     const sequence = ++request.current;
     if (!open || !mention || !token) { setUsers([]); setLoading(false); return; }
     setLoading(true);
+    setUsers([]);
     setActiveIndex(0);
     const timer = window.setTimeout(() => {
       void apiGet<{ users?: MentionUser[] }>(
