@@ -7,7 +7,8 @@ function stripReact(reactNodes: any[]): string {
   return reactNodes.map((node) => {
     if (typeof node === 'string') return node;
     if (node && typeof node === 'object') {
-      const text = node.props?.children ?? '';
+      const child = node.props?.children ?? '';
+      const text = typeof child === 'object' && !Array.isArray(child) ? [child] : child;
       const tag = node.type === 'a' ? 'A' : '';
       const href = node.type === 'a' ? `[${node.props.href}]` : '';
       if (typeof text === 'string') return `${tag}${href}${text}`;
@@ -33,7 +34,7 @@ describe('renderTextWithLinks', () => {
     const nodes = renderTextWithLinks('https://t.me/alphidrop');
     expect(stripReact(nodes)).toContain('A');
     expect(stripReact(nodes)).toContain('A[https://t.me/alphidrop]↗ t.me');
-    expect(nodes[0]).toMatchObject({ props: { className: 'vanta-link-preview', title: 'https://t.me/alphidrop' } });
+    expect(nodes[0]).toMatchObject({ props: { className: 'vanta-link-preview', title: 'https://t.me/alphidrop', children: { props: { href: 'https://t.me/alphidrop' } } } });
   });
 
   it('renders http/https/www as links', () => {
@@ -113,6 +114,9 @@ describe('VANTA shared link appearance', () => {
     const anchors = nodes.filter(node => typeof node === 'object' && node !== null && 'type' in node && node.type === 'a');
     expect(anchors).toHaveLength(2);
     for (const anchor of anchors) expect(anchor).toMatchObject({ props: { className: 'vanta-inline-tag', style: { color: '#dfbd55' } } });
+  });
+  it('supports a hostname-only mode for sensitive text surfaces', () => {
+    expect(renderTextWithLinks('https://example.com', undefined, { richPreviews: false })[0]).toMatchObject({ props: { children: '↗ example.com' } });
   });
   it('uses a hostname rather than exposing a raw URL or query', () => {
     expect(linkPreviewLabel('https://example.com/private?value=secret')).toBe('example.com');
