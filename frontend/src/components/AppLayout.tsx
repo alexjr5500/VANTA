@@ -240,11 +240,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       if (top) {
         event.preventDefault();
         const close = top.querySelector<HTMLButtonElement>(
-          '[data-vanta-back-close], button[aria-label="Close"], button[aria-label="Close dialog"], ' +
-          'button[aria-label="Cancel"], button[aria-label="Go back"], button[title="Close"]'
+          '[data-vanta-back-close], button[aria-label^="Close"], button[aria-label^="Cancel"], ' +
+          'button[aria-label^="Back"], button[aria-label="Go back"], button[title="Close"]'
         );
         if (close && !close.disabled) close.click();
-        else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        else top.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
         return;
       }
       if (createHubOpen) { event.preventDefault(); closeCreateHub(); return; }
