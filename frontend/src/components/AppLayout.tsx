@@ -393,6 +393,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // bottom navigation only on the Chat inbox/list surface.
   const isChatConversation = isChatPage && Boolean(searchParams.get('conversation'));
   const isPostDetailPage = Boolean(pathname && /^\/post\/[^/]+/.test(pathname));
+  const isPostReplyPage = Boolean(pathname && /^\/post\/[^/]+\/reply$/.test(pathname));
   const isReelsPage = pathname?.startsWith('/reels');
   const isHomePage = pathname === '/home';
   const isEditProfilePage = pathname === '/profile/editprofile';
@@ -452,7 +453,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     pathname === '/community-guidelines';
 
   const isProfilePage = pathname === '/profile' || pathname?.startsWith('/profile/');
-  const isImmersiveSurface = isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isProfilePage;
+  const isImmersiveSurface = isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isProfilePage || isPostReplyPage;
   const isScrollPage = !isImmersiveSurface;
 
   const handleLogout = useCallback(() => {
@@ -523,6 +524,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               // (the feed owns the viewport; a single-Reel page owns its own
               // page-level inset and does not receive a shared one).
               isReelsPage && 'px-0 py-0',
+              isPostReplyPage && 'px-0 py-0',
               // Home / Discover / Stories are full-bleed immersive surfaces.
               (isHomePage || isDiscoverPage || isStoryPage) && 'px-0 py-0',
               // Live viewer + studio are full-bleed playback surfaces.
@@ -541,7 +543,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             )}>
             <motion.div
               key={isClient ? pathname : 'initial'}
-              className={cn(isSettingsRoute && 'vanta-settings-shell', (isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isChatPage || isProfilePage) && 'h-full min-h-0')}
+              className={cn(isSettingsRoute && 'vanta-settings-shell', (isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isChatPage || isProfilePage || isPostReplyPage) && 'h-full min-h-0')}
               initial={{ opacity: 0, ...(isConsolePage ? {} : { y: 10 }) }}
               animate={{ opacity: 1, ...(isConsolePage ? {} : { y: 0 }) }}
               transition={{ duration: 0.2, ease: 'easeOut' }}
