@@ -6,6 +6,7 @@ import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import { apiGet } from '@/lib/apiClient';
 import type { VerificationType } from '@/types/verification';
+import { applyMention, mentionAtCaret } from '@/lib/mentionTokens';
 
 /** Shared by post, replies, comments and chat; a mention is a username, never raw HTML. */
 export type MentionUser = {
@@ -17,26 +18,6 @@ export type MentionUser = {
   verificationType?: VerificationType | null;
   following?: boolean;
 };
-
-export type ActiveMention = { prefixStart: number; end: number; query: string };
-
-/** Only query the @token immediately before the caret, not earlier mentions or email addresses. */
-export function mentionAtCaret(value: string, caret: number): ActiveMention | null {
-  if (caret < 0 || caret > value.length) return null;
-  const preceding = value.slice(0, caret);
-  const match = /(?:^|[\s([{])@([a-zA-Z0-9_]{1,30})$/.exec(preceding);
-  if (!match) return null;
-  const prefixStart = caret - match[1].length - 1;
-  return { prefixStart, end: caret, query: match[1] };
-}
-
-export function applyMention(value: string, mention: ActiveMention, username: string): { value: string; caret: number } {
-  const insertion = `@${username} `;
-  return {
-    value: value.slice(0, mention.prefixStart) + insertion + value.slice(mention.end),
-    caret: mention.prefixStart + insertion.length,
-  };
-}
 
 type Args = {
   value: string;
