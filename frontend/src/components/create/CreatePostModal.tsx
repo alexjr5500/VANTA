@@ -339,7 +339,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                     placeholder={intentMeta.placeholder}
                     rows={5}
                     maxLength={MAX_CHARS + 100}
-                    className="min-h-[38dvh] w-full resize-none border-0 bg-transparent text-[23px] leading-relaxed text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 focus:shadow-none"
+                    className={cn('w-full resize-none border-0 bg-transparent text-[23px] leading-relaxed text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 focus:shadow-none', mentions.open ? 'min-h-[90px]' : 'min-h-[38dvh]')}
                     aria-label="Post content"
                   />
                 )}
