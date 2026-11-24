@@ -96,6 +96,23 @@ function PublicCommunityShare({ entityId }: { entityId: string }) {
   </div>;
 }
 
+const COMMUNITY_REACTIONS = ['❤️', '😂', '🔥', '👏', '👍'] as const;
+type CommunityChatSettings = { conversationId: string; allowedReactions: string[]; welcome: { text: string; membershipId: string } | null };
+
+function MemberWelcomeNotice({ text, membershipId, userId }: { text: string; membershipId: string; userId: string }) {
+  const key = `vanta:welcome:${userId}:${membershipId}`;
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    try { setVisible(localStorage.getItem(key) !== '1'); } catch { setVisible(true); }
+  }, [key]);
+  if (!visible) return null;
+  return <div className="mx-3 mt-2 flex shrink-0 items-start gap-3 rounded-xl border border-[#d6a83f]/25 bg-[#151517] p-3">
+    <MessageCircle size={18} className="mt-0.5 shrink-0 text-[#d6a83f]"/>
+    <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-[#f2c75c]">Welcome from the community</p><p className="mt-1 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm text-white/85">{text}</p></div>
+    <button type="button" aria-label="Dismiss welcome message" onClick={() => { try { localStorage.setItem(key, '1'); } catch {} setVisible(false); }} className="grid h-9 w-9 shrink-0 place-items-center text-white/50"><X size={17}/></button>
+  </div>;
+}
+
 interface Conversation {
   id: string;
   type: 'direct' | 'group' | 'channel';
@@ -528,6 +545,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const pendingMediaRef = useRef<Record<string, { file: File; fileType: 'IMAGE' | 'VIDEO' | 'FILE'; fileName: string; previewUrl: string }[]>>({});
   const [trimVideoFile, setTrimVideoFile] = useState<File | null>(null);
   const [editEntityOpen, setEditEntityOpen] = useState(false);
+  const [communityChatSettings, setCommunityChatSettings] = useState<CommunityChatSettings | null>(null);
+  const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
+  const [permissionDraft, setPermissionDraft] = useState<Record<string, unknown>>({});
   const [editEntityId, setEditEntityId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
@@ -866,8 +886,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const fetchMessages = useCallback(async (conversationId: string) => {
     if (!token) return;
     try {
-      const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50`, token);
+      const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50`, token, { skipCache: true });
       if (activeConversationRef.current !== conversationId) return;
+      setCommunityChatSettings({ conversationId, allowedReactions: Array.isArray(data?.allowedReactions) ? data.allowedReactions.filter((reaction: unknown) => COMMUNITY_REACTIONS.some(item => item === reaction)) : [...COMMUNITY_REACTIONS], welcome: data?.welcome || null });
       const msgList = Array.isArray(data) ? data : data?.messages ?? data?.data ?? [];
       setMessages(msgList.map((msg: any) => normalizeMessageRecord(msg, user?.id)).filter((msg: Message) => !msg.deletedAt));
       setMessageCursor(data?.nextCursor ?? null);
@@ -1262,6 +1283,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setFirstUnreadId(null);
     setPendingNewMessage(false);
     setActiveConversation(id);
+    setCommunityChatSettings(null);
+    setReactionPickerMessageId(null);
     setMessages([]);
     setMessageCursor(null);
     setManagedEntity(null);
@@ -2417,6 +2440,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   });
 
   const activeConv = conversations.find(c => c.id === activeConversation);
+  const activeCommunitySettings = communityChatSettings?.conversationId === activeConversation ? communityChatSettings : null;
+  const visibleReactions = activeConv?.type === 'direct' ? [...COMMUNITY_REACTIONS] : activeCommunitySettings?.allowedReactions ?? [];
   const canPublish = activeConv?.type !== 'channel' || ['OWNER', 'ADMIN', 'MODERATOR'].includes(activeConv.currentRole || '');
 
   // Private 1-to-1 voice/video calling (WebRTC + Socket.IO signaling). The call
@@ -2538,6 +2563,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       setEditVisibility(entity.visibility || 'PUBLIC');
       setEditHandle(entity.handle || '');
       setManagedEntity(entity);
+      setPermissionDraft(entity.permissions || {});
       setManagementSearch('');
       setManagementResults([]);
       setManagementMemberFilter('all');
@@ -2570,7 +2596,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     entitySaveInFlightRef.current = true;
     setIsSavingEntity(true);
     try {
-      const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { name: editName.trim(), description: editDescription.trim(), avatar: editAvatar, ...((activeConv.type === 'group' && isGroupPrivileged) || (activeConv.type === 'channel' && isManagedOwner) ? { permissions: managedEntity?.permissions || {} } : {}), ...(activeConv.type === 'channel' ? { visibility: editVisibility, handle: editHandle.trim().replace(/^@/, '') } : {}) }, token);
+      const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { name: editName.trim(), description: editDescription.trim(), avatar: editAvatar, ...(activeConv.type === 'channel' ? { visibility: editVisibility, handle: editHandle.trim().replace(/^@/, '') } : {}) }, token);
       if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setConversations(previous => previous.map(item => item.id === conversationId ? { ...item, name: updated.name || editName.trim(), description: updated.description ?? editDescription.trim(), avatar: updated.avatar ?? editAvatar ?? undefined } : item));
       setManagedEntity(updated);
@@ -2649,9 +2675,28 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     finally { setManagementBusy(null); }
   };
 
+  const defaultPermission = (key: string) => key === 'reactionsEnabled' || key.startsWith('reaction_') || (activeConv?.type === 'channel' ? ['deleteMessages', 'manageChannelInfo', 'manageSubscribers'].includes(key) : ['sendMessages', 'sendMedia', 'sendLinks'].includes(key));
   const toggleManagedPermission = (key: string) => {
     if (!canManageEntityPermissions || !managedPermissions.some(([permission]) => permission === key)) return;
-    setManagedEntity((previous: any) => { const current = previous?.permissions?.[key] ?? (activeConv?.type === 'channel' ? ['deleteMessages', 'manageChannelInfo', 'manageSubscribers'].includes(key) : ['sendMessages', 'sendMedia', 'sendLinks'].includes(key)); return { ...previous, permissions: { ...(previous?.permissions || {}), [key]: !current } }; });
+    setPermissionDraft(previous => ({ ...previous, [key]: !(previous[key] ?? defaultPermission(key)) }));
+  };
+  const saveCommunityPermissions = async () => {
+    if (!token || !activeConv || activeConv.type === 'direct' || !editEntityId || !canManageEntityPermissions || entitySaveInFlightRef.current) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
+    entitySaveInFlightRef.current = true;
+    setIsSavingEntity(true);
+    try {
+      const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { permissions: permissionDraft }, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
+      setManagedEntity(updated);
+      setPermissionDraft(updated.permissions || {});
+      const permissions = updated.permissions || {};
+      setCommunityChatSettings(previous => ({ conversationId, allowedReactions: permissions.reactionsEnabled === false ? [] : COMMUNITY_REACTIONS.filter((_, index) => permissions[`reaction_${index}`] !== false), welcome: previous?.conversationId === conversationId ? previous.welcome : null }));
+      showToast?.({ type: 'success', title: 'Community settings saved', message: 'Reaction and welcome settings are active.' });
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Settings not saved', message: err?.message || 'Please try again.' });
+    } finally { entitySaveInFlightRef.current = false; setIsSavingEntity(false); }
   };
 
   const confirmOwnershipTransfer = async () => {
@@ -2953,6 +2998,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               </div>
             </header>
 
+            {activeConv.type !== 'direct' && activeCommunitySettings?.welcome && user?.id && <MemberWelcomeNotice key={activeCommunitySettings.welcome.membershipId} {...activeCommunitySettings.welcome} userId={user.id}/>}
             {messageSearchOpen && <div className="border-b border-white/[0.08] bg-[#101010] px-4 py-2"><form onSubmit={event => { event.preventDefault(); void searchWithinChat(); }} className="flex items-center gap-2"><Search size={14} className="shrink-0 text-white/35" /><input autoFocus value={messageSearchQuery} onChange={event => setMessageSearchQuery(event.target.value)} placeholder="Search this chat" className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/30" /><button type="submit" disabled={!messageSearchQuery.trim() || searchingMessages} className="text-[11px] font-medium text-white disabled:text-white/25">Search</button><button type="button" onClick={() => { setMessageSearchOpen(false); setMessageSearchQuery(''); setMessageSearchResults([]); }} aria-label="Close chat search" className="text-white/40"><X size={14}/></button></form></div>}
 
             {(searchingMessages || messageSearchResults.length > 0) && <div className="border-b border-white/[0.08] bg-[#101010] px-4 py-2"><div className="flex items-center justify-between"><span className="text-[10px] text-white/40">{searchingMessages ? 'Searching chat...' : `${messageSearchResults.length} result${messageSearchResults.length === 1 ? '' : 's'}`}</span><button onClick={() => setMessageSearchResults([])} className="text-white/40" aria-label="Close search results"><X size={13}/></button></div>{messageSearchResults.slice(0, 5).map(result => <button key={result.id} onClick={() => document.getElementById(`message-${result.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })} className="mt-1 block w-full truncate rounded bg-white/[0.03] px-2 py-1 text-left text-[10px] text-white/60">@{result.sender.username}: {result.text}</button>)}</div>}
@@ -3182,7 +3228,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                       <div className={cn('flex items-center gap-1 mt-0.5', msg.isOwn ? 'justify-end mr-1' : 'justify-start ml-1')}>
                         {msg.pinnedAt && <Pin size={9} className="text-white/40" />}
                       </div>
-                      {msg.reactions && msg.reactions.length > 0 && <div className={cn('mt-1 flex flex-wrap gap-1', msg.isOwn && 'justify-end')}>{Array.from(new Set(msg.reactions.map(item => item.reaction))).map(reaction => <button key={reaction} onClick={() => reactToMessage(msg, reaction)} className="rounded-full border border-white/10 bg-[#161616] px-2 py-0.5 text-xs">{reaction} {msg.reactions?.filter(item => item.reaction === reaction).length}</button>)}</div>}
+                      {!msg.pending && !msg.deletedAt && visibleReactions.length > 0 && selectedMessageIds.size === 0 && <div className={cn('flex flex-wrap items-center gap-1', msg.isOwn && 'justify-end')}>
+                        <button type="button" aria-label="Add reaction" aria-expanded={reactionPickerMessageId === msg.id} onClick={() => setReactionPickerMessageId(previous => previous === msg.id ? null : msg.id)} className="flex h-8 w-8 items-center justify-center rounded-full text-white/40 hover:text-[#f2c75c]"><Smile size={15}/></button>
+                        {reactionPickerMessageId === msg.id && visibleReactions.map(reaction => <button key={reaction} type="button" aria-label={`React with ${reaction}`} onClick={() => { setReactionPickerMessageId(null); void reactToMessage(msg, reaction); }} className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-lg hover:bg-[#d6a83f]/15">{reaction}</button>)}
+                      </div>}
+                      {msg.reactions && msg.reactions.length > 0 && <div className={cn('mt-1 flex flex-wrap gap-1', msg.isOwn && 'justify-end')}>{Array.from(new Set(msg.reactions.map(item => item.reaction))).map(reaction => <button key={reaction} onClick={() => reactToMessage(msg, reaction)} disabled={!visibleReactions.includes(reaction as typeof COMMUNITY_REACTIONS[number]) && !msg.reactions?.some(item => item.reaction === reaction && item.userId === user?.id)} className="rounded-full border border-white/10 bg-[#161616] px-2 py-0.5 text-xs disabled:opacity-60">{reaction} {msg.reactions?.filter(item => item.reaction === reaction).length}</button>)}</div>}
                     </div>
                     </div>
                   </div>
@@ -3763,9 +3813,21 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
             </div>
             <div hidden={entitySettingsTab !== 'permissions' || !canManageEntityPermissions}>
-            <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#151517]"><div className="flex items-center gap-2 border-b border-white/[0.06] px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-white/30"><Shield size={13} className="text-[#d6a83f]"/>Permissions</div><div className="border-b border-white/[0.06] px-3 py-3"><p className="text-xs font-medium text-white/70">Who can do the following?</p><p className="mt-1 text-[10px] leading-relaxed text-white/35">{activeConv.type === 'group' ? 'Allow members to use selected group actions. Admins and the owner retain their management powers.' : 'Control member publishing and the actions channel administrators may perform.'} Permission checks are enforced on the server.</p></div><div className="divide-y divide-white/[0.06]">{managedPermissions.map(([key, label]) => { const enabled = managedEntity?.permissions?.[key] ?? (activeConv.type === 'channel' ? ['deleteMessages', 'manageChannelInfo', 'manageSubscribers'].includes(key) : ['sendMessages', 'sendMedia', 'sendLinks'].includes(key)); return <div key={key} className="flex items-start justify-between gap-3 px-4 py-3.5"><div className="min-w-0 flex-1"><p className="text-xs font-medium text-[#c8c8cc]">{label}</p><p className="mt-0.5 text-[10px] leading-relaxed text-white/30">{permissionHints[key]}</p></div><button onClick={() => toggleManagedPermission(key)} disabled={!canManageEntityPermissions} className={cn('relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition disabled:cursor-not-allowed disabled:opacity-40', enabled ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')} aria-label={`Toggle ${label}`} aria-checked={enabled} role="switch"><span className={cn('absolute top-0.5 h-4.5 w-4.5 rounded-full transition-all', enabled ? 'left-[22px] bg-[#f2c75c]' : 'left-0.5 bg-[#c8c8cc]')}/></button></div>})}</div><p className="mt-3 px-4 pb-3 text-[10px] leading-relaxed text-white/25">{canManageEntityPermissions ? 'Changes take effect when you save and are enforced by VANTA on the server.' : 'Only the channel owner can change permission grants.'}</p></section>
+            <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#151517]"><div className="flex items-center gap-2 border-b border-white/[0.06] px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-white/30"><Shield size={13} className="text-[#d6a83f]"/>Permissions</div><div className="border-b border-white/[0.06] px-3 py-3"><p className="text-xs font-medium text-white/70">Who can do the following?</p><p className="mt-1 text-[10px] leading-relaxed text-white/35">{activeConv.type === 'group' ? 'Allow members to use selected group actions. Admins and the owner retain their management powers.' : 'Control member publishing and the actions channel administrators may perform.'} Permission checks are enforced on the server.</p></div><div className="divide-y divide-white/[0.06]">{managedPermissions.map(([key, label]) => { const enabled = Boolean(permissionDraft[key] ?? defaultPermission(key)); return <div key={key} className="flex items-start justify-between gap-3 px-4 py-3.5"><div className="min-w-0 flex-1"><p className="text-xs font-medium text-[#c8c8cc]">{label}</p><p className="mt-0.5 text-[10px] leading-relaxed text-white/30">{permissionHints[key]}</p></div><button onClick={() => toggleManagedPermission(key)} disabled={!canManageEntityPermissions} className={cn('relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition disabled:cursor-not-allowed disabled:opacity-40', enabled ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')} aria-label={`Toggle ${label}`} aria-checked={enabled} role="switch"><span className={cn('absolute top-0.5 h-4.5 w-4.5 rounded-full transition-all', enabled ? 'left-[22px] bg-[#f2c75c]' : 'left-0.5 bg-[#c8c8cc]')}/></button></div>})}</div><p className="mt-3 px-4 pb-3 text-[10px] leading-relaxed text-white/25">{canManageEntityPermissions ? 'Changes take effect when you save and are enforced by VANTA on the server.' : 'Only the channel owner can change permission grants.'}</p></section>
 
             </div>
+            {entitySettingsTab === 'permissions' && canManageEntityPermissions && <div className="space-y-4 pb-4">
+              <div className="rounded-xl border border-white/[0.08] bg-[#151517] p-4">
+                <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-[#f2c75c]">Reactions</h3><p className="mt-1 text-xs text-white/50">Choose which reactions members can add.</p></div><button type="button" role="switch" aria-label="Enable reactions" aria-checked={permissionDraft.reactionsEnabled !== false} onClick={() => setPermissionDraft(previous => ({ ...previous, reactionsEnabled: previous.reactionsEnabled === false }))} className={cn('relative h-7 w-12 shrink-0 rounded-full border', permissionDraft.reactionsEnabled !== false ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')}><span className={cn('absolute top-1 h-5 w-5 rounded-full transition-all', permissionDraft.reactionsEnabled !== false ? 'left-6 bg-[#f2c75c]' : 'left-1 bg-white/50')}/></button></div>
+                {permissionDraft.reactionsEnabled !== false && <div className="mt-4 grid grid-cols-5 gap-2">{COMMUNITY_REACTIONS.map((reaction, index) => <button key={reaction} type="button" aria-label={`Allow ${reaction} reaction`} aria-pressed={permissionDraft[`reaction_${index}`] !== false} onClick={() => setPermissionDraft(previous => ({ ...previous, [`reaction_${index}`]: previous[`reaction_${index}`] === false }))} className={cn('min-h-12 rounded-lg border text-xl', permissionDraft[`reaction_${index}`] !== false ? 'border-[#d6a83f]/45 bg-[#d6a83f]/10' : 'border-white/10 opacity-40')}>{reaction}</button>)}</div>}
+              </div>
+              <div className="rounded-xl border border-white/[0.08] bg-[#151517] p-4">
+                <h3 className="text-sm font-semibold text-[#f2c75c]">Welcome message</h3><p className="mt-1 text-xs leading-relaxed text-white/50">New members see this personal greeting when they open the chat. Leave it empty to turn it off.</p>
+                <textarea aria-label="Welcome message" value={typeof permissionDraft.welcomeMessage === 'string' ? permissionDraft.welcomeMessage : ''} onChange={event => setPermissionDraft(previous => ({ ...previous, welcomeMessage: event.target.value }))} maxLength={500} rows={4} placeholder="Welcome! Please read our community rules." className="mt-3 w-full resize-none rounded-lg border border-white/10 bg-[#101012] px-3 py-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-[#d6a83f]"/>
+                <p className="mt-1 text-right text-xs text-white/40">{typeof permissionDraft.welcomeMessage === 'string' ? permissionDraft.welcomeMessage.length : 0}/500</p>
+              </div>
+              <button type="button" onClick={() => void saveCommunityPermissions()} disabled={isSavingEntity} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#d6a83f] text-sm font-semibold text-black disabled:opacity-50">{isSavingEntity && <Loader2 size={16} className="animate-spin"/>}Save permissions and community settings</button>
+            </div>}
             {/* Danger zone — irreversible actions kept apart (not shown to the owner: they cannot leave and must delete the group instead) */}
             {!isManagedOwner && <section className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/[0.04]"><div className="flex items-center gap-2 border-b border-red-500/15 px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-red-400"><Ban size={13}/>Danger zone</div><div className="flex items-start gap-3 px-4 py-3.5"><div className="min-w-0 flex-1"><p className="text-sm text-white/80">Leave this {activeConv.type === 'group' ? 'group' : 'channel'}</p><p className="text-[10px] text-white/40">You will lose access to this conversation and its messages.</p></div><button onClick={() => setLeaveDialog(true)} className="btn-destructive h-9 px-3 text-xs">Leave {activeConv.type === 'group' ? 'Group' : 'Channel'}</button></div></section>}
           </div>
