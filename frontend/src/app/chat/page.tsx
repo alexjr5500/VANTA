@@ -14,7 +14,7 @@ import {
   Loader2, Users, ArrowLeft, X, UserPlus, Camera, BellOff, AtSign,
   Pin, Image as ImageIcon, FileText, Info, ChevronRight, Flag, Ban, Pencil, RefreshCw,
   Shield, Trash2, Crown, Globe2, Lock, UserMinus, Copy, Forward, Smile, MoreVertical, MapPin, BarChart3, Music2, Wallet as WalletIcon,
-  Mic, Square, Phone, Video, Play,
+  Mic, Square, Phone, Video, Play, QrCode,
 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import PullToRefresh from '@/components/ui/PullToRefresh';
@@ -45,6 +45,56 @@ import { friendlyError, errorMessage } from '@/lib/errors';
 import type { VerificationType } from '@/types/verification';
 import { nativeGalleryConnection, parseNativeGallery, type NativeRecentMedia, type NativeGalleryStatus } from '@/lib/nativeStatusGallery';
 import { requestNativeLocation } from '@/lib/nativeLocation';
+
+/** Public-only sharing: the API validates current visibility before returning a
+ * canonical link and QR. This component never constructs private invite URLs. */
+function PublicCommunityShare({ entityId }: { entityId: string }) {
+  const { token } = useAuth();
+  const toast = useToast();
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [share, setShare] = useState<{ shareUrl: string; qrCode: string } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    if (!expanded || !token) return;
+    let current = true;
+    setLoading(true);
+    setShare(null);
+    setFailed(false);
+    apiGet<{ shareUrl: string; qrCode: string }>(`/api/communities/discover/${encodeURIComponent(entityId)}?includeQr=1`, token, { skipCache: true })
+      .then(result => {
+        if (!current) return;
+        if (!result?.shareUrl || !result?.qrCode?.startsWith('data:image/png;base64,')) throw new Error('Sharing unavailable');
+        setShare(result);
+      })
+      .catch(() => { if (current) setFailed(true); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [expanded, entityId, token, attempt]);
+
+  const copyLink = async () => {
+    if (!share) return;
+    try {
+      await navigator.clipboard.writeText(share.shareUrl);
+      toast.success('Link copied');
+    } catch {
+      toast.error('Could not copy link', 'You can select and copy the link below.');
+    }
+  };
+
+  return <div className="border-t border-white/[0.07]">
+    <button type="button" onClick={() => { setExpanded(value => !value); setShare(null); setFailed(false); }} aria-expanded={expanded} className="flex min-h-12 w-full items-center gap-3 px-4 text-left text-sm text-white/85 hover:bg-white/[0.05]">
+      <QrCode size={18} className="shrink-0 text-[#d6a83f]"/><span className="flex-1">Public invite link &amp; QR code</span><ChevronRight size={16} className={cn('text-white/35 transition-transform', expanded && 'rotate-90')}/>
+    </button>
+    {expanded && <div className="space-y-3 px-4 pb-4 text-center">
+      {loading && <p role="status" className="flex items-center justify-center gap-2 py-4 text-xs text-white/50"><Loader2 size={14} className="animate-spin"/>Generating share link</p>}
+      {failed && <div role="alert" className="py-2 text-xs text-white/55">Sharing is unavailable. The community may no longer be public.<button type="button" onClick={() => setAttempt(value => value + 1)} className="mt-2 block w-full text-[#f2c75c]">Try again</button></div>}
+      {!loading && share && <><img src={share.qrCode} alt="Scan to open this public VANTA community" width={192} height={192} className="mx-auto rounded-lg bg-white"/><p className="text-xs text-white/50">People must sign in and choose Join. This link does not bypass membership or privacy settings.</p><p className="select-all break-all text-xs text-[#f2c75c]">{share.shareUrl}</p><button type="button" onClick={() => void copyLink()} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#d6a83f] text-sm font-semibold text-black"><Copy size={15}/>Copy invite link</button></>}
+    </div>}
+  </div>;
+}
 
 interface Conversation {
   id: string;
@@ -3575,6 +3625,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-white/85">{(managedEntity?.description || activeConv.description || '').trim() || 'No description yet.'}</p>
               {managedEntity?.visibility && <p className="mt-2 flex items-center gap-1.5 text-xs text-white/50">{managedEntity.visibility === 'PRIVATE' ? <Lock size={13}/> : <Globe2 size={13}/>} {managedEntity.visibility === 'PRIVATE' ? 'Private' : 'Public'} {activeConv.type}</p>}
             </div>
+            {managedEntity?.visibility === 'PUBLIC' && managedEntity?.id && <PublicCommunityShare key={managedEntity.id} entityId={managedEntity.id}/>}
             {canEditEntity && <button type="button" onClick={() => void openEntityEditor()} className="flex min-h-12 w-full items-center gap-3 border-t border-white/[0.07] px-4 text-left text-sm text-white/85 hover:bg-white/[0.05]"><Pencil size={18} className="text-[#d6a83f]"/><span className="flex-1">Edit {activeConv.type}</span><ChevronRight size={16} className="text-white/35"/></button>}
             <button type="button" onClick={() => { setMemberBrowserQuery(''); setMemberBrowserOpen(true); }} className="flex min-h-12 w-full items-center gap-3 border-t border-white/[0.07] px-4 text-left text-sm text-white/85 hover:bg-white/[0.05]"><Users size={18} className="text-[#d6a83f]"/><span className="flex-1">{activeConv.type === 'group' ? 'Members' : 'Administrators'}</span><span className="text-xs text-white/50">{activeConv.type === 'group' ? profileMemberCount : managedEntity ? profilePeople.length : ''}</span><ChevronRight size={16} className="text-white/35"/></button>
             {canManageEntityMembers && <button type="button" onClick={() => void openEntityEditor('people')} className="flex min-h-12 w-full items-center gap-3 border-t border-white/[0.07] px-4 text-left text-sm text-white/85 hover:bg-white/[0.05]"><UserPlus size={18} className="text-[#d6a83f]"/><span className="flex-1">{activeConv.type === 'group' ? 'Manage members' : 'Manage subscribers'}</span><ChevronRight size={16} className="text-white/35"/></button>}
