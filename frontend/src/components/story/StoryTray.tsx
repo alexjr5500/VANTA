@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import StoryCard from '@/components/story/StoryCard';
@@ -46,7 +45,6 @@ export default function StoryTray({
   const router = useRouter();
   const [groups, setGroups] = useState<StoryGroup[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
   const [statusCollapsed, setStatusCollapsed] = useState(false);
   const mountedRef = useRef(true);
 
@@ -56,7 +54,6 @@ export default function StoryTray({
       return;
     }
     setLoading(true);
-    setError(false);
     try {
       const storyGroups = await fetchStoryGroups(token);
       if (!mountedRef.current) return;
@@ -64,7 +61,6 @@ export default function StoryTray({
       onStoriesChange?.(storyGroups);
     } catch {
       if (!mountedRef.current) return;
-      setError(true);
       // Retain the last successfully loaded stories during transient failures.
     } finally {
       if (mountedRef.current) setLoading(false);
@@ -124,19 +120,7 @@ export default function StoryTray({
         className
       )}
     >
-      {error && (
-        <div role="alert" className="flex items-center gap-3 px-3 py-2">
-          <p className="text-xs leading-5 text-[#666]">Couldn&apos;t load Stories.</p>
-          <button
-            type="button"
-            aria-label="Retry loading Stories"
-            onClick={() => void load()}
-            className="ml-auto flex items-center gap-1.5 rounded-lg border border-white/[0.08] px-3 py-2 text-xs text-[#b8b8b8] transition hover:bg-white/[0.05]"
-          >
-            <RefreshCw size={13} /> Retry
-          </button>
-        </div>
-      )}
+
       <div className={cn('flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide', compact ? (statusCollapsed ? 'px-1 gap-1' : 'px-1 gap-1.5') : 'px-2')}>
           {/* Own Status card — always present */}
           {<StoryCard
