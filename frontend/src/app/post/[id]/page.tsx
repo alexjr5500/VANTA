@@ -1,12 +1,14 @@
 'use client';
 
+import BookmarkIcon from '@/components/ui/BookmarkIcon';
+
 import DeleteConfirmDialog from '@/components/ui/DeleteConfirmDialog';
 
 import { use, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bookmark, Eye, Heart, Loader2, MessageCircle, MoreHorizontal, RefreshCw, Share2 } from 'lucide-react';
+import { Eye, Heart, Loader2, MessageCircle, MoreHorizontal, RefreshCw, Share2 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import type { VerificationType } from '@/types/verification';
@@ -308,11 +310,11 @@ export default function PostDetailPage({ params }: { params: Promise<{ id: strin
                 <button
                   type="button"
                   onClick={() => void toggleSave()}
-                  className={toolClass(savedState ? '!text-[#d2ad35]' : 'text-white/55')}
+                  className={toolClass(savedState ? '!text-[#dfbd55]' : 'text-white/55')}
                   aria-label={savedState ? 'Remove from saved' : 'Save post'}
                   aria-pressed={savedState}
                 >
-                  <Bookmark size={18} className={savedState ? 'fill-current' : ''} />
+                  <BookmarkIcon size={18} saved={savedState} />
                   <span className="sr-only">{savedState ? 'Saved' : 'Save'}</span>
                 </button>
               </footer>
