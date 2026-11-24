@@ -10,7 +10,6 @@ import { resolveMediaUrl } from '@/lib/mediaUrl';
 import type { QuoteRef } from '@/lib/quotePost';
 
 type Loaded = Record<string, any> | null;
-const cache = new Map<string, Loaded>();
 
 const authorOf = (item: Record<string, any>) => item.author || item.user || item.creator || {};
 const mediaOf = (item: Record<string, any>) => {
@@ -24,15 +23,15 @@ export default function QuoteEmbed({ quote, className = '' }: { quote: QuoteRef;
   const router = useRouter();
   const { token } = useAuth();
   const key = `${quote.kind}:${quote.id}`;
-  const [data, setData] = useState<Loaded | undefined>(cache.has(key) ? cache.get(key) : undefined);
+  const [result, setResult] = useState<{ key: string; token: string | null; data: Loaded }>();
+  const data = result?.key === key && result.token === token ? result.data : undefined;
 
   useEffect(() => {
-    if (cache.has(key)) { setData(cache.get(key)); return; }
     let active = true;
     const path = quote.kind === 'reel' ? `/api/reels/${encodeURIComponent(quote.id)}` : `/api/feed/${encodeURIComponent(quote.id)}`;
-    void apiGet<Record<string, any>>(path, token || undefined)
-      .then(res => { const v = res?.id ? res : null; cache.set(key, v); if (active) setData(v); })
-      .catch(() => { if (active) setData(null); });
+    void apiGet<Record<string, any>>(path, token || undefined, { skipCache: true })
+      .then(res => { const v = res?.id ? res : null; if (active) setResult({ key, token, data: v }); })
+      .catch(() => { if (active) setResult({ key, token, data: null }); });
     return () => { active = false; };
   }, [key, quote.id, quote.kind, token]);
 
