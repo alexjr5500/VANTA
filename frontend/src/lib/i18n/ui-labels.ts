@@ -4,8 +4,6 @@
  * known English placeholders until full page-by-page localization is complete.
  * User-generated posts/messages must NEVER be auto-translated by this helper.
  */
-import { useCallback } from 'react';
-import { useI18n } from './context';
 import type { Locale } from './config';
 
 const KEYS: Record<string, string> = {
@@ -74,9 +72,4 @@ export function translateUiLabel(label: string, locale: Locale, translateKey: (k
     if (result && result !== key && result !== label) return result;
   }
   return FALLBACK[locale]?.[label] ?? label;
-}
-
-export function useLocalizedUiText(): (label: string) => string {
-  const { locale, t } = useI18n();
-  return useCallback((label: string) => translateUiLabel(label, locale, t), [locale, t]);
 }
