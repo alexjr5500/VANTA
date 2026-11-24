@@ -423,7 +423,7 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
           </span>
         </Link>
         {captionText && (
-          <p className={cn('mt-2 max-w-[44ch] whitespace-pre-wrap break-words text-sm leading-5 text-white/90', !expandedCaption && 'line-clamp-2')}>{renderTextWithLinks(captionText, 'linkify', { mentions: true, hashtags: true })}</p>
+          <p className={cn('mt-2 max-w-[44ch] whitespace-pre-wrap break-words text-sm leading-5 text-white/90', !expandedCaption && !/(?:https?:\/\/|www\.)/i.test(captionText) && 'line-clamp-2')}>{renderTextWithLinks(captionText, 'linkify', { mentions: true, hashtags: true })}</p>
         )}
         {captionText.length > 110 && (
           <button type="button" onClick={() => setExpandedCaption(value => !value)} className="mt-0.5 text-xs text-white/60 hover:text-white">{expandedCaption ? 'less' : 'more'}</button>
