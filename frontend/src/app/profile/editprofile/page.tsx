@@ -170,7 +170,6 @@ export default function EditProfilePage() {
         <Field label="Date of birth" optional><input type="date" value={form.dateOfBirth} max={new Date().toISOString().slice(0, 10)} onChange={event => setField('dateOfBirth', event.target.value)} /></Field>
       </section>
       {progress && <div className="edit-feedback progress"><Loader2 className="spin" size={15} />{progress}</div>}{error && <div className="edit-feedback error" role="alert"><X size={15} />{error}</div>}{success && <div className="edit-feedback success" role="status"><Check size={15} />{success}</div>}
-      <footer><button type="button" onClick={leave}>Cancel</button><button className="save" type="submit" disabled={!dirty || saving}>{saving ? <Loader2 className="spin" size={16} /> : <Save size={16} />}{saving ? 'Saving...' : 'Save changes'}</button></footer>
     </form>
     {cropTarget && <ImageCropEditor file={cropTarget.file} aspect={cropTarget.kind === 'cover' ? 3 : 1} circular={cropTarget.kind === 'avatar'} onCancel={() => setCropTarget(null)} onApply={applyCrop}/>}
   </main>;
