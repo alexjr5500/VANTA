@@ -5,6 +5,9 @@ import DeleteConfirmDialog from '@/components/ui/DeleteConfirmDialog';
 import { useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { createPortal } from 'react-dom';
+import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
+import { MentionTextarea } from '@/components/social/MentionTextarea';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Bookmark,
@@ -942,39 +945,10 @@ function CommentsPanel({ reel, items, loading, text, sending, currentUserId, set
       setDeleteBusy(false);
     }
   };
-  // Track the on-screen keyboard via the visual viewport so the sheet pins
-  // itself above it (and never lets the keyboard cover the composer).
-  const [keyboard, setKeyboard] = useState({ open: false, bottom: 0, viewHeight: typeof window !== 'undefined' ? window.innerHeight : 0 });
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
-    if (!vv) return;
-    const update = () => {
-      const gap = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
-      setKeyboard({ open: gap > 140, bottom: gap > 140 ? gap : 0, viewHeight: vv.height });
-    };
-    vv.addEventListener('resize', update);
-    vv.addEventListener('scroll', update);
-    update();
-    return () => {
-      vv.removeEventListener('resize', update);
-      vv.removeEventListener('scroll', update);
-    };
-  }, []);
-
-  // When the keyboard opens, keep the newest comments in view and make sure
-  // the composer stays reachable.
-  useEffect(() => {
-    if (keyboard.open) {
-      const raf = window.requestAnimationFrame(() => {
-        listRef.current?.scrollTo({ top: 0 });
-        inputRef.current?.scrollIntoView({ block: 'nearest' });
-      });
-      return () => window.cancelAnimationFrame(raf);
-    }
-  }, [keyboard.open]);
+  const { token } = useAuth();
+  const mentions = useMentionSuggestions({ value: text, onChange: setText, token, inputRef });
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -984,10 +958,8 @@ function CommentsPanel({ reel, items, loading, text, sending, currentUserId, set
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [close]);
 
-  const sheetHeight = Math.min(Math.max(260, Math.round(keyboard.viewHeight * 0.92)), 760);
-
-  return <>
-    <motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close} aria-label="Close comments" className="fixed inset-0 z-50 bg-black/70 backdrop-blur-[2px]" />
+  return createPortal(<>
+    <motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={close} aria-label="Close comments" className="fixed inset-0 z-[79] bg-black/35" />
     <motion.section
       initial={{ y: '100%', opacity: 0.6 }}
       animate={{ y: 0, opacity: 1 }}
@@ -996,17 +968,16 @@ function CommentsPanel({ reel, items, loading, text, sending, currentUserId, set
       role="dialog"
       aria-modal="true"
       aria-label="Reel comments"
-      className="fixed inset-x-0 bottom-0 z-[60] mx-auto flex w-full max-w-[28rem] flex-col overflow-hidden rounded-t-[20px] border border-b-0 border-white/10 bg-[#101010] shadow-2xl"
-      style={{ bottom: keyboard.bottom, height: sheetHeight }}
+      className="vanta-reel-comments fixed inset-x-0 z-[80] mx-auto flex w-full max-w-[520px] flex-col overflow-hidden rounded-t-[20px] border border-b-0 border-white/10 bg-[var(--background)] shadow-2xl"
     >
-      <header className="flex h-14 shrink-0 items-center justify-between px-5">
-        <h2 className="text-[15px] font-semibold text-[#f5f5f5]">Comments <span className="font-normal text-white/40">{reel.comments > 0 ? `(${reel.comments})` : ''}</span></h2>
-        <button type="button" onClick={close} className="-mr-1 grid h-9 w-9 place-items-center rounded-lg text-white/50 transition hover:bg-white/[.06] hover:text-white" aria-label="Close comments"><X size={18} /></button>
+      <header className="flex h-12 shrink-0 items-center justify-between px-4">
+        <h2 className="text-[15px] font-semibold text-[#dfbd55]">Comments <span className="font-normal text-white/40">{reel.comments > 0 ? `(${reel.comments})` : ''}</span></h2>
+        <button type="button" onClick={close} className="-mr-1 grid h-9 w-9 place-items-center rounded-lg text-[#dfbd55] transition hover:bg-white/[.06]" aria-label="Close comments"><X size={18} /></button>
       </header>
 
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-1" aria-live="polite">
         {loading ? (
-          <div className="grid h-full place-items-center"><Loader2 className="animate-spin text-white/40" /></div>
+          <div className="grid h-full place-items-center"><Loader2 className="animate-spin text-[#dfbd55]" /></div>
         ) : items.length ? items.map(item => (
           <article key={item.id} className="flex gap-3 py-3">
             <Link href={item.user?.username ? `/profile/${encodeURIComponent(item.user.username)}` : '/profile'} aria-label={`Open ${item.user?.username ? '@' + item.user.username : 'commenter'} profile`} className="h-9 w-9 shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9a227]">
@@ -1032,28 +1003,34 @@ function CommentsPanel({ reel, items, loading, text, sending, currentUserId, set
         )) : (
           <div className="grid h-full place-items-center text-center">
             <div>
-              <MessageCircle className="mx-auto text-white/25" size={26} />
+              <MessageCircle className="mx-auto text-[#dfbd55]/65" size={26} />
               <p className="mt-3 text-sm text-white/45">Be the first to comment.</p>
             </div>
           </div>
         )}
       </div>
 
-      <div className="flex shrink-0 items-center gap-2 border-t border-white/[.07] bg-[#101010] px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <input
+      <div className="vanta-comment-composer relative flex shrink-0 flex-col gap-1 border-t border-white/[.07] bg-[var(--background)] px-3 pt-2">
+        <MentionSuggestions mention={mentions} className="!max-h-[min(24dvh,140px)] rounded-lg" />
+        <div className="flex items-end gap-2">
+        <MentionTextarea surfaceClassName="rounded-full bg-[var(--surface)]"
+          rows={1}
           ref={inputRef}
           value={text}
-          onChange={event => setText(event.target.value)}
-          onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); } }}
+          onChange={event => { setText(event.target.value); mentions.syncCaret(event.currentTarget); }}
+          onClick={event => mentions.syncCaret(event.currentTarget)}
+          onKeyUp={event => mentions.syncCaret(event.currentTarget)}
+          onKeyDown={event => { if (mentions.onKeyDown(event)) return; if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); } }}
           maxLength={1000}
           placeholder="Add a comment..."
-          className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/[.05] px-4 py-2.5 text-[15px] text-[#f5f5f5] outline-none placeholder:text-white/35 focus:border-white/25"
+          className="min-w-0 flex-1 resize-none rounded-full border border-white/10 bg-[var(--surface)] px-4 py-2 text-[15px] text-[#f5f5f5] outline-none placeholder:text-white/35 focus:border-[#dfbd55]/50"
         />
-        <button type="button" disabled={!text.trim() || sending} onClick={submit} aria-label="Send comment" className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white text-black transition disabled:opacity-40"><Send size={15} /></button>
+        <button type="button" disabled={!text.trim() || sending} onClick={submit} aria-label="Send comment" className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#c9a227] text-[#1f2630] transition disabled:opacity-40"><Send size={15} /></button>
+        </div>
       </div>
     </motion.section>
     {deleteFor && <DeleteConfirmDialog title="Delete this comment?" description="This cannot be undone. The comment will be removed permanently." confirmLabel="Delete comment" busy={deleteBusy} onCancel={() => { if (!deleteBusy) setDeleteFor(null); }} onConfirm={() => void confirmRemove()} />}
-  </>;
+  </>, document.body);
 }
 
 function MorePanel({ reel, isOwn, share, save, follow, profile, report, remove, close }: { reel: Reel; isOwn: boolean; share: () => void; save: () => void; follow: () => void; profile: () => void; report: () => void; remove: () => void; close: () => void }) {
