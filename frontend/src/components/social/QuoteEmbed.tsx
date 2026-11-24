@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import type { QuoteRef } from '@/lib/quotePost';
+import { previewExcerpt } from '@/lib/linkify';
 
 type Loaded = Record<string, any> | null;
 
@@ -53,7 +54,7 @@ export default function QuoteEmbed({ quote, className = '' }: { quote: QuoteRef;
         {author.verified && author.verificationType && <VerificationBadge type={author.verificationType} size="sm" />}
         {author.username && <span className="truncate text-[12px] text-[#777]">@{author.username}</span>}
       </div>
-      {text && <p className="line-clamp-4 whitespace-pre-wrap break-words px-3 pt-1 text-[13px] leading-[1.35] text-[#dedede]">{text}</p>}
+      {text && <p className="line-clamp-4 whitespace-pre-wrap break-words px-3 pt-1 text-[13px] leading-[1.35] text-[#dedede]">{previewExcerpt(text)}</p>}
       {media && (isVideoUrl(media)
         ? <video src={media} muted playsInline preload="metadata" className="mt-2 max-h-64 w-full bg-black object-cover" />
         // eslint-disable-next-line @next/next/no-img-element
