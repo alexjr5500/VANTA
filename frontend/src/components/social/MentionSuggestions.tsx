@@ -97,7 +97,7 @@ export function useMentionSuggestions({ value, onChange, token, inputRef }: Args
   }, [open, token]);
 
   const matches = useMemo(
-    () => [...users].sort((a, b) => Number(following.has(b.id)) - Number(following.has(a.id))),
+    () => [...users].map(user => ({ ...user, following: following.has(user.id) })).sort((a, b) => Number(b.following) - Number(a.following)),
     [users, following],
   );
 
