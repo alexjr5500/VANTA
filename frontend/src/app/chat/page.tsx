@@ -2849,7 +2849,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             </div>
             <h1 className="text-base font-semibold tracking-tight text-white">Chats</h1>
           </div>
-          <button type="button" onClick={() => router.push('/notifications')} aria-label="Open notifications" className="relative grid h-10 w-10 shrink-0 place-items-center rounded-lg text-white/65 transition hover:bg-white/[.06] hover:text-white">
+          <button type="button" onClick={() => router.push('/notifications')} aria-label="Open notifications" className="relative grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#dfbd55] transition hover:bg-white/[.06] hover:text-[#f2c75c]">
             <Bell size={18} />
             {notificationUnread > 0 && <span className="absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#d6a83f] px-1 text-[9px] font-bold leading-none text-black">{notificationUnread > 99 ? '99+' : notificationUnread}</span>}
           </button>
