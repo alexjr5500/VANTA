@@ -206,7 +206,7 @@ export default function DirectPostReplyPage({ params }: { params: Promise<{ id: 
                 {date && <span className="text-[var(--text-muted)]">· {date}</span>}
               </div>
               {originalText && (
-                <p className="mt-2 line-clamp-5 whitespace-pre-wrap break-words text-[15px] leading-6 text-[var(--text-primary)]">
+                <p className="mt-2 whitespace-pre-wrap break-words text-[15px] leading-6 text-[var(--text-primary)]">
                   {renderTextWithLinks(originalText, 'linkify', { mentions: true, hashtags: true })}
                 </p>
               )}
