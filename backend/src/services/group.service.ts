@@ -18,11 +18,11 @@ export class GroupService {
     if (!group?.conversationId) return { ...group, permissions: {} };
     const conversation = await prisma.conversation.findUnique({
       where: { id: group.conversationId },
-      select: { permissions: true },
+      select: { permissions: true, visibility: true },
     });
     let permissions: Record<string, boolean> = {};
     try { permissions = conversation?.permissions ? JSON.parse(conversation.permissions) : {}; } catch { permissions = {}; }
-    return { ...group, permissions };
+    return { ...group, permissions, visibility: conversation?.visibility };
   }
 
   /** Enforce the invitee's privacy settings for every group-add path, including bulk creation. */
