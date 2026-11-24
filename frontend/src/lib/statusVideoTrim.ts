@@ -4,7 +4,7 @@ import { validateStoryMediaFile } from './storyMedia';
 export type StatusTrimRange = { start: number; end: number };
 
 export function statusRangeNeedsTrim(range: StatusTrimRange | undefined, duration: number | null): boolean {
-  return Boolean(range && (range.start > 0.01 || (duration && range.end < duration - 0.01)));
+  return Boolean(range && (range.start > 0.01 || duration == null || range.end < duration - 0.01));
 }
 
 /** Materialize the selected range BEFORE creating any server drafts. */
