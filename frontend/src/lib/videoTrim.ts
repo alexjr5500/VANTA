@@ -276,7 +276,8 @@ export async function generateFilmstrip(
   src: string,
   duration: number,
   frameCount = 9,
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  squareFrames = false
 ): Promise<string | null> {
   if (typeof document === 'undefined') return null;
   const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
@@ -288,7 +289,7 @@ export async function generateFilmstrip(
   video.preload = 'metadata';
   video.src = src;
 
-  const frameW = 180;
+  const frameW = squareFrames ? 100 : 180;
   const frameH = 100;
   const canvas = document.createElement('canvas');
   canvas.width = frameW * frameCount;
@@ -320,7 +321,13 @@ export async function generateFilmstrip(
     for (let i = 0; i < frameCount; i++) {
       const t = (safeDuration * (i + 0.5)) / frameCount;
       await seekTo(video, t);
-      ctx.drawImage(video, frameW * i, 0, frameW, frameH);
+      if (squareFrames) {
+        const side = Math.min(video.videoWidth, video.videoHeight);
+        if (!side) return null;
+        ctx.drawImage(video, (video.videoWidth-side)/2, (video.videoHeight-side)/2, side, side, frameW*i, 0, frameW, frameH);
+      } else {
+        ctx.drawImage(video, frameW * i, 0, frameW, frameH);
+      }
       onProgress?.(i + 1, frameCount);
     }
     return canvas.toDataURL('image/jpeg', 0.72);
