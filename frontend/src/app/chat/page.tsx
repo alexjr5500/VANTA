@@ -477,6 +477,7 @@ export default function MessagesPage() {
   const [showMobileList, setShowMobileList] = useState(true);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createStep, setCreateStep] = useState<'details' | 'settings' | 'people'>('details');
+  const createBackRef = useRef<() => void>(() => undefined);
   const [photoCrop, setPhotoCrop] = useState<{ kind: 'create' | 'edit'; file: File; entityId?: string; conversationId?: string } | null>(null);
   const [creatorFollowers, setCreatorFollowers] = useState<any[]>([]);
   const [followersLoading, setFollowersLoading] = useState(false);
@@ -638,7 +639,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [blockConfirmOpen, setBlockConfirmOpen] = useState(false);
   const [memberBrowserOpen, setMemberBrowserOpen] = useState(false);
   const [entityProfileTab, setEntityProfileTab] = useState<'people' | 'media' | 'files' | 'links'>('people');
-  const [entitySettingsTab, setEntitySettingsTab] = useState<'info' | 'people' | 'permissions' | 'ownership' | 'insights'>('info');
+  const [entitySettingsTab, setEntitySettingsTab] = useState<'info' | 'people' | 'permissions' | 'engagement' | 'ownership' | 'insights'>('info');
   const [managementMemberFilter, setManagementMemberFilter] = useState<'all' | 'admins'>('all');
   const [memberBrowserQuery, setMemberBrowserQuery] = useState('');
   const [isLoadingEntityInfo, setIsLoadingEntityInfo] = useState(false);
@@ -1395,7 +1396,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       if (deleteSelectedConfirmOpen) return handled(() => setDeleteSelectedConfirmOpen(false));
       if (leaveDialog) return handled(() => setLeaveDialog(false));
       if (photoCrop) return handled(() => setPhotoCrop(null));
-      if (createModalOpen) return handled(() => { if (createStep === 'people') setCreateStep(createType === 'channel' ? 'settings' : 'details'); else if (createStep === 'settings') setCreateStep('details'); else setCreateModalOpen(false); });
+      if (createModalOpen) return handled(() => createBackRef.current());
       if (pollDraft) return handled(() => setPollDraft(null));
       if (selectedMessageIds.size > 0) return handled(() => closeMessageSelection());
       if (memberBrowserOpen && !mediaViewer && !editEntityOpen) return handled(() => setMemberBrowserOpen(false));
@@ -2259,6 +2260,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
 
   const resetCreateModal = (options?: { discardImage?: boolean }) => {
+    if (!options && (isCreatingEntity || isUploadingAvatar)) return;
     const discardImage = options?.discardImage ?? true;
     const pendingFileId = createAvatarFileIdRef.current;
 
@@ -2397,10 +2399,12 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
 
   const previousCreateStep = () => {
+    if (isCreatingEntity || isUploadingAvatar) return;
     if (createStep === 'people') setCreateStep(createType === 'channel' ? 'settings' : 'details');
     else if (createStep === 'settings') setCreateStep('details');
     else resetCreateModal();
   };
+  createBackRef.current = previousCreateStep;
   const advanceCreateStep = () => {
     if (!createName.trim()) { setCreateValidationError('Please enter a name.'); return; }
     if (createStep === 'details') setCreateStep(createType === 'channel' ? 'settings' : 'people');
@@ -2451,6 +2455,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         avatar: created.avatar ?? createAvatar ?? undefined,
         unread: 0,
         online: false,
+        entityId,
+        currentRole: 'OWNER',
+        description: created.description ?? createDescription.trim(),
+        memberCount: created._count?.members ?? created.members?.length,
       };
 
       setConversations(prev => [newConversation, ...prev]);
@@ -2620,7 +2628,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     );
   };
 
-  const openEntityEditor = async (initialTab: 'info' | 'people' | 'permissions' | 'ownership' | 'insights' = 'info') => {
+  const openEntityEditor = async (initialTab: 'info' | 'people' | 'permissions' | 'engagement' | 'ownership' | 'insights' = 'info') => {
     if (!token || !activeConv || !canEditEntity || activeConv.type === 'direct') return;
     const conversationId = activeConv.id;
     const requestId = ++entityInfoRequestRef.current;
@@ -2772,7 +2780,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       setPermissionDraft(updated.permissions || {});
       const permissions = updated.permissions || {};
       setCommunityChatSettings(previous => ({ conversationId, allowedReactions: permissions.reactionsEnabled === false ? [] : COMMUNITY_REACTIONS.filter((_, index) => permissions[`reaction_${index}`] !== false), welcome: previous?.conversationId === conversationId ? previous.welcome : null }));
-      showToast?.({ type: 'success', title: 'Community settings saved', message: 'Reaction and welcome settings are active.' });
+      showToast?.({ type: 'success', title: 'Community settings saved', message: 'Your changes are active.' });
     } catch (err: any) {
       if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Settings not saved', message: err?.message || 'Please try again.' });
     } finally { entitySaveInFlightRef.current = false; setIsSavingEntity(false); }
@@ -3822,8 +3830,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] pointer-events-none"><motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 320 }} className="vanta-entity-settings pointer-events-auto ml-auto h-[var(--chat-viewport-height,100dvh)] w-full max-w-none overflow-y-auto overscroll-contain border-0 bg-[#1F2630] pb-[max(16px,env(safe-area-inset-bottom))]">
           <header className="sticky top-0 z-10 flex min-h-16 items-center justify-between gap-3 border-b border-white/[0.08] bg-[#1F2630]/95 px-4 pt-[max(0px,env(safe-area-inset-top))] backdrop-blur-xl"><button onClick={() => closeChatSubview(() => setEditEntityOpen(false))} className="btn-icon h-9 w-9 shrink-0" aria-label="Close management"><ArrowLeft size={18}/></button><div className="min-w-0 text-center"><h2 className="text-sm font-semibold text-[#f5f5f5]">{activeConv.type === 'group' ? 'Group settings' : 'Channel settings'}</h2><p className="text-[9px] uppercase tracking-[.16em] text-[#d6a83f]">{isManagedOwner ? 'Owner controls' : 'Administrator controls'}</p></div>{entitySettingsTab === 'info' && canEditEntityInfo ? <button onClick={saveEntityChanges} disabled={isSavingEntity || isUploadingAvatar || !editName.trim()} className="btn-gold-ghost h-9 px-4 text-xs disabled:opacity-40 font-semibold">{isSavingEntity ? <Loader2 size={15} className="animate-spin"/> : 'Save'}</button> : <span className="w-12 shrink-0" aria-hidden="true"/>}</header>
           <div className="mx-auto w-full max-w-2xl px-3.5">
-            <nav className="sticky top-16 z-[5] grid grid-cols-2 gap-2 bg-[#1F2630] py-3 sm:flex" aria-label="Management sections">
-              {([{ id: 'info', label: 'Information', icon: Info, visible: canEditEntityInfo }, { id: 'people', label: activeConv.type === 'group' ? 'Members' : 'Subscribers', icon: Users, visible: canManageEntityMembers }, { id: 'permissions', label: 'Permissions', icon: Shield, visible: canManageEntityPermissions }, { id: 'ownership', label: 'Ownership', icon: Crown, visible: isManagedOwner }, { id: 'insights', label: 'Statistics', icon: BarChart3, visible: canViewEntityInsights }] as const).filter(item => item.visible).map(item => <button key={item.id} type="button" aria-pressed={entitySettingsTab === item.id} onClick={() => { setEntitySettingsTab(item.id); setOwnershipConfirm(null); }} className={cn('flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border px-2 text-xs font-semibold', entitySettingsTab === item.id ? 'border-[#d6a83f]/45 bg-[#d6a83f]/10 text-[#f2c75c]' : 'border-white/[0.08] bg-[#151517] text-white/65')}><item.icon size={15}/>{item.label}</button>)}
+            <nav className="sticky top-16 z-[5] grid grid-cols-2 gap-2 bg-[#1F2630] py-3 sm:grid-cols-3" aria-label="Management sections">
+              {([{ id: 'info', label: 'Information', icon: Info, visible: canEditEntityInfo }, { id: 'people', label: activeConv.type === 'group' ? 'Members' : 'Subscribers', icon: Users, visible: canManageEntityMembers }, { id: 'permissions', label: 'Permissions', icon: Shield, visible: canManageEntityPermissions }, { id: 'engagement', label: 'Reactions & welcome', icon: Smile, visible: canManageEntityPermissions }, { id: 'ownership', label: 'Ownership', icon: Crown, visible: isManagedOwner }, { id: 'insights', label: 'Statistics', icon: BarChart3, visible: canViewEntityInsights }] as const).filter(item => item.visible).map(item => <button key={item.id} type="button" aria-pressed={entitySettingsTab === item.id} onClick={() => { setEntitySettingsTab(item.id); setOwnershipConfirm(null); }} className={cn('flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border px-2 text-xs font-semibold', entitySettingsTab === item.id ? 'border-[#d6a83f]/45 bg-[#d6a83f]/10 text-[#f2c75c]' : 'border-white/[0.08] bg-[#151517] text-white/65')}><item.icon size={15}/>{item.label}</button>)}
             </nav>
             <div hidden={entitySettingsTab !== 'info' || !canEditEntityInfo}>
             <section className="flex flex-col items-center border-b border-white/[0.06] px-4 pb-5 pt-6"><div className="relative"><button onClick={() => editAvatarInputRef.current?.click()} disabled={!canEditEntityInfo || isUploadingAvatar} className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border border-[#d6a83f]/25 bg-[#151517]" aria-label="Change photo">{editAvatar ? <Avatar src={editAvatar} alt={`${activeConv.name} photo`} size="xl" className="!h-full !w-full"/> : <Camera size={20} className="text-white/35"/>}{isUploadingAvatar && <span className="absolute inset-0 grid place-items-center bg-black/70"><Loader2 size={16} className="animate-spin"/></span>}<span className="absolute inset-x-0 bottom-0 grid h-7 place-items-center bg-black/60"><Camera size={13} className="text-white/85"/></span></button></div><input ref={editAvatarInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden" onChange={uploadEntityAvatar}/><h3 className="mt-3 text-lg font-semibold text-[#f5f5f5]">{editName || activeConv.name}</h3><p className="mt-0.5 text-xs text-[#c8c8cc]/55">{managedEntity?._count?.members ?? managedEntity?.members?.length ?? 0} {activeConv.type === 'channel' ? 'subscribers' : 'members'}</p><div className="mt-3 flex gap-2">{editAvatar && <button onClick={() => setEditAvatar(null)} disabled={!canEditEntityInfo} className="btn-ghost h-8 rounded-full border border-white/[0.1] px-4 text-[11px] text-red-300 hover:text-red-200 disabled:opacity-40">Remove</button>}</div></section>
@@ -3891,11 +3899,23 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             )}
 
             </div>
-            <div hidden={entitySettingsTab !== 'permissions' || !canManageEntityPermissions}>
-            <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#151517]"><div className="flex items-center gap-2 border-b border-white/[0.06] px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-white/30"><Shield size={13} className="text-[#d6a83f]"/>Permissions</div><div className="border-b border-white/[0.06] px-3 py-3"><p className="text-xs font-medium text-white/70">Who can do the following?</p><p className="mt-1 text-[10px] leading-relaxed text-white/35">{activeConv.type === 'group' ? 'Allow members to use selected group actions. Admins and the owner retain their management powers.' : 'Control member publishing and the actions channel administrators may perform.'} Permission checks are enforced on the server.</p></div><div className="divide-y divide-white/[0.06]">{managedPermissions.map(([key, label]) => { const enabled = Boolean(permissionDraft[key] ?? defaultPermission(key)); return <div key={key} className="flex items-start justify-between gap-3 px-4 py-3.5"><div className="min-w-0 flex-1"><p className="text-xs font-medium text-[#c8c8cc]">{label}</p><p className="mt-0.5 text-[10px] leading-relaxed text-white/30">{permissionHints[key]}</p></div><button onClick={() => toggleManagedPermission(key)} disabled={!canManageEntityPermissions} className={cn('relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition disabled:cursor-not-allowed disabled:opacity-40', enabled ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')} aria-label={`Toggle ${label}`} aria-checked={enabled} role="switch"><span className={cn('absolute top-0.5 h-4.5 w-4.5 rounded-full transition-all', enabled ? 'left-[22px] bg-[#f2c75c]' : 'left-0.5 bg-[#c8c8cc]')}/></button></div>})}</div><p className="mt-3 px-4 pb-3 text-[10px] leading-relaxed text-white/25">{canManageEntityPermissions ? 'Changes take effect when you save and are enforced by VANTA on the server.' : 'Only the channel owner can change permission grants.'}</p></section>
-
-            </div>
-            {entitySettingsTab === 'permissions' && canManageEntityPermissions && <div className="space-y-4 pb-4">
+            {entitySettingsTab === 'permissions' && canManageEntityPermissions && <div className="space-y-3 pb-4">
+              <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#18212b]">
+                <div className="px-4 pb-2 pt-4 text-xs font-semibold text-[#f2c75c]">{activeConv.type === 'group' ? 'What can members of this group do?' : 'Channel publishing and administration'}</div>
+                <div className="divide-y divide-white/[0.06]">
+                  {managedPermissions.map(([key, label]) => {
+                    const enabled = Boolean(permissionDraft[key] ?? defaultPermission(key));
+                    return <button key={key} type="button" role="switch" aria-checked={enabled} aria-label={label} disabled={isSavingEntity} onClick={() => toggleManagedPermission(key)} className="flex min-h-14 w-full items-center justify-between gap-3 px-4 py-2.5 text-left disabled:opacity-50">
+                      <div className="min-w-0 flex-1"><p className="text-sm font-medium text-white/90">{label}</p><p className="mt-0.5 text-xs leading-snug text-white/45">{permissionHints[key]}</p></div>
+                      <span aria-hidden="true" className={cn('relative h-6 w-11 shrink-0 rounded-full transition-colors', enabled ? 'bg-[#d6a83f]' : 'bg-white/15')}><span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform', enabled ? 'translate-x-[22px]' : 'translate-x-0.5')}/></span>
+                    </button>;
+                  })}
+                </div>
+              </div>
+              <p className="px-1 text-xs leading-relaxed text-white/45">{activeConv.type === 'group' ? 'These permissions apply to ordinary members. Owners and administrators retain management access.' : 'Only the channel owner can change these permissions.'} Changes are enforced on the server.</p>
+              <button type="button" onClick={() => void saveCommunityPermissions()} disabled={isSavingEntity} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#d6a83f] text-sm font-semibold text-black disabled:opacity-50">{isSavingEntity && <Loader2 size={16} className="animate-spin"/>}Save permissions</button>
+            </div>}
+            {entitySettingsTab === 'engagement' && canManageEntityPermissions && <div className="space-y-4 pb-4">
               <div className="rounded-xl border border-white/[0.08] bg-[#151517] p-4">
                 <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-[#f2c75c]">Reactions</h3><p className="mt-1 text-xs text-white/50">Choose which reactions members can add.</p></div><button type="button" role="switch" aria-label="Enable reactions" aria-checked={permissionDraft.reactionsEnabled !== false} onClick={() => setPermissionDraft(previous => ({ ...previous, reactionsEnabled: previous.reactionsEnabled === false }))} className={cn('relative h-7 w-12 shrink-0 rounded-full border', permissionDraft.reactionsEnabled !== false ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')}><span className={cn('absolute top-1 h-5 w-5 rounded-full transition-all', permissionDraft.reactionsEnabled !== false ? 'left-6 bg-[#f2c75c]' : 'left-1 bg-white/50')}/></button></div>
                 {permissionDraft.reactionsEnabled !== false && <div className="mt-4 grid grid-cols-5 gap-2">{COMMUNITY_REACTIONS.map((reaction, index) => <button key={reaction} type="button" aria-label={`Allow ${reaction} reaction`} aria-pressed={permissionDraft[`reaction_${index}`] !== false} onClick={() => setPermissionDraft(previous => ({ ...previous, [`reaction_${index}`]: previous[`reaction_${index}`] === false }))} className={cn('min-h-12 rounded-lg border text-xl', permissionDraft[`reaction_${index}`] !== false ? 'border-[#d6a83f]/45 bg-[#d6a83f]/10' : 'border-white/10 opacity-40')}>{reaction}</button>)}</div>}
@@ -3905,7 +3925,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                 <textarea aria-label="Welcome message" value={typeof permissionDraft.welcomeMessage === 'string' ? permissionDraft.welcomeMessage : ''} onChange={event => setPermissionDraft(previous => ({ ...previous, welcomeMessage: event.target.value }))} maxLength={500} rows={4} placeholder="Welcome! Please read our community rules." className="mt-3 w-full resize-none rounded-lg border border-white/10 bg-[#101012] px-3 py-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-[#d6a83f]"/>
                 <p className="mt-1 text-right text-xs text-white/40">{typeof permissionDraft.welcomeMessage === 'string' ? permissionDraft.welcomeMessage.length : 0}/500</p>
               </div>
-              <button type="button" onClick={() => void saveCommunityPermissions()} disabled={isSavingEntity} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#d6a83f] text-sm font-semibold text-black disabled:opacity-50">{isSavingEntity && <Loader2 size={16} className="animate-spin"/>}Save permissions and community settings</button>
+              <button type="button" onClick={() => void saveCommunityPermissions()} disabled={isSavingEntity} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#d6a83f] text-sm font-semibold text-black disabled:opacity-50">{isSavingEntity && <Loader2 size={16} className="animate-spin"/>}Save reaction and welcome settings</button>
             </div>}
             {entitySettingsTab === 'insights' && canViewEntityInsights && editEntityId && <CommunityInsights key={editEntityId} kind={activeConv.type} entityId={editEntityId}/>}
             {/* Danger zone — irreversible actions kept apart (not shown to the owner: they cannot leave and must delete the group instead) */}
