@@ -218,6 +218,37 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [isFloatingCreateOpen, setIsFloatingCreateOpen] = useState(false);
   const [bottomNavHidden, setBottomNavHidden] = useState(false);
 
+  // Android's hardware Back is delegated to the visible React UI BEFORE the
+  // WebView goes back in its history. Close sheets first; never navigate the
+  // underlying Home/Reels/Chat page while a dialog is still open.
+  useEffect(() => {
+    const handleNativeBack = (event: Event) => {
+      if (createHubOpen) { event.preventDefault(); closeCreateHub(); return; }
+      if (activeFlow) { event.preventDefault(); closeAll(); return; }
+      if (mobileMenuOpen) { event.preventDefault(); setMobileMenuOpen(false); return; }
+
+      const visible = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [aria-modal="true"]'))
+        .filter(el => {
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        });
+      const top = visible.at(-1);
+      if (!top) return;
+      // The overlay owns the Back action. If it has a real Close/Cancel
+      // affordance, activate it; otherwise preserve the current page rather
+      // than unintentionally stepping its WebView history behind the overlay.
+      const close = top.querySelector<HTMLButtonElement>(
+        'button[aria-label="Close"], button[aria-label="Close modal"], button[aria-label="Cancel"], button[title="Close"]'
+      );
+      event.preventDefault();
+      close?.click();
+    };
+    window.addEventListener('vanta-native-back', handleNativeBack);
+    return () => window.removeEventListener('vanta-native-back', handleNativeBack);
+  }, [activeFlow, createHubOpen, mobileMenuOpen, closeCreateHub, closeAll]);
+
+
   // The bottom navigation is shared by the whole app, so observe scrolls at
   // the document capture phase. This catches the shell scroller and page-owned
   // nested scrollers (Home, Discover, Profile, Chat, and standard pages) alike.
