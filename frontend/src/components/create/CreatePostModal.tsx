@@ -310,9 +310,16 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                       </p>
                       <p className="truncate text-xs text-white/40">@{user?.username || 'you'}</p>
                     </div>
-                    <span className="ml-auto flex shrink-0 items-center gap-1.5 rounded-full border border-[#c9a227]/45 px-3 py-1.5 text-xs font-semibold text-[#dfbd55]" aria-label="Posts are visible to everyone">
-                      <Globe2 size={13} /> Everyone
-                    </span>
+                    <button type="button"
+                      onClick={() => { textareaRef.current?.blur(); setShowEmojiPicker(false); setShowReplyAudience(true); }}
+                      disabled={isSubmitting}
+                      aria-label="Who can reply to this post"
+                      aria-haspopup="dialog"
+                      aria-expanded={showReplyAudience}
+                      className="ml-auto flex shrink-0 items-center gap-1.5 rounded-full border border-[#c9a227]/45 px-3 py-1.5 text-xs font-semibold text-[#dfbd55] transition hover:bg-[var(--surface)] disabled:opacity-40"
+                    >
+                      <Globe2 size={13} /> {({ EVERYONE: 'Everyone', VERIFIED: 'Verified', FOLLOWING: 'Following', MENTIONED: 'Mentioned', EXTENDED: 'Follow network' } as const)[replyAudience]}
+                    </button>
                   </div>
                 )}
 
