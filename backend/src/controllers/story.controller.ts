@@ -34,6 +34,8 @@ export const createStory = async (req: AuthRequest, res: Response): Promise<void
       if (!existing || existing.deletedAt || existing.userId !== userId || !["IMAGE", "VIDEO"].includes(existing.fileType)) {
         res.status(403).json({ error: "Uploaded story media was not found or is not owned by you" }); return;
       }
+      if (existing.recordType || existing.recordId) { res.status(400).json({ error: "Media already belongs to another record." }); return; }
+      await uploadService.assertStatusMediaDuration(existing);
       fileId = existing.id;
       mediaUrl = existing.url;
       mediaType = existing.fileType === "VIDEO" ? "VIDEO" : "IMAGE";
