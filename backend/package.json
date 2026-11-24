@@ -45,6 +45,7 @@
     "find-up": "^8.0.0",
     "firebase-admin": "^13.4.0",
     "helmet": "^7.1.0",
+    "ioredis": "^5.4.2",
     "jsonwebtoken": "^9.0.2",
     "livekit-server-sdk": "^2.17.0",
     "morgan": "^1.10.0",

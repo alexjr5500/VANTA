@@ -1,0 +1,7 @@
+# Redis cache readiness
+
+The cache previously loaded ioredis dynamically without declaring it in the backend package manifest. This was a concrete missing-dependency risk, not proof of the sole production failure cause. The backend now declares ioredis; the application adapter is explicitly gated by VANTA_REDIS_CACHE_ENABLED=true and REDIS_URL. Keep the flag off in production pending review. No shared Redis deployment or production setting is changed by this commit.
+
+The dedicated CI job starts disposable Redis 7, checks connection readiness, single and bulk expiries and concurrent increments using two clients. The process-local regression test checks that fallback counters no longer increment twice. CI does not prove a Railway Redis instance, network or credentials are configured.
+
+For isolated staging only, provision a dedicated Redis instance, use its private URL, enable the flag, and verify redisAvailable, cache hits, reconnect behavior, TTLs and application flows. Avoid logging credentials. Do not use a shared database for the existing flush operation. The adapter still has process-local caches, local invalidation and local fallback; it is not an authorization, payment, session or distributed-rate-limit authority. Do not scale application replicas on the basis of this test alone: cross-instance invalidation, failure behavior, socket coordination and call-site review are separate gates. Roll back by disabling the flag in staging.

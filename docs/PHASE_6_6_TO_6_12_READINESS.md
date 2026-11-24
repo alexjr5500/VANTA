@@ -25,6 +25,7 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 ## 6.9 — Observability
 - [ ] Queue backlog age, attempts, dead jobs, processing latency and worker liveness.
 - [ ] API 5xx/latency, DB pool health, Redis connectivity and media-storage health.
+- [x] Declare Redis runtime dependency, add opt-in connection readiness, bounded TTL and counter fixes, and real-Redis CI coverage (staging acceptance and CI result still required).
 - [ ] Alerts with tested notification routing, on-call owner and runbook links.
 
 ## 6.10 — Capacity
