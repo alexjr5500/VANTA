@@ -42,6 +42,7 @@ import QuoteEmbed from '@/components/social/QuoteEmbed';
 import { friendlyError, errorMessage } from '@/lib/errors';
 import type { VerificationType } from '@/types/verification';
 import { nativeGalleryConnection, parseNativeGallery, type NativeRecentMedia, type NativeGalleryStatus } from '@/lib/nativeStatusGallery';
+import { requestNativeLocation } from '@/lib/nativeLocation';
 
 interface Conversation {
   id: string;
@@ -1354,16 +1355,37 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
   };
 
-  const sendLocationMessage = () => {
-    if (!navigator.geolocation) {
-      showToast?.({ type: 'error', title: 'Location unavailable', message: 'This device or browser cannot share a location. You can type an address in chat instead.' });
-      return;
-    }
+  const sendLocationMessage = async () => {
     if (typeof window !== 'undefined' && window.isSecureContext === false) {
-      showToast?.({ type: 'error', title: 'Location unavailable', message: 'Location sharing requires a secure connection. You can type an address in chat instead.' });
+      showToast?.({ type: 'error', title: 'Location unavailable', message: 'Location sharing requires a secure connection.' });
       return;
     }
     showToast?.({ type: 'info', title: 'Getting location', message: 'Sharing your current location...' });
+
+    // The signed APK can prompt for Android location permission even after
+    // WebView's site-level geolocation permission was previously denied.
+    // This request happens only after the user taps Share Location.
+    const nativeRequest = requestNativeLocation();
+    if (nativeRequest) {
+      try {
+        const coords = await nativeRequest;
+        void sendSpecialMessage('LOCATION', { lat: coords.lat, lng: coords.lng }, 'Location');
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'Location unavailable';
+        const message = detail === 'permission-denied'
+          ? 'Allow Location in Android Settings → Apps → VANTA → Permissions, then retry.'
+          : detail === 'location-disabled'
+            ? 'Turn on Location in your phone settings and retry.'
+            : detail;
+        showToast?.({ type: 'error', title: 'Location unavailable', message });
+      }
+      return;
+    }
+
+    if (!navigator.geolocation) {
+      showToast?.({ type: 'error', title: 'Location unavailable', message: 'This device or browser cannot share a location.' });
+      return;
+    }
     navigator.geolocation.getCurrentPosition(
       position => void sendSpecialMessage('LOCATION', { lat: position.coords.latitude, lng: position.coords.longitude }, 'Location'),
       error => {
@@ -1371,14 +1393,12 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         const message = error.code === error.PERMISSION_DENIED
           ? androidApp
             ? 'Allow Location for VANTA in Android Settings → Apps → VANTA → Permissions. Then retry sharing your location.'
-            : 'Location permission was denied. Allow location access in your browser settings, or type an address in chat.'
+            : 'Location permission was denied. Allow location access in your browser settings.'
           : error.code === error.TIMEOUT
             ? 'Location lookup timed out. Turn on device Location and try again.'
             : 'Could not read your location. Turn on device Location and check VANTA location access.';
         showToast?.({ type: 'error', title: 'Location unavailable', message });
       },
-      // Coarse/network location works even when Android users choose
-      // "approximate" permission. Do not require a slow GPS fix to share.
       { enableHighAccuracy: false, timeout: 20000, maximumAge: 30000 }
     );
   };
