@@ -158,7 +158,7 @@ const MobileMenu = memo(function MobileMenu({
                       )}
                     >
                       <span className="relative">
-                        <Icon size={17} className="text-gray-400" />
+                        <Icon size={17} className={item.href === "/notifications" || item.href === "/settings" ? "text-[#dfbd55]" : "text-gray-400"} />
                         {navBadgeFor(item.href) > 0 && (
                           <span className="absolute -right-2 -top-2 grid h-4 min-w-[16px] place-items-center rounded-full bg-[#c9a227] px-1 text-[9px] font-bold leading-none text-black ring-2 ring-[#0d0d0f]">
                             {navBadgeFor(item.href) > 99 ? '99+' : navBadgeFor(item.href)}
