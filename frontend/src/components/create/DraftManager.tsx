@@ -89,7 +89,7 @@ export default function DraftManager({ onSelectDraft, onClose, className }: Draf
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       className={cn(
-        'w-full max-h-[400px] rounded-2xl border border-white/[0.08] bg-[#0e0e16]/95 backdrop-blur-2xl shadow-2xl overflow-hidden',
+        'w-full max-h-[400px] rounded-2xl border border-[var(--border)] bg-[var(--surface)] backdrop-blur-2xl shadow-2xl overflow-hidden',
         className
       )}
       role="dialog"
