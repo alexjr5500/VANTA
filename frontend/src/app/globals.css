@@ -3641,3 +3641,9 @@ html.vanta-native-android .vanta-community-settings-nav { top: 48px; }
 .vanta-community-field-card :is(input:not([type=file]),textarea) { border: 0 !important; background: transparent !important; }
 .vanta-community-field-card:focus-within { border-color: rgba(214,168,63,.65); }
 html.vanta-native-android .vanta-photo-crop { height: var(--chat-viewport-height,100dvh); }
+
+/* Comment sheets use the usable visual viewport, not the scrolling/transformed route. */
+.vanta-reel-comments { bottom: var(--vanta-kb, 0px); height: min(calc(var(--vanta-vh, 100dvh) * .58), 560px); }
+.vanta-reel-comments:focus-within { height: min(calc(var(--vanta-vh, 100dvh) * .88), 560px); }
+.vanta-comment-composer { padding-bottom: max(6px, var(--vanta-native-safe-bottom, env(safe-area-inset-bottom, 0px))); }
+html.vanta-native-android .vanta-comment-composer { padding-bottom: 4px; }
