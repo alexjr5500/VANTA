@@ -26,6 +26,7 @@ import { useNotifications, type VantaNotification } from '@/context/Notification
 import { apiGet, apiPatch } from '@/lib/apiClient';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { cn } from '@/lib/utils';
+import { previewExcerpt } from '@/lib/linkify';
 
 type NotificationResponse = {
   items: VantaNotification[];
@@ -155,7 +156,7 @@ function RelatedPreview({ notification, token }: { notification: VantaNotificati
   }, [lookupId, token]);
   const text = provided || (lookupId && preview?.id === lookupId && preview.token === token ? preview.text : '');
   if (!text?.trim()) return null;
-  return <p className="mt-1 line-clamp-3 break-words text-sm leading-5 text-white/50">{text.split(/([@#][\p{L}\p{N}_]+)/u).map((part, index) => /^[@#][\p{L}\p{N}_]+$/u.test(part) ? <span key={index} className="text-[#d6a83f]">{part}</span> : part)}</p>;
+  return <p className="mt-1 line-clamp-3 break-words text-sm leading-5 text-white/50">{previewExcerpt(text)}</p>;
 }
 
 function Skeletons() {
