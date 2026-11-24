@@ -24,8 +24,10 @@ export function requestNativeLocation(timeoutMs = 20000): Promise<VantaCoordinat
   if (typeof window === 'undefined') return null;
   const host = window as NativeLocationWindow;
   const bridge = host.VantaNativeLocation;
-  const nonce = host.__VANTA_NATIVE_LOCATION_NONCE__;
-  if (!bridge || typeof bridge.requestCurrentLocation !== 'function' || !nonce) return null;
+  // A late onPageFinished injection should not force a WebView geolocation
+  // fallback, which may have a cached site-level DENY. Wait for the trusted
+  // native nonce readiness event instead.
+  if (!bridge || typeof bridge.requestCurrentLocation !== 'function') return null;
 
   const requestId = 'location-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
   return new Promise<VantaCoordinates>((resolve, reject) => {
@@ -33,6 +35,7 @@ export function requestNativeLocation(timeoutMs = 20000): Promise<VantaCoordinat
     const cleanup = () => {
       window.clearTimeout(timer);
       window.removeEventListener('vanta-native-location-result', onResult);
+      window.removeEventListener('vanta-native-location-ready', askNative);
     };
     const finish = (coords?: VantaCoordinates, error?: string) => {
       if (settled) return;
@@ -55,9 +58,17 @@ export function requestNativeLocation(timeoutMs = 20000): Promise<VantaCoordinat
       }
       finish({ lat, lng, accuracy: detail.accuracy });
     };
+    const askNative = () => {
+      const nonce = host.__VANTA_NATIVE_LOCATION_NONCE__;
+      if (!nonce || settled || requested) return;
+      requested = true;
+      try { bridge.requestCurrentLocation(nonce, requestId); }
+      catch { finish(undefined, 'Native location permission request failed'); }
+    };
+    let requested = false;
     const timer = window.setTimeout(() => finish(undefined, 'Location timed out. Turn on device Location and try again.'), timeoutMs);
     window.addEventListener('vanta-native-location-result', onResult);
-    try { bridge.requestCurrentLocation(nonce, requestId); }
-    catch { finish(undefined, 'Native location permission request failed'); }
+    window.addEventListener('vanta-native-location-ready', askNative);
+    askNative();
   });
 }

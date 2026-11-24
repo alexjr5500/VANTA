@@ -1400,7 +1400,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     // The signed APK can prompt for Android location permission even after
     // WebView's site-level geolocation permission was previously denied.
     // This request happens only after the user taps Share Location.
-    const nativeRequest = requestNativeLocation();
+    const nativeRequest = requestNativeLocation(30000);
     if (nativeRequest) {
       try {
         const coords = await nativeRequest;
@@ -1411,7 +1411,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
           ? 'Allow Location in Android Settings → Apps → VANTA → Permissions, then retry.'
           : detail === 'location-disabled'
             ? 'Turn on Location in your phone settings and retry.'
-            : detail;
+            : detail === 'location-unavailable'
+              ? 'Location is allowed but no position was found. Enable Google Location Accuracy and Wi-Fi or mobile data, then try again outdoors.'
+              : detail;
         showToast?.({ type: 'error', title: 'Location unavailable', message });
       }
       return;
@@ -1427,7 +1429,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         const androidApp = navigator.userAgent.includes('VANTAAndroid');
         const message = error.code === error.PERMISSION_DENIED
           ? androidApp
-            ? 'Allow Location for VANTA in Android Settings → Apps → VANTA → Permissions. Then retry sharing your location.'
+            ? 'Allow Location for VANTA in Android Settings → Apps → VANTA → Permissions. If it is already allowed, install the latest production APK and restart VANTA.'
             : 'Location permission was denied. Allow location access in your browser settings.'
           : error.code === error.TIMEOUT
             ? 'Location lookup timed out. Turn on device Location and try again.'

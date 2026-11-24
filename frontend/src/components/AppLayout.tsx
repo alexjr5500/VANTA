@@ -221,36 +221,45 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [isFloatingCreateOpen, setIsFloatingCreateOpen] = useState(false);
   const [bottomNavHidden, setBottomNavHidden] = useState(false);
 
-  // Android's hardware Back is delegated to the visible React UI BEFORE the
-  // WebView goes back in its history. Close sheets first; never navigate the
-  // underlying Home/Reels/Chat page while a dialog is still open.
+  // Let the frontmost visible overlay consume Android Back before WebView
+  // history changes. Chat's capture-phase handler gets the first chance to
+  // dismiss a nested conversation sheet, so respect defaultPrevented here.
   useEffect(() => {
     const handleNativeBack = (event: Event) => {
+      if (event.defaultPrevented) return;
+      const overlays = Array.from(document.querySelectorAll<HTMLElement>(
+        '[role="dialog"], [aria-modal="true"], [data-vanta-overlay], dialog[open], [role="menu"], [role="listbox"]'
+      )).filter(el => {
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return !el.closest('[aria-hidden="true"]') && style.display !== 'none' &&
+          style.visibility !== 'hidden' && style.pointerEvents !== 'none' &&
+          rect.width > 0 && rect.height > 0;
+      });
+      const top = overlays.at(-1);
+      if (top) {
+        event.preventDefault();
+        const close = top.querySelector<HTMLButtonElement>(
+          '[data-vanta-back-close], button[aria-label^="Close"], button[aria-label^="Cancel"], ' +
+          'button[aria-label^="Back"], button[aria-label="Go back"], button[title="Close"]'
+        );
+        if (close && !close.disabled) close.click();
+        else top.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        return;
+      }
       if (createHubOpen) { event.preventDefault(); closeCreateHub(); return; }
       if (activeFlow) { event.preventDefault(); closeAll(); return; }
       if (mobileMenuOpen) { event.preventDefault(); setMobileMenuOpen(false); return; }
-
-      const visible = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [aria-modal="true"]'))
-        .filter(el => {
-          const style = window.getComputedStyle(el);
-          const rect = el.getBoundingClientRect();
-          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-        });
-      const top = visible.at(-1);
-      if (!top) return;
-      // The overlay owns the Back action. If it has a real Close/Cancel
-      // affordance, activate it; otherwise preserve the current page rather
-      // than unintentionally stepping its WebView history behind the overlay.
-      const close = top.querySelector<HTMLButtonElement>(
-        'button[aria-label^="Close"], button[aria-label^="Cancel"], button[title="Close"]'
-      );
-      event.preventDefault();
-      close?.click();
+      if (isFloatingCreateOpen) {
+        // A page-owned composer is still visible; never navigate the page
+        // behind it. Let the owner handle its existing Escape close action.
+        event.preventDefault();
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      }
     };
     window.addEventListener('vanta-native-back', handleNativeBack);
     return () => window.removeEventListener('vanta-native-back', handleNativeBack);
-  }, [activeFlow, createHubOpen, mobileMenuOpen, closeCreateHub, closeAll]);
-
+  }, [activeFlow, createHubOpen, mobileMenuOpen, isFloatingCreateOpen, closeCreateHub, closeAll]);
 
   // The bottom navigation is shared by the whole app, so observe scrolls at
   // the document capture phase. This catches the shell scroller and page-owned

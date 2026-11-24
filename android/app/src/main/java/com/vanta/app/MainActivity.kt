@@ -38,6 +38,10 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.google.firebase.messaging.FirebaseMessaging
+import com.google.android.gms.location.CurrentLocationRequest
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import java.util.UUID
 import org.json.JSONObject
 
@@ -243,7 +247,11 @@ class MainActivity : Activity() {
                     publishNativeShareNonce(view, url)
                     publishNativeGalleryNonce(view, url)
                     if (isTrustedPage(url)) {
-                        view.evaluateJavascript("window.__VANTA_NATIVE_LOCATION_NONCE__ = '$nativeLocationNonce';", null)
+                        view.evaluateJavascript(
+                            "window.__VANTA_NATIVE_LOCATION_NONCE__ = '$nativeLocationNonce';" +
+                                "window.dispatchEvent(new Event('vanta-native-location-ready'));",
+                            null
+                        )
                     }
                     publishNativeFcmToken()
                 }
@@ -450,14 +458,43 @@ class MainActivity : Activity() {
 
     private fun requestNativeLocationFix() {
         val requestId = pendingNativeLocationId ?: return
-        if (!hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION) &&
-            !hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
+        val fine = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (!fine && !hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)) {
             finishNativeLocation(null, "permission-denied")
             return
         }
+        // Fused location can use Wi-Fi and cell towers when GPS has no fix
+        // indoors. A recent cached fix is permitted only up to 60 seconds old.
+        // Never request a location until the user taps Share Location.
+        try {
+            val request = CurrentLocationRequest.Builder()
+                .setPriority(if (fine) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY)
+                .setMaxUpdateAgeMillis(60_000L)
+                .setDurationMillis(10_000L)
+                .build()
+            LocationServices.getFusedLocationProviderClient(this)
+                .getCurrentLocation(request, CancellationTokenSource().token)
+                .addOnSuccessListener { location ->
+                    if (pendingNativeLocationId != requestId) return@addOnSuccessListener
+                    if (location != null) finishNativeLocation(location, null)
+                    else requestAndroidLocationFix(requestId)
+                }
+                .addOnFailureListener {
+                    if (pendingNativeLocationId == requestId) requestAndroidLocationFix(requestId)
+                }
+        } catch (_: Exception) {
+            requestAndroidLocationFix(requestId)
+        }
+    }
+
+    private fun requestAndroidLocationFix(requestId: String) {
+        if (pendingNativeLocationId != requestId) return
         val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        val provider = listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
-            .firstOrNull { locationManager.isProviderEnabled(it) }
+        val providers = mutableListOf(LocationManager.NETWORK_PROVIDER)
+        if (hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
+            providers.add(LocationManager.GPS_PROVIDER)
+        }
+        val provider = providers.firstOrNull { locationManager.isProviderEnabled(it) }
         if (provider == null) {
             finishNativeLocation(null, "location-disabled")
             return
