@@ -20,7 +20,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { storage } from '@/lib/platformStorage';
-import { useLocalizedUiText } from '@/lib/i18n/ui-labels';
+import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 
 /* Accent — driven by the user's selected Accent setting (Gold/Monochrome).
    The `--settings-accent*` tokens are re-mapped at the <html> root by the
