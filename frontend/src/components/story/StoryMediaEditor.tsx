@@ -42,6 +42,7 @@ import {
 import {
   STORY_MAX_IMAGE_BYTES,
   STORY_MAX_VIDEO_BYTES,
+  STORY_MAX_VIDEO_SECONDS,
   storyMediaCapacity,
   storyMediaKindOf,
   toUserFacingStoryError,
@@ -346,9 +347,16 @@ useEffect(() => {
         return;
       }
       const created = await buildDraftItems(valid);
-      if (nativeMediaId && created.length === 1) created[0].nativeMediaId = nativeMediaId;
-      setItems((previous) => [...previous, ...created]);
-      setActiveId(created[created.length - 1].id);
+      const accepted = created.filter(item => {
+        if (item.kind !== 'video' || (item.duration != null && Number.isFinite(item.duration) && item.duration > 0 && item.duration <= STORY_MAX_VIDEO_SECONDS)) return true;
+        URL.revokeObjectURL(item.objectUrl);
+        issues.push(item.duration != null && item.duration > STORY_MAX_VIDEO_SECONDS ? 'Status videos are limited to 2 minutes (120 seconds).' : 'Unable to read this video duration. Choose another video.');
+        return false;
+      });
+      if (!accepted.length) { setMediaError(issues.join(' ')); return; }
+      if (nativeMediaId && accepted.length === 1) accepted[0].nativeMediaId = nativeMediaId;
+      setItems((previous) => [...previous, ...accepted]);
+      setActiveId(accepted[accepted.length - 1].id);
       if (issues.length > 0) setMediaError(issues.join(' '));
     },
     [capacity, items.length]
@@ -559,6 +567,7 @@ useEffect(() => {
       for (const item of items) {
         const range = trimRanges[item.id];
         const needsTrim = item.kind === 'video' && range && statusRangeNeedsTrim(range, item.duration);
+        if (item.kind === 'video' && (!item.duration || item.duration > STORY_MAX_VIDEO_SECONDS)) throw new Error('Status videos are limited to 2 minutes (120 seconds).');
         const file = needsTrim && range ? await prepareStatusVideo(item.file, item.objectUrl, range, abort.signal) : item.file;
         prepared.push({ ...item, file, size: file.size, name: file.name });
       }
@@ -795,8 +804,8 @@ useEffect(() => {
           {/* Compact caption composer — character limits remain enforced by normalization. */}
           <div className="shrink-0 px-3 pb-1">
             <MentionSuggestions mention={captionMentions} className="mb-2 rounded-xl" />
-            <div className="flex items-center gap-2 rounded-full border border-white/[0.06] bg-[var(--surface)] px-3 py-1.5">
-              <button type="button" disabled={preparing} onClick={openGalleryPicker} aria-label="Add more media" className="shrink-0 text-[#dfbd55]"><ImageIcon size={22} /></button>
+            <div className="flex min-h-9 items-center gap-1.5 rounded-full border border-white/[0.06] bg-[var(--surface)] px-2.5 py-0.5">
+              <button type="button" disabled={preparing} onClick={openGalleryPicker} aria-label="Add more media" className="shrink-0 text-[#dfbd55]"><ImageIcon size={18} /></button>
               <MentionTextarea
                 ref={captionRef}
                 value={caption}
@@ -813,9 +822,10 @@ useEffect(() => {
                 aria-label="Status caption"
                 rows={1}
                 disabled={preparing}
-                className="max-h-24 min-h-[28px] flex-1 resize-none bg-transparent text-[15px] leading-tight text-white outline-none placeholder:text-white/45"
+                surfaceClassName="flex items-center"
+                className="block h-8 min-h-0 max-h-8 flex-1 resize-none overflow-y-auto border-0 bg-transparent p-0 py-1.5 text-[14px] leading-5 text-white outline-none placeholder:text-white/45"
               />
-              <button type="button" disabled={preparing} aria-label="Mention account" onClick={() => { setCaption(value => normalizeStatusEditorValue(value + (value && !/\s$/.test(value) ? ' ' : '') + '@')); requestAnimationFrame(() => { const input = captionRef.current; input?.focus(); if (input) { input.setSelectionRange(input.value.length, input.value.length); captionMentions.syncCaret(input); } }); }} className="shrink-0 text-[#dfbd55]"><AtSign size={22} /></button>
+              <button type="button" disabled={preparing} aria-label="Mention account" onClick={() => { setCaption(value => normalizeStatusEditorValue(value + (value && !/\s$/.test(value) ? ' ' : '') + '@')); requestAnimationFrame(() => { const input = captionRef.current; input?.focus(); if (input) { input.setSelectionRange(input.value.length, input.value.length); captionMentions.syncCaret(input); } }); }} className="shrink-0 text-[#dfbd55]"><AtSign size={18} /></button>
             </div>
           </div>
 
