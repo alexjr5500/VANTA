@@ -41,6 +41,7 @@ import IncomingCallBanner from '@/components/messages/IncomingCallBanner';
 import ChatCallOverlay from '@/components/messages/ChatCallOverlay';
 import GlobalGiftAnimations from '@/components/gifts/GlobalGiftAnimations';
 import { useToast } from '@/components/ui/Toast';
+import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 
 const notificationDestination = (notification: any) => {
   let data: any = notification?.data;
@@ -92,6 +93,7 @@ const MobileMenu = memo(function MobileMenu({
 }) {
   const { unreadCount: notificationUnread } = useNotifications();
   const { chatUnreadCount: chatUnread } = useChatUnread();
+  const tr = useLocalizedUiText();
   const navBadgeFor = (href: string) => {
     if (href === '/chat') return chatUnread;
     if (href === '/notifications') return notificationUnread;
@@ -177,7 +179,7 @@ const MobileMenu = memo(function MobileMenu({
                           </span>
                         )}
                       </span>
-                      <span className="text-sm">{item.label}</span>
+                      <span className="text-sm">{tr(item.label)}</span>
                     </Link>
                   );
                 })}
@@ -193,7 +195,7 @@ const MobileMenu = memo(function MobileMenu({
                 aria-label="Logout"
               >
                 <LogOut size={16} />
-                Logout
+                {tr('Logout')}
               </button>
             </div>
           </motion.aside>
@@ -209,6 +211,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const tr = useLocalizedUiText();
   const { unreadCount: notificationUnread } = useNotifications();
   const { chatUnreadCount: chatUnread } = useChatUnread();
   const { chatCalls } = useCalls();
@@ -217,6 +220,37 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isFloatingCreateOpen, setIsFloatingCreateOpen] = useState(false);
   const [bottomNavHidden, setBottomNavHidden] = useState(false);
+
+  // Android's hardware Back is delegated to the visible React UI BEFORE the
+  // WebView goes back in its history. Close sheets first; never navigate the
+  // underlying Home/Reels/Chat page while a dialog is still open.
+  useEffect(() => {
+    const handleNativeBack = (event: Event) => {
+      if (createHubOpen) { event.preventDefault(); closeCreateHub(); return; }
+      if (activeFlow) { event.preventDefault(); closeAll(); return; }
+      if (mobileMenuOpen) { event.preventDefault(); setMobileMenuOpen(false); return; }
+
+      const visible = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [aria-modal="true"]'))
+        .filter(el => {
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        });
+      const top = visible.at(-1);
+      if (!top) return;
+      // The overlay owns the Back action. If it has a real Close/Cancel
+      // affordance, activate it; otherwise preserve the current page rather
+      // than unintentionally stepping its WebView history behind the overlay.
+      const close = top.querySelector<HTMLButtonElement>(
+        'button[aria-label^="Close"], button[aria-label^="Cancel"], button[title="Close"]'
+      );
+      event.preventDefault();
+      close?.click();
+    };
+    window.addEventListener('vanta-native-back', handleNativeBack);
+    return () => window.removeEventListener('vanta-native-back', handleNativeBack);
+  }, [activeFlow, createHubOpen, mobileMenuOpen, closeCreateHub, closeAll]);
+
 
   // The bottom navigation is shared by the whole app, so observe scrolls at
   // the document capture phase. This catches the shell scroller and page-owned
@@ -596,7 +630,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                         </span>
                       )}
                     </span>
-                    <span>{item.label}</span>
+                    <span>{tr(item.label)}</span>
                   </Link>
                 );
               })}

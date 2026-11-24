@@ -430,15 +430,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
 
-    const publicRoutes = ['/login', '/register', '/forgot-password', '/reset-password', '/terms', '/privacy', '/community-guidelines', '/'];
-    const isPublicRoute = publicRoutes.includes(pathname);
+    // Legal documents remain accessible to both signed-in and signed-out
+    // users. Only anonymous/auth-entry routes bounce an authenticated user
+    // into the product; redirecting /terms, /privacy and /community-guidelines
+    // was making the Settings links appear to open Reels instead.
+    const legalRoutes = ['/terms', '/privacy', '/community-guidelines'];
+    const entryRoutes = ['/login', '/register', '/forgot-password', '/reset-password', '/'];
+    const isPublicRoute = [...entryRoutes, ...legalRoutes].includes(pathname);
 
     // A refresh token represents a recoverable persisted session. Do not turn
     // a temporary API/dev-server outage into a logout while recovery retries.
     if (!token && !refreshToken && !isPublicRoute) {
       if (!accountRoute) router.push('/login');
-    } else if (token && isPublicRoute && accountStatus !== 'SUSPENDED') {
-      // After login/signup/password reset or root landing entry, always land on the Reels feed
+    } else if (token && entryRoutes.includes(pathname) && accountStatus !== 'SUSPENDED') {
       router.push('/reels');
     }
   }, [isLoading, token, refreshToken, pathname, router, user]);

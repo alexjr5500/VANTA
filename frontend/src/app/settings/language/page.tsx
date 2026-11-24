@@ -7,7 +7,7 @@
    preference to the backend so it follows the user across devices.
    ═══════════════════════════════════════════════════════════════ */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Globe, Loader2 } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { useAuth } from '@/context/AuthContext';
@@ -17,6 +17,7 @@ import { apiGet, apiPut } from '@/lib/apiClient';
 import { useToast } from '@/components/ui/Toast';
 import { SettingsGroup } from '@/components/settings/SettingsUI';
 import { cn } from '@/lib/utils';
+import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 
 const LANGUAGES: { value: string; label: string }[] = locales.map((code) => ({
   value: code,
@@ -27,6 +28,8 @@ export default function LanguageSettingsPage() {
   const { token } = useAuth();
   const toast = useToast();
   const { locale, setLocale } = useI18n();
+  const tr = useLocalizedUiText();
+  const chosenLocally = useRef(false);
 
   const [selected, setSelected] = useState<string>('en');
   const [saving, setSaving] = useState(false);
@@ -40,7 +43,7 @@ export default function LanguageSettingsPage() {
     let cancel = false;
     apiGet<{ language?: string }>('/api/settings/privacy', token)
       .then((data) => {
-        if (cancel || !data?.language) return;
+        if (cancel || chosenLocally.current || !data?.language) return;
         // If the account has a saved language different from the current one,
         // switch the app to it.
         if (data.language !== locale) void setLocale(data.language as Locale);
@@ -54,6 +57,7 @@ export default function LanguageSettingsPage() {
   }, [token]);
 
   const chooseLanguage = async (value: string) => {
+    chosenLocally.current = true;
     setSelected(value);
     try {
       await setLocale(value as Locale);
@@ -82,8 +86,7 @@ export default function LanguageSettingsPage() {
 
       <div className="-mt-2">
         <p className="text-sm leading-relaxed text-white/45">
-          Choose your display language. Supported translations are loaded from
-          the VANTA translation set.
+          {tr('Choose your display language. Supported translations are loaded from the VANTA translation set.')}
         </p>
       </div>
 
@@ -130,7 +133,7 @@ export default function LanguageSettingsPage() {
       <div className="flex items-center gap-2 px-1">
         <Check size={13} className="shrink-0 text-[var(--settings-accent-text)]" aria-hidden="true" />
         <p className="text-xs text-white/30">
-          Changes apply immediately and are saved to your account.
+          {tr('Your language selection updates supported screens immediately. Some screens remain in English until translations are completed.')}
         </p>
       </div>
     </div>
