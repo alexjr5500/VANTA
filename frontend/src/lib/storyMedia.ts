@@ -92,6 +92,9 @@ export function toUserFacingStoryError(reason: unknown): string {
         ? asObject.message
         : String(reason || '');
   const lower = message.toLowerCase();
+  if (/prisma\.|does not exist in the current database|database schema/i.test(message)) {
+    return 'Status posting is temporarily unavailable. Please try again later.';
+  }
   if (/reached today's status limit|status limit of/i.test(message)) {
     return 'You’ve reached today’s Status publishing limit. It resets at midnight — or become a verified creator for unlimited posts.';
   }
