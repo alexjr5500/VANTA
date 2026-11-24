@@ -1,6 +1,7 @@
 import { prisma } from "../prisma";
 import { chatService } from "./chat.service";
 import { auditLog } from "../security/auditLog";
+import { mergeCommunitySettings } from "./community-settings";
 
 /** Parses the JSON permission blob stored on the linked Conversation. */
 function parsePermissions(value: string | null | undefined): Record<string, boolean> {
@@ -133,7 +134,7 @@ export class GroupService {
       avatar?: string | null;
       memberIds?: string[];
       memberRoles?: Record<string, string>;
-      permissions?: Record<string, boolean>;
+      permissions?: Record<string, unknown>;
     }
   ) {
     const group: any = await prisma.group.findUnique({
@@ -270,8 +271,10 @@ export class GroupService {
 
     if (data.permissions !== undefined) {
       const allowedPermissionKeys = ["sendMessages", "sendMedia", "sendLinks", "addMembers", "pinMessages", "changeGroupInfo"];
-      const permissions = Object.fromEntries(Object.entries(data.permissions).filter(([key, value]) => allowedPermissionKeys.includes(key) && typeof value === "boolean"));
-      if (group.conversationId) await prisma.conversation.update({ where: { id: group.conversationId }, data: { permissions: JSON.stringify(permissions) } });
+      if (group.conversationId) {
+        const current = await prisma.conversation.findUnique({ where: { id: group.conversationId }, select: { permissions: true } });
+        await prisma.conversation.update({ where: { id: group.conversationId }, data: { permissions: mergeCommunitySettings(current?.permissions, data.permissions, allowedPermissionKeys) } });
+      }
     }
 
     // Apply role updates
