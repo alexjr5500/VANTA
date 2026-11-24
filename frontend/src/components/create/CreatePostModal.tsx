@@ -16,6 +16,7 @@ import VerificationBadge from '@/components/ui/VerificationBadge';
 import QuoteEmbed from '@/components/social/QuoteEmbed';
 import ReplyAudienceSheet from './ReplyAudienceSheet';
 import { REPLY_AUDIENCE_LABELS, isReplyAudience, type ReplyAudience } from '@/lib/replyAudience';
+import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
 
 const MAX_CHARS = 5000;
 /** VANTA posts accept up to 10 attachments (matches MediaUploader's default). */
@@ -48,6 +49,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const uploaderRef = useRef<MediaUploaderHandle>(null);
+  const mentions = useMentionSuggestions({ value: content, onChange: setContent, token, inputRef: textareaRef });
 
   const isTextStory = isStory && storyKind === 'text';
   const hasContent = content.trim().length > 0 || media.length > 0 || Boolean(quoteUrl);
@@ -232,6 +234,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
 
   const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setContent(e.target.value);
+    mentions.syncCaret(e.target);
     // Auto-resize
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -329,6 +332,9 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                     ref={textareaRef}
                     value={content}
                     onChange={handleTextareaInput}
+                    onClick={e => mentions.syncCaret(e.currentTarget)}
+                    onKeyUp={e => mentions.syncCaret(e.currentTarget)}
+                    onKeyDown={e => { mentions.onKeyDown(e); }}
                     placeholder={intentMeta.placeholder}
                     rows={5}
                     maxLength={MAX_CHARS + 100}
@@ -337,6 +343,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                   />
                 )}
 
+                {!isStory && <MentionSuggestions mention={mentions} className="rounded-xl" />}
                 {quoteTarget && !isStory && <QuoteEmbed quote={quoteTarget} />}
                 {!isStory && draftNotice && <p role="status" className="text-xs text-[#dfbd55]">{draftNotice}</p>}
 
