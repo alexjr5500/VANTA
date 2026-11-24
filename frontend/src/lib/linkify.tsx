@@ -108,6 +108,15 @@ export function linkPreviewLabel(href: string): string {
   } catch { return 'Open link'; }
 }
 
+/** Compact text inside an already-clickable notification/quote; avoid nested links. */
+export function previewExcerpt(text: string): ReactNode[] {
+  return text.split(/((?:https?:\/\/|www\.)[^\s<>"']+|[@#][a-zA-Z0-9_]{2,30}\b)/gi).map((part, i) => {
+    if (/^(?:https?:\/\/|www\.)/i.test(part)) return createElement('span', { key: i, className: 'vanta-inline-tag' }, '↗ ' + linkPreviewLabel(safeUrlHref(part)));
+    if (/^[@#][a-zA-Z0-9_]{2,30}$/i.test(part)) return createElement('span', { key: i, className: 'vanta-inline-tag' }, part);
+    return part;
+  });
+}
+
 /** Split a string into linkable pieces. Returns an array of React nodes. */
 export function renderTextWithLinks(text: string, linkClassName?: string, options?: LinkifyOptions): ReactNode[] {
   if (!text) return [];
