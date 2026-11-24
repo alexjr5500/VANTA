@@ -14,6 +14,7 @@ export interface VideoTrimTimelineProps {
   onRangeChange: (start: number, end: number) => void;
   onSeek: (time: number) => void;
   className?: string;
+  compact?: boolean;
 }
 
 type DragMode = 'start' | 'end' | 'seek' | null;
@@ -101,6 +102,7 @@ export default function VideoTrimTimeline({
   onRangeChange,
   onSeek,
   className,
+  compact = false,
 }: VideoTrimTimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragMode>(null);
@@ -236,7 +238,7 @@ if (safeDuration <= 0) {
         ref={trackRef}
         role="group"
         aria-label="Video timeline trimmer"
-        className="relative h-[68px] w-full cursor-crosshair touch-none overflow-hidden rounded-xl border border-white/[0.08] bg-[#111113]"
+        className={cn("relative w-full cursor-crosshair touch-none overflow-hidden rounded-md border border-white/[0.08] bg-[#111113]", compact ? "h-10" : "h-[68px]")}
         onPointerDown={handleTrackPointerDown}
         onPointerMove={handleTrackPointerMove}
         onPointerUp={endDrag}
@@ -335,7 +337,7 @@ if (safeDuration <= 0) {
         </button>
       </div>
 {/* Precision controls */}
-      <div className="mt-2 flex items-start justify-between gap-2">
+      {compact ? <div className="mt-1 flex items-center justify-between text-[10px] tabular-nums text-white/60"><span>{formatVideoTime(start)} – {formatVideoTime(end)}</span><span className="text-[#dfbd55]">{formatVideoTime(end - start)} selected</span></div> : <div className="mt-2 flex items-start justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <NudgeButton
             direction="minus"
@@ -381,7 +383,7 @@ if (safeDuration <= 0) {
             onClick={() => onRangeChange(start, clampTime(end + 1, start + VIDEO_MIN_GAP_SECONDS, safeDuration))}
           />
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

@@ -1,12 +1,14 @@
 'use client';
 
+import BookmarkIcon from '@/components/ui/BookmarkIcon';
+
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useToast } from '@/components/ui/Toast';
 import { toggleSaveHome } from '@/lib/services';
 import { API_BASE_URL } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import { MapPin, Bed, Bath, Home, Play, Bookmark } from 'lucide-react';
+import { MapPin, Bed, Bath, Home, Play } from 'lucide-react';
 
 export interface PropertyCardProps { listing: any; }
 
@@ -77,7 +79,7 @@ export default function PropertyCard({ listing }: PropertyCardProps) {
         </Link>
         <span className="absolute bottom-3 left-3 max-w-[calc(100%-4rem)] truncate rounded-full bg-black/65 px-3 py-1.5 text-[10px] font-semibold tracking-wide text-white backdrop-blur-sm">{type}</span>
         <button type="button" onClick={() => void handleSave()} disabled={saving} className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full border border-white/15 bg-black/55 text-white shadow-lg backdrop-blur-md transition hover:bg-black/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c9a227] disabled:opacity-60" aria-label={saved ? 'Remove from saved homes' : 'Save this property'} aria-pressed={saved}>
-          <Bookmark size={17} fill={saved ? '#c9a227' : 'none'} className={saved ? 'text-[#c9a227]' : ''} />
+          <BookmarkIcon size={17} saved={saved} />
         </button>
       </div>
       <div className="min-w-0 px-0 pb-2 pt-3">

@@ -1,6 +1,8 @@
 import { createPost } from '../controllers/feed.controller';
 import { prisma } from '../prisma';
 import { feedService, uploadService } from '../services';
+import { notificationService } from '../services/notification.service';
+jest.mock('../services/notification.service', () => ({ notificationService: { notifyPublishedMentions: jest.fn().mockResolvedValue(undefined) } }));
 
 jest.mock('../prisma', () => ({
   prisma: {
@@ -89,6 +91,14 @@ describe('Create Post publishes video assets into the canonical Reel feed', () =
     expect(res.status).toHaveBeenCalledWith(201);
     expect(tx.post.create).toHaveBeenCalledWith({ data: expect.objectContaining({ replyAudience: 'MENTIONED' }) });
     expect(tx.video.create).toHaveBeenCalledWith({ data: expect.objectContaining({ replyAudience: 'MENTIONED' }) });
+  });
+
+  it('delivers mention notifications only after a successful ordinary post', async () => {
+    (feedService.createPost as jest.Mock).mockResolvedValue({ id: 'p1' });
+    const res = response();
+    await createPost(request([], 'Hello @anime'), res);
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(notificationService.notifyPublishedMentions).toHaveBeenCalledWith('user-1', 'Hello @anime', { kind: 'post', id: 'p1' });
   });
 
   it('rejects an invalid reply audience before publishing', async () => {

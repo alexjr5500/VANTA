@@ -6,14 +6,13 @@ import {
   ArrowLeft,
   Camera,
   Check,
-  Clock,
   CloudUpload,
-  Film,
   Image as ImageIcon,
   Loader2,
   Plus,
+  Send,
+  AtSign,
   RefreshCw,
-  Trash2,
   Video,
   X,
 } from 'lucide-react';
@@ -24,7 +23,6 @@ import { createStoryDraft, failStoryMedia, fetchStatusUsage, type StoryUsage } f
 import { notifyStoryFeedChanged } from '@/lib/storyEvents';
 import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
 import { MentionTextarea } from '@/components/social/MentionTextarea';
-import { renderTextWithLinks } from '@/lib/linkify';
 import {
   cancelUpload,
   getJobs,
@@ -34,16 +32,17 @@ import {
   subscribeUploads,
   type UploadJob,
 } from '@/lib/uploads/store';
-import VideoTrimModal from '@/components/video/VideoTrimModal';
+import StatusVideoPreview from '@/components/story/StatusVideoPreview';
+import { prepareStatusVideo, statusRangeNeedsTrim, type StatusTrimRange } from '@/lib/statusVideoTrim';
 import StatusGallerySheet from '@/components/story/StatusGallerySheet';
 import { nativeGalleryConnection, parseNativeGallery, type NativeRecentMedia, type NativeGalleryStatus } from '@/lib/nativeStatusGallery';
-import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 import {
   normalizeStatusEditorValue,
 } from '@/lib/statusLimits';
 import {
   STORY_MAX_IMAGE_BYTES,
   STORY_MAX_VIDEO_BYTES,
+  STORY_MAX_VIDEO_SECONDS,
   storyMediaCapacity,
   storyMediaKindOf,
   toUserFacingStoryError,
@@ -217,7 +216,9 @@ export default function StoryMediaEditor({ source, initialFiles, onBack, onText,
   const itemsRef = useRef<DraftMedia[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [caption, setCaption] = useState('');
-  const [trimItem, setTrimItem] = useState<DraftMedia | null>(null);
+  const [trimRanges, setTrimRanges] = useState<Record<string, StatusTrimRange>>({});
+  const [preparing, setPreparing] = useState(false);
+  const trimAbortRef = useRef<AbortController | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [draftFailed, setDraftFailed] = useState(false);
   const [error, setError] = useState('');
@@ -243,6 +244,7 @@ useEffect(() => {
   }, [items]);
 
   useEffect(() => () => {
+    trimAbortRef.current?.abort();
     if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
     for (const item of itemsRef.current) {
       try {
@@ -345,9 +347,16 @@ useEffect(() => {
         return;
       }
       const created = await buildDraftItems(valid);
-      if (nativeMediaId && created.length === 1) created[0].nativeMediaId = nativeMediaId;
-      setItems((previous) => [...previous, ...created]);
-      setActiveId(created[created.length - 1].id);
+      const accepted = created.filter(item => {
+        if (item.kind !== 'video' || (item.duration != null && Number.isFinite(item.duration) && item.duration > 0 && item.duration <= STORY_MAX_VIDEO_SECONDS)) return true;
+        URL.revokeObjectURL(item.objectUrl);
+        issues.push(item.duration != null && item.duration > STORY_MAX_VIDEO_SECONDS ? 'Status videos are limited to 2 minutes (120 seconds).' : 'Unable to read this video duration. Choose another video.');
+        return false;
+      });
+      if (!accepted.length) { setMediaError(issues.join(' ')); return; }
+      if (nativeMediaId && accepted.length === 1) accepted[0].nativeMediaId = nativeMediaId;
+      setItems((previous) => [...previous, ...accepted]);
+      setActiveId(accepted[accepted.length - 1].id);
       if (issues.length > 0) setMediaError(issues.join(' '));
     },
     [capacity, items.length]
@@ -503,33 +512,9 @@ useEffect(() => {
     setCaption('');
     setError('');
     setMediaError('');
-    setTrimItem(null);
+    setTrimRanges({});
     onBack?.();
   }, [onBack]);
-
-  const handleTrimConfirm = useCallback(
-    (result: VideoTrimResult) => {
-      const target = trimItem;
-      setTrimItem(null);
-      if (!result.file || !target) return;
-      try {
-        URL.revokeObjectURL(target.objectUrl);
-      } catch {
-        // no-op
-      }
-      const objectUrl = URL.createObjectURL(result.file);
-      setItems((previous) =>
-        previous.map((item) =>
-          item.id === target.id
-            ? { ...item, file: result.file, objectUrl, thumbUrl: null, duration: null, name: result.file.name, size: result.file.size, kind: 'video' }
-            : item
-        )
-      );
-      setError('');
-      setMediaError('');
-    },
-    [trimItem]
-  );
 
   const retryFailedUploads = useCallback(() => {
     const ids = new Set(startedJobIdsRef.current);
@@ -569,13 +554,26 @@ useEffect(() => {
     const normalizedCaption = normalizeStatusEditorValue(caption).trim() || undefined;
     publishingRef.current = true;
     successShownRef.current = false;
-    setPublishing(true);
+    setPreparing(true);
     setDraftFailed(false);
     setError('');
     setMediaError('');
 
     const createdDraftIds: string[] = [];
+    const abort = new AbortController();
+    trimAbortRef.current = abort;
     try {
+      const prepared: DraftMedia[] = [];
+      for (const item of items) {
+        const range = trimRanges[item.id];
+        const needsTrim = item.kind === 'video' && range && statusRangeNeedsTrim(range, item.duration);
+        if (item.kind === 'video' && (!item.duration || item.duration > STORY_MAX_VIDEO_SECONDS)) throw new Error('Status videos are limited to 2 minutes (120 seconds).');
+        const file = needsTrim && range ? await prepareStatusVideo(item.file, item.objectUrl, range, abort.signal) : item.file;
+        prepared.push({ ...item, file, size: file.size, name: file.name });
+      }
+      if (abort.signal.aborted) throw new DOMException('Trimming cancelled', 'AbortError');
+      setPreparing(false);
+      setPublishing(true);
       // 1) Create one draft per file, preserving the selected order. Nothing is
       //    uploaded until EVERY draft exists, so a mid-way failure can never
       //    leave a partial-but-live Status.
@@ -589,7 +587,7 @@ useEffect(() => {
       // 2) Hand every file to the existing resumable chunk pipeline. Each job
       //    finalizes its own Story row server-side (quota + 24h enforced there).
       const jobIds: string[] = [];
-      items.forEach((item, index) => {
+      prepared.forEach((item, index) => {
         const job = startUpload({
           kind: 'story',
           file: item.file,
@@ -623,8 +621,11 @@ useEffect(() => {
       setDraftFailed(true);
       publishingRef.current = false;
       setPublishing(false);
+    } finally {
+      setPreparing(false);
+      if (trimAbortRef.current === abort) trimAbortRef.current = null;
     }
-  }, [token, items, caption, toast, getAccessToken, renewAccessToken]);
+  }, [token, items, caption, trimRanges, toast, getAccessToken, renewAccessToken]);
 
   const active = useMemo(() => items.find((item) => item.id === activeId) || items[0] || null, [items, activeId]);
 
@@ -668,7 +669,7 @@ useEffect(() => {
       <header className="relative flex h-14 shrink-0 items-center justify-between px-4" aria-label="Status editor navigation">
         <button
           type="button"
-          onClick={() => (showMediaPreview && !publishing ? setShowMediaPreview(false) : items.length > 0 ? discardAll() : onBack ? onBack() : onClose())}
+          onClick={() => (preparing ? trimAbortRef.current?.abort() : showMediaPreview && !publishing ? setShowMediaPreview(false) : items.length > 0 ? discardAll() : onBack ? onBack() : onClose())}
           aria-label={showMediaPreview && !publishing ? 'Back to selected media' : items.length > 0 ? 'Discard selected media' : 'Close Add status'}
           className="grid h-11 w-11 place-items-center text-white transition hover:bg-white/[0.06]"
         >
@@ -717,42 +718,19 @@ useEffect(() => {
         />
       ) : (
 <>
-          {/* Main preview */}
-          <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
-            <div
-              className="relative h-full w-full overflow-hidden bg-black"
-            >
-              {active?.kind === 'image' ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={active.objectUrl} alt="Status media preview" className="absolute inset-0 h-full w-full object-contain" />
-              ) : active ? (
-                <video src={active.objectUrl} playsInline muted loop className="absolute inset-0 h-full w-full object-contain" />
-              ) : null}
-
-              {/* Selected index + kind chip */}
-              {active && items.length > 0 && (
-                <span className="absolute left-2.5 top-2.5 z-10 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-semibold text-white/90 backdrop-blur-sm">
-                  {active.kind === 'video' ? <Film size={11} /> : <ImageIcon size={11} />}
-                  {items.findIndex((item) => item.id === active.id) + 1}
-                  <span className="text-white/35">/</span>
-                  {items.length}
-                </span>
-              )}
-              {active && active.kind === 'video' && active.duration && active.duration > 0 && (
-                <span className="absolute right-2.5 top-2.5 z-10 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-white/90 backdrop-blur-sm">
-                  <Clock size={11} />
-                  {formatVideoTime(active.duration)}
-                </span>
-              )}
-
-              {caption.trim() && (
-                <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 to-transparent px-4 pb-4 pt-10">
-                  <p className="whitespace-pre-wrap break-words text-left text-[15px] font-medium leading-snug text-white">
-                    {renderTextWithLinks(caption.trim(), 'linkify', { mentions: true, hashtags: true })}
-                  </p>
-                </div>
-              )}
-            </div>
+          <div className="relative flex min-h-0 flex-1 items-center justify-center bg-[var(--background)]">
+            {active?.kind === 'image' ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={active.objectUrl} alt="Status media preview" className="h-full w-full object-contain" />
+            ) : active ? (
+              <StatusVideoPreview key={active.id} src={active.objectUrl} duration={active.duration} size={active.size} poster={active.thumbUrl} range={trimRanges[active.id]}
+                onRange={range => setTrimRanges(previous => ({ ...previous, [active.id]: range }))} />
+            ) : null}
+            {preparing && <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/70 text-white">
+              <Loader2 className="animate-spin text-[#dfbd55]" size={28} />
+              <p className="text-sm">Preparing your selected clips…</p>
+              <button type="button" className="rounded-full border border-white/20 px-4 py-2 text-xs" onClick={() => trimAbortRef.current?.abort()}>Cancel</button>
+            </div>}
           </div>
 
           {(mediaError || error) && (
@@ -761,16 +739,17 @@ useEffect(() => {
         </>
       )}
 {!publishing && showMediaPreview && items.length > 0 && (
-        <div className="flex shrink-0 items-center gap-2 overflow-x-auto px-3 pb-1 scrollbar-hide" aria-label="Selected media">
+        <div className={cn("flex shrink-0 items-center gap-1.5 overflow-x-auto px-3 py-1 scrollbar-hide", items.length <= 4 ? "justify-center" : "justify-start")} aria-label="Selected media">
           {items.map((item, index) => (
             <div key={item.id} className="relative shrink-0">
               <button
                 type="button"
+                disabled={preparing}
                 onClick={() => setActiveId(item.id)}
                 aria-pressed={item.id === activeId}
                 aria-label={`Preview ${item.name}`}
                 className={cn(
-                  'relative block h-[88px] w-[58px] overflow-hidden rounded-lg',
+                  'relative block h-12 w-12 overflow-hidden rounded-lg',
                   item.id === activeId
                     ? 'border-2 border-[#dfbd55] shadow-[0_0_12px_rgba(201,162,39,0.35)]'
                     : 'border border-white/[0.12] opacity-85 transition hover:border-white/25 hover:opacity-100'
@@ -795,6 +774,7 @@ useEffect(() => {
               </button>
               <button
                 type="button"
+                disabled={preparing}
                 onClick={() => removeItem(item.id)}
                 aria-label={`Remove ${item.name}`}
                 className="absolute -right-1.5 -top-1.5 z-10 grid h-6 w-6 place-items-center rounded-full border border-white/20 bg-black/80 text-white/80 transition hover:bg-[#e5484d] hover:text-white active:scale-90"
@@ -806,9 +786,10 @@ useEffect(() => {
           <button
             type="button"
             onClick={openGalleryPicker}
+            disabled={preparing || items.length >= capacity}
             aria-label="Add more photos or videos"
             className={cn(
-              'flex h-[88px] w-[58px] shrink-0 items-center justify-center rounded-lg border border-dashed',
+              'flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-dashed',
               items.length >= capacity
                 ? 'border-white/[0.07] bg-white/[0.01] text-white/25'
                 : 'border-[#c9a227]/45 bg-black/30 text-[#dfbd55] transition hover:border-[#c9a227] hover:bg-[#c9a227]/10 active:scale-95'
@@ -820,17 +801,11 @@ useEffect(() => {
       )}
 {!publishing && showMediaPreview && items.length > 0 && (
         <>
-          {/* Trim remains available for videos; redundant media shortcuts are hidden. */}
-          {active?.kind === 'video' && (
-            <div className="flex shrink-0 justify-center px-4 pb-1.5">
-              <MediaAction label="Trim" icon={Clock} onClick={() => setTrimItem(active)} />
-            </div>
-          )}
-
           {/* Compact caption composer — character limits remain enforced by normalization. */}
-          <div className="shrink-0 px-4 pb-1.5">
+          <div className="shrink-0 px-3 pb-1">
             <MentionSuggestions mention={captionMentions} className="mb-2 rounded-xl" />
-            <div className="flex items-end gap-2 rounded-full border border-white/[0.06] bg-[#11191e] px-4 py-2.5">
+            <div className="flex min-h-9 items-center gap-1.5 rounded-full border border-white/[0.06] bg-[var(--surface)] px-2.5 py-0.5">
+              <button type="button" disabled={preparing} onClick={openGalleryPicker} aria-label="Add more media" className="shrink-0 text-[#dfbd55]"><ImageIcon size={18} /></button>
               <MentionTextarea
                 ref={captionRef}
                 value={caption}
@@ -846,8 +821,11 @@ useEffect(() => {
                 placeholder="Add a caption…"
                 aria-label="Status caption"
                 rows={1}
-                className="max-h-24 min-h-[38px] flex-1 resize-none bg-transparent text-[15px] leading-tight text-white outline-none placeholder:text-white/45"
+                disabled={preparing}
+                surfaceClassName="flex items-center"
+                className="block h-8 min-h-0 max-h-8 flex-1 resize-none overflow-y-auto border-0 bg-transparent p-0 py-1.5 text-[14px] leading-5 text-white outline-none placeholder:text-white/45"
               />
+              <button type="button" disabled={preparing} aria-label="Mention account" onClick={() => { setCaption(value => normalizeStatusEditorValue(value + (value && !/\s$/.test(value) ? ' ' : '') + '@')); requestAnimationFrame(() => { const input = captionRef.current; input?.focus(); if (input) { input.setSelectionRange(input.value.length, input.value.length); captionMentions.syncCaret(input); } }); }} className="shrink-0 text-[#dfbd55]"><AtSign size={18} /></button>
             </div>
           </div>
 
@@ -864,38 +842,19 @@ useEffect(() => {
         <p role="alert" className="shrink-0 px-4 pb-1 text-center text-xs leading-4 text-[#ff9b9b]">{error}</p>
       )}
 
-      {/* Publish bar */}
       {!publishing && showMediaPreview && items.length > 0 && (
-        <footer
-          className="vanta-status-action-footer mt-auto shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-3 pt-1"
-          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--vanta-kb, 0px))' }}
-        >
-          <button
-            type="button"
-            onClick={() => failedJobs.length > 0 ? retryFailedUploads() : void publish()}
-            disabled={items.length === 0 || atQuota}
+        <footer className="vanta-status-action-footer mt-auto flex shrink-0 items-center justify-between bg-[var(--background)] px-3 pt-1"
+          style={{ paddingBottom: 'max(6px, env(safe-area-inset-bottom, 0px))' }}>
+          <span className="text-xs font-medium text-white/55">Status · {items.length} {items.length === 1 ? 'item' : 'items'}</span>
+          <button type="button" onClick={() => failedJobs.length > 0 ? retryFailedUploads() : void publish()}
+            disabled={preparing || items.length === 0 || atQuota}
             aria-label={failedJobs.length > 0 ? 'Retry failed Status uploads' : 'Post Status'}
-            className="flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[#c9a227] text-[15px] font-bold text-black transition hover:bg-[#dfbd55] active:scale-[0.99] disabled:opacity-30"
-          >
-            {failedJobs.length > 0 ? <RefreshCw size={18} /> : <Check size={18} />}
-            {failedJobs.length > 0 ? 'Retry failed uploads' : 'Post Status'}
-            {items.length > 0 && <span className="text-black/50">({items.length})</span>}
+            className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#c9a227] text-black transition hover:bg-[#dfbd55] active:scale-95 disabled:opacity-35">
+            {preparing ? <Loader2 size={21} className="animate-spin" /> : failedJobs.length > 0 ? <RefreshCw size={21} /> : <Send size={21} fill="currentColor" />}
           </button>
         </footer>
       )}
 
-      {/* Shared video trimmer — lets the user cut a Story video to the range they
-          want before it is uploaded in the background. */}
-      <VideoTrimModal
-        open={Boolean(trimItem)}
-        file={trimItem?.file || null}
-        onClose={() => setTrimItem(null)}
-        onConfirm={handleTrimConfirm}
-        title="Trim Story Video"
-        subtitle="Preview and trim the timeline before publishing"
-        confirmLabel="Use this video"
-        trimActionLabel="Trim & Preview"
-      />
     </div>
   );
 }
@@ -1051,26 +1010,5 @@ function PublishingPanel({
       {error && <p role="alert" className="mt-4 text-center text-xs leading-4 text-[#ff9b9b]">{error}</p>}
       {absentMessage && !error && <p className="mt-2 text-center text-[10.5px] leading-4 text-white/40">{absentMessage}</p>}
     </div>
-  );
-}
-
-function MediaAction({
-  label,
-  icon: Icon,
-  onClick,
-}: {
-  label: string;
-  icon: React.ComponentType<{ size?: number | string; className?: string }>;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex h-9 items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 text-[11px] font-medium text-[#c8c8cc] transition hover:bg-white/[0.07] hover:text-white active:scale-95"
-    >
-      <Icon size={14} />
-      {label}
-    </button>
   );
 }

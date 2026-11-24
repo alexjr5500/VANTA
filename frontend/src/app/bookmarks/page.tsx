@@ -1,5 +1,7 @@
 'use client';
 
+import BookmarkIcon from '@/components/ui/BookmarkIcon';
+
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/context/AuthContext';
@@ -157,8 +159,8 @@ export default function BookmarksPage() {
                 )}
                 
                 {/* Remove Button */}
-                <button aria-label="Remove bookmark" onClick={(event) => { event.stopPropagation(); void removeBookmark(bookmark.id); }} className="absolute top-2 right-2 flex h-9 w-9 items-center justify-center rounded-lg bg-black/75 text-white">
-                  <Bookmark size={17} className="fill-current" />
+                <button aria-label="Remove bookmark" aria-pressed={true} onClick={(event) => { event.stopPropagation(); void removeBookmark(bookmark.id); }} className="absolute top-2 right-2 flex h-9 w-9 items-center justify-center rounded-lg bg-black/75 text-[#dfbd55]">
+                  <BookmarkIcon size={17} saved />
                 </button>
               </div>
 

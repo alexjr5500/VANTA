@@ -26,6 +26,7 @@ import { useNotifications, type VantaNotification } from '@/context/Notification
 import { apiGet, apiPatch } from '@/lib/apiClient';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { cn } from '@/lib/utils';
+import { notificationDestination } from '@/lib/notificationDestination';
 import { previewExcerpt } from '@/lib/linkify';
 
 type NotificationResponse = {
@@ -75,25 +76,6 @@ const metadataOf = (notification: VantaNotification): Record<string, any> => {
   if (!notification.data) return {};
   if (typeof notification.data === 'object') return notification.data;
   try { const value = JSON.parse(notification.data); return value && typeof value === 'object' ? value : {}; } catch { return {}; }
-};
-
-const destinationOf = (notification: VantaNotification) => {
-  const data = metadataOf(notification);
-  const type = normalizedTypeOf(notification);
-  if (typeof data.destination === 'string' && data.destination.startsWith('/')) return data.destination;
-  const streamId = data.streamId || (notification.entityType === 'live' ? notification.entityId : null);
-  if (streamId) return `/live/${streamId}`;
-  const conversationId = data.conversationId || (notification.entityType === 'conversation' ? notification.entityId : null);
-  if (conversationId) return `/chat/${conversationId}`;
-  if (data.groupId) return `/chat/${data.groupId}`;
-  if (data.channelId) return `/chat/${data.channelId}`;
-  const postId = data.postId || (notification.entityType === 'post' ? notification.entityId : null);
-  if (postId) return `/home?post=${postId}${data.commentId ? `&comment=${data.commentId}` : ''}`;
-  if (data.reelId || notification.entityType === 'reel') return `/reels?reel=${data.reelId || notification.entityId}`;
-  if (data.transactionId || type === 'wallet' || type.startsWith('wallet_')) return '/balance/transactions';
-  const actor = notification.actor?.username || notification.actorId || data.actorId || data.followerId;
-  if (actor) return `/profile/${actor}`;
-  return null;
 };
 
 const localTime = (value: string) => {
@@ -227,7 +209,7 @@ export default function NotificationsPage() {
 
   const openNotification = async (notification: VantaNotification) => {
     await markRead(notification);
-    const destination = destinationOf(notification);
+    const destination = notificationDestination(notification);
     if (destination) router.push(destination);
   };
 
@@ -258,11 +240,11 @@ export default function NotificationsPage() {
             <button type="button" onClick={() => router.push('/profile')} aria-label="Your profile" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:ring-white/50"><Avatar src={user?.avatar ?? user?.avatarUrl} alt="" size="sm" /></button>
           </div>
           <h1 className="text-base font-bold text-white">Notifications</h1>
-          <button onClick={() => router.push('/settings/notifications')} className="ml-auto flex h-10 w-10 items-center justify-center rounded-lg text-white/80 hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-white/50" aria-label="Notification settings"><Settings size={23} /></button>
+          <button onClick={() => router.push('/settings/notifications')} className="ml-auto flex h-10 w-10 items-center justify-center rounded-lg text-[#dfbd55] hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#dfbd55]" aria-label="Notification settings"><Settings size={23} /></button>
         </div>
         <div className="grid grid-cols-3 border-b border-white/[0.08]" role="tablist" aria-label="Notification activity">
           {activityTabs.map(tab => <button key={tab.id} role="tab" aria-selected={activityTab === tab.id} onClick={() => { setActivityTab(tab.id); setFilterId('all'); }} className={cn('relative flex min-h-12 items-center justify-center gap-1.5 px-1 text-sm font-semibold focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/50', activityTab === tab.id ? 'text-[#d6a83f] after:absolute after:inset-x-3 after:bottom-0 after:h-[3px] after:rounded-full after:bg-[#d6a83f]' : 'text-white/50 hover:text-white')}>
-            {tab.id === 'all' && <Bell size={17} aria-hidden="true" />}{tab.label}
+            {tab.id === 'all' && <Bell size={17} className="text-[#dfbd55]" aria-hidden="true" />}{tab.label}
           </button>)}
         </div>
         <div className="flex min-h-11 items-center gap-2 border-b border-white/[0.07] px-4">
@@ -280,7 +262,7 @@ export default function NotificationsPage() {
             const Icon = iconByType[normalizedType] ?? Bell;
             const data = metadataOf(notification);
             const actorName = notification.actor?.fullName || notification.actor?.username;
-            const destination = destinationOf(notification);
+            const destination = notificationDestination(notification);
             const thumbnail = [data.thumbnailUrl, data.imageUrl].find(value => typeof value === 'string' && value.trim());
             const message = activityMessage(notification, actorName);
             return <motion.article key={notification.id} initial={index === 0 && latestNotification?.id === notification.id ? { opacity: 0, y: -8 } : false} animate={{ opacity: 1, y: 0 }} className={cn('relative border-b border-white/[0.08] transition-colors hover:bg-[var(--surface)]', !notification.read && 'bg-white/[0.025]')}>

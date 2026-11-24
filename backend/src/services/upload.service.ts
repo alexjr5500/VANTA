@@ -122,6 +122,11 @@ const useCloudinary = Boolean(
 );
 const execFileAsync = promisify(execFile);
 const maxVideoDurationSeconds = Number(process.env.MAX_VIDEO_DURATION_SECONDS || 600);
+export const STATUS_MAX_VIDEO_SECONDS = 120;
+export function assertStatusVideoDuration(duration: unknown): void {
+  if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) throw new Error("Unable to verify Status video duration. Choose a supported video.");
+  if (duration > STATUS_MAX_VIDEO_SECONDS) throw new Error("Status videos are limited to 2 minutes (120 seconds).");
+}
 
 if (useCloudinary) {
   cloudinary.config({
@@ -516,8 +521,13 @@ export class UploadService {
     const url = buildUploadUrl(req, file.filename);
     const fileType = getFileType(file.mimetype);
 
+    const isStatus = category === "story" || recordType === "Story";
+    let probedDuration: number | undefined;
     if (fileType === "VIDEO") {
-      const duration = await probeVideoDuration(file.path);
+      const duration = probedDuration = await probeVideoDuration(file.path);
+      if (isStatus && (duration !== undefined || !useCloudinary)) {
+        try { assertStatusVideoDuration(duration); } catch (error) { removeLocalFile(file.path); throw error; }
+      }
       if (duration !== undefined && duration > maxVideoDurationSeconds) {
         removeLocalFile(file.path);
         throw new Error(`Video duration exceeds the ${Math.floor(maxVideoDurationSeconds / 60)} minute limit.`);
@@ -557,6 +567,10 @@ export class UploadService {
           unique_filename: true,
           overwrite: false,
         });
+        if (isStatus && fileType === "VIDEO") {
+          try { assertStatusVideoDuration(cloudResult.duration ?? probedDuration); }
+          catch (error) { await cloudinary.uploader.destroy(cloudResult.public_id, { resource_type: "video", invalidate: true }); throw error; }
+        }
         finalUrl = cloudResult.secure_url;
         storagePath = `cloudinary:${resourceType}:${cloudResult.public_id}`;
         if (fileType === "VIDEO") {
@@ -607,11 +621,25 @@ export class UploadService {
     };
   }
 
+  /** Verify duration from trusted storage metadata, including pre-existing uploads. */
+  async assertStatusMediaDuration(file: { fileType: string; path: string | null; filename: string }): Promise<void> {
+    if (file.fileType !== "VIDEO") return;
+    const match = /^cloudinary:video:(.+)$/.exec(file.path || "");
+    if (match) {
+      const resource = await cloudinary.api.resource(match[1], { resource_type: "video", type: "upload" });
+      assertStatusVideoDuration(resource.duration);
+      return;
+    }
+    if (path.basename(file.filename) !== file.filename) throw new Error("Invalid Status video storage reference.");
+    assertStatusVideoDuration(await probeVideoDuration(path.join(uploadDir, file.filename)));
+  }
+
   private async deleteStorageAsset(filename: string, storagePath?: string | null): Promise<boolean> {
     if (storagePath?.startsWith("cloudinary:")) {
       const [, resourceType, ...publicIdParts] = storagePath.split(":");
-      await cloudinary.uploader.destroy(publicIdParts.join(":"), { resource_type: resourceType as any, invalidate: true });
-      return true;
+      const result = await cloudinary.uploader.destroy(publicIdParts.join(":"), { resource_type: resourceType as any, invalidate: true });
+      if (result.result !== "ok" && result.result !== "not found") throw new Error("Storage provider did not confirm asset deletion");
+      return result.result === "ok";
     }
     const safeFilename = path.basename(filename);
     if (safeFilename !== filename) return false;
