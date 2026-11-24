@@ -62,8 +62,14 @@ import { setNotificationIO, notificationService } from './services/notification.
 import { setSocialEventsIO } from './services/social-events.service';
 import { apiLatencyMiddleware, healthStatus, metricsCollector, cacheService, setupDefaultAlerts } from './services';
 import { uploadStorageDir, getStorageDiagnostics } from './services/upload.service';
+import { ServerReadiness, BackgroundDrain, shutdownWithin } from './services/server-lifecycle';
 
 const app: Express = express();
+const traffic = new ServerReadiness(
+  () => prisma.$queryRaw`SELECT 1`,
+  () => process.env.VANTA_READINESS_REQUIRE_REDIS !== 'true' || cacheService.isRedisAvailable,
+);
+const backgroundDrain = new BackgroundDrain();
 
 // Local HTTPS development (optional). When HTTPS_DEV_CERT and HTTPS_DEV_KEY are
 // set the API + Socket.IO are served over TLS (wss://) so an HTTPS frontend page
@@ -136,6 +142,11 @@ app.use(cors({
   optionsSuccessStatus: 204, // complete preflight OPTIONS cleanly for all /api routes
   preflightContinue: false,
 }));
+
+// Lightweight platform probes bypass body parsing, static file handling and API rate limits.
+app.get('/health/live', traffic.liveHandler);
+app.get('/health/ready', traffic.readyHandler);
+app.use(traffic.drainMiddleware);
 
 // Performance optimization: Response compression
 app.use(compression({
@@ -531,6 +542,7 @@ app.use('/api/analytics', analyticsRouter);
 // ============================================================================
 
 const io = new Server(httpServer, {
+  allowRequest: (_req, callback) => callback(null, !traffic.draining),
   cors: {
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
       if (isOriginAllowed(origin, corsAllowedOrigins, isProduction)) {
@@ -749,9 +761,7 @@ async function startServer() {
         console.warn('[FollowerRewards] Expiry sweep skipped:', sweepError);
       }
     };
-    void expireDueRewards();
-    const expireRewardsTimer = setInterval(expireDueRewards, 15 * 60 * 1000);
-    if (expireRewardsTimer.unref) expireRewardsTimer.unref();
+    backgroundDrain.schedule(expireDueRewards, 15 * 60 * 1000);
 
     // Birthday and VANTA account anniversaries: run at startup and once daily in UTC.
     // Notification reference keys are unique per user/year, so retries and restarts are safe.
@@ -781,9 +791,7 @@ async function startServer() {
         console.warn('[Milestones] Birthday/anniversary sweep skipped:', sweepError);
       }
     };
-    void sweepUserMilestones();
-    const userMilestonesTimer = setInterval(sweepUserMilestones, 24 * 60 * 60 * 1000);
-    if (userMilestonesTimer.unref) userMilestonesTimer.unref();
+    backgroundDrain.schedule(sweepUserMilestones, 24 * 60 * 60 * 1000);
 
     // Verification badge expiry: flip overdue ACTIVE badges to EXPIRED so
     // persisted state matches the read-time enforcement that already gates
@@ -799,9 +807,7 @@ async function startServer() {
         console.warn('[Verification] Badge expiry sweep skipped:', sweepError);
       }
     };
-    void sweepVerificationBadges();
-    const verificationSweepTimer = setInterval(sweepVerificationBadges, 60 * 60 * 1000);
-    if (verificationSweepTimer.unref) verificationSweepTimer.unref();
+    backgroundDrain.schedule(sweepVerificationBadges, 60 * 60 * 1000);
 
     // CEO/Admin initial allocation: grants the canonical CEO account exactly
     // 1,000,000 VANTA Coins ONCE through the real wallet/ledger system. The
@@ -845,7 +851,9 @@ async function startServer() {
     // withdrawals, and completed entitlements remain untouched.
 
     // Start HTTP server
+    if (traffic.draining) return;
     httpServer.listen(PORT, () => {
+      traffic.markServing();
       console.info(`Server running on port ${PORT}`);
       console.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
@@ -855,6 +863,7 @@ async function startServer() {
       process.exit(1);
     } else {
       console.warn('Continuing despite startup errors in non-production environment.');
+      if (traffic.draining) return;
       httpServer.listen(PORT, () => {
         console.log(`Server is running on port ${PORT} (degraded mode)`);
       });
@@ -890,6 +899,29 @@ function startCacheWarming(): void {
   }, 30_000);
 
   warmer.start();
+}
+
+// Opt in only after the platform shutdown deadline and staging tests are verified.
+if (process.env.VANTA_GRACEFUL_SHUTDOWN_ENABLED === 'true') {
+  const shutdown = (signal: string): void => {
+    if (traffic.draining) return;
+    traffic.beginDrain();
+    console.info('[Shutdown] Draining:', signal);
+    cacheService.warmerInstance.stop();
+    void shutdownWithin(async () => {
+      const sweeps = backgroundDrain.stop();
+      // Socket.IO closes its clients and the underlying HTTP server. Node waits
+      // for already accepted HTTP responses before the close callback returns.
+      await Promise.all([sweeps, new Promise<void>(resolve => { void io.close(() => resolve()); })]);
+      await cacheService.closeRedisConnection();
+      await prisma.$disconnect();
+    }, 25000).then(clean => {
+      console.info('[Shutdown] Finished:', clean ? 'drained' : 'deadline or cleanup failure');
+      process.exit(clean ? 0 : 1);
+    });
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 startServer();

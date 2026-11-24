@@ -205,6 +205,7 @@ jobs:
           src/__tests__/durable-queue.worker.test.ts
           src/__tests__/cache.local.test.ts
           src/__tests__/database-pool-readiness.test.ts
+          src/__tests__/server-lifecycle.test.ts
 
   redis-cache:
     name: Redis cache adapter integration
