@@ -465,7 +465,23 @@ class MainActivity : Activity() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 locationManager.getCurrentLocation(provider, null, mainExecutor) { location ->
-                    if (pendingNativeLocationId == requestId) {
+                    if (pendingNativeLocationId != requestId) return@getCurrentLocation
+                    // Approximate/network location usually responds first. If
+                    // there is no network fix, use GPS only when precise
+                    // permission was granted and GPS is enabled.
+                    if (location == null && provider != LocationManager.GPS_PROVIDER &&
+                        hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) &&
+                        locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                        try {
+                            locationManager.getCurrentLocation(LocationManager.GPS_PROVIDER, null, mainExecutor) { gps ->
+                                if (pendingNativeLocationId == requestId) {
+                                    finishNativeLocation(gps, if (gps == null) "location-unavailable" else null)
+                                }
+                            }
+                        } catch (_: Exception) {
+                            finishNativeLocation(null, "location-unavailable")
+                        }
+                    } else {
                         finishNativeLocation(location, if (location == null) "location-unavailable" else null)
                     }
                 }
