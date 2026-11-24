@@ -41,7 +41,7 @@ import IncomingCallBanner from '@/components/messages/IncomingCallBanner';
 import ChatCallOverlay from '@/components/messages/ChatCallOverlay';
 import GlobalGiftAnimations from '@/components/gifts/GlobalGiftAnimations';
 import { useToast } from '@/components/ui/Toast';
-import { useLocalizedUiText } from '@/lib/i18n/ui-labels';
+import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 
 const notificationDestination = (notification: any) => {
   let data: any = notification?.data;
