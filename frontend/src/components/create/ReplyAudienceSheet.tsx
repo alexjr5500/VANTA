@@ -30,7 +30,7 @@ export default function ReplyAudienceSheet({ audience, onSelect, onClose }: Prop
         aria-describedby="reply-audience-description"
         className="relative z-10 flex max-h-[90%] w-full flex-col overflow-hidden rounded-t-[28px] border-t border-[var(--border)] bg-[var(--background)] text-[var(--text-primary)] shadow-2xl"
       >
-        <div className="mx-auto mt-3.5 h-1.5 w-12 shrink-0 rounded-full bg-[var(--text-muted)]/35" aria-hidden="true" />
+        <div className="mx-auto mt-3.5 h-1.5 w-12 shrink-0 rounded-full bg-white/25" aria-hidden="true" />
         <div className="flex shrink-0 items-start justify-between gap-3 px-6 pb-2 pt-4">
           <div>
             <h2 id="reply-audience-title" className="text-2xl font-bold">Who can reply?</h2>
@@ -45,7 +45,7 @@ export default function ReplyAudienceSheet({ audience, onSelect, onClose }: Prop
             className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--surface)]"
           ><X size={20} /></button>
         </div>
-        <div className="min-h-0 overflow-y-auto overscroll-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+        <div role="radiogroup" aria-label="Who can reply" className="min-h-0 overflow-y-auto overscroll-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
           {choices.map(({ value, label, Icon }) => {
             const selected = audience === value;
             return (
