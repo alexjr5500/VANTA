@@ -38,6 +38,7 @@ import { isSecureMediaContext, mapMediaError } from '@/lib/mediaPermissions';
 import { addDrafts, hasBusyDraft, readyDraftCount, removeDraft, type AttachmentDraft } from '@/lib/attachmentDrafts';
 import { renderTextWithLinks } from '@/lib/linkify';
 import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
+import { MentionTextarea } from '@/components/social/MentionTextarea';
 import { extractQuoteRef } from '@/lib/quotePost';
 import QuoteEmbed from '@/components/social/QuoteEmbed';
 import { friendlyError, errorMessage } from '@/lib/errors';
@@ -3341,7 +3342,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                 )}
                 <div className="flex-1 relative">
                   <div className="absolute bottom-full left-0 right-0 mb-2 z-[95]"><MentionSuggestions mention={mentions} className="rounded-2xl" /></div>
-                  <textarea
+                  <MentionTextarea
+                    surfaceClassName="rounded-2xl bg-[#27313d] focus-within:bg-[#354252]"
                     ref={messageInputRef}
                     rows={1}
                     value={messageInput}
