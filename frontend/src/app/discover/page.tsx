@@ -65,6 +65,7 @@ export default function DiscoverPage() {
   const sentinel = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const pageScrollRef = useRef<HTMLDivElement>(null);
+  const pendingActionsRef = useRef(new Set<string>());
   const [category, setCategory] = useState<Category>('forYou');
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -84,6 +85,7 @@ export default function DiscoverPage() {
   const [cursor, setCursor] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
   const [error, setError] = useState('');
   const [commentsFor, setCommentsFor] = useState<Item>();
   const [shareFor, setShareFor] = useState<Item>();
@@ -95,7 +97,8 @@ export default function DiscoverPage() {
     // error states so the current layout and scroll position stay intact.
     if (!background) {
       append ? setLoadingMore(true) : setLoading(true);
-      if (!append) setError('');
+      if (append) setLoadMoreError(false);
+      else { setError(''); setLoadMoreError(false); }
     }
     const exploreQuery = new URLSearchParams({ limit: '12' });
     if (nextCursor) exploreQuery.set('cursor', nextCursor);
@@ -118,14 +121,19 @@ export default function DiscoverPage() {
       const fulfilled = results.filter(result => result.status === 'fulfilled').length;
       if (!fulfilled) throw new Error('Discover services are unavailable');
       const value = (index: number) => results[index].status === 'fulfilled' ? (results[index] as PromiseFulfilledResult<any>).value : {};
-      setPosts(unwrap(value(0))); setCursor(value(0)?.nextCursor);
-      setTrending(unwrap(value(1))); setCreators(unwrap(value(2)));
-      setReels(unwrap(value(3))); setLive(unwrap(value(4))); setCommunities(unwrap(value(5)));
+      // A partial failure must not silently erase previously loaded sections.
+      if (results[0].status === 'fulfilled') { setPosts(unwrap(value(0))); setCursor(value(0)?.nextCursor); }
+      if (results[1].status === 'fulfilled') setTrending(unwrap(value(1)));
+      if (results[2].status === 'fulfilled') setCreators(unwrap(value(2)));
+      if (results[3].status === 'fulfilled') setReels(unwrap(value(3)));
+      if (results[4].status === 'fulfilled') setLive(unwrap(value(4)));
+      if (results[5].status === 'fulfilled') setCommunities(unwrap(value(5)));
     } catch (reason) {
       // A pull-to-refresh failure surfaces through the gesture (retry hint)
       // instead of replacing the page with an error state.
       if (background) throw reason;
-      setError("Couldn't load Discover.");
+      if (append) setLoadMoreError(true);
+      else setError("Couldn't load Discover.");
     } finally {
       if (!background) { setLoading(false); setLoadingMore(false); }
     }
@@ -191,9 +199,9 @@ export default function DiscoverPage() {
   useEffect(() => {
     const element = sentinel.current;
     if (!element || !cursor || debouncedQuery || category !== 'forYou') return;
-    const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting && !loadingMore) void loadDiscover(true, cursor); }, { rootMargin: '500px' });
+    const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting && !loading && !loadingMore && !loadMoreError) void loadDiscover(true, cursor); }, { rootMargin: '500px' });
     observer.observe(element); return () => observer.disconnect();
-  }, [category, cursor, debouncedQuery, loadDiscover, loadingMore]);
+  }, [category, cursor, debouncedQuery, loadDiscover, loading, loadingMore, loadMoreError]);
 
   const featured = useMemo(() => live[0] || reels[0] || trending.find(mediaOf) || posts.find(mediaOf) || creators[0], [creators, live, posts, reels, trending]);
   const topics = useMemo(() => {
@@ -205,12 +213,30 @@ export default function DiscoverPage() {
   const hasForYouContent = Boolean(featured || trending.length || creators.length || reels.length || live.length || communities.length || posts.length);
 
   const follow = async (profile: Item) => {
-    if (!token || !profile.username) return;
+    if (!token || !profile.id || !profile.username) return;
+    const actionKey = `follow:${profile.id}`;
+    if (pendingActionsRef.current.has(actionKey)) return;
+    pendingActionsRef.current.add(actionKey);
     const was = Boolean(profile.following || profile.isFollowing);
-    const update = (rows: Item[]) => rows.map(item => item.id === profile.id ? { ...item, following: !was, isFollowing: !was, _count: { ...item._count, followers: Math.max(0, profileFollowers(item) + (was ? -1 : 1)) } } : item);
-    setCreators(update); setSearchResults(current => ({ ...current, people: update(current.people || []) }));
-    try { was ? await apiDelete(`/api/profiles/${profile.username}/follow`, token) : await apiPost(`/api/profiles/${profile.username}/follow`, {}, token); }
-    catch (reason: any) { setCreators(rows => rows.map(item => item.id === profile.id ? { ...item, following: was, isFollowing: was } : item)); toast.error('Follow update failed', reason?.message); }
+    const update = (value: boolean) => (rows: Item[]) => rows.map(item => {
+      if (item.id !== profile.id) return item;
+      const current = Boolean(item.following || item.isFollowing);
+      return { ...item, following: value, isFollowing: value,
+        _count: { ...item._count, followers: Math.max(0, profileFollowers(item) + (current === value ? 0 : value ? 1 : -1)) } };
+    });
+    setCreators(update(!was));
+    setSearchResults(current => ({ ...current, people: update(!was)(current.people || []) }));
+    try {
+      const endpoint = `/api/profiles/${encodeURIComponent(profile.username)}/follow`;
+      if (was) await apiDelete(endpoint, token);
+      else await apiPost(endpoint, {}, token);
+    } catch (reason: any) {
+      setCreators(update(was));
+      setSearchResults(current => ({ ...current, people: update(was)(current.people || []) }));
+      toast.error('Follow update failed', reason?.message);
+    } finally {
+      pendingActionsRef.current.delete(actionKey);
+    }
   };
   const joinCommunity = async (community: Item) => {
     if (!token || community.isPrivate) return;
@@ -235,16 +261,68 @@ export default function DiscoverPage() {
     catch { toast.error('Could not copy the link'); }
   };
   const mutatePost = async (post: Item, mode: 'like' | 'save') => {
-    if (!token) return; const key = mode === 'like' ? 'liked' : 'saved'; const was = Boolean(post[key]);
-    const update = (value: boolean) => { const apply = (rows: Item[]) => rows.map(item => item.id === post.id ? { ...item, [key]: value, ...(mode === 'like' ? { likes: Math.max(0, Number(item.likes || item._count?.likes || 0) + (value ? 1 : -1)) } : {}) } : item); setPosts(apply); setTrending(apply); setSearchResults(current => ({ ...current, posts: apply(current.posts || []) })); };
+    if (!token || !post.id) return;
+    const actionKey = `${mode}:${cleanId(post)}`;
+    if (pendingActionsRef.current.has(actionKey)) return;
+    pendingActionsRef.current.add(actionKey);
+    const key = mode === 'like' ? 'liked' : 'saved';
+    const was = Boolean(post[key]);
+    const originalLikes = Number(post.likes ?? post._count?.likes ?? 0);
+    const apply = (value: boolean, serverCount?: number) => (rows: Item[]) => rows.map(item => {
+      if (item.id !== post.id) return item;
+      const current = Boolean(item[key]);
+      const likes = serverCount ?? Math.max(0, Number(item.likes ?? item._count?.likes ?? 0) + (current === value ? 0 : value ? 1 : -1));
+      return { ...item, [key]: value, ...(mode === 'like' ? { likes } : {}) };
+    });
+    const update = (value: boolean, serverCount?: number) => {
+      setPosts(apply(value, serverCount));
+      setTrending(apply(value, serverCount));
+      setSearchResults(current => ({ ...current, posts: apply(value, serverCount)(current.posts || []) }));
+    };
     update(!was);
-    try { mode === 'like' ? await apiPost(`/api/feed/${cleanId(post)}/like`, {}, token) : was ? await apiDelete(`/api/feed/${cleanId(post)}/save`, token) : await apiPost(`/api/feed/${cleanId(post)}/save`, {}, token); }
-    catch (reason: any) { update(was); toast.error('Could not update post', reason?.message); }
+    try {
+      const endpoint = `/api/feed/${cleanId(post)}`;
+      if (mode === 'like') {
+        const result = await apiPost<any>(`${endpoint}/like`, {}, token);
+        const serverLikes = result?.likeCount ?? result?.likes;
+        update(typeof result?.liked === 'boolean' ? result.liked : !was,
+          serverLikes != null && Number.isFinite(Number(serverLikes)) ? Math.max(0, Number(serverLikes)) : undefined);
+      } else if (was) {
+        await apiDelete(`${endpoint}/save`, token);
+      } else {
+        await apiPost(`${endpoint}/save`, {}, token);
+      }
+    } catch (reason: any) {
+      update(was, mode === 'like' ? originalLikes : undefined);
+      toast.error('Could not update post', reason?.message);
+    } finally {
+      pendingActionsRef.current.delete(actionKey);
+    }
   };
   const share = async (destination: string) => {
-    if (!shareFor || !token) return; const url = `${location.origin}/post/${cleanId(shareFor)}`;
-    try { await apiPost(`/api/feed/${cleanId(shareFor)}/share`, { destination }, token); if (destination === 'COPY_LINK') await navigator.clipboard.writeText(url); else if (destination === 'NATIVE' && navigator.share) await navigator.share({ title: 'VANTA', text: shareFor.content, url }); else if (destination === 'MESSAGE') router.push(`/chat?share=${encodeURIComponent(url)}`); toast.success('Shared successfully'); setShareFor(undefined); }
-    catch (reason: any) { toast.error('Share failed', reason?.message); }
+    if (!shareFor || !token) return;
+    const url = `${location.origin}/post/${cleanId(shareFor)}`;
+    try {
+      if (destination === 'NATIVE') {
+        if (!navigator.share) {
+          toast.error('Device sharing is unavailable', 'Use Copy link instead.');
+          return;
+        }
+        await navigator.share({ title: 'VANTA', text: shareFor.content, url });
+      } else if (destination === 'COPY_LINK') {
+        await navigator.clipboard.writeText(url);
+      } else if (destination === 'MESSAGE') {
+        router.push(`/chat?share=${encodeURIComponent(url)}`);
+      } else {
+        return;
+      }
+      await apiPost(`/api/feed/${cleanId(shareFor)}/share`, { destination }, token);
+      if (destination === 'COPY_LINK') toast.success('Link copied');
+      else if (destination === 'NATIVE') toast.success('Shared successfully');
+      setShareFor(undefined);
+    } catch (reason: any) {
+      if (reason?.name !== 'AbortError') toast.error('Share failed', reason?.message);
+    }
   };
   const selectTopic = (topic: string) => { setQuery(topic); setSearchFilter('all'); searchRef.current?.focus(); scrollPageTop(pageScrollRef.current); };
 
@@ -289,7 +367,7 @@ export default function DiscoverPage() {
             {homesLoading ? <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{[0,1,2,3].map((n) => <div key={n} className="animate-pulse overflow-hidden rounded-2xl border border-white/[.08] bg-white/[.025]"><div className="aspect-[4/3] bg-white/[.06]"/><div className="space-y-3 p-4"><div className="h-4 w-2/3 rounded bg-white/[.07]"/><div className="h-3 w-1/2 rounded bg-white/[.05]"/></div></div>)}</div> : homesError ? <div className="rounded-2xl border border-white/[.08] bg-white/[.025] p-6 text-center"><p className="text-sm text-white/70">{homesError}</p><button type="button" onClick={() => setHomesRetryCount((count) => count + 1)} className="mt-3 rounded-lg border border-[#c9a227]/35 px-4 py-2 text-sm text-[#e0bb4f]">Try again</button></div> : homeListings.length ? <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{homeListings.map((listing) => <PropertyCard key={listing.id} listing={listing}/>)}</div> : <EmptyState icon={Compass} title="No homes available right now." actionLabel="Explore VANTA Homes" onAction={() => router.push('/homes')}/>}
           </section>}
           {category === 'communities' && <CommunitySection items={communities} join={joinCommunity} open={(item: Item) => router.push(`/communities/${item.id}`)} copyLink={copyCommunityLink} setCategory={setCategory}/>} 
-          {category === 'forYou' && <div ref={sentinel} className="flex min-h-10 items-center justify-center">{loadingMore && <Loader2 className="animate-spin text-[#666]"/>}</div>}
+          {category === 'forYou' && <div ref={sentinel} className="flex min-h-10 items-center justify-center">{loadingMore && <Loader2 className="animate-spin text-[#666]"/>}{loadMoreError && <button type="button" onClick={() => void loadDiscover(true, cursor)} className="rounded-lg px-4 py-2 text-xs text-[#c9a227] hover:bg-white/[.05]">Couldn&apos;t load more. Retry</button>}</div>}
         </div>}
       </main>
       </div>

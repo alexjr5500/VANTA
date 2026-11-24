@@ -27,6 +27,7 @@ export type StoryComposerMode = 'menu' | 'text' | 'status' | 'media';
 export interface StoryComposerProps {
   open: boolean;
   onClose: () => void;
+  onRequestOpen?: () => void;
 }
 
 export interface StoryComposerOpenDetails {
@@ -39,6 +40,13 @@ export type StoryComposerOpener = (details: StoryComposerOpenDetails) => void;
 // Global open command so any consumer (Home tray, header button, profile) can
 // open the composer without prop drilling into every page.
 let openCommand: ((details: StoryComposerOpenDetails) => void) | null = null;
+let statusPickerCommand: (() => void) | null = null;
+
+/** The Android Status + action keeps its real user gesture for the native file picker. */
+export function openStatusFilePicker(fallback: () => void): void {
+  if (statusPickerCommand) statusPickerCommand();
+  else fallback();
+}
 export function setStoryComposerOpener(fn: StoryComposerOpener | null): void {
   openCommand = fn;
 }
@@ -91,12 +99,30 @@ export const CREATE_STATUS_CHOICES: MenuChoiceCard[] = [
  * the premium text canvas. No fake controls — every choice routes to an
  * existing, working VANTA flow.
  */
-export default function StoryComposer({ open, onClose }: StoryComposerProps) {
+export default function StoryComposer({ open, onClose, onRequestOpen }: StoryComposerProps) {
   const { user, token } = useAuth();
   const [mode, setMode] = useState<StoryComposerMode>('media');
   const [mediaSource, setMediaSource] = useState<MediaStorySource>('gallery-mixed');
   const [usage, setUsage] = useState<StoryUsage | null>(null);
   const wasOpenRef = useRef(false);
+  const [mediaSession, setMediaSession] = useState(0);
+
+  // Enter the in-app Status gallery first. The secure Android photo picker
+  // is opened by a deliberate tap on Recents, not automatically on Status +.
+  // This prevents the duplicate picker flow while keeping device access
+  // consent-based and requiring no broad media-library permissions.
+  useEffect(() => {
+    const openPicker = () => {
+      setMediaSession(value => value + 1);
+      setMediaSource('gallery-mixed');
+      setMode('media');
+      onRequestOpen?.();
+    };
+    statusPickerCommand = openPicker;
+    return () => {
+      if (statusPickerCommand === openPicker) statusPickerCommand = null;
+    };
+  }, [onRequestOpen]);
 
   // Receive global open commands (e.g. from the Home tray's add button).
   useEffect(() => {
@@ -150,7 +176,8 @@ export default function StoryComposer({ open, onClose }: StoryComposerProps) {
   };
 
   const closed = !open;
-return (
+  return (
+    <>
     <AnimatePresence>
       {open && (
         <motion.div
@@ -187,7 +214,12 @@ return (
                 exit={{ opacity: 0, y: 24 }}
                 transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
               >
-                <StoryComposerTextStory onBack={() => setMode('media')} onClose={handleClose} />
+                <StoryComposerTextStory
+                  onBack={() => setMode('media')}
+                  onClose={handleClose}
+                  onPhoto={() => { setMediaSource('gallery-mixed'); setMode('media'); }}
+                  onVideo={() => { setMediaSource('camera-video'); setMode('media'); }}
+                />
               </motion.div>
             )}
 
@@ -214,6 +246,7 @@ return (
                 transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
               >
                 <StoryMediaEditor
+                  key={mediaSession}
                   source={mediaSource}
                   onBack={handleClose}
                   onText={() => setMode('text')}
@@ -227,6 +260,7 @@ return (
         </motion.div>
       )}
     </AnimatePresence>
+    </>
   );
 }
 /**

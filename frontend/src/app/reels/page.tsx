@@ -123,6 +123,7 @@ export default function ReelsPage() {
   const [reels, setReels] = useState<Reel[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
   const [active, setActive] = useState(0);
   const muted = false;
   const [paused, setPaused] = useState(false);
@@ -151,13 +152,15 @@ export default function ReelsPage() {
   const feedSeedRef = useRef<string>(`sess-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
   const loadingMoreRef = useRef(false);
   const loadRequest = useRef(0);
+  const commentsRequest = useRef(0);
   const reelsViewport = useRef<HTMLElement | null>(null);
   // Derived feed-mount signal used by the swipe effect below: the touch
   // listeners must attach only once the scroll viewport actually exists.
   const hasReels = reels.length > 0;
 
   const load = useCallback(async (start = 0, append = false, background = false) => {
-    if (!append) Object.values(videos.current).forEach(video => video?.pause());
+    if (!append && !background) Object.values(videos.current).forEach(video => video?.pause());
+    if (append) setLoadMoreError(false);
     const requestId = ++loadRequest.current;
     if (!append && !background) { setLoading(true); setLoadError(false); }
     try {
@@ -192,7 +195,8 @@ export default function ReelsPage() {
       if (background) {
         if (reason?.statusCode !== 499) throw reason;
       } else if (reason?.statusCode !== 499) {
-        setLoadError(true);
+        if (append) setLoadMoreError(true);
+        else setLoadError(true);
       }
     } finally {
       if (requestId === loadRequest.current && !background) setLoading(false);
@@ -242,10 +246,10 @@ export default function ReelsPage() {
   }, [load]);
 
   const loadMore = useCallback(() => {
-    if (nextStart == null || loadingMoreRef.current || loading) return;
+    if (nextStart == null || loadingMoreRef.current || loading || loadMoreError) return;
     loadingMoreRef.current = true;
     void load(nextStart, true).finally(() => { loadingMoreRef.current = false; });
-  }, [nextStart, load, loading]);
+  }, [nextStart, load, loading, loadMoreError]);
 
   // Infinite scroll: preload the next page as the user approaches the end of the
   // loaded Reels. The order stays stable because the session seed is fixed and the
@@ -466,7 +470,8 @@ export default function ReelsPage() {
     if (isOwn) { toast.error('That is your own Reel'); return; }
     if (!token) { toast.error('Sign in required'); return; }
     const key = `follow:${reel.author.id}`;
-    if (pending[key]) return;
+    if (pendingActionsRef.current.has(key)) return;
+    pendingActionsRef.current.add(key);
     const was = !!(reel.author.following || reel.author.isFollowing || reel.isFollowing);
     setPending(items => ({ ...items, [key]: true }));
     setReels(items => items.map(item => item.author.id === reel.author.id ? {
@@ -485,35 +490,42 @@ export default function ReelsPage() {
       } : item));
       toast.error('Follow update failed', reason?.message);
     } finally {
+      pendingActionsRef.current.delete(key);
       setPending(items => ({ ...items, [key]: false }));
     }
   };
 
   const openComments = async (reel: Reel) => {
+    const requestId = ++commentsRequest.current;
     setCommentsFor(reel);
     setComments([]);
     setCommentsLoading(true);
     try {
       const result = await apiGet<{ items?: ReelComment[] }>(`/api/reels/${reel.id}/comments?limit=30`, token || undefined, { skipCache: true });
-      setComments(result.items || []);
+      if (requestId === commentsRequest.current) setComments(result.items || []);
     } catch {
-      toast.error('Comments unavailable');
+      if (requestId === commentsRequest.current) toast.error('Comments unavailable');
     } finally {
-      setCommentsLoading(false);
+      if (requestId === commentsRequest.current) setCommentsLoading(false);
     }
   };
 
   const submitComment = async () => {
     if (!token || !commentsFor || !commentText.trim() || commentSending) return;
+    const reelId = commentsFor.id;
+    const requestId = commentsRequest.current;
+    const content = commentText.trim();
     setCommentSending(true);
     try {
-      const created = await apiPost<ReelComment>(`/api/reels/${commentsFor.id}/comments`, { content: commentText.trim() }, token);
-      setComments(items => [created, ...items]);
-      patch(commentsFor.id, { comments: commentsFor.comments + 1 });
-      setCommentsFor(current => current ? { ...current, comments: current.comments + 1 } : current);
-      setCommentText('');
+      const created = await apiPost<ReelComment>(`/api/reels/${reelId}/comments`, { content }, token);
+      setReels(items => items.map(item => item.id === reelId ? { ...item, comments: item.comments + 1 } : item));
+      if (commentsRequest.current === requestId) {
+        setComments(items => [created, ...items]);
+        setCommentsFor(current => current?.id === reelId ? { ...current, comments: current.comments + 1 } : current);
+        setCommentText('');
+      }
     } catch (reason: any) {
-      toast.error('Comment not saved', reason?.message);
+      if (commentsRequest.current === requestId) toast.error('Comment not saved', reason?.message);
     } finally {
       setCommentSending(false);
     }
@@ -521,34 +533,54 @@ export default function ReelsPage() {
 
   const deleteComment = async (comment: ReelComment): Promise<boolean> => {
     if (!token || !commentsFor) return false;
+    const reelId = commentsFor.id;
+    const requestId = commentsRequest.current;
+    const key = `comment-delete:${reelId}:${comment.id}`;
+    if (pendingActionsRef.current.has(key)) return false;
+    pendingActionsRef.current.add(key);
     try {
-      await apiDelete(`/api/reels/${commentsFor.id}/comments/${comment.id}`, token);
-      setComments(items => items.filter(item => item.id !== comment.id));
-      patch(commentsFor.id, { comments: Math.max(0, commentsFor.comments - 1) });
-      setCommentsFor(current => current ? { ...current, comments: Math.max(0, current.comments - 1) } : current);
+      await apiDelete(`/api/reels/${reelId}/comments/${comment.id}`, token);
+      setReels(items => items.map(item => item.id === reelId ? { ...item, comments: Math.max(0, item.comments - 1) } : item));
+      if (commentsRequest.current === requestId) {
+        setComments(items => items.filter(item => item.id !== comment.id));
+        setCommentsFor(current => current?.id === reelId ? { ...current, comments: Math.max(0, current.comments - 1) } : current);
+      }
       return true;
     } catch (reason: any) {
-      toast.error('Comment not deleted', reason?.message);
+      if (commentsRequest.current === requestId) toast.error('Comment not deleted', reason?.message);
       return false;
+    } finally {
+      pendingActionsRef.current.delete(key);
     }
   };
 
   const toggleCommentLike = async (comment: ReelComment) => {
     if (!token || !commentsFor) { toast.error('Sign in to like comments'); return; }
+    const reelId = commentsFor.id;
+    const requestId = commentsRequest.current;
+    const key = `comment-like:${reelId}:${comment.id}`;
+    if (pendingActionsRef.current.has(key)) return;
+    pendingActionsRef.current.add(key);
     const wasLiked = Boolean(comment.liked);
-    const previousCount = Number(comment._count?.likes || 0);
+    const previousCount = Number(comment._count?.likes ?? 0);
     const optimisticLiked = !wasLiked;
     const optimisticCount = Math.max(0, previousCount + (wasLiked ? -1 : 1));
     const apply = (items: ReelComment[], liked: boolean, count: number) => items.map(item => item.id === comment.id
-      ? { ...item, liked, _count: { likes: count, replies: 0 } }
+      ? { ...item, liked, _count: { ...item._count, likes: count } }
       : item);
     setComments(items => apply(items, optimisticLiked, optimisticCount));
     try {
-      const result = await apiPost<{ liked: boolean; likes: number }>(`/api/reels/${commentsFor.id}/comments/${comment.id}/like`, {}, token);
-      setComments(items => apply(items, result.liked, result.likes));
+      const result = await apiPost<{ liked: boolean; likes: number }>(`/api/reels/${reelId}/comments/${comment.id}/like`, {}, token);
+      if (commentsRequest.current === requestId) {
+        setComments(items => apply(items, result.liked, result.likes));
+      }
     } catch (reason: any) {
-      setComments(items => apply(items, wasLiked, previousCount));
-      toast.error('Comment like failed', reason?.message);
+      if (commentsRequest.current === requestId) {
+        setComments(items => apply(items, wasLiked, previousCount));
+        toast.error('Comment like failed', reason?.message);
+      }
+    } finally {
+      pendingActionsRef.current.delete(key);
     }
   };
 
@@ -697,10 +729,20 @@ export default function ReelsPage() {
         ))}
       </PullToRefresh>
 
-      
+      {loadMoreError && nextStart != null && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-24 z-30 flex justify-center px-4">
+          <button type="button" onClick={() => {
+            if (loadingMoreRef.current) return;
+            loadingMoreRef.current = true;
+            void load(nextStart, true).finally(() => { loadingMoreRef.current = false; });
+          }} className="pointer-events-auto rounded-full border border-white/15 bg-[#1f2630] px-4 py-2 text-xs font-medium text-[#e6c35a] shadow-lg" aria-label="Retry loading more Reels">
+            Couldn&apos;t load more Reels. Retry
+          </button>
+        </div>
+      )}
 
       <AnimatePresence>
-        {commentsFor && <CommentsPanel reel={commentsFor} items={comments} loading={commentsLoading} text={commentText} sending={commentSending} currentUserId={user?.id} setText={setCommentText} submit={submitComment} remove={deleteComment} toggleLike={toggleCommentLike} close={() => setCommentsFor(null)} />}
+        {commentsFor && <CommentsPanel reel={commentsFor} items={comments} loading={commentsLoading} text={commentText} sending={commentSending} currentUserId={user?.id} setText={setCommentText} submit={submitComment} remove={deleteComment} toggleLike={toggleCommentLike} close={() => { commentsRequest.current += 1; setCommentsFor(null); }} />}
         {shareFor && (() => {
           const liveReel = reels.find(item => item.id === shareFor.id) ?? shareFor;
           return <ReelShareSheet

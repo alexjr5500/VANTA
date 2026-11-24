@@ -12,6 +12,11 @@ on:
       - "android/**"
       - ".github/workflows/android-debug.yml"
   workflow_dispatch:
+    inputs:
+      preview_origin:
+        description: "Optional HTTPS VANTA Vercel preview URL for APK device testing"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -46,12 +51,14 @@ jobs:
 
       - name: Assemble debug APK
         working-directory: android
+        env:
+          VANTA_DEBUG_ORIGIN: ${{ github.event_name == 'workflow_dispatch' && inputs.preview_origin || '' }}
         run: gradle --no-daemon --stacktrace assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: vanta-android-debug
+          name: ${{ github.event_name == 'workflow_dispatch' && inputs.preview_origin != '' && 'vanta-android-preview-debug' || 'vanta-android-debug' }}
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7

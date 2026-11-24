@@ -14,7 +14,6 @@ import {
   Plus,
   RefreshCw,
   Trash2,
-  Type,
   Video,
   X,
 } from 'lucide-react';
@@ -27,19 +26,21 @@ import {
   cancelUpload,
   getJobs,
   retryUpload,
+  requestWithUploadAuth,
   startUpload,
   subscribeUploads,
   type UploadJob,
 } from '@/lib/uploads/store';
 import VideoTrimModal from '@/components/video/VideoTrimModal';
+import StatusGallerySheet from '@/components/story/StatusGallerySheet';
+import { nativeGalleryConnection, parseNativeGallery, type NativeRecentMedia, type NativeGalleryStatus } from '@/lib/nativeStatusGallery';
 import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 import {
-  STATUS_MAX_CHARS,
   normalizeStatusEditorValue,
-  statusCounts,
 } from '@/lib/statusLimits';
 import {
-  MAX_STATUS_MEDIA_FILES,
+  STORY_MAX_IMAGE_BYTES,
+  STORY_MAX_VIDEO_BYTES,
   storyMediaCapacity,
   storyMediaKindOf,
   toUserFacingStoryError,
@@ -52,6 +53,7 @@ export type MediaStorySource = 'camera-photo' | 'camera-video' | 'gallery-image'
 
 export interface StoryMediaEditorProps {
   source: MediaStorySource;
+  initialFiles?: File[];
   onBack?: () => void;
   onText?: () => void;
   onClose: () => void;
@@ -59,6 +61,8 @@ export interface StoryMediaEditorProps {
 
 export interface DraftMedia {
   id: string;
+  /** Stable Android MediaStore identity, when added from the native Recents grid. */
+  nativeMediaId?: string;
   file: File;
   kind: 'image' | 'video';
   /** Full-resolution blob preview URL (main canvas + upload source). */
@@ -195,11 +199,18 @@ async function buildDraftItems(files: File[]): Promise<DraftMedia[]> {
  *    and uploads only start once every draft exists,
  *  - guards against double-submission with an immediate ref-based lock.
  */
-export default function StoryMediaEditor({ source, onBack, onText, onClose }: StoryMediaEditorProps) {
-  const { token, user } = useAuth();
+export default function StoryMediaEditor({ source, initialFiles, onBack, onText, onClose }: StoryMediaEditorProps) {
+  const { token, user, getAccessToken, renewAccessToken } = useAuth();
   const toast = useToast();
 
   const [items, setItems] = useState<DraftMedia[]>([]);
+  // Choose media in the gallery before opening the photo/video editor.
+  const [showMediaPreview, setShowMediaPreview] = useState(false);
+  const [nativeRecentMedia, setNativeRecentMedia] = useState<NativeRecentMedia[]>([]);
+  const [nativeGalleryStatus, setNativeGalleryStatus] = useState<NativeGalleryStatus>('unavailable');
+  const [pickingRecentId, setPickingRecentId] = useState<string | null>(null);
+  const nativeAccessAskedRef = useRef(false);
+  const recentPickLockedRef = useRef(false);
   const itemsRef = useRef<DraftMedia[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [caption, setCaption] = useState('');
@@ -218,6 +229,7 @@ export default function StoryMediaEditor({ source, onBack, onText, onClose }: St
   const successShownRef = useRef(false);
   const closeTimerRef = useRef<number | null>(null);
 
+  const appliedInitialFilesRef = useRef(false);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const cameraPhotoRef = useRef<HTMLInputElement | null>(null);
   const cameraVideoRef = useRef<HTMLInputElement | null>(null);
@@ -237,7 +249,6 @@ useEffect(() => {
     itemsRef.current = [];
   }, []);
 
-  const counts = useMemo(() => statusCounts(caption), [caption]);
 
   // Quota: the server stays authoritative, this only shapes the UX. Verified
   // users are unlimited; every media file publishes its own Story row, so a
@@ -260,10 +271,7 @@ useEffect(() => {
   }, [token]);
 
   // Live upload progress — re-read the job store whenever any job changes.
-  useEffect(() => {
-    if (!publishing) return;
-    return subscribeUploads(() => setJobsTick((tick) => tick + 1));
-  }, [publishing]);
+  useEffect(() => subscribeUploads(() => setJobsTick((tick) => tick + 1)), []);
 
   // jobsTick is the re-render trigger: the upload store is a module singleton,
   // so the memo re-reads it whenever any upload job changes.
@@ -285,25 +293,28 @@ useEffect(() => {
     if (failedJobs.length > 0) {
       setError(
         failedJobs.length === 1
-          ? `${failedJobs[0].fileName || 'One upload'} failed. Retry it or post the remaining files.`
-          : `${failedJobs.length} uploads failed. Retry them or post the remaining files.`
+          ? `${failedJobs[0].fileName || 'One upload'} failed: ${toUserFacingStoryError(failedJobs[0].error)} Retry below.`
+          : `${failedJobs.length} uploads failed. Retry the failed items below.`
       );
       setDraftFailed(true);
       publishingRef.current = false;
-      setPublishing(false);
+      // Preserve the progress panel so the user sees the actual error and
+      // can retry only the failed files without creating a new Status draft.
       return;
     }
+    // Never show the success toast while the expected uploads are incomplete.
+    if (completedCount !== totalJobs || relatedJobs.length !== totalJobs) return;
     if (successShownRef.current) return;
     successShownRef.current = true;
     notifyStoryFeedChanged();
     toast.success('Status posted', `${totalJobs} media item${totalJobs === 1 ? '' : 's'} live on your Status.`);
     if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
     closeTimerRef.current = window.setTimeout(() => onClose(), 900);
-  }, [jobsTick, publishing, totalJobs, activeJobs, failedJobs, onClose, toast]);
+  }, [jobsTick, publishing, totalJobs, completedCount, relatedJobs.length, activeJobs, failedJobs, onClose, toast]);
 
   /** Validate + append files, generating lightweight thumbnails. */
   const addFiles = useCallback(
-    async (files: ReadonlyArray<File | null | undefined>) => {
+    async (files: ReadonlyArray<File | null | undefined>, nativeMediaId?: string) => {
       if (publishingRef.current) return;
       setMediaError('');
       setError('');
@@ -329,12 +340,94 @@ useEffect(() => {
         return;
       }
       const created = await buildDraftItems(valid);
+      if (nativeMediaId && created.length === 1) created[0].nativeMediaId = nativeMediaId;
       setItems((previous) => [...previous, ...created]);
       setActiveId(created[created.length - 1].id);
       if (issues.length > 0) setMediaError(issues.join(' '));
     },
     [capacity, items.length]
   );
+
+  // Android's scoped MediaStore bridge supplies thumbnails from the device
+  // only after permission. Older APKs and ordinary browsers use the picker.
+  useEffect(() => {
+    const refresh = () => {
+      const connection = nativeGalleryConnection();
+      if (!connection) {
+        setNativeGalleryStatus('unavailable');
+        return;
+      }
+      try {
+        const result = parseNativeGallery(
+          connection.bridge.listRecent(connection.nonce),
+          window.location.origin, connection.nonce
+        );
+        if (result.status === 'permission' && !nativeAccessAskedRef.current) {
+          nativeAccessAskedRef.current = true;
+          setNativeGalleryStatus('loading');
+          connection.bridge.requestAccess(connection.nonce);
+          return;
+        }
+        setNativeRecentMedia(result.items);
+        setNativeGalleryStatus(result.status);
+      } catch {
+        setNativeGalleryStatus('error');
+      }
+    };
+    window.addEventListener('vanta-native-gallery-ready', refresh);
+    window.addEventListener('vanta-native-gallery-changed', refresh);
+    refresh();
+    return () => {
+      window.removeEventListener('vanta-native-gallery-ready', refresh);
+      window.removeEventListener('vanta-native-gallery-changed', refresh);
+    };
+  }, []);
+
+  const grantNativeGallery = useCallback(() => {
+    const connection = nativeGalleryConnection();
+    if (!connection) {
+      galleryInputRef.current?.click();
+      return;
+    }
+    setNativeGalleryStatus('loading');
+    connection.bridge.requestAccess(connection.nonce);
+  }, []);
+
+  const pickNativeRecentMedia = useCallback(async (media: NativeRecentMedia) => {
+    if (publishingRef.current || recentPickLockedRef.current) return;
+    if (items.some(item => item.nativeMediaId === media.id)) return;
+    const maxBytes = media.mimeType.startsWith('video/') ? STORY_MAX_VIDEO_BYTES : STORY_MAX_IMAGE_BYTES;
+    if (media.size > maxBytes) {
+      setMediaError(media.mimeType.startsWith('video/')
+        ? 'This video is larger than the 100MB limit.'
+        : 'This image is larger than the 15MB limit.');
+      return;
+    }
+    recentPickLockedRef.current = true;
+    setPickingRecentId(media.id);
+    setMediaError('');
+    try {
+      // The URL resolves entirely inside the trusted Android WebView. No media
+      // is uploaded to VANTA until the user later confirms Post Status.
+      const response = await fetch(media.mediaUrl, { cache: 'no-store' });
+      if (!response.ok) throw new Error('Cannot open this device photo. Use Recents to choose it instead.');
+      const blob = await response.blob();
+      if (blob.size === 0) throw new Error('This device photo could not be read. Choose a different photo.');
+      await addFiles([new File([blob], media.name, { type: media.mimeType })], media.id);
+    } catch (reason) {
+      setMediaError(reason instanceof Error ? reason.message : 'Unable to read the selected photo.');
+    } finally {
+      recentPickLockedRef.current = false;
+      setPickingRecentId(null);
+    }
+  }, [addFiles, items]);
+
+  // Accept the media chosen directly from Android Files without reopening a picker.
+  useEffect(() => {
+    if (appliedInitialFilesRef.current || !initialFiles?.length) return;
+    appliedInitialFilesRef.current = true;
+    void addFiles(initialFiles);
+  }, [addFiles, initialFiles]);
 
   const openGalleryPicker = useCallback(() => {
     galleryInputRef.current?.click();
@@ -371,6 +464,7 @@ useEffect(() => {
       const target = index >= 0 ? items[index] : undefined;
       const next = items.filter((item) => item.id !== id);
       setItems(next);
+      if (next.length === 0) setShowMediaPreview(false);
       if (target) {
         try {
           URL.revokeObjectURL(target.objectUrl);
@@ -400,6 +494,7 @@ useEffect(() => {
     itemsRef.current = [];
     setItems([]);
     setActiveId(null);
+    setShowMediaPreview(false);
     setCaption('');
     setError('');
     setMediaError('');
@@ -447,7 +542,9 @@ useEffect(() => {
   const cancelAllPending = useCallback(() => {
     const ids = new Set(startedJobIdsRef.current);
     for (const job of getJobs()) {
-      if (ids.has(job.id) && (job.phase === 'starting' || job.phase === 'uploading' || job.phase === 'processing')) {
+      // Finalizing may have already persisted the file and published the
+      // Status; cancelling here would give the user an incorrect result.
+      if (ids.has(job.id) && (job.phase === 'starting' || job.phase === 'uploading')) {
         cancelUpload(job);
       }
     }
@@ -478,7 +575,9 @@ useEffect(() => {
       //    uploaded until EVERY draft exists, so a mid-way failure can never
       //    leave a partial-but-live Status.
       for (let index = 0; index < items.length; index += 1) {
-        const story = await createStoryDraft(token, normalizedCaption);
+        const story = await requestWithUploadAuth(token, getAccessToken, renewAccessToken, accessToken =>
+          createStoryDraft(accessToken, normalizedCaption)
+        );
         createdDraftIds.push(story.id);
       }
 
@@ -491,6 +590,8 @@ useEffect(() => {
           file: item.file,
           draftId: createdDraftIds[index],
           token,
+          getAccessToken,
+          renewAccessToken,
           meta: { caption: normalizedCaption, mimeType: resolveStoryMime(item) },
         });
         jobIds.push(job.id);
@@ -498,15 +599,17 @@ useEffect(() => {
       startedJobIdsRef.current = jobIds;
       setJobsTick((tick) => tick + 1);
       toast.info(
-        'Posting your Status',
-        `Uploading ${jobIds.length} file${jobIds.length === 1 ? '' : 's'} — you can close this screen; it continues in the background.`
+        'Uploading your Status',
+        `${jobIds.length} file${jobIds.length === 1 ? '' : 's'} queued. Your Status will appear once the uploads finish.`
       );
     } catch (reason) {
       // Mark created-but-unposted drafts FAILED so they never surface and never
       // block a retry (bounded server-side by the pending-draft cap).
       for (const draftId of createdDraftIds) {
         try {
-          await failStoryMedia(token, draftId);
+          await requestWithUploadAuth(token, getAccessToken, renewAccessToken, accessToken =>
+            failStoryMedia(accessToken, draftId)
+          );
         } catch {
           // best effort
         }
@@ -516,20 +619,12 @@ useEffect(() => {
       publishingRef.current = false;
       setPublishing(false);
     }
-  }, [token, items, caption, toast]);
+  }, [token, items, caption, toast, getAccessToken, renewAccessToken]);
 
   const active = useMemo(() => items.find((item) => item.id === activeId) || items[0] || null, [items, activeId]);
-  const isVerified = Boolean(user?.verified);
-
-  // Keep the Add status screen visible until the user chooses Text,
-  // Photo & Video, or Camera. This prevents the device picker from appearing
-  // unexpectedly as soon as the Status composer opens.
-const sourceLabel = source === 'camera-video' ? 'Record a video'
-    : source === 'camera-photo' ? 'Take a photo'
-    : 'Photo & Video Status';
 
   return (
-    <div className="flex h-full flex-col bg-[#1F2630]">
+    <div className={cn('flex h-full flex-col', items.length === 0 && !publishing ? 'bg-[#121719]' : 'bg-[#1F2630]')}>
       {/* Hidden inputs */}
       <input
         ref={galleryInputRef}
@@ -562,31 +657,25 @@ const sourceLabel = source === 'camera-video' ? 'Record a video'
         onChange={handleSingleCapture}
       />
 
-      {/* Header */}
-      <header className="flex shrink-0 items-center justify-between px-3 pt-[max(env(safe-area-inset-top,0px),6px)]">
+      {items.length === 0 && !publishing && (
+        <span aria-hidden="true" className="mx-auto mt-2 h-[5px] w-14 shrink-0 rounded-full bg-[#92999d]" />
+      )}
+      <header className="relative flex h-14 shrink-0 items-center justify-between px-4" aria-label="Status editor navigation">
         <button
           type="button"
-          onClick={() => (items.length > 0 ? discardAll() : onBack ? onBack() : onClose())}
-          aria-label={items.length > 0 ? 'Remove all media and go back' : 'Back to creation menu'}
-          className={cn(
-            'grid h-11 w-11 place-items-center rounded-full transition hover:bg-white/[0.06]',
-            items.length > 0 ? 'text-[#e5484d]' : 'text-[#8a8a8a] hover:text-white'
-          )}
+          onClick={() => (showMediaPreview && !publishing ? setShowMediaPreview(false) : items.length > 0 ? discardAll() : onBack ? onBack() : onClose())}
+          aria-label={showMediaPreview && !publishing ? 'Back to selected media' : items.length > 0 ? 'Discard selected media' : 'Close Add status'}
+          className="grid h-11 w-11 place-items-center text-white transition hover:bg-white/[0.06]"
         >
-          {items.length > 0 ? <Trash2 size={18} /> : <ArrowLeft size={18} />}
+          {items.length > 0 ? <ArrowLeft size={24} /> : <X size={28} />}
         </button>
-        <div className="flex min-w-0 flex-col items-center">
-          <h2 className="text-sm font-semibold text-white">Add status</h2>
-          <p className="max-w-[220px] truncate text-[10px] text-white/40">{sourceLabel}</p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close creation"
-          className="grid h-11 w-11 place-items-center rounded-full text-[#8a8a8a] transition hover:bg-white/[0.06] hover:text-white"
-        >
-          <X size={18} />
-        </button>
+        {items.length > 0 ? (
+          <button type="button" onClick={onClose} aria-label="Close Add status" className="grid h-11 w-11 place-items-center text-white/70 hover:text-white">
+            <X size={21} />
+          </button>
+        ) : (
+          <span className="h-11 w-11" aria-hidden="true" />
+        )}
       </header>
 
       {publishing ? (
@@ -600,29 +689,39 @@ const sourceLabel = source === 'camera-video' ? 'Record a video'
           absentMessage={absentMessage}
           onRetry={retryFailedUploads}
           onCancel={cancelAllPending}
+          cancellable={activeJobs.filter((job) => job.phase === 'starting' || job.phase === 'uploading').length}
           onClose={onClose}
         />
-      ) : items.length === 0 ? (
-        <EmptyPicker
+      ) : !showMediaPreview ? (
+        <StatusGallerySheet
           source={source}
+          selected={items}
+          selectionLimit={capacity}
+          error={mediaError || error}
+          recentMedia={nativeRecentMedia}
+          nativeGalleryStatus={nativeGalleryStatus}
+          pickingRecentId={pickingRecentId}
+          onPickRecent={media => void pickNativeRecentMedia(media)}
+          onGrantGallery={grantNativeGallery}
           onGallery={openGalleryPicker}
           onCameraPhoto={openCameraPhoto}
           onCameraVideo={openCameraVideo}
+          onRemove={removeItem}
+          onNext={() => setShowMediaPreview(true)}
           onText={onText}
         />
       ) : (
 <>
           {/* Main preview */}
-          <div className="flex min-h-0 flex-1 items-center justify-center px-4 py-1">
+          <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
             <div
-              className="relative flex w-full max-w-[380px] items-center justify-center overflow-hidden rounded-2xl border border-white/[0.08] bg-black"
-              style={{ aspectRatio: '9 / 16', maxHeight: '100%' }}
+              className="relative h-full w-full overflow-hidden bg-black"
             >
               {active?.kind === 'image' ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={active.objectUrl} alt="Status media preview" className="absolute inset-0 h-full w-full object-cover" />
+                <img src={active.objectUrl} alt="Status media preview" className="absolute inset-0 h-full w-full object-contain" />
               ) : active ? (
-                <video src={active.objectUrl} playsInline muted loop className="absolute inset-0 h-full w-full object-cover" />
+                <video src={active.objectUrl} playsInline muted loop className="absolute inset-0 h-full w-full object-contain" />
               ) : null}
 
               {/* Selected index + kind chip */}
@@ -656,7 +755,7 @@ const sourceLabel = source === 'camera-video' ? 'Record a video'
           )}
         </>
       )}
-{!publishing && items.length > 0 && (
+{!publishing && showMediaPreview && items.length > 0 && (
         <div className="flex shrink-0 items-center gap-2 overflow-x-auto px-3 pb-1 scrollbar-hide" aria-label="Selected media">
           {items.map((item, index) => (
             <div key={item.id} className="relative shrink-0">
@@ -714,21 +813,18 @@ const sourceLabel = source === 'camera-video' ? 'Record a video'
           </button>
         </div>
       )}
-{!publishing && items.length > 0 && (
+{!publishing && showMediaPreview && items.length > 0 && (
         <>
-          {/* Media toolbar */}
-          <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 px-4 pb-1.5">
-            <MediaAction label="Photo & Video" icon={ImageIcon} onClick={openGalleryPicker} />
-            <MediaAction label="Camera" icon={Camera} onClick={openCameraPhoto} />
-            <MediaAction label="Record" icon={Video} onClick={openCameraVideo} />
-            {active && active.kind === 'video' && (
+          {/* Trim remains available for videos; redundant media shortcuts are hidden. */}
+          {active?.kind === 'video' && (
+            <div className="flex shrink-0 justify-center px-4 pb-1.5">
               <MediaAction label="Trim" icon={Clock} onClick={() => setTrimItem(active)} />
-            )}
-          </div>
+            </div>
+          )}
 
-          {/* Caption field with live status counter */}
+          {/* Compact caption composer — character limits remain enforced by normalization. */}
           <div className="shrink-0 px-4 pb-1.5">
-            <div className="flex items-end gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2">
+            <div className="flex items-end gap-2 rounded-full border border-white/[0.06] bg-[#11191e] px-4 py-2.5">
               <textarea
                 value={caption}
                 onChange={(event) => setCaption(normalizeStatusEditorValue(event.target.value))}
@@ -737,31 +833,14 @@ const sourceLabel = source === 'camera-video' ? 'Record a video'
                   const pasted = event.clipboardData?.getData('text/plain') || '';
                   setCaption((previous) => normalizeStatusEditorValue(previous + pasted));
                 }}
-                placeholder="Add a caption to your Status…"
+                placeholder="Add a caption…"
                 aria-label="Status caption"
                 rows={1}
-                className="max-h-24 min-h-[38px] flex-1 resize-none bg-transparent text-[15px] leading-tight text-white outline-none placeholder:text-white/30"
+                className="max-h-24 min-h-[38px] flex-1 resize-none bg-transparent text-[15px] leading-tight text-white outline-none placeholder:text-white/45"
               />
-              <span className={cn('shrink-0 text-[11px] tabular-nums', counts.overChars ? 'text-[#e5484d]' : 'text-white/35')}>
-                {counts.chars}/{STATUS_MAX_CHARS}
-              </span>
             </div>
           </div>
 
-          {/* Quota + limits hint */}
-          <div className="flex shrink-0 items-center justify-center gap-1.5 px-4 pb-1 text-center text-[10.5px] leading-4 text-white/35">
-            {isVerified ? (
-              <span className="flex items-center gap-1 rounded-full border border-[#c9a227]/35 bg-[#c9a227]/10 px-2 py-0.5 font-semibold text-[#dfbd55]">
-                <Check size={10} /> Verified — unlimited
-              </span>
-            ) : (
-              usage && <span>Today: {usage.used} / {usage.limit} used</span>
-            )}
-            <span aria-hidden="true">·</span>
-            <span>
-              Up to {MAX_STATUS_MEDIA_FILES} photos &amp; videos per Status · vanishes in 24 hours
-            </span>
-          </div>
         </>
       )}
 
@@ -771,25 +850,25 @@ const sourceLabel = source === 'camera-video' ? 'Record a video'
         </p>
       )}
 
-      {error && publishing && (
+      {error && !publishing && (
         <p role="alert" className="shrink-0 px-4 pb-1 text-center text-xs leading-4 text-[#ff9b9b]">{error}</p>
       )}
 
       {/* Publish bar */}
-      {!publishing && (
+      {!publishing && showMediaPreview && items.length > 0 && (
         <footer
-          className="shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-4 pt-3"
-          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--vanta-kb, 0px) + 16px)' }}
+          className="vanta-status-action-footer mt-auto shrink-0 border-t border-white/[0.07] bg-[#0b0b0e]/95 px-3 pt-1"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--vanta-kb, 0px))' }}
         >
           <button
             type="button"
-            onClick={() => void publish()}
+            onClick={() => failedJobs.length > 0 ? retryFailedUploads() : void publish()}
             disabled={items.length === 0 || atQuota}
-            aria-label="Post Status"
+            aria-label={failedJobs.length > 0 ? 'Retry failed Status uploads' : 'Post Status'}
             className="flex h-[52px] w-full items-center justify-center gap-2 rounded-xl bg-[#c9a227] text-[15px] font-bold text-black transition hover:bg-[#dfbd55] active:scale-[0.99] disabled:opacity-30"
           >
-            {publishing ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
-            Post Status
+            {failedJobs.length > 0 ? <RefreshCw size={18} /> : <Check size={18} />}
+            {failedJobs.length > 0 ? 'Retry failed uploads' : 'Post Status'}
             {items.length > 0 && <span className="text-black/50">({items.length})</span>}
           </button>
         </footer>
@@ -820,6 +899,7 @@ function PublishingPanel({
   absentMessage,
   onRetry,
   onCancel,
+  cancellable,
   onClose,
 }: {
   total: number;
@@ -831,9 +911,10 @@ function PublishingPanel({
   absentMessage: string;
   onRetry: () => void;
   onCancel: () => void;
+  cancellable: number;
   onClose: () => void;
 }) {
-  const allDone = total > 0 && active === 0 && failed === 0;
+  const allDone = total > 0 && completed === total && active === 0 && failed === 0;
   const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
 
   return (
@@ -936,7 +1017,7 @@ function PublishingPanel({
               Retry failed
             </button>
           )}
-          {active > 0 && (
+          {cancellable > 0 && (
             <button
               type="button"
               onClick={onCancel}
@@ -981,94 +1062,5 @@ function MediaAction({
       <Icon size={14} />
       {label}
     </button>
-  );
-}
-function EmptyPicker({
-  source,
-  onGallery,
-  onCameraPhoto,
-  onCameraVideo,
-  onText,
-}: {
-  source: MediaStorySource;
-  onGallery: () => void;
-  onCameraPhoto: () => void;
-  onCameraVideo: () => void;
-  onText?: () => void;
-}) {
-  const camera = source === 'camera-photo' || source === 'camera-video';
-  const videoCamera = source === 'camera-video';
-  return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.96 }}
-      animate={{ opacity: 1, scale: 1 }}
-      className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto px-6 pb-[max(env(safe-area-inset-bottom,0px),16px)] text-center"
-    >
-      <span className="grid h-16 w-16 place-items-center rounded-2xl border border-white/[0.08] bg-white/[0.04] text-[#dfbd55]">
-        {camera ? <Camera size={32} /> : <ImageIcon size={32} />}
-      </span>
-      <div>
-        <h3 className="text-[17px] font-bold text-white">
-          {camera ? (videoCamera ? 'Record a Story video' : 'Take a Story photo') : 'Choose your media'}
-        </h3>
-        <p className="mt-1 text-[13px] leading-5 text-white/45">
-          {camera
-            ? 'Capture a photo or short video for your Status.'
-            : 'Select one or more photos and videos — they all post to the same Status.'}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center justify-center gap-2.5">
-        {onText && (
-          <button
-            type="button"
-            onClick={onText}
-            className="flex h-11 items-center gap-2 rounded-full border border-white/[0.12] bg-white/[0.04] px-4 text-[13px] font-semibold text-white transition hover:bg-white/[0.08] active:scale-[0.98]"
-          >
-            <Type size={15} />
-            Text
-          </button>
-        )}
-        {camera ? (
-          <>
-            <button
-              type="button"
-              onClick={videoCamera ? onCameraVideo : onCameraPhoto}
-              className="flex h-12 items-center gap-2 rounded-xl bg-[#c9a227] px-5 text-[15px] font-bold text-black transition hover:bg-[#dfbd55] active:scale-[0.98]"
-            >
-              <Camera size={16} />
-              {videoCamera ? 'Record video' : 'Take photo'}
-            </button>
-            <button
-              type="button"
-              onClick={onGallery}
-              className="flex h-12 items-center gap-2 rounded-xl border border-white/[0.12] bg-white/[0.06] px-5 text-[15px] font-semibold text-white transition hover:bg-white/[0.1] active:scale-[0.98]"
-            >
-              <ImageIcon size={16} />
-              Gallery
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={onGallery}
-              className="flex h-12 items-center gap-2 rounded-full bg-[#c9a227] px-5 text-[15px] font-bold text-black transition hover:bg-[#dfbd55] active:scale-[0.98]"
-            >
-              <ImageIcon size={16} />
-              Photo &amp; Video
-            </button>
-            <button
-              type="button"
-              onClick={onCameraPhoto}
-              className="flex h-12 items-center gap-2 rounded-full bg-white px-5 text-[15px] font-semibold text-black transition hover:bg-white/85 active:scale-[0.98]"
-            >
-              <Camera size={16} />
-              Camera
-            </button>
-          </>
-        )}
-      </div>
-      <p className="mt-1 text-[10.5px] leading-4 text-white/35">Up to 7 photos &amp; videos per Status · Stories vanish after 24 hours.</p>
-    </motion.div>
   );
 }

@@ -85,7 +85,7 @@ const nextConfig = {
           // Permissions-Policy layer before the browser permission prompt appears.
           // `(self)` grants the VANTA origin access while still denying third-party
           // iframes. FLoC (interest-cohort) stays disabled for privacy.
-          { key: 'Permissions-Policy', value: 'camera=(self), microphone=(self), display-capture=(self), geolocation=(), interest-cohort=()' },
+          { key: 'Permissions-Policy', value: 'camera=(self), microphone=(self), display-capture=(self), geolocation=(self), interest-cohort=()' },
         ],
       },
       {

@@ -31,7 +31,9 @@ import { useNotifications } from '@/context/NotificationContext';
 import VideoTrimModal from '@/components/video/VideoTrimModal';
 import type { VideoTrimResult } from '@/components/video/VideoTrimEditor';
 import { VoiceNotePlayer, VideoFullscreenPlayer } from '@/components/messages/ChatMediaPlayer';
+import EmojiPicker from '@/components/create/EmojiPicker';
 import { activeReplyFor, createReply, type ReplyState } from '@/lib/replyState';
+import { hasVisibleReadReceipt, outgoingReceiptState, shouldRefreshReadReceipts } from '@/lib/messageReceipt';
 import { isSecureMediaContext, mapMediaError } from '@/lib/mediaPermissions';
 import { addDrafts, hasBusyDraft, readyDraftCount, removeDraft, type AttachmentDraft } from '@/lib/attachmentDrafts';
 import { renderTextWithLinks } from '@/lib/linkify';
@@ -39,6 +41,7 @@ import { extractQuoteRef } from '@/lib/quotePost';
 import QuoteEmbed from '@/components/social/QuoteEmbed';
 import { friendlyError, errorMessage } from '@/lib/errors';
 import type { VerificationType } from '@/types/verification';
+import { nativeGalleryConnection, parseNativeGallery, type NativeRecentMedia, type NativeGalleryStatus } from '@/lib/nativeStatusGallery';
 
 interface Conversation {
   id: string;
@@ -184,7 +187,7 @@ const normalizeMessageRecord = (msg: any, currentUserId?: string): Message => {
     conversationId: msg.conversationId,
     timestamp: msg.createdAt ?? msg.timestamp,
     createdAt: msg.createdAt ?? msg.timestamp,
-    read: Boolean(msg.read ?? msg.isRead ?? msg.reads?.some((read: any) => read.userId !== currentUserId)),
+    read: hasVisibleReadReceipt(msg, currentUserId),
     isOwn: (msg.senderId ?? msg.sender?.id) === currentUserId,
     attachments,
     reactions: msg.reactions ?? [],
@@ -223,7 +226,9 @@ const chatMediaLinksOf = (text: string): { url: string; kind: 'image' | 'video' 
   for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
     const url = match[0].replace(/[.,)]+$/, '');
     const path = url.split(/[?#]/)[0];
-    const name = decodeURIComponent(path.split('/').pop() || 'File');
+    const filename = path.split('/').pop() || 'File';
+    let name = filename;
+    try { name = decodeURIComponent(filename); } catch { /* Keep malformed URL text instead of crashing chat rendering. */ }
     const kind = /\.(png|jpe?g|gif|webp|avif)$/i.test(path) ? 'image' : /\.(mp4|webm|mov|m4v)$/i.test(path) ? 'video' : /\.(pdf|docx?|xlsx?|pptx?|txt|zip|csv)$/i.test(path) ? 'file' : null;
     if (kind && !out.some(item => item.url === url)) out.push({ url, kind, name });
   }
@@ -414,6 +419,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const activeConversationRef = useRef<string | null>(null);
+  const entityInfoRequestRef = useRef(0);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingActiveRef = useRef(false);
   const typingRenewRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -432,41 +438,34 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [newChatResults, setNewChatResults] = useState<any[]>([]);
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [attachmentDrafts, setAttachmentDrafts] = useState<AttachmentDraft[]>([]);
-  // Toggles the compact Camera / Photos / Files attachment sheet above the composer.
+  // Gallery-first chat attachment sheet. Native Android MediaStore is read-only;
+  // the OS picker remains the fallback outside the VANTA Android app.
   const [showAttachmentSheet, setShowAttachmentSheet] = useState(false);
-  const [cameraPreviewError, setCameraPreviewError] = useState<string | null>(null);
-  const cameraPreviewRef = useRef<HTMLVideoElement>(null);
-  const cameraPreviewStreamRef = useRef<MediaStream | null>(null);
+  const [recentChatMedia, setRecentChatMedia] = useState<NativeRecentMedia[]>([]);
+  const [chatGalleryStatus, setChatGalleryStatus] = useState<NativeGalleryStatus>('unavailable');
+  const [chatPickingMediaId, setChatPickingMediaId] = useState<string | null>(null);
+  const [composerEmojiOpen, setComposerEmojiOpen] = useState(false);
   useEffect(() => {
-    let cancelled = false;
-    const stopPreview = () => {
-      cameraPreviewStreamRef.current?.getTracks().forEach(track => track.stop());
-      cameraPreviewStreamRef.current = null;
-      if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
+    if (!showAttachmentSheet) return;
+    const refresh = () => {
+      const connection = nativeGalleryConnection();
+      if (!connection) { setChatGalleryStatus('unavailable'); setRecentChatMedia([]); return; }
+      try {
+        const result = parseNativeGallery(connection.bridge.listRecent(connection.nonce), window.location.origin, connection.nonce);
+        setChatGalleryStatus(result.status);
+        setRecentChatMedia(result.items);
+      } catch {
+        setChatGalleryStatus('error');
+        setRecentChatMedia([]);
+      }
     };
-    if (!showAttachmentSheet) {
-      stopPreview();
-      setCameraPreviewError(null);
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraPreviewError('Live camera preview is not available here. Use Camera to open your device camera.');
-      return;
-    }
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
-      .then(stream => {
-        if (cancelled) { stream.getTracks().forEach(track => track.stop()); return; }
-        cameraPreviewStreamRef.current = stream;
-        if (cameraPreviewRef.current) {
-          cameraPreviewRef.current.srcObject = stream;
-          void cameraPreviewRef.current.play().catch(() => undefined);
-        }
-        setCameraPreviewError(null);
-      })
-      .catch(() => {
-        if (!cancelled) setCameraPreviewError('Allow camera access to use the live preview, or tap Camera to open the device camera.');
-      });
-    return () => { cancelled = true; stopPreview(); };
+    refresh();
+    window.addEventListener('vanta-native-gallery-ready', refresh);
+    window.addEventListener('vanta-native-gallery-changed', refresh);
+    return () => {
+      window.removeEventListener('vanta-native-gallery-ready', refresh);
+      window.removeEventListener('vanta-native-gallery-changed', refresh);
+    };
   }, [showAttachmentSheet]);
 
   const uploadAbortRef = useRef<AbortController | null>(null);
@@ -484,9 +483,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [managedEntity, setManagedEntity] = useState<any>(null);
   const [managementSearch, setManagementSearch] = useState('');
   const [managementResults, setManagementResults] = useState<any[]>([]);
+  const managementSearchRequestRef = useRef(0);
   const [managementBusy, setManagementBusy] = useState<string | null>(null);
   const [ownershipConfirm, setOwnershipConfirm] = useState<any | null>(null);
   const [isSavingEntity, setIsSavingEntity] = useState(false);
+  const entitySaveInFlightRef = useRef(false);
   const editAvatarInputRef = useRef<HTMLInputElement>(null);
   const [typingUserId, setTypingUserId] = useState<string | null>(null);
   const [typingByConversation, setTypingByConversation] = useState<Record<string, boolean>>({});
@@ -693,6 +694,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   }, [router, searchParams]);
 
   const openConversationInfo = useCallback(async () => {
+    const requestId = ++entityInfoRequestRef.current;
     setDetailsOpen(true);
     setMemberBrowserOpen(false);
     setMemberBrowserQuery('');
@@ -705,11 +707,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     try {
       const entityId = conversation.entityId || conversation.id;
       const entity = await apiGet<any>(`/api/${conversation.type === 'group' ? 'groups' : 'channels'}/${entityId}`, token);
-      setManagedEntity(entity);
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversation.id) setManagedEntity(entity);
     } catch {
       // The overview remains usable from conversation data if extra info is unavailable.
     } finally {
-      setIsLoadingEntityInfo(false);
+      if (entityInfoRequestRef.current === requestId) setIsLoadingEntityInfo(false);
     }
   }, [activeConversation, conversations, pushChatView, token]);
 
@@ -807,12 +809,17 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     if (!token) return;
     try {
       const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50`, token);
+      if (activeConversationRef.current !== conversationId) return;
       const msgList = Array.isArray(data) ? data : data?.messages ?? data?.data ?? [];
       setMessages(msgList.map((msg: any) => normalizeMessageRecord(msg, user?.id)).filter((msg: Message) => !msg.deletedAt));
       setMessageCursor(data?.nextCursor ?? null);
       await apiPut<any>(`/api/messages/${conversationId}/read`, {}, token).catch(() => undefined);
-      setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation));
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Chat unavailable', message: errorMessage(err, { action: 'load this conversation', context: 'conversation', fallback: 'Could not load this conversation.' }) }); }
+      if (activeConversationRef.current === conversationId) {
+        setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation));
+      }
+    } catch (err: any) {
+      if (activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Chat unavailable', message: errorMessage(err, { action: 'load this conversation', context: 'conversation', fallback: 'Could not load this conversation.' }) });
+    }
   }, [token, user?.id, showToast]);
 
   useEffect(() => { fetchConversations(); }, [fetchConversations]);
@@ -830,26 +837,33 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
   const loadOlderMessages = async () => {
     if (!token || !activeConversation || !messageCursor || loadingOlder) return;
+    const conversationId = activeConversation;
     const viewport = messagesViewportRef.current;
     const prevScrollHeight = viewport?.scrollHeight ?? 0;
     const prevScrollTop = viewport?.scrollTop ?? 0;
     setLoadingOlder(true);
     try {
-      const data = await apiGet<any>(`/api/messages/${activeConversation}?limit=50&cursor=${encodeURIComponent(messageCursor)}`, token);
+      const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50&cursor=${encodeURIComponent(messageCursor)}`, token);
+      if (activeConversationRef.current !== conversationId) return;
       const older = (data?.messages ?? [])
         .map((msg: any) => normalizeMessageRecord(msg, user?.id))
         .filter((msg: Message) => !msg.deletedAt);
-      setMessages(previous => [...older, ...previous]);
+      setMessages(previous => {
+        const existing = new Set(previous.map(message => message.id));
+        return [...older.filter((message: Message) => !existing.has(message.id)), ...previous];
+      });
       setMessageCursor(data?.nextCursor ?? null);
-      // Keep the reader exactly where they were after older messages are
-      // prepended above the current viewport (prevents a jarring jump).
-      const raf = window.requestAnimationFrame(() => {
+      // Preserve the reader's scroll position after prepending older messages.
+      window.requestAnimationFrame(() => {
+        if (activeConversationRef.current !== conversationId) return;
         const target = messagesViewportRef.current;
         if (target) target.scrollTop = (target.scrollHeight - prevScrollHeight) + prevScrollTop;
       });
-      window.setTimeout(() => window.cancelAnimationFrame(raf), 5000);
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Could not load older messages', message: errorMessage(err, { action: 'load older messages', fallback: 'Please try again.' }) }); }
-    finally { setLoadingOlder(false); }
+    } catch (err: any) {
+      if (activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Could not load older messages', message: errorMessage(err, { action: 'load older messages', fallback: 'Please try again.' }) });
+    } finally {
+      setLoadingOlder(false);
+    }
   };
 
   const clearTypingFor = (conversationId: string) => {
@@ -1047,7 +1061,31 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       }
       fetchConversations();
     };
-    const onRead = (data: any) => { if (data.readerId !== user.id) setMessages(previous => previous.map(item => item.isOwn ? { ...item, read: true } : item)); fetchConversations(); };
+    const onRead = (data: any) => {
+      if (!shouldRefreshReadReceipts(data, activeConversationRef.current, user.id)) return;
+      // A socket event only tells us a participant opened the thread; it does
+      // not prove every message was read, nor that the reader permits receipts.
+      // Ask the authenticated API for privacy-filtered receipt rows before
+      // changing any visible tick. Never mark a whole conversation as read.
+      const conversationId = data.conversationId as string;
+      void apiGet<any>(`/api/messages/${encodeURIComponent(conversationId)}?limit=100`, token)
+        .then(response => {
+          if (activeConversationRef.current !== conversationId) return;
+          const confirmed = new Map<string, boolean>(
+            (response?.messages ?? []).map((raw: any) => [
+              String(raw.id),
+              hasVisibleReadReceipt(raw, user.id),
+            ])
+          );
+          setMessages(previous => previous.map(message =>
+            message.isOwn && confirmed.has(message.id)
+              ? { ...message, read: confirmed.get(message.id) === true }
+              : message
+          ));
+        })
+        .catch(() => undefined);
+      fetchConversations();
+    };
     const onPresence = (data: any) => setConversations(previous => previous.map(conversation => {
       if (conversation.type === 'direct') {
         return conversation.partnerId === data.userId ? {
@@ -1158,6 +1196,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setEditingMessage(null);
     setMessageInput('');
     if (activeConversationRef.current) socketRef.current?.emit('leave_conversation', activeConversationRef.current);
+    entityInfoRequestRef.current += 1;
+    managementSearchRequestRef.current += 1;
     activeConversationRef.current = id;
     previousLastMessageIdRef.current = null;
     initialScrollDoneRef.current = false;
@@ -1166,6 +1206,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setActiveConversation(id);
     setShowMobileList(false);
     setDetailsOpen(false);
+    setEditEntityOpen(false);
+    setMemberBrowserOpen(false);
+    setOwnershipConfirm(null);
+    setManagementResults([]);
     fetchMessages(id);
     socketRef.current?.emit('conversation:join', id);
     if (searchParams.get('conversation') !== id) {
@@ -1180,6 +1224,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     if (activeConversationRef.current) {
       socketRef.current?.emit('leave_conversation', activeConversationRef.current);
     }
+    entityInfoRequestRef.current += 1;
+    managementSearchRequestRef.current += 1;
     activeConversationRef.current = null;
     previousLastMessageIdRef.current = null;
     initialScrollDoneRef.current = false;
@@ -1193,6 +1239,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setMessages([]);
     setShowMobileList(true);
     setDetailsOpen(false);
+    setEditEntityOpen(false);
+    setMemberBrowserOpen(false);
+    setOwnershipConfirm(null);
+    setManagementResults([]);
     setDirectMenuOpen(false);
     router.replace('/chat', { scroll: false });
   }, [router]);
@@ -1224,6 +1274,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     const requestedConversation = searchParams.get('conversation');
     if (!requestedConversation) {
       if (activeConversationRef.current) {
+        entityInfoRequestRef.current += 1;
+        managementSearchRequestRef.current += 1;
+        socketRef.current?.emit('leave_conversation', activeConversationRef.current);
         activeConversationRef.current = null;
         previousLastMessageIdRef.current = null;
         setActiveConversation(null);
@@ -1232,6 +1285,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         setEditingMessage(null);
         setMessageInput('');
         setShowMobileList(true);
+        setDetailsOpen(false);
+        setEditEntityOpen(false);
+        setMemberBrowserOpen(false);
+        setOwnershipConfirm(null);
+        setManagementResults([]);
       }
       return;
     }
@@ -1309,14 +1367,19 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     navigator.geolocation.getCurrentPosition(
       position => void sendSpecialMessage('LOCATION', { lat: position.coords.latitude, lng: position.coords.longitude }, 'Location'),
       error => {
+        const androidApp = navigator.userAgent.includes('VANTAAndroid');
         const message = error.code === error.PERMISSION_DENIED
-          ? 'Location permission was denied. Allow location access in your device or browser settings, or type an address in chat.'
+          ? androidApp
+            ? 'Allow Location for VANTA in Android Settings → Apps → VANTA → Permissions. Then retry sharing your location.'
+            : 'Location permission was denied. Allow location access in your browser settings, or type an address in chat.'
           : error.code === error.TIMEOUT
-            ? 'Location lookup timed out. Try again, or type an address in chat.'
-            : 'Could not read your location. Check that location access is allowed, or type an address in chat.';
+            ? 'Location lookup timed out. Turn on device Location and try again.'
+            : 'Could not read your location. Turn on device Location and check VANTA location access.';
         showToast?.({ type: 'error', title: 'Location unavailable', message });
       },
-      { enableHighAccuracy: true, timeout: 15000 }
+      // Coarse/network location works even when Android users choose
+      // "approximate" permission. Do not require a slow GPS fix to share.
+      { enableHighAccuracy: false, timeout: 20000, maximumAge: 30000 }
     );
   };
 
@@ -1591,26 +1654,39 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
   };
 
-  const captureLivePhoto = () => {
-    const video = cameraPreviewRef.current;
-    if (!video || !video.videoWidth || !video.videoHeight) {
-      showToast?.({ type: 'error', title: 'Camera not ready', message: 'Wait for the live preview, then try again.' });
-      return;
+  const pickChatRecentMedia = async (item: NativeRecentMedia) => {
+    if (chatPickingMediaId || isUploadingAttachment || hasBusyDraft(attachmentDrafts)) return;
+    setChatPickingMediaId(item.id);
+    try {
+      // The native bridge only serves files through a trusted, nonce-scoped URL.
+      const response = await fetch(item.mediaUrl);
+      if (!response.ok) throw new Error('Media could not be opened');
+      const blob = await response.blob();
+      const file = new File([blob], item.name, { type: item.mimeType });
+      const limit = item.mimeType.startsWith('video/') ? 100 * 1024 * 1024 : 15 * 1024 * 1024;
+      if (file.size > limit) {
+        showToast?.({ type: 'error', title: 'File too large', message: `Choose a file smaller than ${limit / 1024 / 1024} MB.` });
+        return;
+      }
+      if (item.mimeType.startsWith('video/')) setTrimVideoFile(file);
+      else setAttachmentDrafts(previous => addDrafts(previous, [{ file, fileType: 'IMAGE' }], selected => URL.createObjectURL(selected)));
+      setShowAttachmentSheet(false);
+    } catch {
+      showToast?.({ type: 'error', title: 'Could not open media', message: 'Select the photo or video using Gallery instead.' });
+    } finally {
+      setChatPickingMediaId(null);
     }
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const context = canvas.getContext('2d');
-    if (!context) return;
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob(blob => {
-      if (!blob) { showToast?.({ type: 'error', title: 'Photo failed', message: 'Could not capture this photo. Try again.' }); return; }
-      const file = new File([blob], `vanta-photo-${Date.now()}.jpg`, { type: 'image/jpeg' });
-      setAttachmentDrafts(previous => [...previous, {
-        file, previewUrl: URL.createObjectURL(file), fileType: 'IMAGE', progress: 0, status: 'ready',
-        id: typeof crypto !== 'undefined' && crypto?.randomUUID ? crypto.randomUUID() : `draft-${Date.now()}`,
-      }]);
-    }, 'image/jpeg', 0.92);
+  };
+
+  const requestChatGalleryAccess = () => {
+    const connection = nativeGalleryConnection();
+    if (connection) {
+      setChatGalleryStatus('loading');
+      connection.bridge.requestAccess(connection.nonce);
+    } else {
+      setShowAttachmentSheet(false);
+      window.requestAnimationFrame(() => attachmentInputRef.current?.click());
+    }
   };
 
   /** Open the native device camera for a photo or video. */
@@ -2254,13 +2330,14 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       && (isManagedOwner || managedEntity?.permissions?.manageChannelInfo !== false || managedEntity?.permissions?.manageSubscribers !== false);
   const canEditEntityInfo = activeConv?.type === 'group'
     ? isGroupPrivileged || managedEntity?.permissions?.changeGroupInfo === true
-    : activeConv?.type === 'channel' && (isManagedOwner || managedEntity?.permissions?.manageChannelInfo !== false);
+    : activeConv?.type === 'channel' && ['OWNER', 'ADMIN', 'MODERATOR'].includes(activeConv.currentRole || '')
+      && (isManagedOwner || managedEntity?.permissions?.manageChannelInfo !== false);
   const canManageEntityMembers = activeConv?.type === 'group'
     ? isGroupPrivileged || managedEntity?.permissions?.addMembers === true
     : activeConv?.type === 'channel' && ['OWNER', 'ADMIN', 'MODERATOR'].includes(activeConv.currentRole || '')
       && (isManagedOwner || managedEntity?.permissions?.manageSubscribers !== false);
   const canRemoveEntityMembers = activeConv?.type === 'group' ? isGroupPrivileged : canManageEntityMembers;
-  const canManageEntityPermissions = activeConv?.type === 'group' ? isGroupPrivileged : isManagedOwner;
+  const canManageEntityPermissions = activeConv?.type === 'group' ? isGroupPrivileged : activeConv?.type === 'channel' && isManagedOwner;
   const managedPermissions = activeConv?.type === 'channel'
     ? [
         ['postMessages', 'Post messages'],
@@ -2304,9 +2381,12 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
   const openEntityEditor = async () => {
     if (!token || !activeConv || !canEditEntity || activeConv.type === 'direct') return;
+    const conversationId = activeConv.id;
+    const requestId = ++entityInfoRequestRef.current;
     try {
       const entityId = activeConv.entityId || activeConv.id;
       const entity = await apiGet<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${entityId}`, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setEditEntityId(entity.id || entityId);
       setEditName(entity.name || activeConv.name);
       setEditDescription(entity.description || '');
@@ -2318,7 +2398,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       setManagementResults([]);
       setEditEntityOpen(true);
       pushChatView('settings');
-    } catch (err: any) { showToast?.({ type: 'error', title: `Could not open ${activeConv.type} settings`, message: err?.message || 'Please try again.' }); }
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: `Could not open ${activeConv.type} settings`, message: err?.message || 'Please try again.' });
+    }
   };
 
   const uploadEntityAvatar = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -2335,77 +2417,111 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
 
   const saveEntityChanges = async () => {
-    if (!token || !activeConv || !editEntityId || !editName.trim() || !canEditEntityInfo) return;
+    if (!token || !activeConv || !editEntityId || !editName.trim() || !canEditEntityInfo || entitySaveInFlightRef.current) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
+    entitySaveInFlightRef.current = true;
     setIsSavingEntity(true);
     try {
       const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { name: editName.trim(), description: editDescription.trim(), avatar: editAvatar, ...((activeConv.type === 'group' && isGroupPrivileged) || (activeConv.type === 'channel' && isManagedOwner) ? { permissions: managedEntity?.permissions || {} } : {}), ...(activeConv.type === 'channel' ? { visibility: editVisibility, handle: editHandle.trim().replace(/^@/, '') } : {}) }, token);
-      setConversations(previous => previous.map(item => item.id === activeConv.id ? { ...item, name: updated.name || editName.trim(), description: updated.description ?? editDescription.trim(), avatar: updated.avatar ?? editAvatar ?? undefined } : item));
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
+      setConversations(previous => previous.map(item => item.id === conversationId ? { ...item, name: updated.name || editName.trim(), description: updated.description ?? editDescription.trim(), avatar: updated.avatar ?? editAvatar ?? undefined } : item));
       setManagedEntity(updated);
       setEditEntityOpen(false);
       showToast?.({ type: 'success', title: `${activeConv.type === 'group' ? 'Group' : 'Channel'} updated`, message: 'Changes are visible throughout Chat.' });
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Changes not saved', message: errorMessage(err, { action: 'save the changes', context: activeConv?.type === 'channel' ? 'channel' : 'group', fallback: 'Please try again.' }) }); }
-    finally { setIsSavingEntity(false); }
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Changes not saved', message: errorMessage(err, { action: 'save the changes', context: activeConv?.type === 'channel' ? 'channel' : 'group', fallback: 'Please try again.' }) });
+    } finally {
+      entitySaveInFlightRef.current = false;
+      setIsSavingEntity(false);
+    }
   };
 
   const searchManagementUsers = async (value: string) => {
+    const requestId = ++managementSearchRequestRef.current;
+    const conversationId = activeConversationRef.current;
     setManagementSearch(value);
     if (!token || value.trim().length < 2) { setManagementResults([]); return; }
     try {
       const result = await apiGet<any>(`/api/search?q=${encodeURIComponent(value.trim())}&type=users`, token);
       const users = result?.results?.users ?? result?.data?.users ?? result?.users ?? (Array.isArray(result) ? result : []);
+      if (managementSearchRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       const memberIds = new Set((managedEntity?.members || []).map((member: any) => member.userId));
       setManagementResults(users.filter((person: any) => person.id !== user?.id && !memberIds.has(person.id)));
-    } catch { setManagementResults([]); }
+    } catch {
+      if (managementSearchRequestRef.current === requestId && activeConversationRef.current === conversationId) setManagementResults([]);
+    }
   };
 
   const updateManagedMembers = async (memberIds: string[], successMessage: string) => {
-    if (!token || !activeConv || !editEntityId || !canManageEntityMembers) return;
+    if (!token || !activeConv || !editEntityId || !canManageEntityMembers || managementBusy) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
+    const existingIds = (managedEntity?.members || []).map((member: any) => member.userId).filter(Boolean);
+    if (!canRemoveEntityMembers && existingIds.some((id: string) => !memberIds.includes(id))) return;
     setManagementBusy('members');
     try {
       const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { memberIds }, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setManagedEntity(updated);
-      setConversations(previous => previous.map(item => item.id === activeConv.id ? { ...item, memberCount: updated._count?.members ?? updated.members?.length ?? item.memberCount } : item));
+      setConversations(previous => previous.map(item => item.id === conversationId ? { ...item, memberCount: updated._count?.members ?? updated.members?.length ?? item.memberCount } : item));
       setManagementSearch(''); setManagementResults([]);
       showToast?.({ type: 'success', title: successMessage, message: 'Membership has been updated.' });
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Membership not changed', message: err?.message || 'Please try again.' }); }
-    finally { setManagementBusy(null); }
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Membership not changed', message: err?.message || 'Please try again.' });
+    } finally { setManagementBusy(null); }
   };
 
-  const addManagedMember = (person: any) => updateManagedMembers([...(managedEntity?.members || []).map((member: any) => member.userId), person.id], `${person.username || 'Member'} added`);
+  const addManagedMember = (person: any) => {
+    if (!person?.id || (managedEntity?.members || []).some((member: any) => member.userId === person.id)) return;
+    void updateManagedMembers([...(managedEntity?.members || []).map((member: any) => member.userId), person.id], `${person.username || 'Member'} added`);
+  };
 
   const removeManagedMember = (member: any) => {
-    if (!canRemoveEntityMembers) return;
+    if (!canRemoveEntityMembers || managementBusy || !member?.userId || member.userId === user?.id) return;
     const username = member.user?.username || 'this member';
     if (!window.confirm(`Remove ${username} from this ${activeConv?.type}?`)) return;
     void updateManagedMembers((managedEntity?.members || []).filter((item: any) => item.userId !== member.userId).map((item: any) => item.userId), `${username} removed`);
   };
 
   const changeManagedRole = async (member: any, role: string) => {
-    if (!token || !activeConv || !editEntityId) return;
+    if (!token || !activeConv || !editEntityId || !isGroupPrivileged && activeConv.type === 'group' || activeConv.type === 'channel' && !isManagedOwner || managementBusy || !member?.userId || !['MEMBER', 'ADMIN', 'MODERATOR'].includes(role)) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
     const action = role === 'MEMBER' ? 'remove administrator rights from' : 'promote';
     if (!window.confirm(`${action[0].toUpperCase()}${action.slice(1)} @${member.user?.username || 'member'}?`)) return;
     setManagementBusy(member.userId);
     try {
       const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { memberRoles: { [member.userId]: role } }, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setManagedEntity(updated);
       showToast?.({ type: 'success', title: 'Administrator access updated', message: 'The new role is active.' });
-    } catch (err: any) { showToast?.({ type: 'error', title: 'Role not changed', message: err?.message || 'Please try again.' }); }
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Role not changed', message: err?.message || 'Please try again.' });
+    }
     finally { setManagementBusy(null); }
   };
 
-  const toggleManagedPermission = (key: string) => setManagedEntity((previous: any) => { const current = previous?.permissions?.[key] ?? (activeConv?.type === 'channel' ? ['deleteMessages', 'manageChannelInfo', 'manageSubscribers'].includes(key) : ['sendMessages', 'sendMedia', 'sendLinks'].includes(key)); return { ...previous, permissions: { ...(previous?.permissions || {}), [key]: !current } }; });
+  const toggleManagedPermission = (key: string) => {
+    if (!canManageEntityPermissions || !managedPermissions.some(([permission]) => permission === key)) return;
+    setManagedEntity((previous: any) => { const current = previous?.permissions?.[key] ?? (activeConv?.type === 'channel' ? ['deleteMessages', 'manageChannelInfo', 'manageSubscribers'].includes(key) : ['sendMessages', 'sendMedia', 'sendLinks'].includes(key)); return { ...previous, permissions: { ...(previous?.permissions || {}), [key]: !current } }; });
+  };
 
   const confirmOwnershipTransfer = async () => {
-    if (!token || !activeConv || !editEntityId || !ownershipConfirm || activeConv.type === 'direct') return;
+    if (!token || !activeConv || !editEntityId || !ownershipConfirm || activeConv.type === 'direct' || !isManagedOwner || managementBusy || !ownershipConfirm.userId || ownershipConfirm.userId === user?.id) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
     setManagementBusy('ownership');
     try {
       const endpoint = activeConv.type === 'group' ? 'groups' : 'channels';
       const updated = await apiPost<any>(`/api/${endpoint}/${editEntityId}/transfer-ownership`, { targetUserId: ownershipConfirm.userId }, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setManagedEntity(updated);
       setOwnershipConfirm(null);
       // The backend also broadcasts `conversations:refresh` on the socket, but a
       // local refetch makes the new owner/role state appear instantly here too.
       await fetchConversations();
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       const targetName = ownershipConfirm.user?.username || 'The new owner';
       showToast?.({
         type: 'success',
@@ -2413,7 +2529,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         message: `${targetName} is now the owner of this ${activeConv.type}.`,
       });
     } catch (err: any) {
-      showToast?.({
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({
         type: 'error',
         title: 'Ownership transfer failed',
         message: err?.message || 'Please try again.',
@@ -2594,6 +2710,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       {/* Chat Window */}
       <div className={cn(
         'flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#050505]',
+        activeConv?.type === 'direct' && 'vanta-direct-chat',
         showMobileList && 'hidden md:flex'
       )}>
         {activeConversation && activeConv ? (
@@ -2609,7 +2726,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                 <button type="button" onClick={() => setSelectedMessageIds(current => current.size === messages.length ? new Set() : new Set(messages.filter(message => !message.pending).map(message => message.id)))} className="rounded-full px-3 py-2 text-[11px] font-semibold text-[#f2c75c] transition hover:bg-[#d6a83f]/10">{selectedMessageIds.size === messages.filter(message => !message.pending).length ? "Clear all" : "Select loaded"}</button>
               </header>
             )}
-            <header className={cn("relative z-20 flex h-14 min-h-14 shrink-0 items-center justify-between border-b border-white/[0.08] bg-[#0d0d0f]/95 px-3 backdrop-blur-xl", selectedMessageIds.size > 0 && "hidden")}>
+            <header className={cn("relative z-20 flex h-14 min-h-14 shrink-0 items-center justify-between border-b border-white/[0.08] bg-[#0d0d0f]/95 px-3 backdrop-blur-xl", selectedMessageIds.size > 0 && "hidden", activeConv.type === 'direct' && 'vanta-direct-header')}>
               <div className="flex min-w-0 items-center gap-3">
                 <button
                   onClick={handleCloseConversation}
@@ -2684,7 +2801,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     </div>
                   </>
                 )}
-                <button onClick={() => setMessageSearchOpen(value => !value)} className="btn-icon h-9 w-9" aria-label="Search chat"><Search size={15} /></button>
+                <button onClick={() => setMessageSearchOpen(value => !value)} className={cn("btn-icon h-9 w-9", activeConv.type === 'direct' && 'hidden')} aria-label="Search chat"><Search size={15} /></button>
                  <button onClick={handleOpenConversationActions} className="btn-icon h-9 w-9" aria-label={activeConv.type === 'direct' ? 'Open conversation actions' : `Open ${activeConv.type === 'group' ? 'group' : 'channel'} information`}><MoreVertical size={17} /></button>
               </div>
             </header>
@@ -2694,7 +2811,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             {(searchingMessages || messageSearchResults.length > 0) && <div className="border-b border-white/[0.08] bg-[#101010] px-4 py-2"><div className="flex items-center justify-between"><span className="text-[10px] text-white/40">{searchingMessages ? 'Searching chat...' : `${messageSearchResults.length} result${messageSearchResults.length === 1 ? '' : 's'}`}</span><button onClick={() => setMessageSearchResults([])} className="text-white/40" aria-label="Close search results"><X size={13}/></button></div>{messageSearchResults.slice(0, 5).map(result => <button key={result.id} onClick={() => document.getElementById(`message-${result.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })} className="mt-1 block w-full truncate rounded bg-white/[0.03] px-2 py-1 text-left text-[10px] text-white/60">@{result.sender.username}: {result.text}</button>)}</div>}
 
             {/* Messages */}
-            <div ref={messagesViewportRef} className={cn("relative min-h-0 flex-1 touch-pan-y overscroll-contain overflow-x-hidden overflow-y-auto scrollbar-hide bg-[#050505] px-3 py-4 pb-6 [overflow-anchor:none] [-webkit-overflow-scrolling:touch]", selectedMessageIds.size > 0 && "bg-[#1F2630] pt-4 pb-4")}>
+            <div ref={messagesViewportRef} className={cn("relative min-h-0 flex-1 touch-pan-y overscroll-contain overflow-x-hidden overflow-y-auto scrollbar-hide bg-[#050505] px-3 py-4 pb-6 [overflow-anchor:none] [-webkit-overflow-scrolling:touch]", activeConv.type === 'direct' && 'vanta-direct-wallpaper', selectedMessageIds.size > 0 && "pt-4 pb-4")}>
               {messageCursor && <div className="flex justify-center"><button onClick={loadOlderMessages} disabled={loadingOlder} className="rounded-full bg-white/[0.05] px-3 py-1 text-[10px] text-white/50 disabled:opacity-50">{loadingOlder ? 'Loading…' : 'Load older messages'}</button></div>}
               {messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center">
@@ -2730,8 +2847,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   // show the other person's avatar only at the start of a run.
                   // Group/channel conversations retain sender identity for each run.
                   const isGroupLike = activeConv?.type === 'group' || activeConv?.type === 'channel';
-                  const showSenderIdentity = isGroupLike ? !inSameRun : (!msg.isOwn && !inSameRun);
-                  return <div key={msg.id} className={inSameRun ? 'mt-1' : ''}>{showDate && <div className="my-5 flex justify-center"><span className="rounded-full bg-[#202126] px-3 py-1.5 text-[11px] font-medium text-white/65">{dateLabel}</span></div>}{msg.id === firstUnreadId && <div className="my-4 flex items-center gap-3"><span className="h-px flex-1 bg-[#d6a83f]/25"/><span className="rounded-full border border-[#d6a83f]/30 bg-[#d6a83f]/10 px-3 py-1 text-[9px] font-semibold uppercase tracking-[.14em] text-[#f2c75c]">New messages</span><span className="h-px flex-1 bg-[#d6a83f]/25"/></div>}
+                  const showSenderIdentity = isGroupLike && !inSameRun;
+                  return <div key={msg.id} className={inSameRun ? 'mt-[3px]' : ''}>{showDate && <div className="my-4 flex justify-center"><span className="rounded-full bg-[#243646]/95 px-3 py-1.5 text-xs font-semibold text-white/85 shadow-sm">{dateLabel}</span></div>}{msg.id === firstUnreadId && <div className="my-4 flex items-center gap-3"><span className="h-px flex-1 bg-[#d6a83f]/25"/><span className="rounded-full border border-[#d6a83f]/30 bg-[#d6a83f]/10 px-3 py-1 text-[9px] font-semibold uppercase tracking-[.14em] text-[#f2c75c]">New messages</span><span className="h-px flex-1 bg-[#d6a83f]/25"/></div>}
                   <div
                     id={`message-${msg.id}`}
                     className={cn('flex relative scroll-mt-24 transition-shadow touch-pan-y will-change-transform', msg.isOwn ? 'justify-end' : 'justify-start', selectedMessageIds.size > 0 && 'cursor-pointer -mx-3 w-[calc(100%+1.5rem)] py-1.5 pl-[3.25rem] pr-3 transition-colors duration-150 [&_*]:pointer-events-none select-none', selectedMessageIds.has(msg.id) && 'bg-[#d6a83f]/[0.14] shadow-[inset_3px_0_0_#d6a83f]')}
@@ -2750,7 +2867,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   >
                     {selectedMessageIds.size > 0 && <span aria-hidden="true" className={cn('absolute left-2.5 top-1/2 z-10 grid h-[22px] w-[22px] -translate-y-1/2 place-items-center rounded-full border-2 transition-all duration-150', selectedMessageIds.has(msg.id) ? 'scale-100 border-[#e8c65f] bg-gradient-to-b from-[#f2d777] to-[#c49a2f] text-[#17130a] shadow-[0_0_12px_rgba(214,168,63,.5)]' : 'scale-95 border-white/30 bg-black/30 text-transparent')}><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></span>}
                     <div className={cn('flex w-full min-w-0 items-start gap-2.5', msg.isOwn ? 'flex-row-reverse' : 'flex-row')}>
-                      <div className="w-fit min-w-[3.5rem] max-w-[calc(100%-2.75rem)]">
+                      <div className={cn('w-fit min-w-[3.5rem]', activeConv.type === 'direct' ? 'max-w-[min(85vw,410px)]' : 'max-w-[calc(100%-2.75rem)]')}>
                         {showSenderIdentity && (
                           <div className={cn('flex max-w-[min(100%,420px)] items-center gap-2', msg.isOwn && 'justify-end')}>
                             <button
@@ -2764,12 +2881,16 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                           </div>
                         )}
                       <div className={cn(
-                        'chat-bubble-text w-fit max-w-full overflow-hidden text-[15px] leading-[1.45]',
-                        msg.isOwn
-                           ? 'border-r-2 border-[#c9a227]/60 bg-transparent pr-2.5 text-white'
-                           : 'bg-transparent text-white'
+                        'chat-bubble-text w-fit max-w-full overflow-hidden rounded-2xl px-3 py-2 text-[15px] leading-[1.45] shadow-sm',
+                        activeConv.type === 'direct'
+                          ? msg.isOwn
+                            ? 'rounded-br-md bg-gradient-to-br from-[#5c54d9] to-[#2989de] text-white'
+                            : 'rounded-bl-md bg-[#243444] text-white'
+                          : msg.isOwn
+                            ? 'rounded-tr-md bg-[#303d4b] text-white'
+                            : 'rounded-tl-md bg-[#202b37] text-white'
                       )}>
-                        {msg.deletedAt ? null : msg.type === 'CALL' ? (
+                        {msg.deletedAt ? <span className="block text-sm italic text-white/60">Message deleted</span> : msg.type === 'CALL' ? (
                           <span className="flex items-center justify-center gap-1.5 whitespace-nowrap py-0.5 px-3 text-xs text-white/50">
                             <Phone size={12} className="text-[#d6a83f]" />
                             {renderTextWithLinks(msg.text || msg.content || '', 'linkify', { mentions: true, hashtags: true })}
@@ -2900,13 +3021,13 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                               </>
                             );
                           })()}
-                          {(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg)).trim() && <p className="px-3 py-2 max-w-[min(420px,65vw)] whitespace-pre-wrap break-normal [overflow-wrap:break-word]">{showMessageTime && !msg.deletedAt && !(msg.isOwn && hasAudioAttachment) && <span className={cn('float-right ml-2 inline-flex translate-y-[3px] items-center gap-1 select-none text-[10px] leading-none tabular-nums', msg.isOwn ? 'text-white/75' : 'text-white/40')}>{currentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}{msg.isOwn && (msg.failed ? <button onClick={() => retryFailedMessage(msg)} className="text-[9px] text-red-100">Retry</button> : msg.pending ? <Loader2 size={10} className="animate-spin" /> : <CheckCheck size={11} />)}</span>}{renderTextWithLinks(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg), 'linkify', { mentions: true, hashtags: true })}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}</p>}
+                          {(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg)).trim() && <p className="px-3 py-2 max-w-[min(420px,65vw)] whitespace-pre-wrap break-normal [overflow-wrap:break-word]">{showMessageTime && !msg.deletedAt && !(msg.isOwn && hasAudioAttachment) && <span className={cn('float-right ml-2 inline-flex translate-y-[3px] items-center gap-1 select-none text-[10px] leading-none tabular-nums', msg.isOwn ? 'text-white/75' : 'text-white/40')}>{currentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}{msg.isOwn && (msg.failed ? <button onClick={() => retryFailedMessage(msg)} className="text-[9px] text-red-100">Retry</button> : msg.pending ? <Loader2 size={10} className="animate-spin" /> : outgoingReceiptState(msg) === 'read' ? <CheckCheck size={12} aria-label="Read" /> : <Check size={12} aria-label="Sent" />)}</span>}{renderTextWithLinks(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg), 'linkify', { mentions: true, hashtags: true })}{msg.editedAt && <span className="ml-1 text-[9px] opacity-60">edited</span>}</p>}
                           {!msg.deletedAt && chatMediaLinksOf(visibleMessageText(msg)).map(link => <div key={link.url} className="w-[min(320px,65vw)] max-w-full px-2 pb-2 pt-1">{link.kind === 'video' ? <video src={link.url} controls playsInline preload="metadata" className="max-h-64 w-full rounded-xl bg-black object-cover" /> : link.kind === 'image' ? <a href={link.url} target="_blank" rel="noreferrer"><img src={link.url} alt="" loading="lazy" className="max-h-64 w-full rounded-xl object-cover" /></a> : <a href={link.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-xl border border-white/[.12] bg-white/[.04] px-3 py-2 text-[13px] text-white"><FileText size={16} className="shrink-0 text-[#f2c75c]" /><span className="truncate">{link.name}</span></a>}</div>)}
                           {chatQuoteOf(msg) && <div className="w-[min(320px,65vw)] max-w-full px-2 pb-2 pt-1"><QuoteEmbed quote={chatQuoteOf(msg)!.ref} /></div>}
                           {!(chatQuoteOf(msg)?.rest ?? visibleMessageText(msg)).trim() && showMessageTime && !msg.deletedAt && !(msg.isOwn && hasAudioAttachment) && (
                           <div className={cn('flex items-center gap-1 px-3 pb-1.5 pt-0.5 text-[10px] tabular-nums', msg.isOwn ? 'justify-end text-white/75' : 'text-white/40')}>
                             <span>{currentDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</span>
-                            {msg.isOwn && (msg.failed ? <button onClick={() => retryFailedMessage(msg)} className="text-[9px] text-red-100">Retry</button> : msg.pending ? <Loader2 size={10} className="animate-spin" /> : <CheckCheck size={11} />)}
+                            {msg.isOwn && (msg.failed ? <button onClick={() => retryFailedMessage(msg)} className="text-[9px] text-red-100">Retry</button> : msg.pending ? <Loader2 size={10} className="animate-spin" /> : outgoingReceiptState(msg) === 'read' ? <CheckCheck size={12} aria-label="Read" /> : <Check size={12} aria-label="Sent" />)}
                           </div>
                         )}{msg.uploading && <div className="mt-1 flex items-center gap-1.5 px-3 pb-2 text-[10px] text-[#6aa5ff]"><Loader2 size={10} className="animate-spin" /><span className="tabular-nums">Uploading {msg.uploadProgress ?? 0}%</span></div>}
                         </>)}
@@ -2950,7 +3071,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   <button type="button" onClick={requestDeleteSelectedMessages} className="flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl bg-[#4a2c32] text-[10px] font-semibold text-[#ffb9bd] transition hover:bg-[#5a343b]"><Trash2 size={17}/>Delete</button>
                 </div>
               </div>
-            ) : canPublish ? <div className="sticky bottom-0 z-30 shrink-0 bg-transparent px-2.5 pb-[max(8px,env(safe-area-inset-bottom))] pt-2">
+            ) : canPublish ? <div className={cn("vanta-chat-composer sticky bottom-0 z-30 shrink-0 bg-transparent px-2.5 pb-[max(8px,env(safe-area-inset-bottom))] pt-2", activeConv.type === 'direct' && 'vanta-direct-composer')}>
               {editingMessage && <div className="mb-2 flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/70"><span>Editing message</span><button onClick={() => { setEditingMessage(null); setMessageInput(''); }} aria-label="Cancel editing"><X size={14} /></button></div>}
               {activeReply && <div className="mb-1.5 flex items-center gap-2 border-l-2 border-[#d6a83f] pr-2 pl-2 py-1"><button type="button" className="min-w-0 flex-1 truncate text-left text-[11px]" onClick={() => { const original = document.getElementById(`message-${activeReply.id}`); original?.scrollIntoView({ behavior: 'smooth', block: 'center' }); original?.classList.add('ring-1', 'ring-[#d6a83f]/70'); window.setTimeout(() => original?.classList.remove('ring-1', 'ring-[#d6a83f]/70'), 1200); }}><span className="font-semibold text-[#f2c75c]">@{activeReply.sender?.username || 'user'}</span><span className="text-white/45"> · {activeReply.text || activeReply.content || 'Attachment'}</span></button><button className="grid h-6 w-6 shrink-0 place-items-center rounded text-white/40" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={12} /></button></div>}
               {(recordingState === 'recording' || recordingState === 'ready' || recordingState === 'uploading') && (
@@ -3023,34 +3144,45 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   })()}
                 </div>
               )}
-              {/* Unified attachment sheet: live camera preview plus one compact action strip. */}
+              {/* Gallery-first bottom sheet: real recent media, camera tile, attachment categories. */}
               {showAttachmentSheet && (
                 <>
-                  <button type="button" aria-label="Close attachment picker" onClick={() => setShowAttachmentSheet(false)} className="fixed inset-0 z-[60] bg-black/55" />
-                  <section role="dialog" aria-label="Choose an attachment" className="fixed inset-x-3 bottom-[calc(var(--vanta-kb,0px)+5.25rem)] z-[70] mx-auto w-[calc(100%-1.5rem)] max-w-lg rounded-2xl border border-white/[0.09] bg-[#1F2630] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.65)] backdrop-blur-2xl">
-                    <div className="mb-4 flex items-center justify-between">
-                      <div>
-                        <h3 className="text-sm font-semibold text-white">Share a file</h3>
-                        <p className="mt-1 text-[11px] text-white/45">Choose how you want to attach it</p>
+                  <button type="button" aria-label="Close attachment picker" onClick={() => setShowAttachmentSheet(false)} className="fixed inset-0 z-[60] bg-black/60" />
+                  <section role="dialog" aria-modal="true" aria-label="Choose an attachment" className="fixed inset-x-0 bottom-0 z-[70] flex h-[min(68dvh,640px)] flex-col overflow-hidden rounded-t-[26px] bg-[#17232e] shadow-[0_-16px_60px_rgba(0,0,0,0.55)]">
+                    <div className="flex h-10 shrink-0 items-center justify-center">
+                      <span className="h-1.5 w-14 rounded-full bg-white/20" aria-hidden="true" />
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                      <div className="grid grid-cols-3 gap-[3px]" aria-label="Recent device photos and videos">
+                        <button type="button" onClick={openCamera} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} aria-label="Open camera" className="relative flex aspect-[3/4] items-start justify-end bg-[#0e141b] p-3 text-white disabled:opacity-50">
+                          <Camera size={25} />
+                        </button>
+                        {recentChatMedia.map(item => (
+                          <button type="button" key={item.id} onClick={() => void pickChatRecentMedia(item)} disabled={Boolean(chatPickingMediaId) || isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="relative aspect-[3/4] overflow-hidden bg-[#101820] disabled:opacity-50" aria-label={`Attach ${item.name}`}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={item.thumbnailUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                            {item.mimeType.startsWith('video/') && <span className="absolute bottom-2 left-2 flex items-center gap-1 rounded bg-black/65 px-1.5 py-0.5 text-xs text-white"><Play size={12} fill="currentColor" /> Video</span>}
+                            {chatPickingMediaId === item.id && <Loader2 className="absolute right-3 top-3 animate-spin text-white" size={22} />}
+                          </button>
+                        ))}
                       </div>
-                      <button type="button" onClick={() => setShowAttachmentSheet(false)} className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-white/60" aria-label="Close"><X size={16}/></button>
+                      {chatGalleryStatus === 'permission' && (
+                        <button type="button" onClick={requestChatGalleryAccess} className="m-4 rounded-xl bg-white/10 px-4 py-3 text-sm text-white">Allow access to recent photos</button>
+                      )}
+                      {chatGalleryStatus === 'loading' && <p className="px-4 py-3 text-sm text-white/60">Loading recent media…</p>}
+                      {(chatGalleryStatus === 'unavailable' || chatGalleryStatus === 'error' || (chatGalleryStatus === 'ready' && recentChatMedia.length === 0)) && (
+                        <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => attachmentInputRef.current?.click()); }} className="m-4 rounded-xl bg-white/10 px-4 py-3 text-sm text-white">Browse device photos and videos</button>
+                      )}
                     </div>
-                    <div className="mb-3 overflow-hidden rounded-xl bg-black">
-                      <video ref={cameraPreviewRef} autoPlay playsInline muted className="max-h-52 min-h-32 w-full object-cover" />
-                      {cameraPreviewError && <p className="px-3 py-2 text-[10px] text-white/55">{cameraPreviewError}</p>}
-                      <div className="flex items-center justify-center gap-3 border-t border-white/10 px-3 py-2">
-                        <button type="button" onClick={captureLivePhoto} disabled={Boolean(cameraPreviewError) || isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-black disabled:opacity-40">Take photo</button>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 overflow-x-auto border-t border-white/[0.07] pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => attachmentInputRef.current?.click()); }} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="flex shrink-0 items-center gap-2 rounded-full bg-[#26384a] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-40"><ImageIcon size={15}/> Gallery</button>
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => fileInputRef.current?.click()); }} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold text-white/75 hover:bg-white/[0.06] disabled:opacity-40"><FileText size={15}/> Files</button>
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); sendLocationMessage(); }} disabled={specialSending} className="flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold text-white/75 hover:bg-white/[0.06] disabled:opacity-40"><MapPin size={15}/> Location</button>
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); setPollDraft({ question: '', options: ['', ''], allowMultiple: false, imageFile: null }); }} disabled={specialSending} className="flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold text-white/75 hover:bg-white/[0.06] disabled:opacity-40"><BarChart3 size={15}/> Poll</button>
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); setContactPickerOpen(true); }} disabled={specialSending} className="flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold text-white/75 hover:bg-white/[0.06] disabled:opacity-40"><User size={15}/> Contact</button>
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); musicInputRef.current?.click(); }} disabled={specialSending} className="flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold text-white/75 hover:bg-white/[0.06] disabled:opacity-40"><Music2 size={15}/> Music</button>
-                      <button type="button" onClick={() => { setShowAttachmentSheet(false); openWallet(); }} disabled={specialSending} className="flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-[11px] font-semibold text-white/75 hover:bg-white/[0.06] disabled:opacity-40"><WalletIcon size={15}/> Wallet</button>
-                    </div>
+                    <nav aria-label="Attachment options" className="vanta-chat-attachment-tabs flex shrink-0 gap-1.5 overflow-x-auto border-t border-white/10 bg-[#1d2b38] px-3 pt-2 pb-[env(safe-area-inset-bottom,0px)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => attachmentInputRef.current?.click()); }} className="flex min-w-[80px] shrink-0 flex-col items-center gap-1 rounded-2xl bg-[#254666] px-3 py-2 text-xs font-semibold text-[#51b7ff]"><ImageIcon size={24}/>Gallery</button>
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); window.requestAnimationFrame(() => fileInputRef.current?.click()); }} className="flex min-w-[70px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white"><FileText size={24}/>File</button>
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); openWallet(); }} disabled={specialSending} className="flex min-w-[70px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white disabled:opacity-40"><WalletIcon size={24}/>Money</button>
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); sendLocationMessage(); }} disabled={specialSending} className="flex min-w-[80px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white disabled:opacity-40"><MapPin size={24}/>Location</button>
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); setPollDraft({ question: '', options: ['', ''], allowMultiple: false, imageFile: null }); }} disabled={specialSending} className="flex min-w-[75px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white disabled:opacity-40"><BarChart3 size={24}/>Poll</button>
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); setContactPickerOpen(true); }} disabled={specialSending} className="flex min-w-[80px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white disabled:opacity-40"><User size={24}/>Contact</button>
+                      <button type="button" onClick={() => { setShowAttachmentSheet(false); musicInputRef.current?.click(); }} disabled={specialSending} className="flex min-w-[70px] shrink-0 flex-col items-center gap-1 rounded-2xl px-3 py-2 text-xs text-white disabled:opacity-40"><Music2 size={24}/>Music</button>
+                    </nav>
                   </section>
                 </>
               )}
@@ -3128,13 +3260,26 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                   </section>
                 </>
               )}
-              <div className="flex items-center gap-1.5 bg-transparent px-0 py-0">
+              {composerEmojiOpen && (
+                <div className="absolute bottom-[calc(100%+6px)] left-2 z-[65] max-w-[calc(100vw-16px)]">
+                  <EmojiPicker onEmojiSelect={emoji => {
+                    setMessageInput(current => current + emoji);
+                    setComposerEmojiOpen(false);
+                    messageInputRef.current?.focus({ preventScroll: true });
+                  }} onClose={() => setComposerEmojiOpen(false)} className="max-w-full" />
+                </div>
+              )}
+              <div className={cn("flex items-center gap-1.5 bg-transparent px-0 py-0", activeConv.type === 'direct' && 'vanta-direct-input-row')}>
                 {/* Hidden native pickers — each invokes a distinct real device capability */}
                 <input ref={attachmentInputRef} type="file" className="hidden" accept="image/*,video/*" multiple onChange={handleAttachment} />
                 <input ref={cameraInputRef} type="file" className="hidden" accept="image/*,video/*" capture="environment" onChange={handleAttachment} />
                 <input ref={musicInputRef} type="file" className="hidden" accept="audio/*,.mp3,.wav,.ogg,.m4a,.flac,.aac" onChange={handleMusicAttachment} />
                 <input ref={fileInputRef} type="file" className="hidden" accept="application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" multiple onChange={handleDocumentAttachment} />
-                <button onClick={() => setShowAttachmentSheet(value => !value)} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="btn-icon h-9 w-9 shrink-0 rounded-full bg-white/[0.045] disabled:opacity-50" aria-label="Add attachment">{isUploadingAttachment ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={17} />}</button>
+                <button onClick={() => { setComposerEmojiOpen(false); setShowAttachmentSheet(value => !value); }} disabled={isUploadingAttachment || hasBusyDraft(attachmentDrafts)} className="btn-icon h-10 w-10 shrink-0 rounded-full bg-white/[0.045] disabled:opacity-50" aria-label="Add attachment">{isUploadingAttachment ? <Loader2 size={17} className="animate-spin" /> : <Paperclip size={22} />}</button>
+                {activeConv.type === 'direct' && (
+                  <button type="button" aria-label="Choose emoji" aria-expanded={composerEmojiOpen} onClick={() => { setShowAttachmentSheet(false); setComposerEmojiOpen(value => !value); }}
+                    className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white/65 hover:text-white"><Smile size={23}/></button>
+                )}
                 <div className="flex-1 relative">
                   <textarea
                     ref={messageInputRef}
@@ -3167,7 +3312,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     }}
                     disabled={recordingState !== 'idle'}
                     placeholder="Message"
-                    className="min-h-10 max-h-[100px] w-full resize-none overflow-y-auto rounded-2xl border-0 bg-[#27313d] px-3.5 py-2.5 text-sm leading-5 text-white outline-none placeholder:text-white/35 focus:bg-[#354252]"
+                    className="min-h-10 max-h-[100px] w-full resize-none overflow-y-auto rounded-2xl border-0 bg-[#27313d] px-3.5 py-2.5 text-[16px] leading-5 text-white outline-none placeholder:text-white/40 focus:bg-[#354252]"
                     enterKeyHint="enter"
                     onKeyDown={e => {
                       // Keep Enter as a newline on phones; the visible Send button
@@ -3183,7 +3328,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                 {messageInput.trim() || attachmentDrafts.length ? (
                   <button
                     onClick={sendComposer}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#c9a227] text-[#171b20] transition-colors hover:bg-[#e0b638]"
+                    className="flex h-[50px] w-[50px] shrink-0 items-center justify-center rounded-full bg-[#2b9de4] text-white transition-colors hover:bg-[#168bd0]"
                     aria-label="Send message"
                   >
                     <Send size={16} />
@@ -3194,7 +3339,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     animate={{ scale: 1 }}
                     type="button"
                     onClick={() => void startVoiceRecording()}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1E9DE9] text-white transition-colors hover:bg-[#168bd0]"
+                    className="flex h-[50px] w-[50px] shrink-0 items-center justify-center rounded-full bg-[#2b9de4] text-white transition-colors hover:bg-[#168bd0]"
                     aria-label="Record voice note"
                     title="Record voice note"
                   >

@@ -74,6 +74,7 @@ jobs:
           src/__tests__/private-media.controller.test.ts
           src/__tests__/chat.service.test.ts
           src/__tests__/upload.service.test.ts
+          src/__tests__/chunk-upload.service.test.ts
           src/__tests__/reel-media-finalization.test.ts
           src/__tests__/wallet.transfer-security.test.ts
           src/__tests__/wallet.withdrawal.test.ts
@@ -101,6 +102,7 @@ jobs:
           src/__tests__/group-ownership.test.ts
           src/__tests__/channel-ownership.test.ts
           src/__tests__/feed.moderation-guards.test.ts
+          src/__tests__/feed.video-publication.test.ts
           src/__tests__/post.service.test.ts
           src/ai/__tests__/privacy.middleware.test.ts
 

@@ -41,7 +41,7 @@ const STEP_SUBTITLES: Record<Step, string> = {
  * becomes visible (PUBLISHED) after its media actually reaches storage.
  */
 export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
-  const { token, user } = useAuth();
+  const { token, user, getAccessToken, renewAccessToken } = useAuth();
   const { showToast } = useToast();
 
   const [step, setStep] = useState<Step>('select');
@@ -137,6 +137,8 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
         file,
         draftId: draft.video.id,
         token,
+        getAccessToken,
+        renewAccessToken,
         meta: {
           title: reelTitle,
           description: reelDescription,

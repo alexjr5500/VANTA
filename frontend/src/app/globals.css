@@ -3446,3 +3446,105 @@ html.light .feed-item:hover {
     border-radius: 12px !important;
   }
 }
+
+
+/* Android APK only: native FrameLayout already reserves the OS bars. Avoid
+   counting their insets again in the WebView's chat/creation surfaces. */
+html.vanta-native-android body {
+  padding-bottom: 0 !important;
+}
+
+html.vanta-native-android .chat-screen {
+  height: var(--chat-viewport-height, 100dvh);
+  bottom: auto;
+}
+
+html.vanta-native-android .vanta-chat-composer {
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}
+
+/* The Android FrameLayout already reserves the OS navigation buttons. Bottom
+   actions belong flush against that usable WebView edge, not above a second
+   web safe-area spacer. Browser views still retain their own safe-area inset. */
+html.vanta-native-android .vanta-status-action-footer {
+  padding-bottom: var(--vanta-kb, 0px) !important;
+}
+
+html.vanta-native-android .vanta-chat-attachment-tabs {
+  padding-bottom: 0 !important;
+}
+
+html.vanta-native-android .vanta-entity-create {
+  height: var(--chat-viewport-height, 100dvh) !important;
+  min-height: 0;
+}
+
+html.vanta-native-android .vanta-entity-create > header {
+  min-height: 52px;
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}
+
+html.vanta-native-android .vanta-entity-create > div.flex-1 {
+  padding-top: 0;
+}
+
+html.vanta-native-android .vanta-entity-create footer {
+  min-height: 56px;
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}
+
+
+/* Direct messages: floating mobile controls and Telegram-style low-contrast
+   doodle wallpaper. Group/channel surfaces intentionally retain their UI. */
+.vanta-direct-chat { background: #102230; }
+.vanta-direct-wallpaper {
+  background-color: #122332 !important;
+  background-image: url('/media/chat-doodles.svg') !important;
+  background-size: 320px 320px !important;
+  background-repeat: repeat !important;
+}
+.vanta-direct-header {
+  height: 74px !important;
+  min-height: 74px !important;
+  padding: 8px 10px !important;
+  gap: 8px;
+  border-bottom: 0 !important;
+  background: #102230 !important;
+}
+.vanta-direct-header > div:first-child { flex: 1 1 auto; min-width: 0; gap: 7px; }
+.vanta-direct-header > div:first-child > button:first-child {
+  flex: 0 0 50px; width: 50px; height: 54px; border-radius: 999px;
+  background: #263446; color: white;
+}
+.vanta-direct-header > div:first-child > button:nth-child(2) {
+  flex: 1 1 auto; min-width: 0; height: 54px;
+  gap: 9px; padding: 0 9px; border-radius: 999px;
+  background: #263446;
+}
+.vanta-direct-header > div:first-child > button:nth-child(2) > div:last-child { flex: 1 1 auto; min-width: 0; }
+.vanta-direct-header > div:first-child > button:nth-child(2) p:first-child { font-size: 16px; line-height: 1.25; }
+.vanta-direct-header > div:first-child > button:nth-child(2) p:last-child { font-size: 12px; }
+.vanta-direct-header > div:last-child {
+  flex: 0 0 auto; min-width: 80px; height: 54px; padding: 0 4px;
+  border-radius: 999px; background: #263446;
+}
+.vanta-direct-header > div:last-child .btn-icon { width: 35px; height: 44px; color: #fff; }
+.vanta-direct-chat .chat-bubble-text { padding: 2px 4px; }
+.vanta-direct-chat .chat-bubble-text > p { line-height: 1.35; }
+.vanta-direct-composer { background: #102230; }
+.vanta-direct-input-row { min-height: 52px; }
+.vanta-direct-input-row > div.relative.flex-1 textarea {
+  background: #263648; border-radius: 999px;
+  min-height: 48px; padding-top: 13px; padding-bottom: 11px;
+}
+@media (max-width: 380px) {
+  .vanta-direct-header { padding-left: 6px !important; padding-right: 6px !important; gap: 5px; }
+  .vanta-direct-header > div:first-child > button:first-child { flex-basis: 44px; width: 44px; }
+  .vanta-direct-header > div:last-child { min-width: 73px; }
+  .vanta-direct-header > div:last-child .btn-icon { width: 31px; }
+  .vanta-direct-input-row { gap: 4px; }
+  .vanta-direct-input-row > button { width: 32px !important; }
+}

@@ -48,7 +48,12 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const downloadPost = async (target: ProfileItem) => { if (downloadingId) return; setDownloadingId(target.id); await downloadPostVideo(target, toast, p => { if (p === null) { setDownloadingId(null); setMoreFor(undefined); } }); };
   const { openPostModal, openQuotePost } = useContentCreation();
-  const normalized = username && username !== 'me' ? decodeURIComponent(username).replace(/^@/, '') : '';
+  // Route params are normally decoded by Next.js; malformed percent escapes must not crash the profile.
+  const normalized = (() => {
+    if (!username || username === 'me') return '';
+    try { return decodeURIComponent(username).replace(/^@/, ''); }
+    catch { return username.replace(/^@/, ''); }
+  })();
   const own = !normalized || (!!user?.username && normalized.toLowerCase() === user.username.toLowerCase());
   const [profile, setProfile] = useState<ProfileData | null>(null); const [tab, setTab] = useState<ProfileTab>('posts');
   const [content, setContent] = useState(emptyContent); const [nextCursor, setNextCursor] = useState<Partial<Record<ProfileTab, string>>>({}); const [loadingMore, setLoadingMore] = useState(false); const [loading, setLoading] = useState(true); const [contentLoading, setContentLoading] = useState(true);
@@ -61,7 +66,13 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   const [repostFor, setRepostFor] = useState<ProfileItem>(); const [moreFor, setMoreFor] = useState<ProfileItem>();
   const [giftFor, setGiftFor] = useState<ProfileItem>(); const [gifts, setGifts] = useState<GiftCatalogItem[]>([]); const [balance, setBalance] = useState(0);
   const profileRequest = useRef(0);
+  const paginationRequest = useRef(0);
+  const contentRequest = useRef(0);
+  const paginationInFlight = useRef(false);
   const pendingPostActionsRef = useRef(new Set<string>());
+  const followInFlightRef = useRef(false);
+  const deleteInFlightRef = useRef(false);
+  const giftRequestRef = useRef(0);
 
   const loadProfile = useCallback(async () => {
     if (authLoading) return;
@@ -104,53 +115,61 @@ export default function CreatorHubPage({ username }: { username?: string }) {
   }, [normalized, own, tab]);
 
   useEffect(() => {
+    paginationRequest.current += 1;
+    const requestId = ++contentRequest.current;
     if (!profile) return;
     if (!endpoint) { setContent(current => ({ ...current, [tab]: [] })); setNextCursor(current => ({ ...current, [tab]: undefined })); return; }
-    let active = true; setContentLoading(true); setContentError(''); setNextCursor(current => ({ ...current, [tab]: undefined }));
+    let active = true; setContentLoading(true); setContentError('');
     apiGet<any>(`${endpoint}?limit=24`, token || undefined, { skipCache: true })
       .then(result => {
-        if (!active) return;
+        if (!active || requestId !== contentRequest.current) return;
         const rows = postOnly(unwrap(result)).map(item => normalizeProfileItem(item, tab === 'likes'));
         setContent(current => ({ ...current, [tab]: rows }));
         setNextCursor(current => ({ ...current, [tab]: nextCursorFrom(result) }));
       })
       .catch((reason: any) => {
-        if (!active || reason?.statusCode === 499) return;
-        setContent(current => ({ ...current, [tab]: [] }));
+        if (!active || requestId !== contentRequest.current || reason?.statusCode === 499) return;
+        // Keep already loaded posts visible when a refresh fails; retry remains available.
         const status = errorStatus(reason);
         setContentError(status === 401 || status === 403 ? 'This content is not available to your account.' : reason?.message || `Unable to load ${tab}.`);
       })
-      .finally(() => active && setContentLoading(false));
+      .finally(() => { if (active && requestId === contentRequest.current) setContentLoading(false); });
     return () => { active = false; };
   }, [contentRetry, endpoint, profile, tab, token]);
 
   const refreshProfile = useCallback(async () => {
     await Promise.all([loadProfile(), new Promise<void>(resolve => {
       if (!profile || !endpoint) { resolve(); return; }
+      const requestId = ++contentRequest.current;
+      paginationRequest.current += 1;
       let settled = false;
       const finish = () => { if (!settled) { settled = true; resolve(); } };
       setContentLoading(true);
       setContentError('');
       apiGet<any>(`${endpoint}?limit=24`, token || undefined, { skipCache: true })
         .then(result => {
+          if (requestId !== contentRequest.current) return;
           const rows = postOnly(unwrap(result)).map(item => normalizeProfileItem(item, tab === 'likes'));
           setContent(current => ({ ...current, [tab]: rows }));
           setNextCursor(current => ({ ...current, [tab]: nextCursorFrom(result) }));
         })
         .catch((reason: any) => {
-          if (reason?.statusCode !== 499) setContentError(reason?.message || `Unable to load ${tab}.`);
+          if (requestId === contentRequest.current && reason?.statusCode !== 499) setContentError(reason?.message || `Unable to load ${tab}.`);
         })
-        .finally(() => { setContentLoading(false); finish(); });
+        .finally(() => { if (requestId === contentRequest.current) setContentLoading(false); finish(); });
     })]);
   }, [endpoint, loadProfile, profile, tab, token]);
 
   const loadMore = async () => {
     const requestedTab = tab;
     const cursor = nextCursor[requestedTab];
-    if (!endpoint || !cursor || loadingMore) return;
+    if (!endpoint || !cursor || paginationInFlight.current || contentLoading) return;
+    const requestId = paginationRequest.current;
+    paginationInFlight.current = true;
     setLoadingMore(true);
     try {
       const result = await apiGet<any>(`${endpoint}?limit=24&cursor=${encodeURIComponent(cursor)}`, token || undefined, { skipCache: true });
+      if (paginationRequest.current !== requestId) return;
       const rows = postOnly(unwrap(result)).map(item => normalizeProfileItem(item, requestedTab === 'likes'));
       setContent(current => {
         const existingIds = new Set(current[requestedTab].map(cleanPostId));
@@ -158,8 +177,9 @@ export default function CreatorHubPage({ username }: { username?: string }) {
       });
       setNextCursor(current => ({ ...current, [requestedTab]: nextCursorFrom(result) }));
     } catch (reason: any) {
-      toast.error(`Unable to load more ${requestedTab}`, reason?.message);
+      if (paginationRequest.current === requestId && reason?.statusCode !== 499) toast.error(`Unable to load more ${requestedTab}`, reason?.message);
     } finally {
+      paginationInFlight.current = false;
       setLoadingMore(false);
     }
   };
@@ -179,16 +199,18 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     } catch (reason: any) { toast.error('Could not start chat', reason?.message); }
   };
   const follow = async () => {
-    if (!profile || followPending) return;
+    if (!profile || own || followPending || followInFlightRef.current) return;
     if (!token) return router.push(`/login?next=${encodeURIComponent(`/profile/${profile.username}`)}`);
     const wasFollowing = !!profile.isFollowing;
     if (wasFollowing && !unfollowOpen) { setUnfollowOpen(true); return; }
     setUnfollowOpen(false);
+    followInFlightRef.current = true;
+    const targetId = profile.id;
     setFollowPending(true);
     setProfile(current => current ? { ...current, isFollowing: !wasFollowing, stats: { ...current.stats, followers: Math.max(0, finite(current.stats?.followers ?? current._count?.followers) + (wasFollowing ? -1 : 1)) } } : current);
     try {
       const result: any = wasFollowing ? await apiDelete(`/api/profiles/${profile.username}/follow`, token) : await apiPost(`/api/profiles/${profile.username}/follow`, {}, token);
-      setProfile(current => current ? { ...current, isFollowing: !!result?.isFollowing, stats: { ...current.stats, followers: finite(result?.counts?.target?.followers ?? current.stats?.followers) } } : current);
+      setProfile(current => current?.id === targetId ? { ...current, isFollowing: typeof result?.isFollowing === 'boolean' ? result.isFollowing : !wasFollowing, stats: { ...current.stats, followers: finite(result?.counts?.target?.followers ?? current.stats?.followers) } } : current);
       if (own === false && result?.counts?.currentUser) {
         window.dispatchEvent(new CustomEvent('vanta:profile-counts-updated', {
           detail: { userId: user?.id, counts: result.counts.currentUser },
@@ -196,34 +218,38 @@ export default function CreatorHubPage({ username }: { username?: string }) {
       }
       window.dispatchEvent(new CustomEvent('vanta:follow-updated', { detail: result }));
     }
-    catch (reason: any) { void loadProfile(); toast.error('Follow update failed', reason?.message); }
-    finally { setFollowPending(false); }
+    catch (reason: any) {
+      setProfile(current => current?.id === targetId ? { ...current, isFollowing: wasFollowing, stats: { ...current.stats, followers: finite(current.stats?.followers ?? current._count?.followers) + (wasFollowing ? -1 : 1) } } : current);
+      toast.error('Follow update failed', reason?.message);
+    }
+    finally { followInFlightRef.current = false; setFollowPending(false); }
   };
-  const updatePost = (id: string, patch: ProfileItem) => setContent(current => ({ ...current, [tab]: current[tab].map(item => cleanPostId(item) === id ? { ...item, ...patch } : item) }));
+  const updatePost = (targetTab: ProfileTab, id: string, patch: ProfileItem) => setContent(current => ({ ...current, [targetTab]: current[targetTab].map(item => cleanPostId(item) === id ? { ...item, ...patch } : item) }));
   const togglePost = async (item: ProfileItem, mode: 'like' | 'save') => {
     if (!token) return;
+    const targetTab = tab;
     const id = cleanPostId(item);
-    const actionKey = `${mode}:${id}`;
+    const actionKey = `${targetTab}:${mode}:${id}`;
     if (pendingPostActionsRef.current.has(actionKey)) return;
     pendingPostActionsRef.current.add(actionKey);
     const key = mode === 'like' ? 'liked' : 'saved';
     const was = Boolean(item[key]);
     const previousLikes = finite(item.likes ?? item._count?.likes);
-    updatePost(id, { [key]: !was, ...(mode === 'like' ? { likes: Math.max(0, previousLikes + (was ? -1 : 1)) } : {}) });
+    updatePost(targetTab, id, { [key]: !was, ...(mode === 'like' ? { likes: Math.max(0, previousLikes + (was ? -1 : 1)) } : {}) });
     try {
       if (mode === 'like') {
-        const result: any = await apiPost(tab === 'reposts' && item.repostKind !== 'post' ? `/api/reels/${id}/like` : `/api/feed/${id}/like`, {}, token);
-        updatePost(id, { liked: typeof result?.liked === 'boolean' ? result.liked : !was, likes: finite(result?.likeCount ?? result?.likes ?? previousLikes + (was ? -1 : 1)) });
+        const result: any = await apiPost(targetTab === 'reposts' && item.repostKind !== 'post' ? `/api/reels/${id}/like` : `/api/feed/${id}/like`, {}, token);
+        updatePost(targetTab, id, { liked: typeof result?.liked === 'boolean' ? result.liked : !was, likes: finite(result?.likeCount ?? result?.likes ?? previousLikes + (was ? -1 : 1)) });
       } else if (tab === 'reposts' && item.repostKind !== 'post') {
         const result: any = await apiPost(`/api/reels/${id}/save`, {}, token);
-        if (typeof result?.saved === 'boolean') updatePost(id, { saved: result.saved });
+        if (typeof result?.saved === 'boolean') updatePost(targetTab, id, { saved: result.saved });
       } else if (was) {
         await apiDelete(`/api/feed/${id}/save`, token);
       } else {
         await apiPost(`/api/feed/${id}/save`, {}, token);
       }
     } catch (reason: any) {
-      updatePost(id, { [key]: was, ...(mode === 'like' ? { likes: previousLikes } : {}) });
+      updatePost(targetTab, id, { [key]: was, ...(mode === 'like' ? { likes: previousLikes } : {}) });
       toast.error('Post update failed', reason?.message);
     } finally {
       pendingPostActionsRef.current.delete(actionKey);
@@ -234,7 +260,8 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     setDeletePostFor(item);
   };
   const confirmDeletePost = async () => {
-    if (!token || !deletePostFor) return;
+    if (!token || !deletePostFor || deleteInFlightRef.current) return;
+    deleteInFlightRef.current = true;
     const item = deletePostFor;
     setDeletePostFor(undefined);
     const id = cleanPostId(item);
@@ -242,8 +269,13 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     const endpoint = isReel ? `/api/reels/${id}` : `/api/feed/${id}`;
     try {
       await apiDelete(endpoint, token);
-      const bucket = isReel ? 'reels' : 'posts';
-      setContent(current => ({ ...current, [bucket]: current[bucket].filter(post => cleanPostId(post) !== id) }));
+      setContent(current => {
+        const updated = { ...current };
+        for (const bucket of Object.keys(updated) as ProfileTab[]) {
+          updated[bucket] = current[bucket].filter(post => cleanPostId(post) !== id);
+        }
+        return updated;
+      });
       if (!isReel) {
         setProfile(current => current ? {
           ...current,
@@ -255,26 +287,52 @@ export default function CreatorHubPage({ username }: { username?: string }) {
       toast.success(isReel ? 'Reel deleted' : 'Post deleted');
     }
     catch (reason: any) { toast.error(isReel ? 'Reel not deleted' : 'Post not deleted', reason?.message); }
+    finally { deleteInFlightRef.current = false; }
   };
   const openGift = async (item: ProfileItem) => {
-    if (!token) return; setGiftFor(item);
-    try { const [catalog, wallet] = await Promise.all([apiGet<any>('/api/monetization/gifts', token), apiGet<any>('/api/monetization/wallet', token, { skipCache: true })]); setGifts(unwrap(catalog) as GiftCatalogItem[]); setBalance(finite(wallet?.coinBalance)); }
-    catch (reason: any) { setGiftFor(undefined); toast.error('Gift picker unavailable', reason?.message); }
+    if (!token) {
+      router.push(`/login?next=${encodeURIComponent(`/profile/${profile?.username || ''}`)}`);
+      return;
+    }
+    const requestId = ++giftRequestRef.current;
+    setGiftFor(item);
+    try {
+      const [catalog, wallet] = await Promise.all([
+        apiGet<any>('/api/monetization/gifts', token),
+        apiGet<any>('/api/monetization/wallet', token, { skipCache: true }),
+      ]);
+      if (requestId !== giftRequestRef.current) return;
+      setGifts(unwrap(catalog) as GiftCatalogItem[]);
+      setBalance(finite(wallet?.coinBalance));
+    } catch (reason: any) {
+      if (requestId !== giftRequestRef.current || reason?.statusCode === 499) return;
+      setGiftFor(undefined);
+      toast.error('Gift picker unavailable', reason?.message);
+    }
   };
   const creatorOf = (item: ProfileItem) => item.author || item.user || item.creator || item.host || {};
   const sharePost = async (destination: 'COPY_LINK' | 'NATIVE' | 'MESSAGE', target?: ProfileItem) => {
-    if (!target || !token) return;
+    if (!target) return;
     const id = cleanPostId(target);
     const url = `${location.origin}/post/${id}`;
     try {
-      await apiPost(`/api/feed/${id}/share`, { destination }, token);
-      if (destination === 'COPY_LINK') await navigator.clipboard.writeText(url);
-      else if (destination === 'NATIVE' && navigator.share) await navigator.share({ title: 'VANTA', text: target.content || target.title || 'Check out this post on VANTA', url });
-      else if (destination === 'MESSAGE') router.push(`/chat?share=${encodeURIComponent(url)}`);
-      toast.success(destination === 'COPY_LINK' ? 'Link copied' : 'Shared successfully');
-    }
-    catch (reason: any) { toast.error('Share failed', reason?.message); }
-    finally { setMoreFor(undefined); }
+      if (destination === 'MESSAGE') {
+        router.push(`/chat?share=${encodeURIComponent(url)}`);
+        return; // Opening the composer is not a completed share.
+      }
+      if (destination === 'NATIVE' && navigator.share) {
+        await navigator.share({ title: 'VANTA', text: target.content || target.title || 'Check out this post on VANTA', url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        toast.success('Link copied');
+      }
+      if (token) {
+        try { await apiPost(`/api/feed/${id}/share`, { destination: destination === 'NATIVE' && !navigator.share ? 'COPY_LINK' : destination }, token); }
+        catch { /* Sharing already succeeded locally; analytics failure must not claim it failed. */ }
+      }
+    } catch (reason: any) {
+      if (reason?.name !== 'AbortError') toast.error('Share failed', reason?.message);
+    } finally { setMoreFor(undefined); }
   };
   const patchRow = (id: string, patch: Record<string, any>) => setContent(current => Object.fromEntries(Object.entries(current).map(([key, rows]) => [key, (rows as ProfileItem[]).map(row => (cleanPostId(row) === id || row.id === id) ? { ...row, ...patch } : row)])) as typeof current);
   const repostPost = async (target: ProfileItem) => {
@@ -303,8 +361,8 @@ export default function CreatorHubPage({ username }: { username?: string }) {
     <ProfileHeader profile={profile} own={own} onFollow={() => { void follow(); }} onMessage={() => { void messageProfile(); }} onGift={() => { void openGift(profile); }} onCopy={() => { void copyProfile(); }} onPeople={setPeople} followPending={followPending} />
     {!own && <FollowerRewardGiftBox creatorUsername={profile.username} token={token} />}
     <nav className="profile-tabs" aria-label="Profile content">{TABS.filter(item => !item.ownOnly || own).map(({ id, label, icon: Icon }) => <button key={id} className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}><Icon size={16} strokeWidth={tab === id ? 2.4 : 1.9} /><span className="tab-label">{label}</span></button>)}</nav>
-    <section className="profile-content" aria-live="polite">{contentLoading ? <ContentSkeleton /> : contentError ? <ContentError message={contentError} retry={() => setContentRetry(value => value + 1)} /> : <><ProfileContent tab={tab} rows={content[tab]} profile={profile} own={own} router={router} currentUserId={user?.id} onLike={item => void togglePost(item, 'like')} onSave={item => void togglePost(item, 'save')} onComment={item => router.push(tab === 'reposts' || isVideoPost(item) ? `/reels/${encodeURIComponent(cleanPostId(item))}` : `/post/${encodeURIComponent(cleanPostId(item))}/reply`)} onGift={item => void openGift(item)} onDelete={item => void deletePost(item)} onShare={setRepostFor} onShareLink={item => { void navigator.clipboard?.writeText(`${location.origin}/reels/${cleanPostId(item)}`).then(() => toast.success('Link copied')).catch(() => toast.error('Could not copy link')); }} onFollow={() => { void follow(); setContentRetry(value => value + 1); }} onMore={setMoreFor} onCreate={own ? openPostModal : undefined} />{nextCursor[tab] && <div className="profile-load-more"><button className="profile-button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</button></div>}</>}</section>
-    <AnimatePresence>{giftFor && token && <GiftPicker gifts={gifts} balance={balance} recipient={{ id: profile.id, username: profile.username, fullName: profile.fullName || profile.displayName || profile.username, avatar }} token={token} videoId={giftFor.id !== profile.id && (tab === 'reels' || tab === 'reposts' || isVideoPost(giftFor)) ? cleanPostId(giftFor) : undefined} initialGift={null} onClose={() => setGiftFor(undefined)} onSent={(remaining, _amount, _gift, quantity = 1) => { setBalance(remaining); const sent = giftFor; if (sent && sent.id !== profile.id) patchRow(cleanPostId(sent), { isGifted: true, tips: Number(sent.tips ?? sent.tipCount ?? sent.giftsReceived ?? sent.gifts ?? 0) + quantity, gifts: Number(sent.gifts ?? 0) + quantity }); }} />}{repostFor && token && <FeedPostRepostSheet close={() => setRepostFor(undefined)} repost={() => void repostPost(repostFor)} quote={() => quotePost(repostFor)} />}{moreFor && token && <FeedPostMoreSheet item={moreFor} download={canDownloadPostVideo(moreFor) ? () => void downloadPost(moreFor) : undefined} downloading={downloadingId === moreFor.id} share={destination => void sharePost(destination, moreFor)} isOwn={creatorOf(moreFor).id === user?.id} close={() => setMoreFor(undefined)} openProfile={() => { const creator = creatorOf(moreFor); setMoreFor(undefined); router.push(creator.username ? `/profile/${creator.username}` : '/profile'); }} save={() => { void togglePost(moreFor, 'save'); setMoreFor(undefined); }} remove={() => deletePost(moreFor)} />}</AnimatePresence>
+    <section className="profile-content" aria-live="polite">{contentLoading ? <ContentSkeleton /> : contentError ? <ContentError message={contentError} retry={() => setContentRetry(value => value + 1)} /> : <><ProfileContent tab={tab} rows={content[tab]} profile={profile} own={own} router={router} currentUserId={user?.id} onLike={item => void togglePost(item, 'like')} onSave={item => void togglePost(item, 'save')} onComment={item => router.push(tab === 'reposts' || isVideoPost(item) ? `/reels/${encodeURIComponent(cleanPostId(item))}` : `/post/${encodeURIComponent(cleanPostId(item))}/reply`)} onGift={item => void openGift(item)} onDelete={item => void deletePost(item)} onShare={setRepostFor} onShareLink={item => { void navigator.clipboard?.writeText(`${location.origin}/reels/${cleanPostId(item)}`).then(() => toast.success('Link copied')).catch(() => toast.error('Could not copy link')); }} onFollow={() => { void follow(); }} onMore={setMoreFor} onCreate={own ? openPostModal : undefined} />{nextCursor[tab] && <div className="profile-load-more"><button className="profile-button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load more'}</button></div>}</>}</section>
+    <AnimatePresence>{giftFor && token && <GiftPicker gifts={gifts} balance={balance} recipient={{ id: profile.id, username: profile.username, fullName: profile.fullName || profile.displayName || profile.username, avatar }} token={token} videoId={giftFor.id !== profile.id && (tab === 'reels' || tab === 'reposts' || isVideoPost(giftFor)) ? cleanPostId(giftFor) : undefined} initialGift={null} onClose={() => { giftRequestRef.current += 1; setGiftFor(undefined); }} onSent={(remaining, _amount, _gift, quantity = 1) => { setBalance(remaining); const sent = giftFor; if (sent && sent.id !== profile.id) patchRow(cleanPostId(sent), { isGifted: true, tips: Number(sent.tips ?? sent.tipCount ?? sent.giftsReceived ?? sent.gifts ?? 0) + quantity, gifts: Number(sent.gifts ?? 0) + quantity }); }} />}{repostFor && token && <FeedPostRepostSheet close={() => setRepostFor(undefined)} repost={() => void repostPost(repostFor)} quote={() => quotePost(repostFor)} />}{moreFor && token && <FeedPostMoreSheet item={moreFor} download={canDownloadPostVideo(moreFor) ? () => void downloadPost(moreFor) : undefined} downloading={downloadingId === moreFor.id} share={destination => void sharePost(destination, moreFor)} isOwn={creatorOf(moreFor).id === user?.id} close={() => setMoreFor(undefined)} openProfile={() => { const creator = creatorOf(moreFor); setMoreFor(undefined); router.push(creator.username ? `/profile/${creator.username}` : '/profile'); }} save={() => { void togglePost(moreFor, 'save'); setMoreFor(undefined); }} remove={() => deletePost(moreFor)} />}</AnimatePresence>
     {people && <PeopleDialog kind={people} own={own} username={profile.username} token={token || undefined} currentUserId={user?.id} close={() => setPeople(null)} />}
     {unfollowOpen && <ConfirmDialog username={profile.username} onCancel={() => setUnfollowOpen(false)} onConfirm={() => { void follow(); }} />}
     {deletePostFor && <DeleteDialog label={tab === 'reels' ? 'Reel' : 'Post'} onCancel={() => setDeletePostFor(undefined)} onConfirm={() => { void confirmDeletePost(); }} />}

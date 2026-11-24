@@ -20,6 +20,10 @@ interface AuthContextType {
   error: string | null;
   setError: (error: string | null) => void;
   isRefreshing: boolean;
+  /** Latest provider-owned access token for background media transfers. */
+  getAccessToken: () => string | null;
+  /** Refresh using the existing single-flight auth recovery; no new auth store. */
+  renewAccessToken: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -216,6 +220,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     refreshInFlightRef.current = refreshPromise;
     return refreshPromise;
   }, [clearSession]);
+
+  const getAccessToken = useCallback(() => tokenRef.current, []);
+  const renewAccessToken = useCallback(async () => {
+    const existing = refreshTokenRef.current || await storage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+    if (!existing) return null;
+    return refreshAccessToken(existing);
+  }, [refreshAccessToken]);
 
   // Restore session from storage
   const restoreSession = useCallback(async () => {
@@ -445,6 +456,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         error,
         setError,
         isRefreshing,
+        getAccessToken,
+        renewAccessToken,
       }}
     >
       {children}
