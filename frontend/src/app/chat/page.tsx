@@ -2386,18 +2386,6 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
   };
 
-  /** Remove the temporary create image — both from the UI and the server. */
-  const removeCreateAvatar = async () => {
-    const fileId = createAvatarFileIdRef.current;
-    createAvatarFileIdRef.current = null;
-    setCreateAvatarFileId(null);
-    setCreateAvatar(null);
-    setCreateAvatarError(null);
-    if (fileId && token) {
-      apiDelete<any>(`/api/upload/files/${fileId}`, token).catch(() => undefined);
-    }
-  };
-
   const previousCreateStep = () => {
     if (isCreatingEntity || isUploadingAvatar) return;
     if (createStep === 'people') setCreateStep(createType === 'channel' ? 'settings' : 'details');
