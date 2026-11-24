@@ -1,5 +1,5 @@
 jest.mock('../services/private-media.service', () => ({ createPrivateMediaUrl: jest.fn((id: string) => `/api/media/private/${id}?token=test-token`) }));
-import { UploadService, getFileType, buildUploadUrl } from '../services/upload.service';
+import { UploadService, getFileType, buildUploadUrl, assertStatusVideoDuration } from '../services/upload.service';
 import { prisma } from '../prisma';
 import fs from 'fs';
 import path from 'path';
@@ -193,5 +193,13 @@ describe('UploadService', () => {
       const filename = uploadService.getFilenameFromUrl('test-123.jpg');
       expect(filename).toBe('test-123.jpg');
     });
+  });
+});
+
+describe('Status video duration', () => {
+  it('accepts exactly two minutes and rejects longer or unverified durations', () => {
+    expect(() => assertStatusVideoDuration(120)).not.toThrow();
+    expect(() => assertStatusVideoDuration(120.001)).toThrow('2 minutes');
+    for (const duration of [undefined, 0, NaN, Infinity, -1]) expect(() => assertStatusVideoDuration(duration)).toThrow('verify');
   });
 });
