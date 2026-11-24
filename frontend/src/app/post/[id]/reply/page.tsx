@@ -11,6 +11,7 @@ import { apiGet, apiPost, apiUpload } from '@/lib/apiClient';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { renderTextWithLinks } from '@/lib/linkify';
 import type { VerificationType } from '@/types/verification';
+import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
 
 type Post = {
   id: string;
@@ -50,6 +51,7 @@ export default function DirectPostReplyPage({ params }: { params: Promise<{ id: 
   const [previews, setPreviews] = useState<{ url: string; file: File }[]>([]);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const mentions = useMentionSuggestions({ value: text, onChange: setText, token, inputRef });
 
   useEffect(() => {
     let active = true;
@@ -215,8 +217,11 @@ export default function DirectPostReplyPage({ params }: { params: Promise<{ id: 
                 id="vanta-reply-text"
                 ref={inputRef}
                 value={text}
-                onChange={event => setText(event.target.value)}
+                onChange={event => { setText(event.target.value); mentions.syncCaret(event.currentTarget); }}
+                onClick={event => mentions.syncCaret(event.currentTarget)}
+                onKeyUp={event => mentions.syncCaret(event.currentTarget)}
                 onKeyDown={event => {
+                  if (mentions.onKeyDown(event)) return;
                   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
                     event.preventDefault();
                     void submit();
@@ -230,6 +235,8 @@ export default function DirectPostReplyPage({ params }: { params: Promise<{ id: 
               />
             </div>
           </form>
+
+          <MentionSuggestions mention={mentions} className="mb-3 rounded-xl" />
 
           {previews.length > 0 && (
             <div className="ml-[60px] flex flex-wrap gap-2 pb-3" aria-label="Selected attachments">
