@@ -4,7 +4,7 @@ import React from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Menu } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useLocalizedUiText } from '@/lib/i18n/ui-labels';
+import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 
 export interface PageHeaderProps {
   /** Primary title. Long titles truncate instead of pushing actions off-screen. */
