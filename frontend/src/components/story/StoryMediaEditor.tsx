@@ -24,6 +24,7 @@ import { createStoryDraft, failStoryMedia, fetchStatusUsage, type StoryUsage } f
 import { notifyStoryFeedChanged } from '@/lib/storyEvents';
 import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
 import { MentionTextarea } from '@/components/social/MentionTextarea';
+import { renderTextWithLinks } from '@/lib/linkify';
 import {
   cancelUpload,
   getJobs,
@@ -747,7 +748,7 @@ useEffect(() => {
               {caption.trim() && (
                 <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 to-transparent px-4 pb-4 pt-10">
                   <p className="whitespace-pre-wrap break-words text-left text-[15px] font-medium leading-snug text-white">
-                    {caption.trim()}
+                    {renderTextWithLinks(caption.trim(), 'linkify', { mentions: true, hashtags: true })}
                   </p>
                 </div>
               )}
