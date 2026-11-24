@@ -237,8 +237,8 @@ export function probeDuration(src: string, timeoutMs = 10_000): Promise<number> 
     video.addEventListener(
       'loadedmetadata',
       () => {
-        cleanup();
         const duration = video.duration;
+        cleanup();
         resolve(Number.isFinite(duration) && duration > 0 ? duration : 0);
       },
       { once: true }
