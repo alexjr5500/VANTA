@@ -72,6 +72,9 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [timezone, setTimezone] = useState('UTC');
   const mountedRef = useRef(true);
+  // A quick second language choice must not be replaced by a slower dynamic
+  // import started for an earlier choice (or initial browser detection).
+  const localeRequestRef = useRef(0);
 
   const direction = locale === 'ar' || locale === 'ur' ? 'rtl' : 'ltr';
   const isRTL = direction === 'rtl';
@@ -101,13 +104,13 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
 
   // Set locale and load its translations
   const setLocale = useCallback(async (newLocale: Locale) => {
+    const request = ++localeRequestRef.current;
     setIsLoading(true);
     const translations = await loadTranslations(newLocale);
-    if (mountedRef.current) {
+    if (mountedRef.current && localeRequestRef.current === request) {
       setTranslations(translations);
       setLocaleState(newLocale);
       storeLocale(newLocale);
-      // Update html attributes — only runs on client after hydration, safe here
       document.documentElement.lang = newLocale;
       document.documentElement.dir = newLocale === 'ar' || newLocale === 'ur' ? 'rtl' : 'ltr';
       setIsLoading(false);
