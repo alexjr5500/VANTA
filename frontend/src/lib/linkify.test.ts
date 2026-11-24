@@ -1,5 +1,7 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('@/components/social/LinkPreviewContent', () => ({ default: () => null }));
 import { safeUrlHref, renderTextWithLinks, linkPreviewLabel } from './linkify';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
