@@ -10,11 +10,12 @@ import { highlightedParts } from '@/lib/mentionTokens';
 type Props = TextareaHTMLAttributes<HTMLTextAreaElement> & {
   value: string;
   surfaceClassName?: string;
+  mirrorTextColor?: string;
 };
 
 /** Keep real textarea on top; mirror exact computed metrics, resize and scroll. */
 export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function MentionTextarea(
-  { value, className = '', surfaceClassName = '', style, onScroll, ...props },
+  { value, className = '', surfaceClassName = '', mirrorTextColor, style, onScroll, ...props },
   forwardedRef,
 ) {
   const textarea = useRef<HTMLTextAreaElement | null>(null);
@@ -40,6 +41,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
       if (mirror.current) mirror.current.scrollTop = input.scrollTop;
     };
     update();
+    if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(update);
     observer.observe(input);
     return () => observer.disconnect();
@@ -51,7 +53,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function M
         aria-hidden="true"
         ref={mirror}
         className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap [overflow-wrap:break-word]"
-        style={{ ...metrics, color: 'var(--text-primary)' }}
+        style={{ ...metrics, color: mirrorTextColor || 'var(--text-primary)' }}
       >
         {parts.map((part, index) => (
           <span key={index} style={part.highlighted ? { color: 'var(--vanta-gold-bright)' } : undefined}>{part.text}</span>
