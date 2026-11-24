@@ -519,6 +519,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [directMenuOpen, setDirectMenuOpen] = useState(false);
   const [blockConfirmOpen, setBlockConfirmOpen] = useState(false);
   const [memberBrowserOpen, setMemberBrowserOpen] = useState(false);
+  const [entityProfileTab, setEntityProfileTab] = useState<'people' | 'media' | 'files' | 'links'>('people');
   const [memberBrowserQuery, setMemberBrowserQuery] = useState('');
   const [isLoadingEntityInfo, setIsLoadingEntityInfo] = useState(false);
   // Unified Call button: opens the Voice/Video call-type menu. The menu closes
@@ -678,7 +679,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   // as the visible Chat headers: settings -> info -> conversation -> list.
   useEffect(() => {
     const view = searchParams.get('view');
-    if (view !== 'info' && view !== 'settings') setDetailsOpen(false);
+    if (view !== 'info' && view !== 'settings' && view !== 'media') setDetailsOpen(false);
     if (view !== 'settings') setEditEntityOpen(false);
     if (view !== 'media') setMediaViewer(null);
     // Back navigation closes transient chat overlays.
@@ -700,6 +701,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const openConversationInfo = useCallback(async () => {
     const requestId = ++entityInfoRequestRef.current;
     setDetailsOpen(true);
+    setEntityProfileTab('people');
     setMemberBrowserOpen(false);
     setMemberBrowserQuery('');
     pushChatView('info');
@@ -1269,6 +1271,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       if (createModalOpen) return handled(() => setCreateModalOpen(false));
       if (pollDraft) return handled(() => setPollDraft(null));
       if (selectedMessageIds.size > 0) return handled(() => closeMessageSelection());
+      if (memberBrowserOpen && !mediaViewer && !editEntityOpen) return handled(() => setMemberBrowserOpen(false));
       if (mediaViewer || detailsOpen || editEntityOpen || searchParams.get('view')) {
         return handled(() => closeChatSubview(() => {
           setMediaViewer(null); setDetailsOpen(false); setEditEntityOpen(false);
@@ -1284,7 +1287,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   }, [showAttachmentSheet, composerEmojiOpen, callMenuOpen, directMenuOpen,
       messageSearchOpen, contactPickerOpen, deleteConfirmMessage, deleteSelectedConfirmOpen,
       leaveDialog, createModalOpen, pollDraft, selectedMessageIds.size, mediaViewer,
-      detailsOpen, editEntityOpen, activeConversation, searchParams, closeChatSubview, handleCloseConversation]);
+      detailsOpen, editEntityOpen, memberBrowserOpen, activeConversation, searchParams, closeChatSubview, handleCloseConversation]);
 
   const handleLeaveActiveConversation = async () => {
     if (!token || !activeConv || activeConv.type === 'direct') return;
@@ -2429,7 +2432,33 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         pinMessages: 'Members can pin messages.',
         changeGroupInfo: 'Members can edit the name and description.',
       };
-  const sharedAttachments = messages.flatMap(message => (message.attachments || []).map(attachment => ({ ...attachment, messageId: message.id })));
+  // Only show content already loaded for this conversation; never imply that
+  // this is a server-side archive or expose attachments from another chat.
+  const profileMessages = detailsOpen && activeConv?.type !== 'direct'
+    ? messages.filter(message => !message.deletedAt && !message.pending && (!message.conversationId || message.conversationId === activeConv?.id))
+    : [];
+  const sharedAttachments = profileMessages.flatMap(message => (message.attachments || []).map(attachment => ({ ...attachment, messageId: message.id }))).filter(attachment => Boolean(attachment.url));
+  const profileMedia = sharedAttachments.filter(attachment => ['IMAGE', 'VIDEO'].includes(attachment.fileType));
+  const profileFiles = sharedAttachments.filter(attachment => !['IMAGE', 'VIDEO'].includes(attachment.fileType));
+  const profileLinks = Array.from(new Set(profileMessages.flatMap(message => visibleMessageText(message).match(/https?:\/\/[^\s<>"']+/gi) || [])))
+    .flatMap(link => {
+      try {
+        const url = new URL(link.replace(/[.,!?;:)\]]+$/, ''));
+        return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? [{ href: url.href, host: url.hostname }] : [];
+      } catch { return []; }
+    });
+  const profileIsOwner = isManagedOwner || activeConv?.currentRole === 'OWNER';
+  const profilePeople = activeConv?.type === 'channel'
+    ? (managedEntity?.members || []).filter((member: any) => ['OWNER', 'ADMIN', 'MODERATOR'].includes(member.role))
+    : (managedEntity?.members || activeConv?.participants || []);
+  const profileMemberCount = managedEntity?._count?.members ?? activeConv?.memberCount ?? (activeConv?.type === 'group' ? activeConv?.participants?.length : undefined);
+  const closeProfileToChat = () => closeChatSubview(() => setDetailsOpen(false));
+  const openProfileSearch = () => {
+    setMessageSearchQuery('');
+    setMessageSearchResults([]);
+    closeProfileToChat();
+    setMessageSearchOpen(true);
+  };
 
   const toggleMemberSelection = (member: any) => {
     setSelectedMembers(prev =>
@@ -3501,24 +3530,66 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
       {activeConv && detailsOpen && <motion.aside initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 320 }} className="vanta-conversation-info fixed inset-0 z-50 h-[var(--chat-viewport-height,100dvh)] w-full overflow-y-auto overscroll-contain border-l border-white/[0.08] bg-[#1F2630] md:left-0 md:right-0 md:w-full">
         {memberBrowserOpen && activeConv.type !== 'direct' ? <section role="dialog" aria-modal="true" aria-label={activeConv.type === 'group' ? 'Group members' : 'Channel administrators'} className="fixed inset-0 z-[60] flex h-[var(--chat-viewport-height,100dvh)] flex-col bg-[#0d0d0f]"><header className="flex min-h-16 items-center gap-3 border-b border-white/[0.08] px-3 pt-[max(0px,env(safe-area-inset-top))]"><button type="button" onClick={() => setMemberBrowserOpen(false)} className="btn-icon h-10 w-10 shrink-0" aria-label="Back to information"><ArrowLeft size={18}/></button><div className="min-w-0 flex-1"><h2 className="text-sm font-semibold text-white">{activeConv.type === 'group' ? 'Members' : 'Administrators'}</h2><p className="mt-0.5 text-[10px] text-white/35">{activeConv.type === 'group' ? managedEntity?._count?.members ?? activeConv.memberCount ?? activeConv.participants?.length ?? 0 : managedEntity?.members?.filter((member: any) => ['OWNER','ADMIN','MODERATOR'].includes(member.role)).length ?? 0} {activeConv.type === 'group' ? 'people in this group' : 'channel administrators'}</p></div></header><div className="border-b border-white/[0.07] p-3"><div className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-[#151517] px-3"><Search size={15} className="shrink-0 text-white/35"/><input autoFocus type="search" value={memberBrowserQuery} onChange={event => setMemberBrowserQuery(event.target.value)} placeholder={activeConv.type === 'group' ? 'Find a member' : 'Find an administrator'} className="h-11 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/30"/></div></div><div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(20px,env(safe-area-inset-bottom))]"><div className="divide-y divide-white/[0.06]">{(managedEntity?.members || activeConv.participants || []).filter((member: any) => activeConv.type !== 'channel' || ['OWNER','ADMIN','MODERATOR'].includes(member.role)).filter((member: any) => { const person = member.user || member; const query = memberBrowserQuery.trim().toLowerCase(); return !query || `${person.fullName || ''} ${person.username || ''} ${member.role || ''}`.toLowerCase().includes(query); }).map((member: any) => { const person = member.user || member; const role = member.role || member.membershipRole; return <div key={member.userId || person.id} className="flex items-center gap-3 py-3"><Avatar src={person.avatar} alt={person.username || person.fullName || 'Member'} size="sm"/><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-white/85">{person.fullName || person.username || 'Member'}</p><p className="mt-0.5 truncate text-[11px] text-white/35">{person.username ? `@${person.username}` : ''}</p></div>{role && role !== 'MEMBER' && <span className="rounded-full bg-[#d6a83f]/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-[#d6a83f]">{role.toLowerCase()}</span>}</div>; })}{(managedEntity?.members || activeConv.participants || []).filter((member: any) => activeConv.type !== 'channel' || ['OWNER','ADMIN','MODERATOR'].includes(member.role)).filter((member: any) => { const person = member.user || member; const query = memberBrowserQuery.trim().toLowerCase(); return !query || `${person.fullName || ''} ${person.username || ''} ${member.role || ''}`.toLowerCase().includes(query); }).length === 0 && <p className="py-10 text-center text-xs text-white/35">{memberBrowserQuery ? 'No matching people found.' : 'Member details are unavailable.'}</p>}</div></div></section> : <><div className="sticky top-0 z-10 grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-white/[0.08] bg-[#1F2630]/95 px-3 pt-[max(0px,env(safe-area-inset-top))] backdrop-blur-xl"><button onClick={() => closeChatSubview(() => setDetailsOpen(false))} className="btn-icon h-10 w-10 shrink-0" aria-label={`Close ${activeConv.type === 'group' ? 'group' : activeConv.type === 'channel' ? 'channel' : 'conversation'} information`}><ArrowLeft size={18}/></button><div className="min-w-0 text-center"><h2 className="truncate text-sm font-semibold text-white">{activeConv.type === 'group' ? 'Group info' : activeConv.type === 'channel' ? 'Channel info' : 'Conversation info'}</h2></div>{activeConv.type !== 'direct' && canEditEntity ? <button onClick={() => void openEntityEditor()} className="btn-icon h-10 w-10 shrink-0 text-[#f2c75c]" aria-label={`Manage ${activeConv.type === 'group' ? 'group' : 'channel'}`} title={`Edit ${activeConv.type === 'group' ? 'group' : 'channel'}`}><Pencil size={16}/></button> : <span className="h-10 w-10 shrink-0" aria-hidden="true"/>}</div>
-        <div className="vanta-info-hero border-b border-white/[0.08] px-5 py-7 text-center"><div className="mx-auto w-fit"><Avatar src={activeConv.avatar} alt={activeConv.name} size="xl" /></div><h3 className="mt-3 text-base font-semibold text-white">{activeConv.name}</h3><p className="mt-1 text-xs text-white/40">{activeConv.type === 'direct' ? `@${activeConv.username || 'user'}` : activeConv.type === 'channel' ? `#${managedEntity?.handle || activeConv.handle || activeConv.name.toLowerCase().replace(/\s+/g, '-')}` : `${managedEntity?._count?.members ?? activeConv.memberCount ?? activeConv.participants?.length ?? 1} members`}</p>
-        {activeConv.type === 'channel' && <p className="mt-1 text-[11px] text-white/35">{managedEntity?._count?.members ?? activeConv.memberCount ?? 0} subscribers</p>}
-        {activeConv.type !== 'direct' && <div className="mt-4 w-full min-w-0 text-left"><div className="overflow-hidden rounded-xl border border-white/[0.07] bg-[#101012]"><div className="flex items-center justify-between border-b border-white/[0.05] px-3 py-2"><span className="text-[9px] font-semibold uppercase tracking-[.14em] text-white/35">About</span>{canEditEntity ? <button type="button" onClick={() => void openEntityEditor()} className="inline-flex items-center gap-1 pb-[2px] text-[9px] font-semibold uppercase tracking-[.1em] text-[#d6a83f] hover:text-[#f2c75c]"><Pencil size={10}/>Edit</button> : <span className="h-3" aria-hidden="true" />}</div><p className="whitespace-pre-wrap break-words px-3 py-3 text-xs font-normal leading-[1.6] text-white/55">{managedEntity?.description?.trim() || activeConv.description?.trim() ? (managedEntity?.description || activeConv.description)?.trim() : <span className="text-white/25">No description yet. Add an about text to help people know what this {activeConv.type === 'group' ? 'group' : 'channel'} is about.</span>}</p></div></div>}
-        {activeConv.type === 'channel' && <div className="mt-4 flex items-center justify-center gap-2"><span className={cn('rounded-full px-2.5 py-1 text-[10px] font-semibold', managedEntity?.visibility === 'PRIVATE' ? 'bg-white/[0.06] text-white/55' : 'bg-[#d6a83f]/10 text-[#f2c75c]')}>{managedEntity?.visibility === 'PRIVATE' ? 'Private channel' : 'Public channel'}</span>{(managedEntity?.handle || activeConv.handle) && <span className="rounded-full bg-white/[0.05] px-2.5 py-1 text-[10px] text-white/50">@{managedEntity?.handle || activeConv.handle}</span>}</div>}
-        {activeConv.type !== 'direct' && isLoadingEntityInfo && <p className="mt-3 flex items-center justify-center gap-2 text-[10px] text-white/30"><Loader2 size={12} className="animate-spin"/>Loading members and channel details</p>}
-        </div>
+        {activeConv.type === 'direct' ? <>
+          <div className="vanta-info-hero border-b border-white/[0.08] px-5 py-7 text-center">
+            <div className="mx-auto w-fit"><Avatar src={activeConv.avatar} alt={activeConv.name} size="xl"/></div>
+            <h3 className="mt-3 text-base font-semibold text-white">{activeConv.name}</h3>
+            <p className="mt-1 text-xs text-white/40">@{activeConv.username || 'user'}</p>
+          </div>
         <div className="border-b border-white/[0.08] p-3">
-          <button onClick={searchWithinChat} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-white/60 hover:bg-white/[0.04] hover:text-white"><Search size={14}/>Search chat<ChevronRight size={13} className="ml-auto"/></button>
+          <button onClick={openProfileSearch} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-white/60 hover:bg-white/[0.04] hover:text-white"><Search size={14}/>Search chat<ChevronRight size={13} className="ml-auto"/></button>
           <button onClick={toggleMute} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-white/60 hover:bg-white/[0.04] hover:text-white"><BellOff size={14}/>{activeConv.muted ? 'Unmute notifications' : 'Mute notifications'}<ChevronRight size={13} className="ml-auto"/></button>
-          {activeConv.type === 'direct' && activeConv.username && <a href={`/profile/${activeConv.username}`} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-white/60 hover:bg-white/[0.04] hover:text-white"><Info size={14}/>View profile<ChevronRight size={13} className="ml-auto"/></a>}
-          {activeConv.type === 'direct' && <div className="mt-2 border-t border-white/[0.06] pt-2">
+          {activeConv.username && <a href={`/profile/${activeConv.username}`} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-white/60 hover:bg-white/[0.04] hover:text-white"><Info size={14}/>View profile<ChevronRight size={13} className="ml-auto"/></a>}
+          {<div className="mt-2 border-t border-white/[0.06] pt-2">
             {activeConv.partnerId && <button type="button" onClick={() => void blockActiveUser()} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-red-300/85 transition hover:bg-red-500/[0.07] hover:text-red-200"><Ban size={14}/>Block account<ChevronRight size={13} className="ml-auto"/></button>}
             <button type="button" onClick={() => void reportActiveConversation()} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-red-300/85 transition hover:bg-red-500/[0.07] hover:text-red-200"><Flag size={14}/>Report account<ChevronRight size={13} className="ml-auto"/></button>
           </div>}
         </div>
-          {activeConv.type !== 'direct' && (<><div className="mb-4 grid grid-cols-2 gap-2"><button type="button" onClick={() => { setMemberBrowserQuery(''); setMemberBrowserOpen(true); }} className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.025] px-3 py-2.5 text-left hover:bg-white/[0.05]"><Users size={14} className="text-[#d6a83f]"/><span className="min-w-0"><span className="block text-[11px] font-semibold text-white/80">{activeConv.type === 'group' ? 'Browse members' : 'Browse admins'}</span><span className="block truncate text-[9px] text-white/35">View the full list</span></span></button><button type="button" onClick={() => void openEntityEditor()} disabled={!canEditEntity} className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.025] px-3 py-2.5 text-left hover:bg-white/[0.05] disabled:opacity-40"><Pencil size={14} className="text-[#d6a83f]"/><span className="min-w-0"><span className="block text-[11px] font-semibold text-white/80">Edit {activeConv.type}</span><span className="block truncate text-[9px] text-white/35">Info and settings</span></span></button></div><section className="mt-4 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#101012]"><div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3"><div><h3 className="text-[10px] font-semibold uppercase tracking-[.14em] text-white/45">{activeConv.type === 'group' ? 'Members' : 'Administrators'}</h3><p className="mt-1 text-[10px] text-white/30">{activeConv.type === 'group' ? 'People in this group' : 'People who manage this channel'}</p></div><button type="button" onClick={() => { setMemberBrowserQuery(''); setMemberBrowserOpen(true); }} className="rounded-full border border-white/[0.08] px-2.5 py-1.5 text-[10px] font-medium text-[#f2c75c] transition hover:border-[#d6a83f]/40 hover:bg-[#d6a83f]/[0.08]">See all <span className="ml-1 text-white/50">{activeConv.type === 'group' ? managedEntity?._count?.members ?? activeConv.memberCount ?? 0 : managedEntity?.members?.filter((member: any) => ['OWNER','ADMIN','MODERATOR'].includes(member.role)).length ?? 0}</span></button></div>
-          {activeConv.type === 'group' ? <div className="divide-y divide-white/[0.05] px-4">{(managedEntity?.members || activeConv.participants || []).slice(0, 8).map((member: any) => {const person = member.user || member; const role = member.role || member.membershipRole; return <div key={member.userId || person.id} className="flex items-center gap-3 py-2.5"><Avatar src={person.avatar} alt={person.username || person.fullName || 'Member'} size="xs"/><div className="min-w-0 flex-1"><p className="truncate text-xs text-white/80">{person.fullName || person.username || 'Member'}</p><p className="truncate text-[10px] text-white/35">{person.username ? `@${person.username}` : ''}</p></div>{role && role !== 'MEMBER' && <span className="text-[9px] uppercase tracking-wide text-[#d6a83f]">{role.toLowerCase()}</span>}</div>})}{!managedEntity?.members?.length && !activeConv.participants?.length && <p className="py-4 text-center text-[10px] text-white/30">Member details are unavailable.</p>}</div> : <div className="divide-y divide-white/[0.05] px-4">{(managedEntity?.members || []).filter((member: any) => ['OWNER','ADMIN','MODERATOR'].includes(member.role)).slice(0, 8).map((member: any) => <div key={member.userId} className="flex items-center gap-3 py-2.5"><Avatar src={member.user?.avatar} alt={member.user?.username || 'Administrator'} size="xs"/><div className="min-w-0 flex-1"><p className="truncate text-xs text-white/80">{member.user?.fullName || member.user?.username}</p><p className="truncate text-[10px] text-white/35">@{member.user?.username}</p></div><span className="text-[9px] uppercase tracking-wide text-[#d6a83f]">{member.role.toLowerCase()}</span></div>)}{!managedEntity?.members?.some((member: any) => ['OWNER','ADMIN','MODERATOR'].includes(member.role)) && <p className="py-4 text-center text-[10px] text-white/30">Administrator details are unavailable.</p>}</div>}
-          </section></>)}
+
+        </> : <div className="mx-auto w-full max-w-2xl space-y-4 px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-5">
+          <div className="flex flex-col items-center px-3 text-center">
+            <Avatar src={managedEntity?.avatar || activeConv.avatar} alt={activeConv.name} size="xl" wrapperClassName="!h-24 !w-24" className="!h-24 !w-24"/>
+            <h3 className="mt-3 break-words text-xl font-semibold text-white">{managedEntity?.name || activeConv.name}</h3>
+            <p className="mt-1 text-sm text-white/50">{profileMemberCount === undefined ? (activeConv.type === 'group' ? 'Group' : 'Channel') : <>{profileMemberCount.toLocaleString()} {activeConv.type === 'group' ? 'members' : 'subscribers'}</>}</p>
+            {activeConv.type === 'channel' && (managedEntity?.handle || activeConv.handle) && <p className="mt-1 text-xs text-[#f2c75c]">@{managedEntity?.handle || activeConv.handle}</p>}
+          </div>
+
+          <div className={cn('grid gap-2', profileIsOwner ? 'grid-cols-3' : 'grid-cols-4')} aria-label="Conversation actions">
+            <button type="button" onClick={closeProfileToChat} className="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl bg-[#151517] px-1 py-2 text-xs text-[#f2c75c] hover:bg-white/[0.08]"><MessageCircle size={21}/><span>{activeConv.type === 'group' ? 'Message' : 'View posts'}</span></button>
+            <button type="button" onClick={() => void toggleMute()} aria-pressed={Boolean(activeConv.muted)} className="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl bg-[#151517] px-1 py-2 text-xs text-[#f2c75c] hover:bg-white/[0.08]">{activeConv.muted ? <Bell size={21}/> : <BellOff size={21}/>}<span>{activeConv.muted ? 'Unmute' : 'Mute'}</span></button>
+            <button type="button" onClick={openProfileSearch} className="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl bg-[#151517] px-1 py-2 text-xs text-[#f2c75c] hover:bg-white/[0.08]"><Search size={21}/><span>Search</span></button>
+            {!profileIsOwner && <button type="button" onClick={() => setLeaveDialog(true)} className="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl bg-[#151517] px-1 py-2 text-xs text-red-300 hover:bg-red-500/[0.08]"><UserMinus size={21}/><span>Leave</span></button>}
+          </div>
+
+          <div className="overflow-hidden rounded-xl bg-[#151517]">
+            <div className="px-4 pb-3 pt-4">
+              <h4 className="text-xs font-semibold text-[#f2c75c]">Info</h4>
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-white/85">{(managedEntity?.description || activeConv.description || '').trim() || 'No description yet.'}</p>
+              {managedEntity?.visibility && <p className="mt-2 flex items-center gap-1.5 text-xs text-white/50">{managedEntity.visibility === 'PRIVATE' ? <Lock size={13}/> : <Globe2 size={13}/>} {managedEntity.visibility === 'PRIVATE' ? 'Private' : 'Public'} {activeConv.type}</p>}
+            </div>
+            {canEditEntity && <button type="button" onClick={() => void openEntityEditor()} className="flex min-h-12 w-full items-center gap-3 border-t border-white/[0.07] px-4 text-left text-sm text-white/85 hover:bg-white/[0.05]"><Pencil size={18} className="text-[#d6a83f]"/><span className="flex-1">Edit {activeConv.type}</span><ChevronRight size={16} className="text-white/35"/></button>}
+            <button type="button" onClick={() => { setMemberBrowserQuery(''); setMemberBrowserOpen(true); }} className="flex min-h-12 w-full items-center gap-3 border-t border-white/[0.07] px-4 text-left text-sm text-white/85 hover:bg-white/[0.05]"><Users size={18} className="text-[#d6a83f]"/><span className="flex-1">{activeConv.type === 'group' ? 'Members' : 'Administrators'}</span><span className="text-xs text-white/50">{activeConv.type === 'group' ? profileMemberCount : managedEntity ? profilePeople.length : ''}</span><ChevronRight size={16} className="text-white/35"/></button>
+            {canManageEntityMembers && <button type="button" onClick={() => void openEntityEditor()} className="flex min-h-12 w-full items-center gap-3 border-t border-white/[0.07] px-4 text-left text-sm text-white/85 hover:bg-white/[0.05]"><UserPlus size={18} className="text-[#d6a83f]"/><span className="flex-1">{activeConv.type === 'group' ? 'Manage members' : 'Manage subscribers'}</span><ChevronRight size={16} className="text-white/35"/></button>}
+          </div>
+
+          <div className="overflow-hidden rounded-xl bg-[#151517]">
+            <div className="flex border-b border-white/[0.08]" role="group" aria-label="Profile content">
+              {(['people', 'media', 'files', 'links'] as const).map(tab => <button key={tab} type="button" aria-pressed={entityProfileTab === tab} onClick={() => setEntityProfileTab(tab)} className={cn('min-h-12 min-w-0 flex-1 border-b-2 px-1 text-xs font-medium transition', entityProfileTab === tab ? 'border-[#d6a83f] text-[#f2c75c]' : 'border-transparent text-white/50 hover:text-white')}>{tab === 'people' ? (activeConv.type === 'group' ? 'Members' : 'Admins') : tab === 'media' ? 'Media' : tab === 'files' ? 'Files' : 'Links'}</button>)}
+            </div>
+            {entityProfileTab === 'people' ? <div className="divide-y divide-white/[0.05] px-3">
+              {isLoadingEntityInfo ? <p className="flex items-center justify-center gap-2 py-7 text-xs text-white/50"><Loader2 size={14} className="animate-spin"/>Loading details</p> : <>
+                {profilePeople.slice(0, 8).map((member: any) => { const person = member.user || member; const role = member.role || member.membershipRole; return <div key={member.userId || person.id} className="flex items-center gap-3 py-3"><Avatar src={person.avatar} alt={person.fullName || person.username || 'Member'} size="sm"/><div className="min-w-0 flex-1"><p className="truncate text-sm text-white/85">{person.fullName || person.username || 'Member'}</p>{person.username && <p className="truncate text-xs text-white/45">@{person.username}</p>}</div>{role && role !== 'MEMBER' && <span className="shrink-0 text-xs capitalize text-[#d6a83f]">{role.toLowerCase()}</span>}</div>; })}
+                {!profilePeople.length && <p className="py-7 text-center text-xs text-white/45">People details are unavailable.</p>}
+                {profilePeople.length > 0 && <button type="button" onClick={() => { setMemberBrowserQuery(''); setMemberBrowserOpen(true); }} className="min-h-12 w-full text-sm font-medium text-[#f2c75c]">View all {activeConv.type === 'group' ? 'members' : 'administrators'}</button>}
+              </>}
+            </div> : <div className="p-3">
+              <p className="mb-3 text-xs text-white/45">From messages currently loaded in this chat.</p>
+              {entityProfileTab === 'media' && (profileMedia.length ? <div className="grid grid-cols-3 gap-1.5">{profileMedia.map((attachment, index) => <button key={`${attachment.messageId}-${attachment.id || index}`} type="button" onClick={() => openMediaViewer(attachment)} aria-label={`Open ${attachment.fileName || attachment.fileType.toLowerCase()}`} className="relative aspect-square overflow-hidden rounded-md bg-black">{attachment.fileType === 'IMAGE' ? <img loading="lazy" src={attachment.url} alt={attachment.fileName || 'Shared image'} className="h-full w-full object-cover"/> : <div className="flex h-full flex-col items-center justify-center gap-2 px-1 text-[#f2c75c]"><Play size={24}/><span className="w-full truncate text-center text-[10px]">{attachment.fileName || 'Video'}</span></div>}</button>)}</div> : <p className="py-7 text-center text-xs text-white/45">No media in loaded messages.</p>)}
+              {entityProfileTab === 'files' && (profileFiles.length ? <div className="divide-y divide-white/[0.06]">{profileFiles.map((attachment, index) => <a key={`${attachment.messageId}-${attachment.id || index}`} href={attachment.url} target="_blank" rel="noopener noreferrer" className="flex min-h-12 items-center gap-3 py-2 text-sm text-white/85"><FileText size={18} className="shrink-0 text-[#d6a83f]"/><span className="min-w-0 flex-1 truncate">{attachment.fileName || 'Shared file'}</span><ChevronRight size={15} className="shrink-0 text-white/35"/></a>)}</div> : <p className="py-7 text-center text-xs text-white/45">No files in loaded messages.</p>)}
+              {entityProfileTab === 'links' && (profileLinks.length ? <div className="divide-y divide-white/[0.06]">{profileLinks.map((link, index) => <a key={`${link.href}-${index}`} href={link.href} target="_blank" rel="noopener noreferrer" className="flex min-h-12 items-center gap-3 py-2 text-sm text-[#f2c75c]"><Globe2 size={18} className="shrink-0"/><span className="min-w-0 flex-1 truncate">{link.host}</span><ChevronRight size={15} className="shrink-0 text-white/35"/></a>)}</div> : <p className="py-7 text-center text-xs text-white/45">No links in loaded messages.</p>)}
+            </div>}
+          </div>
+        </div>}
         </>}
       </motion.aside>}
 
