@@ -36,22 +36,52 @@ Use `createDurableQueueWorker()` from
 call `.stop()` during graceful shutdown. The factory itself has no startup
 side effects.
 
-## Media job blockers
+## Media job readiness
 
-Do not route the following job types to the durable worker yet:
+Local Sharp/FFmpeg and Cloudinary durable media handlers now exist but remain
+**opt-in**. Do not run local media jobs on a worker-only Railway volume: it
+cannot read uploads written by a separate HTTP service. See
+`docs/DURABLE_MEDIA_STAGING_VERIFICATION.md` for the isolated Cloudinary
+acceptance tests and private-media safeguards. Green CI is not real-provider
+or playback acceptance.
 
-- `image:optimize`: upload flow currently calls the image optimizer
-  synchronously; queued image optimization has no registered production handler.
-- `thumbnail:generate`: image/video enqueue APIs exist, but no handler is
-  registered or confirmed as a production call path.
-- `video:transcode`: no real FFmpeg transcode implementation or declared
-  FFmpeg dependency was found. The current HLS method writes a playlist file
-  but does not generate encoded segments.
-- `cleanup:temp`: no handler exists, and the current cleanup enqueue passes a
-  delay inside payload data instead of scheduling options.
+## Queue monitoring (Phase 6.9)
 
-Implement and test real handlers, validate storage paths against the mounted
-volume, and prove idempotent outputs before migrating any of these jobs.
+This PR includes a **read-only, explicit opt-in** queue monitor, suitable for
+periodic staging/production checks **after** a separately approved rollout:
+
+```bash
+VANTA_DURABLE_QUEUE_MONITOR_ENABLED=true \
+  npm --prefix backend run queue:monitor
+```
+
+Run this command in an environment with its own valid `DATABASE_URL` and
+applied `QueueJob` migration. Do not put database passwords in CLI arguments,
+GitHub Actions logs or documentation. The monitor exits `0` on `ok` and
+`2` on a warning, critical state, query failure, or missing database.
+It logs aggregate-only JSON and never loads/prints job payloads, user IDs,
+device IDs, or error strings. It does **not** start or stop a worker, enqueue
+jobs, change job states, or send paging notifications.
+
+The snapshot excludes media job types this worker mode cannot claim; ensure
+the monitor's `VANTA_DURABLE_QUEUE_MEDIA_HANDLERS` and
+`VANTA_DURABLE_QUEUE_MEDIA_STORAGE` match the monitored worker, or it will
+report misleading backlog. All snapshots include pending, active, completed,
+failed, oldest **due** pending age, expired leases, and terminal failures
+within the last **15 minutes**. Future-scheduled jobs do not contribute to
+overdue age; historical failures alone do not trigger alerts.
+
+Initial conservative thresholds (tune after staging baselines):
+- Pending overdue: warning at 120 seconds, critical at 600 seconds.
+- Expired worker leases: warning at 1, critical at 3.
+- Failed jobs in 15 minutes: warning at 1, critical at 5.
+
+An external Railway cron or alerting provider can treat a nonzero exit as an
+alert, **but none has been provisioned or enabled**. An empty queue cannot prove
+that workers are alive, and this check does not verify Cloudinary object
+availability, a specific user's upload, or streaming playback. Include worker
+deployment/liveness, retries, error budgets and backup restore testing in
+the production release gate.
 
 ## Activation checklist
 

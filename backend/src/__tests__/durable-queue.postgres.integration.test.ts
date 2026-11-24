@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { randomUUID } from 'crypto';
 import { DurableQueueRepository, DurableQueueClient } from '../services/durable-queue.repository';
+import { getDurableQueueHealth } from '../services/durable-queue.health';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeWithDatabase = databaseUrl ? describe : describe.skip;
@@ -9,6 +10,7 @@ describeWithDatabase('DurableQueueRepository PostgreSQL integration', () => {
   let admin: Pool;
   let pool: Pool;
   let repository: DurableQueueRepository;
+  let queueClient: DurableQueueClient;
   let schema: string;
 
   beforeAll(async () => {
@@ -32,6 +34,7 @@ describeWithDatabase('DurableQueueRepository PostgreSQL integration', () => {
       $executeRawUnsafe: async (query, ...values) => (await pool.query(query, values)).rowCount ?? 0,
       $queryRawUnsafe: async <T>(query: string, ...values: unknown[]) => (await pool.query(query, values)).rows as T,
     };
+    queueClient = client;
     repository = new DurableQueueRepository(client);
   });
 
@@ -44,6 +47,27 @@ describeWithDatabase('DurableQueueRepository PostgreSQL integration', () => {
   });
 
   beforeEach(async () => { if (pool) await pool.query('TRUNCATE TABLE "QueueJob"'); });
+
+  it('monitors only claimable job types and counts recent terminal failures', async () => {
+    await repository.enqueue('image:optimize', {}, { id: 'disabled-media', runAt: new Date(Date.now() - 1800000) });
+    await repository.enqueue('push:deliver', {}, { id: 'due-push', runAt: new Date(Date.now() - 90000) });
+    await repository.enqueue('push:deliver', {}, { id: 'recent-failure' });
+    await pool.query(`UPDATE "QueueJob" SET "status" = 'failed', "updatedAt" = NOW()
+      WHERE "id" = $1`, ['recent-failure']);
+    await repository.enqueue('push:deliver', {}, { id: 'expired-lease' });
+    await pool.query(`UPDATE "QueueJob" SET "status" = 'active', "lockedUntil" = NOW() - INTERVAL '1 second'
+      WHERE "id" = $1`, ['expired-lease']);
+
+    const monitored = await getDurableQueueHealth(queueClient, ['image:optimize']);
+    expect(monitored).toMatchObject({
+      pending: 1, active: 1, completed: 0, failed: 1, expiredLeases: 1, recentFailures: 1,
+    });
+    expect(monitored.oldestPendingAgeSeconds).toBeGreaterThan(80);
+
+    const unfiltered = await getDurableQueueHealth(queueClient);
+    expect(unfiltered.pending).toBe(2);
+    expect(unfiltered.oldestPendingAgeSeconds).toBeGreaterThan(1000);
+  });
 
   it('leaves disabled media jobs pending while claiming eligible jobs', async () => {
     await repository.enqueue('image:optimize', {}, { id: 'media-job', priority: 10 });
