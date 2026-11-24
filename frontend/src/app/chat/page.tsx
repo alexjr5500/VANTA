@@ -113,6 +113,51 @@ function MemberWelcomeNotice({ text, membershipId, userId }: { text: string; mem
   </div>;
 }
 
+type CommunityInsightsData = {
+  members: number;
+  messagesLast7Days: number | null;
+  currentMembersJoinedLast7Days: number | null;
+  asOf: string;
+  auditEnabled: boolean;
+  recentActions: { id: string; label: string; actor: string | null; createdAt: string }[];
+};
+
+function CommunityInsights({ kind, entityId }: { kind: 'group' | 'channel'; entityId: string }) {
+  const { token } = useAuth();
+  const [data, setData] = useState<CommunityInsightsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => {
+    if (!token) return;
+    let current = true;
+    setLoading(true);
+    setFailed(false);
+    setData(null);
+    apiGet<CommunityInsightsData>(`/api/communities/manage/${kind}/${encodeURIComponent(entityId)}/insights`, token, { skipCache: true })
+      .then(result => { if (current) setData(result); })
+      .catch(() => { if (current) setFailed(true); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [kind, entityId, token, refresh]);
+  const formatCount = (value: number | null) => value === null ? 'Unavailable' : value.toLocaleString();
+  return <div className="space-y-4 pb-5">
+    <div className="flex items-center justify-between gap-3"><div><h3 className="text-base font-semibold text-white">Statistics</h3><p className="mt-1 text-xs text-white/50">Current totals and the last 7 days</p></div><button type="button" aria-label="Refresh statistics" disabled={loading} onClick={() => setRefresh(value => value + 1)} className="grid h-11 w-11 place-items-center rounded-xl bg-[#151517] text-[#f2c75c] disabled:opacity-50"><RefreshCw size={18} className={loading ? 'animate-spin' : ''}/></button></div>
+    {loading && <p role="status" className="py-10 text-center text-sm text-white/50">Loading statistics and recent actions…</p>}
+    {failed && <div role="alert" className="rounded-xl bg-[#151517] p-4 text-sm text-white/70">Statistics are unavailable.<button type="button" onClick={() => setRefresh(value => value + 1)} className="mt-3 block min-h-11 w-full rounded-lg border border-[#d6a83f]/30 text-[#f2c75c]">Try again</button></div>}
+    {data && <>
+      <div className="grid grid-cols-2 gap-2">
+        {[{ label: kind === 'group' ? 'Total members' : 'Total subscribers', value: data.members }, { label: kind === 'group' ? 'Messages · 7 days' : 'Posts · 7 days', value: data.messagesLast7Days }, { label: 'Current members joined · 7 days', value: data.currentMembersJoinedLast7Days }].map(metric => <div key={metric.label} className="min-w-0 rounded-xl border border-white/[0.08] bg-[#151517] p-4"><p className="break-words text-2xl font-semibold tabular-nums text-[#f2c75c]">{formatCount(metric.value)}</p><p className="mt-1 text-xs text-white/55">{metric.label}</p></div>)}
+      </div>
+      <p className="text-xs text-white/45">Updated {new Date(data.asOf).toLocaleString()}. Join counts exclude people who have since left.</p>
+      <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#151517]">
+        <div className="border-b border-white/[0.08] p-4"><h3 className="text-sm font-semibold text-[#f2c75c]">Recent actions</h3><p className="mt-1 text-xs text-white/50">Up to 50 recorded management actions in the last 30 days.</p></div>
+        {!data.auditEnabled ? <p className="p-4 text-sm text-white/50">Audit logging is disabled.</p> : !data.recentActions.length ? <p className="p-4 text-sm text-white/50">No recorded actions in this period.</p> : <div className="divide-y divide-white/[0.07]">{data.recentActions.map(action => <div key={action.id} className="flex gap-3 p-4"><Shield size={16} className="mt-0.5 shrink-0 text-[#d6a83f]"/><div className="min-w-0 flex-1"><p className="text-sm text-white/85">{action.label}</p><p className="mt-1 break-words text-xs text-white/50">{action.actor ? `@${action.actor} · ` : ''}{new Date(action.createdAt).toLocaleString()}</p></div></div>)}</div>}
+      </div>
+    </>}
+  </div>;
+}
+
 interface Conversation {
   id: string;
   type: 'direct' | 'group' | 'channel';
@@ -590,7 +635,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [blockConfirmOpen, setBlockConfirmOpen] = useState(false);
   const [memberBrowserOpen, setMemberBrowserOpen] = useState(false);
   const [entityProfileTab, setEntityProfileTab] = useState<'people' | 'media' | 'files' | 'links'>('people');
-  const [entitySettingsTab, setEntitySettingsTab] = useState<'info' | 'people' | 'permissions' | 'ownership'>('info');
+  const [entitySettingsTab, setEntitySettingsTab] = useState<'info' | 'people' | 'permissions' | 'ownership' | 'insights'>('info');
   const [managementMemberFilter, setManagementMemberFilter] = useState<'all' | 'admins'>('all');
   const [memberBrowserQuery, setMemberBrowserQuery] = useState('');
   const [isLoadingEntityInfo, setIsLoadingEntityInfo] = useState(false);
@@ -2481,6 +2526,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       && (isManagedOwner || managedEntity?.permissions?.manageSubscribers !== false);
   const canRemoveEntityMembers = activeConv?.type === 'group' ? isGroupPrivileged : canManageEntityMembers;
   const canManageEntityPermissions = activeConv?.type === 'group' ? isGroupPrivileged : activeConv?.type === 'channel' && isManagedOwner;
+  const canViewEntityInsights = Boolean(activeConv && activeConv.type !== 'direct' && (isManagedOwner || ['OWNER', 'ADMIN'].includes(activeConv.currentRole || '')));
   const managedPermissions = activeConv?.type === 'channel'
     ? [
         ['postMessages', 'Post messages'],
@@ -2548,7 +2594,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     );
   };
 
-  const openEntityEditor = async (initialTab: 'info' | 'people' | 'permissions' | 'ownership' = 'info') => {
+  const openEntityEditor = async (initialTab: 'info' | 'people' | 'permissions' | 'ownership' | 'insights' = 'info') => {
     if (!token || !activeConv || !canEditEntity || activeConv.type === 'direct') return;
     const conversationId = activeConv.id;
     const requestId = ++entityInfoRequestRef.current;
@@ -3744,7 +3790,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
           <header className="sticky top-0 z-10 flex min-h-16 items-center justify-between gap-3 border-b border-white/[0.08] bg-[#1F2630]/95 px-4 pt-[max(0px,env(safe-area-inset-top))] backdrop-blur-xl"><button onClick={() => closeChatSubview(() => setEditEntityOpen(false))} className="btn-icon h-9 w-9 shrink-0" aria-label="Close management"><ArrowLeft size={18}/></button><div className="min-w-0 text-center"><h2 className="text-sm font-semibold text-[#f5f5f5]">{activeConv.type === 'group' ? 'Group settings' : 'Channel settings'}</h2><p className="text-[9px] uppercase tracking-[.16em] text-[#d6a83f]">{isManagedOwner ? 'Owner controls' : 'Administrator controls'}</p></div>{entitySettingsTab === 'info' && canEditEntityInfo ? <button onClick={saveEntityChanges} disabled={isSavingEntity || isUploadingAvatar || !editName.trim()} className="btn-gold-ghost h-9 px-4 text-xs disabled:opacity-40 font-semibold">{isSavingEntity ? <Loader2 size={15} className="animate-spin"/> : 'Save'}</button> : <span className="w-12 shrink-0" aria-hidden="true"/>}</header>
           <div className="mx-auto w-full max-w-2xl px-3.5">
             <nav className="sticky top-16 z-[5] grid grid-cols-2 gap-2 bg-[#1F2630] py-3 sm:flex" aria-label="Management sections">
-              {([{ id: 'info', label: 'Information', icon: Info, visible: canEditEntityInfo }, { id: 'people', label: activeConv.type === 'group' ? 'Members' : 'Subscribers', icon: Users, visible: canManageEntityMembers }, { id: 'permissions', label: 'Permissions', icon: Shield, visible: canManageEntityPermissions }, { id: 'ownership', label: 'Ownership', icon: Crown, visible: isManagedOwner }] as const).filter(item => item.visible).map(item => <button key={item.id} type="button" aria-pressed={entitySettingsTab === item.id} onClick={() => { setEntitySettingsTab(item.id); setOwnershipConfirm(null); }} className={cn('flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border px-2 text-xs font-semibold', entitySettingsTab === item.id ? 'border-[#d6a83f]/45 bg-[#d6a83f]/10 text-[#f2c75c]' : 'border-white/[0.08] bg-[#151517] text-white/65')}><item.icon size={15}/>{item.label}</button>)}
+              {([{ id: 'info', label: 'Information', icon: Info, visible: canEditEntityInfo }, { id: 'people', label: activeConv.type === 'group' ? 'Members' : 'Subscribers', icon: Users, visible: canManageEntityMembers }, { id: 'permissions', label: 'Permissions', icon: Shield, visible: canManageEntityPermissions }, { id: 'ownership', label: 'Ownership', icon: Crown, visible: isManagedOwner }, { id: 'insights', label: 'Statistics', icon: BarChart3, visible: canViewEntityInsights }] as const).filter(item => item.visible).map(item => <button key={item.id} type="button" aria-pressed={entitySettingsTab === item.id} onClick={() => { setEntitySettingsTab(item.id); setOwnershipConfirm(null); }} className={cn('flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border px-2 text-xs font-semibold', entitySettingsTab === item.id ? 'border-[#d6a83f]/45 bg-[#d6a83f]/10 text-[#f2c75c]' : 'border-white/[0.08] bg-[#151517] text-white/65')}><item.icon size={15}/>{item.label}</button>)}
             </nav>
             <div hidden={entitySettingsTab !== 'info' || !canEditEntityInfo}>
             <section className="flex flex-col items-center border-b border-white/[0.06] px-4 pb-5 pt-6"><div className="relative"><button onClick={() => editAvatarInputRef.current?.click()} disabled={!canEditEntityInfo || isUploadingAvatar} className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border border-[#d6a83f]/25 bg-[#151517]" aria-label="Change photo">{editAvatar ? <Avatar src={editAvatar} alt={`${activeConv.name} photo`} size="xl" className="!h-full !w-full"/> : <Camera size={20} className="text-white/35"/>}{isUploadingAvatar && <span className="absolute inset-0 grid place-items-center bg-black/70"><Loader2 size={16} className="animate-spin"/></span>}<span className="absolute inset-x-0 bottom-0 grid h-7 place-items-center bg-black/60"><Camera size={13} className="text-white/85"/></span></button></div><input ref={editAvatarInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden" onChange={uploadEntityAvatar}/><h3 className="mt-3 text-lg font-semibold text-[#f5f5f5]">{editName || activeConv.name}</h3><p className="mt-0.5 text-xs text-[#c8c8cc]/55">{managedEntity?._count?.members ?? managedEntity?.members?.length ?? 0} {activeConv.type === 'channel' ? 'subscribers' : 'members'}</p><div className="mt-3 flex gap-2">{editAvatar && <button onClick={() => setEditAvatar(null)} disabled={!canEditEntityInfo} className="btn-ghost h-8 rounded-full border border-white/[0.1] px-4 text-[11px] text-red-300 hover:text-red-200 disabled:opacity-40">Remove</button>}</div></section>
@@ -3828,6 +3874,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               </div>
               <button type="button" onClick={() => void saveCommunityPermissions()} disabled={isSavingEntity} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#d6a83f] text-sm font-semibold text-black disabled:opacity-50">{isSavingEntity && <Loader2 size={16} className="animate-spin"/>}Save permissions and community settings</button>
             </div>}
+            {entitySettingsTab === 'insights' && canViewEntityInsights && editEntityId && <CommunityInsights key={editEntityId} kind={activeConv.type} entityId={editEntityId}/>}
             {/* Danger zone — irreversible actions kept apart (not shown to the owner: they cannot leave and must delete the group instead) */}
             {!isManagedOwner && <section className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/[0.04]"><div className="flex items-center gap-2 border-b border-red-500/15 px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-red-400"><Ban size={13}/>Danger zone</div><div className="flex items-start gap-3 px-4 py-3.5"><div className="min-w-0 flex-1"><p className="text-sm text-white/80">Leave this {activeConv.type === 'group' ? 'group' : 'channel'}</p><p className="text-[10px] text-white/40">You will lose access to this conversation and its messages.</p></div><button onClick={() => setLeaveDialog(true)} className="btn-destructive h-9 px-3 text-xs">Leave {activeConv.type === 'group' ? 'Group' : 'Channel'}</button></div></section>}
           </div>
