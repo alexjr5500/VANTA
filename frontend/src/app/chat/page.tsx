@@ -37,6 +37,7 @@ import { hasVisibleReadReceipt, outgoingReceiptState, shouldRefreshReadReceipts 
 import { isSecureMediaContext, mapMediaError } from '@/lib/mediaPermissions';
 import { addDrafts, hasBusyDraft, readyDraftCount, removeDraft, type AttachmentDraft } from '@/lib/attachmentDrafts';
 import { renderTextWithLinks } from '@/lib/linkify';
+import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
 import { extractQuoteRef } from '@/lib/quotePost';
 import QuoteEmbed from '@/components/social/QuoteEmbed';
 import { friendlyError, errorMessage } from '@/lib/errors';
@@ -402,6 +403,7 @@ export default function MessagesPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesViewportRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
+  const mentions = useMentionSuggestions({ value: messageInput, onChange: setMessageInput, token, inputRef: messageInputRef });
   const previousLastMessageIdRef = useRef<string | null>(null);
 // Separates the one-time "open at latest unread / bottom" anchor from the
 // live "only auto-scroll when already near the bottom" behaviour.
@@ -3338,12 +3340,16 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white/65 hover:text-white"><Smile size={23}/></button>
                 )}
                 <div className="flex-1 relative">
+                  <div className="absolute bottom-full left-0 right-0 mb-2 z-[95]"><MentionSuggestions mention={mentions} className="rounded-2xl" /></div>
                   <textarea
                     ref={messageInputRef}
                     rows={1}
                     value={messageInput}
+                    onClick={e => mentions.syncCaret(e.currentTarget)}
+                    onKeyUp={e => mentions.syncCaret(e.currentTarget)}
                     onChange={e => {
                       setMessageInput(e.target.value);
+                      mentions.syncCaret(e.currentTarget);
                       // Auto-expand vertically up to a sensible max height, then
                       // scroll inside the input. Keeps the composer compact.
                       const el = e.currentTarget;
@@ -3372,6 +3378,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     className="min-h-10 max-h-[100px] w-full resize-none overflow-y-auto rounded-2xl border-0 bg-[#27313d] px-3.5 py-2.5 text-[16px] leading-5 text-white outline-none placeholder:text-white/40 focus:bg-[#354252]"
                     enterKeyHint="enter"
                     onKeyDown={e => {
+                      if (mentions.onKeyDown(e)) return;
                       // Keep Enter as a newline on phones; the visible Send button
                       // is the only send action on mobile keyboards.
                       const isMobile = window.matchMedia('(max-width: 767px)').matches;
