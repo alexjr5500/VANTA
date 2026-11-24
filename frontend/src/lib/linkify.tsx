@@ -85,7 +85,8 @@ function renderTextTokens(
     nodes.push(createElement('a', {
       key: keyRef.current++,
       href,
-      className: [linkClassName, 'vanta-inline-tag'].filter(Boolean).join(' '),
+      className: 'vanta-inline-tag',
+      style: { color: '#dfbd55', WebkitTextFillColor: '#dfbd55' },
       onClick: (event: ReactMouseEvent) => event.stopPropagation(),
     }, `${marker}${value}`));
     lastIndex = tokenStart + value.length + 1;
