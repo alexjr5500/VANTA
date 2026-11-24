@@ -3,6 +3,7 @@ import { AuthRequest } from "../middleware/auth.middleware";
 import { groupService } from "../services";
 import { sendError, AppError, badRequest } from "../utils/api-error";
 import { broadcastMessageEvent } from "../sockets/chat.socket";
+import { logCommunityUpdate, logCommunityAction } from "../services/community-insights";
 
 const parseLimit = (value: unknown, defaultLimit = 50) => {
   const parsed = typeof value === "string" ? parseInt(value, 10) : NaN;
@@ -63,6 +64,7 @@ export const updateGroup = async (req: AuthRequest, res: Response): Promise<void
       memberRoles: memberRoles && typeof memberRoles === "object" ? memberRoles : undefined,
       permissions: permissions && typeof permissions === "object" ? permissions : undefined,
     });
+    await logCommunityUpdate("group", req.params.id, userId, { name: typeof name === "string" ? name : undefined, description: typeof description === "string" ? description : undefined, avatar: typeof avatar === "string" || avatar === null ? avatar : undefined, memberIds, memberRoles, permissions });
     res.status(200).json(group);
   } catch (error) {
     sendError(res, error, { diagnostic: { action: "updateGroup", id: req.params.id } });
@@ -78,6 +80,7 @@ export const addGroupMember = async (req: AuthRequest, res: Response): Promise<v
     if (!targetUserId) throw badRequest("VALIDATION_ERROR", "Please choose a member to add.");
 
     const member = await groupService.addMember(req.params.id, targetUserId, userId);
+    await logCommunityAction("group", req.params.id, userId, "MEMBER_ADDED");
     res.status(200).json(member);
   } catch (error) {
     sendError(res, error, { diagnostic: { action: "addGroupMember", id: req.params.id } });
@@ -91,6 +94,7 @@ export const removeGroupMember = async (req: AuthRequest, res: Response): Promis
 
     const { targetUserId } = req.params;
     await groupService.removeMember(req.params.id, targetUserId || userId, userId);
+    if (targetUserId && targetUserId !== userId) await logCommunityAction("group", req.params.id, userId, "MEMBER_REMOVED");
     res.status(200).json({ message: "Member removed" });
   } catch (error) {
     sendError(res, error, { diagnostic: { action: "removeGroupMember", id: req.params.id } });
