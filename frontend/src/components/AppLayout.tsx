@@ -242,7 +242,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       // affordance, activate it; otherwise preserve the current page rather
       // than unintentionally stepping its WebView history behind the overlay.
       const close = top.querySelector<HTMLButtonElement>(
-        'button[aria-label="Close"], button[aria-label="Close modal"], button[aria-label="Cancel"], button[title="Close"]'
+        'button[aria-label^="Close"], button[aria-label^="Cancel"], button[title="Close"]'
       );
       event.preventDefault();
       close?.click();
