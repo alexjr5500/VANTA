@@ -3562,3 +3562,51 @@ html.vanta-native-android .vanta-entity-create footer {
   .vanta-direct-input-row { gap: 4px; }
   .vanta-direct-input-row > button { width: 32px !important; }
 }
+
+/* Keep published mentions and hashtags gold even when a generic anchor style wins. */
+a.vanta-inline-tag, a.vanta-inline-tag:visited, a.vanta-inline-tag:hover, a.vanta-inline-tag:active {
+  color: #dfbd55 !important;
+  -webkit-text-fill-color: #dfbd55 !important;
+  text-decoration: none;
+}
+html.vanta-native-android .vanta-reply-toolbar { padding-bottom: 0 !important; }
+
+/* Compact clickable URL preview fallback for all shared text surfaces. */
+a.vanta-link-preview {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 6px 10px;
+  color: #dfbd55;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+a.vanta-link-preview:hover { text-decoration: underline; }
+
+/* Rich previews are inline phrasing elements, so they remain valid inside
+   paragraphs in posts, chats and comments. The entire card is one link. */
+a.vanta-link-preview:has(.vanta-link-rich) {
+  display: inline-flex;
+  width: min(100%, 350px);
+  padding: 0;
+  overflow: hidden;
+  margin-block: 4px;
+  vertical-align: top;
+  white-space: normal;
+  text-decoration: none;
+  text-align: left;
+  color: var(--text-primary);
+}
+.vanta-link-rich { display: flex; width: 100%; min-width: 0; flex-direction: column; }
+.vanta-link-thumbnail { display: block; width: 100%; height: 132px; object-fit: cover; background: var(--background); }
+.vanta-link-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding: 10px 12px; }
+.vanta-link-title, .vanta-link-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.vanta-link-title { color: var(--text-primary); font-weight: 650; font-size: 14px; line-height: 1.3; }
+.vanta-link-description { color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
+.vanta-link-domain { color: #dfbd55; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+
+span.vanta-inline-tag { color: #dfbd55 !important; -webkit-text-fill-color: #dfbd55 !important; }

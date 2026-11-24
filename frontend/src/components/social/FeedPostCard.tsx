@@ -124,6 +124,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
   useEffect(() => setHost(window.location.host), []);
   const quoted = extractQuoteRef(rawCaption, host);
   const captionText = quoted ? quoted.rest : rawCaption;
+  const hasPreviewLink = /(?:https?:\/\/|www\.)/i.test(captionText);
   const captionRef = useRef<HTMLParagraphElement>(null);
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [likePulse, setLikePulse] = useState(0);
@@ -233,7 +234,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
           <button type="button" onClick={() => onMore(item)} aria-label="More post options" className="shrink-0 flex h-8 w-8 items-center justify-center rounded-lg text-[#666] transition hover:bg-white/[.05] hover:text-white"><MoreHorizontal size={17}/></button>
         </div>
         {item.location && <p className="truncate text-[10px] text-[#666]">{item.location}</p>}
-        {captionText && <><p ref={captionRef} style={captionExpanded ? undefined : { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 5, overflow: 'hidden' }} className="whitespace-pre-wrap break-words text-[14px] leading-[1.4] text-[#dedede]">{renderTextWithLinks(captionText, 'linkify', { mentions: true, hashtags: true })}</p>{captionOverflows && <button type="button" onClick={() => setCaptionExpanded(value => !value)} aria-expanded={captionExpanded} className="-mt-0.5 self-start text-[13px] font-medium text-[#c9a227] transition hover:text-[#e0bb4f]">{captionExpanded ? 'Show less' : 'Show more'}</button>}</>}
+        {captionText && <><p ref={captionRef} style={captionExpanded || hasPreviewLink ? undefined : { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 5, overflow: 'hidden' }} className="whitespace-pre-wrap break-words text-[14px] leading-[1.4] text-[#dedede]">{renderTextWithLinks(captionText, 'linkify', { mentions: true, hashtags: true })}</p>{captionOverflows && !hasPreviewLink && <button type="button" onClick={() => setCaptionExpanded(value => !value)} aria-expanded={captionExpanded} className="-mt-0.5 self-start text-[13px] font-medium text-[#c9a227] transition hover:text-[#e0bb4f]">{captionExpanded ? 'Show less' : 'Show more'}</button>}</>}
         {quoted && <QuoteEmbed quote={quoted.ref} />}
         {item.hashtags && <p className="text-[11px] text-[#c9a227]">{Array.isArray(item.hashtags) ? item.hashtags.map((tag: string) => `#${tag}`).join(' ') : item.hashtags}</p>}
         {/* Media sits INSIDE the content column so it aligns with the caption,

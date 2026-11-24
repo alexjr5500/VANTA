@@ -40,7 +40,7 @@ export default function StoryCard({
 
   if (isOwn) {
     return (
-      <div className={cn("flex shrink-0 flex-col items-center transition-all duration-300 ease-out", collapsed ? "w-[52px] gap-0" : "w-[94px] gap-1.5")} data-story-card="own">
+      <div className={cn("flex shrink-0 flex-col items-center transition-all duration-300 ease-out", collapsed ? "w-[52px] gap-0" : compact ? "w-[74px] gap-1" : "w-[94px] gap-1.5")} data-story-card="own">
         <span className="group relative">
           <button
             type="button"
@@ -54,7 +54,7 @@ export default function StoryCard({
               active={hasUnviewed}
               showDot
               segments={stories.length ? segments : undefined}
-              size={collapsed ? 'xs' : compact ? 'compactStatus' : 'xl'}
+              size={collapsed ? 'xs' : compact ? 'sm' : 'xl'}
               verified={Boolean(user.verified && user.verificationType)}
               verificationType={user.verificationType}
             />
@@ -64,7 +64,7 @@ export default function StoryCard({
               type="button"
               aria-label="Add a Status or Story"
               onClick={onCreate}
-              className={cn('absolute grid place-items-center rounded-full border-2 border-[#0d0d0f] bg-[#c9a227] text-black transition-all duration-300 active:scale-90', collapsed ? '-bottom-0.5 -right-0.5 h-5 w-5' : '-bottom-1 -right-1 h-[26px] w-[26px]')}
+              className={cn('absolute grid place-items-center rounded-full border-2 border-[#0d0d0f] bg-[#c9a227] text-black transition-all duration-300 active:scale-90', collapsed ? '-bottom-0.5 -right-0.5 h-5 w-5' : compact ? '-bottom-0.5 -right-0.5 h-6 w-6' : '-bottom-1 -right-1 h-[26px] w-[26px]')}
             >
               <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true"><path d="M8 2.5v11M2.5 8h11" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" /></svg>
             </button>

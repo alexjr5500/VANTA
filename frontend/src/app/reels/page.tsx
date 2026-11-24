@@ -900,8 +900,8 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
                 {followPending ? <Loader2 className="mx-auto animate-spin" size={14} /> : followed ? 'Following' : 'Follow'}
               </button>}
             </div>
-            <p className={cn('mt-3 max-w-[44ch] text-sm leading-5 text-white/90', !expanded && 'line-clamp-2')}>{reel.description || reel.title || 'A new Reel on VANTA.'}</p>
-            {(reel.description?.length || reel.title?.length || 0) > 110 && <button type="button" onClick={() => setExpanded(value => !value)} className="mt-0.5 text-xs text-white/60">{expanded ? 'less' : 'more'}</button>}
+            <p className={cn('mt-3 max-w-[44ch] text-sm leading-5 text-white/90', !expanded && 'line-clamp-2', expanded && 'max-h-[36dvh] overflow-y-auto')}>{renderTextWithLinks(reel.description || reel.title || 'A new Reel on VANTA.', 'linkify', { mentions: true, hashtags: true, richPreviews: expanded })}</p>
+            {((reel.description?.length || reel.title?.length || 0) > 110 || /(?:https?:\/\/|www\.)/i.test(reel.description || reel.title || '')) && <button type="button" onClick={() => setExpanded(value => !value)} className="mt-0.5 text-xs text-white/60">{expanded ? 'less' : 'more'}</button>}
           </div>
 
           <div className="absolute bottom-[calc(1.5rem_+_var(--vanta-native-reel-action-offset,calc(4rem_+_env(safe-area-inset-bottom))))] right-3 z-10 flex flex-col items-center gap-3 ">

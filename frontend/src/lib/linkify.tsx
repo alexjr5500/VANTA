@@ -27,6 +27,7 @@
 // ============================================================================
 
 import { createElement, Fragment, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
+import LinkPreviewContent from '@/components/social/LinkPreviewContent';
 
 // Matches http(s)://host/path or bare www.host/path. The match is permissive on
 // the trailing boundary (whitespace, punctuation, end-of-line) so embedded URLs
@@ -48,6 +49,8 @@ export interface LinkifyOptions {
   mentions?: boolean;
   /** Render #hashtag tokens as links to matching VANTA content. */
   hashtags?: boolean;
+  /** Set false for tiny text-only surfaces or private/sensitive links. */
+  richPreviews?: boolean;
 }
 
 /** Normalise a detected URL token into a safe, openable href. */
@@ -61,7 +64,6 @@ export function safeUrlHref(match: string): string {
 function renderTextTokens(
   text: string,
   options: LinkifyOptions | undefined,
-  linkClassName: string | undefined,
   keyRef: { current: number },
 ): ReactNode[] {
   const nodes: ReactNode[] = [];
@@ -85,7 +87,8 @@ function renderTextTokens(
     nodes.push(createElement('a', {
       key: keyRef.current++,
       href,
-      className: [linkClassName, 'vanta-inline-tag'].filter(Boolean).join(' '),
+      className: 'vanta-inline-tag',
+      style: { color: '#dfbd55', WebkitTextFillColor: '#dfbd55' },
       onClick: (event: ReactMouseEvent) => event.stopPropagation(),
     }, `${marker}${value}`));
     lastIndex = tokenStart + value.length + 1;
@@ -95,6 +98,23 @@ function renderTextTokens(
   }
   if (!nodes.length) return [createElement(Fragment, { key: keyRef.current++ }, text)];
   return nodes;
+}
+
+/** A safe URL-derived label, not scraped metadata. No external network requests. */
+export function linkPreviewLabel(href: string): string {
+  try {
+    const url = new URL(href);
+    return url.hostname || 'Open link';
+  } catch { return 'Open link'; }
+}
+
+/** Compact text inside an already-clickable notification/quote; avoid nested links. */
+export function previewExcerpt(text: string): ReactNode[] {
+  return text.split(/((?:https?:\/\/|www\.)[^\s<>"']+|[@#][a-zA-Z0-9_]{2,30}\b)/gi).map((part, i) => {
+    if (/^(?:https?:\/\/|www\.)/i.test(part)) return createElement('span', { key: i, className: 'vanta-inline-tag' }, '↗ ' + linkPreviewLabel(safeUrlHref(part)));
+    if (/^[@#][a-zA-Z0-9_]{2,30}$/i.test(part)) return createElement('span', { key: i, className: 'vanta-inline-tag' }, part);
+    return part;
+  });
 }
 
 /** Split a string into linkable pieces. Returns an array of React nodes. */
@@ -112,7 +132,7 @@ export function renderTextWithLinks(text: string, linkClassName?: string, option
 
     // Leading text before this URL (plain, unlinked — mentions opt-in).
     if (start > lastIndex) {
-      result.push(...renderTextTokens(text.slice(lastIndex, start), options, linkClassName, keyRef));
+      result.push(...renderTextTokens(text.slice(lastIndex, start), options, keyRef));
     }
 
     const href = safeUrlHref(urlToken);
@@ -125,9 +145,11 @@ export function renderTextWithLinks(text: string, linkClassName?: string, option
           target: '_blank',
           rel: 'noopener noreferrer',
           onClick: (event: ReactMouseEvent) => event.stopPropagation(),
-          className: linkClassName,
+          className: [linkClassName, 'vanta-link-preview'].filter(Boolean).join(' '),
+          title: href,
+          'aria-label': `Open link to ${linkPreviewLabel(href)}`,
         },
-        urlToken
+        options?.richPreviews === false ? `↗ ${linkPreviewLabel(href)}` : createElement(LinkPreviewContent, { href, children: `↗ ${linkPreviewLabel(href)}` })
       ),
     );
 
@@ -136,7 +158,7 @@ export function renderTextWithLinks(text: string, linkClassName?: string, option
 
   // Trailing plain text after the last URL.
   if (lastIndex < text.length) {
-    result.push(...renderTextTokens(text.slice(lastIndex), options, linkClassName, keyRef));
+    result.push(...renderTextTokens(text.slice(lastIndex), options, keyRef));
   }
 
   return result;

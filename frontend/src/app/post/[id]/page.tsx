@@ -21,6 +21,8 @@ import { useToast } from '@/components/ui/Toast';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
 import { renderTextWithLinks } from '@/lib/linkify';
+import QuoteEmbed from '@/components/social/QuoteEmbed';
+import { extractQuoteRef } from '@/lib/quotePost';
 
 type Post = {
   id: string; content: string; mediaUrl?: string | null; attachments?: PostAttachment[]; createdAt: string;
@@ -184,6 +186,8 @@ export default function PostDetailPage({ params }: { params: Promise<{ id: strin
     </main>;
   }
 
+  const quote = post.content && typeof window !== 'undefined' ? extractQuoteRef(post.content, window.location.host) : null;
+  const visibleText = quote ? quote.rest : post.content;
   const attachments = Array.isArray(post.attachments) ? post.attachments.map((attachment: any) => ({ ...attachment, url: mediaSrc(attachment?.url || attachment?.src || '') })).filter((attachment) => Boolean(attachment.url)) : [];
   const media = mediaSrc(post.mediaUrl) || attachments[0]?.url;
   const isOwn = post.author.id === user?.id;
@@ -239,11 +243,12 @@ export default function PostDetailPage({ params }: { params: Promise<{ id: strin
                 </div>
               </div>
             </header>
-            {post.content && (
+            {(visibleText || quote) && (
               <div className="px-3.5 pb-2 pt-2">
                 <p className="whitespace-pre-wrap break-words text-[14px] leading-[1.4] tracking-normal text-[#f0f0f0]">
-                  {renderTextWithLinks(post.content, 'linkify', { mentions: true, hashtags: true })}
+                  {renderTextWithLinks(visibleText, 'linkify', { mentions: true, hashtags: true })}
                 </p>
+                {quote && <QuoteEmbed quote={quote.ref} className="mt-2" />}
               </div>
             )}
 
