@@ -44,6 +44,8 @@ const FALLBACK: Partial<Record<Locale, Record<string, string>>> = {
     'About VANTA': 'À propos de VANTA', 'Display language': "Langue d'affichage",
     'Log out': 'Se déconnecter', 'Edit profile': 'Modifier le profil',
     'Language and translations': 'Langue et traductions',
+    'Your language selection updates supported screens immediately. Some screens remain in English until translations are completed.':
+      "Votre langue s'applique immédiatement aux écrans traduits. Certains écrans restent en anglais en attendant leur traduction.",
   },
   ar: { Home: 'الرئيسية', Discover: 'اكتشف', Reels: 'ريلز', Chat: 'الدردشة', Profile: 'الملف الشخصي', Settings: 'الإعدادات', Language: 'اللغة', Account: 'الحساب', About: 'حول', Notifications: 'الإشعارات', Appearance: 'المظهر', 'Terms of Service': 'شروط الخدمة', 'Privacy Policy': 'سياسة الخصوصية', 'Community Guidelines': 'إرشادات المجتمع', 'Language & Region': 'اللغة والمنطقة', 'Display Language': 'لغة العرض' },
   it: { Home: 'Home', Discover: 'Scopri', Reels: 'Reels', Chat: 'Chat', Profile: 'Profilo', Settings: 'Impostazioni', Language: 'Lingua', Account: 'Account', About: 'Informazioni', Notifications: 'Notifiche', Appearance: 'Aspetto', 'Terms of Service': 'Termini di servizio', 'Privacy Policy': 'Informativa sulla privacy', 'Community Guidelines': 'Linee guida della community', 'Language & Region': 'Lingua e regione', 'Display Language': 'Lingua di visualizzazione' },
