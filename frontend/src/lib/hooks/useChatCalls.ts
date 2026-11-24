@@ -6,6 +6,7 @@ import { apiPost } from '@/lib/apiClient';
 import { API_BASE_URL, authHeaders } from '@/lib/api';
 import type { AuthUser } from '@/lib/authApi';
 import { applyContinuousAutofocus, pickPrimaryCamera, pickVideoConstraints } from '@/lib/cameraCapture';
+import { getUserMediaWithFallback } from '@/lib/captureWithFallback';
 
 // ============================================================================
 // VANTA private 1-to-1 voice/video calling
@@ -551,7 +552,7 @@ const answerCallFromPush = useCallback(async (intent: CallAnswerIntent) => {
       const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
       const input = pickPrimaryCamera(videoInputs);
       const videoConstraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
-      stream = await navigator.mediaDevices.getUserMedia({
+      stream = await getUserMediaWithFallback({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: intent.callType === 'video' ? videoConstraints : false,
       });
@@ -632,7 +633,7 @@ const startCall = useCallback(async (type: CallType) => {
       const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
       const input = pickPrimaryCamera(videoInputs);
       const videoConstraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
-      stream = await navigator.mediaDevices.getUserMedia({
+      stream = await getUserMediaWithFallback({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: type === 'video' ? videoConstraints : false,
       });
@@ -741,7 +742,7 @@ const startCall = useCallback(async (type: CallType) => {
       const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
       const input = pickPrimaryCamera(videoInputs);
       const videoConstraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
-      stream = await navigator.mediaDevices.getUserMedia({
+      stream = await getUserMediaWithFallback({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: session.type === 'video' ? videoConstraints : false,
       });
@@ -901,7 +902,7 @@ const declineCall = useCallback(() => {
     const videoInputs = devices.filter((d): d is MediaDeviceInfo => d.kind === 'videoinput');
     const input = pickPrimaryCamera(videoInputs);
     const constraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
-    const media = await navigator.mediaDevices.getUserMedia({
+    const media = await getUserMediaWithFallback({
       video: constraints,
       audio: false,
     });
@@ -1059,7 +1060,7 @@ const declineCall = useCallback(() => {
         deviceId: next.deviceId,
         forceFacingMode: wantFront ? 'user' : 'environment',
       });
-      const replacement = await navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
+      const replacement = await getUserMediaWithFallback({ video: constraints, audio: false });
       const newTrack = replacement.getVideoTracks()[0];
       if (!newTrack || newTrack.readyState !== 'live') {
         replacement.getTracks().forEach(t => t.stop());

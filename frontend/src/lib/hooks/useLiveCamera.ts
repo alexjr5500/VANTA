@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getUserMediaWithFallback } from '@/lib/captureWithFallback';
 import {
   applyContinuousAutofocus,
   describeCapture,
@@ -161,7 +162,7 @@ export function useLiveCamera() {
       const input = pickPrimaryCamera(videoInputs);
       const constraints = pickVideoConstraints(input, { deviceId: input?.deviceId, preferFront: true });
 
-      const videoStream = await navigator.mediaDevices.getUserMedia({ video: constraints });
+      const videoStream = await getUserMediaWithFallback({ video: constraints });
       const videoTrack = videoStream.getVideoTracks()[0];
       if (!videoTrack || videoTrack.readyState !== 'live') {
         videoStream.getTracks().forEach((t) => t.stop());
@@ -193,7 +194,7 @@ export function useLiveCamera() {
       throw guard;
     }
     try {
-      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS });
+      const audioStream = await getUserMediaWithFallback({ audio: AUDIO_CONSTRAINTS });
       const audioTrack = audioStream.getAudioTracks()[0];
       if (!audioTrack || audioTrack.readyState !== 'live') {
         audioStream.getTracks().forEach((t) => t.stop());
@@ -274,7 +275,7 @@ export function useLiveCamera() {
     const next = list.find((d) => d.deviceId && d.deviceId !== currentDeviceId) || list[list.length - 1];
     try {
       const constraints = pickVideoConstraints(next, { deviceId: next.deviceId, forceFacingMode: null });
-      const replacement = await navigator.mediaDevices.getUserMedia({
+      const replacement = await getUserMediaWithFallback({
         video: constraints,
         audio: false,
       });
@@ -314,7 +315,7 @@ export function useLiveCamera() {
     const input = list.find((d) => d.deviceId && d.deviceId === currentDeviceId) || pickPrimaryCamera(list);
     try {
       const constraints = pickVideoConstraints(input, { deviceId: input?.deviceId, quality, forceFacingMode: null });
-      const replacement = await navigator.mediaDevices.getUserMedia({ video: constraints });
+      const replacement = await getUserMediaWithFallback({ video: constraints });
       const newTrack = replacement.getVideoTracks()[0];
       if (!newTrack || newTrack.readyState !== 'live') {
         replacement.getTracks().forEach((t) => t.stop());

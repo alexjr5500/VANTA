@@ -432,7 +432,13 @@ class MainActivity : Activity() {
         if (request.resources.contains(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE) && hasPermission(Manifest.permission.RECORD_AUDIO)) {
             allowed.add(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE)
         }
-        if (allowed.isNotEmpty()) request.grant(allowed.toTypedArray()) else request.deny()
+        // A WebRTC capture request is valid only when all requested audio/video
+        // resources have Android permission; avoid partial grants.
+        if (allowed.isNotEmpty() && allowed.size == androidPermissionsFor(request).size) {
+            request.grant(allowed.toTypedArray())
+        } else {
+            request.deny()
+        }
     }
 
     private fun processPendingWebPermissions() {
