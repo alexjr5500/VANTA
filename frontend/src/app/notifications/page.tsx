@@ -142,20 +142,20 @@ function RelatedPreview({ notification, token }: { notification: VantaNotificati
     .find((value): value is string => typeof value === 'string' && Boolean(value.trim()));
   const postId = typeof data.postId === 'string' ? data.postId : notification.entityType === 'post' ? notification.entityId : null;
   const lookupId = !provided && type === 'like' ? postId : null;
-  const [preview, setPreview] = useState<{ id: string; text: string } | null>(null);
+  const [preview, setPreview] = useState<{ id: string; token: string; text: string } | null>(null);
   useEffect(() => {
     if (!lookupId || !token) return;
     let current = true;
     // Use the same authenticated, visibility-checked endpoint as Post Detail.
-    void apiGet<{ content?: string | null }>(`/api/feed/${encodeURIComponent(lookupId)}`, token)
+    void apiGet<{ content?: string | null }>(`/api/feed/${encodeURIComponent(lookupId)}`, token, { skipCache: true })
       .then(post => {
-        if (current && typeof post.content === 'string') setPreview({ id: lookupId, text: post.content });
+        if (current && typeof post.content === 'string') setPreview({ id: lookupId, token, text: post.content });
       }).catch(() => { /* Deleted or inaccessible content has no preview. */ });
     return () => { current = false; };
   }, [lookupId, token]);
-  const text = provided || (lookupId && preview?.id === lookupId ? preview.text : '');
+  const text = provided || (lookupId && preview?.id === lookupId && preview.token === token ? preview.text : '');
   if (!text?.trim()) return null;
-  return <p className="mt-1 line-clamp-3 break-words text-sm leading-5 text-white/50">{text}</p>;
+  return <p className="mt-1 line-clamp-3 break-words text-sm leading-5 text-white/50">{text.split(/([@#][\p{L}\p{N}_]+)/u).map((part, index) => /^[@#][\p{L}\p{N}_]+$/u.test(part) ? <span key={index} className="text-[#d6a83f]">{part}</span> : part)}</p>;
 }
 
 function Skeletons() {
