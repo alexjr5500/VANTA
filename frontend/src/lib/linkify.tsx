@@ -61,7 +61,6 @@ export function safeUrlHref(match: string): string {
 function renderTextTokens(
   text: string,
   options: LinkifyOptions | undefined,
-  linkClassName: string | undefined,
   keyRef: { current: number },
 ): ReactNode[] {
   const nodes: ReactNode[] = [];
@@ -98,6 +97,14 @@ function renderTextTokens(
   return nodes;
 }
 
+/** A safe URL-derived label, not scraped metadata. No external network requests. */
+export function linkPreviewLabel(href: string): string {
+  try {
+    const url = new URL(href);
+    return url.hostname || 'Open link';
+  } catch { return 'Open link'; }
+}
+
 /** Split a string into linkable pieces. Returns an array of React nodes. */
 export function renderTextWithLinks(text: string, linkClassName?: string, options?: LinkifyOptions): ReactNode[] {
   if (!text) return [];
@@ -113,7 +120,7 @@ export function renderTextWithLinks(text: string, linkClassName?: string, option
 
     // Leading text before this URL (plain, unlinked — mentions opt-in).
     if (start > lastIndex) {
-      result.push(...renderTextTokens(text.slice(lastIndex, start), options, linkClassName, keyRef));
+      result.push(...renderTextTokens(text.slice(lastIndex, start), options, keyRef));
     }
 
     const href = safeUrlHref(urlToken);
@@ -126,9 +133,11 @@ export function renderTextWithLinks(text: string, linkClassName?: string, option
           target: '_blank',
           rel: 'noopener noreferrer',
           onClick: (event: ReactMouseEvent) => event.stopPropagation(),
-          className: linkClassName,
+          className: [linkClassName, 'vanta-link-preview'].filter(Boolean).join(' '),
+          title: href,
+          'aria-label': `Open link to ${linkPreviewLabel(href)}`,
         },
-        urlToken
+        `↗ ${linkPreviewLabel(href)}`
       ),
     );
 
@@ -137,7 +146,7 @@ export function renderTextWithLinks(text: string, linkClassName?: string, option
 
   // Trailing plain text after the last URL.
   if (lastIndex < text.length) {
-    result.push(...renderTextTokens(text.slice(lastIndex), options, linkClassName, keyRef));
+    result.push(...renderTextTokens(text.slice(lastIndex), options, keyRef));
   }
 
   return result;
