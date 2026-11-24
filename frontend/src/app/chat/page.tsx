@@ -1248,6 +1248,41 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     router.replace('/chat', { scroll: false });
   }, [router]);
 
+  // Hardware Back must dismiss the visible chat sheet/subscreen rather than
+  // navigating the underlying WebView history while it remains on screen.
+  useEffect(() => {
+    const onNativeBack = (event: Event) => {
+      if (event.defaultPrevented) return;
+      const handled = (close: () => void) => { event.preventDefault(); close(); };
+      if (showAttachmentSheet) return handled(() => setShowAttachmentSheet(false));
+      if (composerEmojiOpen) return handled(() => setComposerEmojiOpen(false));
+      if (callMenuOpen) return handled(() => setCallMenuOpen(false));
+      if (directMenuOpen) return handled(() => setDirectMenuOpen(false));
+      if (messageSearchOpen) return handled(() => setMessageSearchOpen(false));
+      if (contactPickerOpen) return handled(() => setContactPickerOpen(false));
+      if (deleteConfirmMessage) return handled(() => setDeleteConfirmMessage(null));
+      if (deleteSelectedConfirmOpen) return handled(() => setDeleteSelectedConfirmOpen(false));
+      if (leaveDialog) return handled(() => setLeaveDialog(false));
+      if (createModalOpen) return handled(() => setCreateModalOpen(false));
+      if (pollDraft) return handled(() => setPollDraft(null));
+      if (selectedMessageIds.size > 0) return handled(() => closeMessageSelection());
+      if (mediaViewer || detailsOpen || editEntityOpen || searchParams.get('view')) {
+        return handled(() => closeChatSubview(() => {
+          setMediaViewer(null); setDetailsOpen(false); setEditEntityOpen(false);
+        }));
+      }
+      if (activeConversation) return handled(handleCloseConversation);
+    };
+    window.addEventListener('vanta-native-back', onNativeBack);
+    return () => window.removeEventListener('vanta-native-back', onNativeBack);
+    // closeMessageSelection is intentionally called via the latest render;
+    // the effect re-registers when transient chat state changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAttachmentSheet, composerEmojiOpen, callMenuOpen, directMenuOpen,
+      messageSearchOpen, contactPickerOpen, deleteConfirmMessage, deleteSelectedConfirmOpen,
+      leaveDialog, createModalOpen, pollDraft, selectedMessageIds.size, mediaViewer,
+      detailsOpen, editEntityOpen, activeConversation, searchParams, closeChatSubview, handleCloseConversation]);
+
   const handleLeaveActiveConversation = async () => {
     if (!token || !activeConv || activeConv.type === 'direct') return;
     const entityId = activeConv.entityId || activeConv.id;
