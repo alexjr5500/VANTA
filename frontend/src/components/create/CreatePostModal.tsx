@@ -17,6 +17,7 @@ import QuoteEmbed from '@/components/social/QuoteEmbed';
 import ReplyAudienceSheet from './ReplyAudienceSheet';
 import { REPLY_AUDIENCE_LABELS, isReplyAudience, type ReplyAudience } from '@/lib/replyAudience';
 import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
+import { MentionTextarea } from '@/components/social/MentionTextarea';
 
 const MAX_CHARS = 5000;
 /** VANTA posts accept up to 10 attachments (matches MediaUploader's default). */
@@ -328,7 +329,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
 
                 {/* Post text - borderless, auto-growing, keyboard friendly */}
                 {!isStory && (
-                  <textarea
+                  <MentionTextarea
                     ref={textareaRef}
                     value={content}
                     onChange={handleTextareaInput}
