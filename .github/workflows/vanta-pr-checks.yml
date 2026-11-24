@@ -160,7 +160,7 @@ jobs:
       - name: Run PostgreSQL integration and concurrency tests
         env:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
-        run: npm --prefix backend run test -- --runInBand src/__tests__/durable-queue.postgres.integration.test.ts
+        run: npm --prefix backend run test -- --runInBand src/__tests__/durable-queue.postgres.integration.test.ts src/__tests__/database-replica.postgres.integration.test.ts
 
   durable-media:
     name: Durable media handlers and real FFmpeg integration
@@ -204,6 +204,7 @@ jobs:
           src/__tests__/durable-queue.alerts.test.ts
           src/__tests__/durable-queue.worker.test.ts
           src/__tests__/cache.local.test.ts
+          src/__tests__/database-pool-readiness.test.ts
 
   redis-cache:
     name: Redis cache adapter integration
