@@ -52,7 +52,7 @@ export function useMentionSuggestions({ value, onChange, token, inputRef }: Args
   const [following, setFollowing] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
-  const followingLoaded = useRef(false);
+  const followingLoaded = useRef<string | null>(null);
   const request = useRef(0);
   const mention = useMemo(() => mentionAtCaret(value, caret), [value, caret]);
   const mentionKey = mention ? `${mention.prefixStart}:${mention.query}` : null;
@@ -89,9 +89,10 @@ export function useMentionSuggestions({ value, onChange, token, inputRef }: Args
   // Used for "Following" labels and the preferred ordering in the reference.
   // Never show hidden users: the actual candidate list still comes from search.
   useEffect(() => {
-    if (!open || !token || followingLoaded.current) return;
-    followingLoaded.current = true;
-    void apiGet<{ items?: MentionUser[] }>('/api/feed/following?limit=50', token)
+    if (!open || !token || followingLoaded.current === token) return;
+    followingLoaded.current = token;
+    setFollowing(new Set());
+    void apiGet<{ items?: MentionUser[] }>('/api/feed/following?limit=50', token, { skipCache: true })
       .then(result => setFollowing(new Set((result.items || []).map(u => u.id))))
       .catch(() => setFollowing(new Set()));
   }, [open, token]);
