@@ -3610,3 +3610,34 @@ a.vanta-link-preview:has(.vanta-link-rich) {
 .vanta-link-domain { color: #dfbd55; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
 
 span.vanta-inline-tag { color: #dfbd55 !important; -webkit-text-fill-color: #dfbd55 !important; }
+
+/* Community follow-up: restore fully enclosed cards on the annotated screens.
+   Scoped classes override the old flat-section rules without changing DM UI. */
+.vanta-community-compact-header {
+  --community-safe-top: env(safe-area-inset-top, 0px);
+  box-sizing: border-box;
+  height: calc(48px + var(--community-safe-top)) !important;
+  min-height: calc(48px + var(--community-safe-top)) !important;
+  padding-top: var(--community-safe-top) !important;
+  padding-bottom: 0 !important;
+}
+.vanta-community-settings-nav { top: calc(48px + env(safe-area-inset-top, 0px)); }
+html.vanta-native-android .vanta-community-compact-header { --community-safe-top: 0px; }
+html.vanta-native-android .vanta-community-settings-nav { top: 48px; }
+.vanta-conversation-info .vanta-community-card,
+.vanta-entity-settings .vanta-community-card {
+  background: #18212b !important;
+  border: 1px solid rgba(255,255,255,.13) !important;
+  border-radius: 14px !important;
+  box-shadow: none !important;
+}
+.vanta-entity-settings section.vanta-community-card { padding: 0 0 8px; margin-top: 12px; }
+.vanta-entity-settings .vanta-community-field-card,
+.vanta-community-person-card {
+  background: #202b37;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 11px;
+}
+.vanta-community-field-card :is(input:not([type=file]),textarea) { border: 0 !important; background: transparent !important; }
+.vanta-community-field-card:focus-within { border-color: rgba(214,168,63,.65); }
+html.vanta-native-android .vanta-photo-crop { height: var(--chat-viewport-height,100dvh); }
