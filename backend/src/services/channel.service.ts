@@ -2,6 +2,7 @@ import { prisma } from "../prisma";
 import { chatService } from "./chat.service";
 import { conflict } from "../utils/api-error";
 import { auditLog } from "../security/auditLog";
+import { mergeCommunitySettings } from "./community-settings";
 
 /** Parses the JSON permission blob stored on the linked Conversation. */
 function parsePermissions(value: string | null | undefined): Record<string, boolean> {
@@ -150,7 +151,7 @@ export class ChannelService {
       handle?: string;
       memberIds?: string[];
       memberRoles?: Record<string, string>;
-      permissions?: Record<string, boolean>;
+      permissions?: Record<string, unknown>;
     }
   ) {
     const channel: any = await prisma.channel.findUnique({
@@ -199,7 +200,7 @@ export class ChannelService {
     const safeAvatar = data.avatar !== undefined ? data.avatar : channel.avatar;
     const safeCategory = data.category !== undefined ? (data.category?.trim() || null) : channel.category;
     const conversationSettings = channel.conversationId
-      ? await prisma.conversation.findUnique({ where: { id: channel.conversationId }, select: { visibility: true } })
+      ? await prisma.conversation.findUnique({ where: { id: channel.conversationId }, select: { visibility: true, permissions: true } })
       : null;
     const currentVisibility = conversationSettings?.visibility || "PUBLIC";
     const safeVisibility = data.visibility !== undefined ? (["PUBLIC", "PRIVATE"].includes(data.visibility) ? data.visibility : currentVisibility) : currentVisibility;
@@ -229,7 +230,7 @@ export class ChannelService {
 
     await prisma.$transaction(async tx => {
       await tx.channel.update({ where: { id: channelId }, data: { name: safeName, description: safeDescription, avatar: safeAvatar, category: safeCategory } });
-      if (channel.conversationId) await tx.conversation.update({ where: { id: channel.conversationId }, data: { name: safeName, description: safeDescription, avatar: safeAvatar, visibility: safeVisibility, ...(safeHandle !== undefined ? { handle: safeHandle } : {}), ...(data.permissions !== undefined ? { permissions: JSON.stringify(Object.fromEntries(Object.entries(data.permissions).filter(([key, value]) => ["postMessages", "editMessages", "deleteMessages", "manageChannelInfo", "manageSubscribers"].includes(key) && typeof value === "boolean"))) } : {}) } });
+      if (channel.conversationId) await tx.conversation.update({ where: { id: channel.conversationId }, data: { name: safeName, description: safeDescription, avatar: safeAvatar, visibility: safeVisibility, ...(safeHandle !== undefined ? { handle: safeHandle } : {}), ...(data.permissions !== undefined ? { permissions: mergeCommunitySettings(conversationSettings?.permissions, data.permissions, ["postMessages", "editMessages", "deleteMessages", "manageChannelInfo", "manageSubscribers"]) } : {}) } });
       if (requestedMemberIds) {
         const currentIds = channel.members.map((member: any) => member.userId);
         const toAdd = requestedMemberIds.filter(id => !currentIds.includes(id));
