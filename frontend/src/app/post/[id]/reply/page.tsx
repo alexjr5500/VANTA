@@ -12,6 +12,7 @@ import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { renderTextWithLinks } from '@/lib/linkify';
 import type { VerificationType } from '@/types/verification';
 import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
+import { MentionTextarea } from '@/components/social/MentionTextarea';
 
 type Post = {
   id: string;
@@ -213,7 +214,7 @@ export default function DirectPostReplyPage({ params }: { params: Promise<{ id: 
             <Avatar src={avatar} alt={user?.username || 'You'} size="lg" />
             <div className="min-w-0 flex-1">
               <label htmlFor="vanta-reply-text" className="sr-only">Post your reply</label>
-              <textarea
+              <MentionTextarea
                 id="vanta-reply-text"
                 ref={inputRef}
                 value={text}
