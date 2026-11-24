@@ -27,6 +27,7 @@
 // ============================================================================
 
 import { createElement, Fragment, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
+import LinkPreviewContent from '@/components/social/LinkPreviewContent';
 
 // Matches http(s)://host/path or bare www.host/path. The match is permissive on
 // the trailing boundary (whitespace, punctuation, end-of-line) so embedded URLs
@@ -48,6 +49,8 @@ export interface LinkifyOptions {
   mentions?: boolean;
   /** Render #hashtag tokens as links to matching VANTA content. */
   hashtags?: boolean;
+  /** Set false for tiny text-only surfaces or private/sensitive links. */
+  richPreviews?: boolean;
 }
 
 /** Normalise a detected URL token into a safe, openable href. */
@@ -137,7 +140,7 @@ export function renderTextWithLinks(text: string, linkClassName?: string, option
           title: href,
           'aria-label': `Open link to ${linkPreviewLabel(href)}`,
         },
-        `↗ ${linkPreviewLabel(href)}`
+        options?.richPreviews === false ? `↗ ${linkPreviewLabel(href)}` : createElement(LinkPreviewContent, { href, children: `↗ ${linkPreviewLabel(href)}` })
       ),
     );
 
