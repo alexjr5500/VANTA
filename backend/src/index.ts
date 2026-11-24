@@ -736,6 +736,21 @@ async function startServer() {
       console.warn('[OAuthState] Startup sweep skipped:', sweepError);
     }
 
+    // Status media is ephemeral. Read-time expiration remains authoritative;
+    // a recurring bounded cleanup deletes the underlying storage assets.
+    const expireStatuses = async (): Promise<void> => {
+      try {
+        const { sweepExpiredStatuses } = await import('./services/status-expiry.service');
+        const result = await sweepExpiredStatuses();
+        if (result.stories || result.files || result.failed) console.log('[StatusExpiry]', result);
+      } catch (error) {
+        console.warn('[StatusExpiry] Sweep failed; will retry:', error);
+      }
+    };
+    void expireStatuses();
+    const statusExpiryTimer = setInterval(expireStatuses, 60_000);
+    statusExpiryTimer.unref();
+
     // Gold Verified Follower Rewards: expire due campaigns (refund unused
     // reservation to the creator's available balance). Runs at startup and on
     // an interval; claims also lazily enforce expiration so a downtime window
