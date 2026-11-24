@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { FileText, Trash2, Calendar, Clock, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import DeleteConfirmDialog from '@/components/ui/DeleteConfirmDialog';
+import type { ReplyAudience } from '@/lib/replyAudience';
 
 interface Draft {
   id: string;
@@ -12,6 +13,7 @@ interface Draft {
   media: { type: 'image' | 'video'; url: string; name: string }[];
   createdAt: string;
   visibility: 'public' | 'followers';
+  replyAudience?: ReplyAudience;
 }
 
 const STORAGE_KEY = 'vanta_drafts';
@@ -175,7 +177,7 @@ export default function DraftManager({ onSelectDraft, onClose, className }: Draf
 }
 
 // Helper function to save a draft from the CreatePostModal
-export function savePostDraft(content: string, media: { type: 'image' | 'video'; url: string; name: string }[], visibility: 'public' | 'followers') {
+export function savePostDraft(content: string, media: { type: 'image' | 'video'; url: string; name: string }[], visibility: 'public' | 'followers', replyAudience: ReplyAudience = 'EVERYONE') {
   const drafts = loadDrafts();
   const newDraft: Draft = {
     id: `draft_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -183,6 +185,7 @@ export function savePostDraft(content: string, media: { type: 'image' | 'video';
     media,
     createdAt: new Date().toISOString(),
     visibility,
+    replyAudience,
   };
   drafts.unshift(newDraft);
   saveDrafts(drafts);
