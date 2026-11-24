@@ -22,6 +22,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import { createStoryDraft, failStoryMedia, fetchStatusUsage, type StoryUsage } from '@/lib/storyApi';
 import { notifyStoryFeedChanged } from '@/lib/storyEvents';
+import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
+import { MentionTextarea } from '@/components/social/MentionTextarea';
 import {
   cancelUpload,
   getJobs,
@@ -231,6 +233,8 @@ export default function StoryMediaEditor({ source, initialFiles, onBack, onText,
 
   const appliedInitialFilesRef = useRef(false);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const captionRef = useRef<HTMLTextAreaElement | null>(null);
+  const captionMentions = useMentionSuggestions({ value: caption, onChange: value => setCaption(normalizeStatusEditorValue(value)), token, inputRef: captionRef });
   const cameraPhotoRef = useRef<HTMLInputElement | null>(null);
   const cameraVideoRef = useRef<HTMLInputElement | null>(null);
 useEffect(() => {
@@ -824,10 +828,15 @@ useEffect(() => {
 
           {/* Compact caption composer — character limits remain enforced by normalization. */}
           <div className="shrink-0 px-4 pb-1.5">
+            <MentionSuggestions mention={captionMentions} className="mb-2 rounded-xl" />
             <div className="flex items-end gap-2 rounded-full border border-white/[0.06] bg-[#11191e] px-4 py-2.5">
-              <textarea
+              <MentionTextarea
+                ref={captionRef}
                 value={caption}
-                onChange={(event) => setCaption(normalizeStatusEditorValue(event.target.value))}
+                onChange={(event) => { setCaption(normalizeStatusEditorValue(event.target.value)); captionMentions.syncCaret(event.currentTarget); }}
+                onClick={event => captionMentions.syncCaret(event.currentTarget)}
+                onKeyUp={event => captionMentions.syncCaret(event.currentTarget)}
+                onKeyDown={event => { captionMentions.onKeyDown(event); }}
                 onPaste={(event) => {
                   event.preventDefault();
                   const pasted = event.clipboardData?.getData('text/plain') || '';
