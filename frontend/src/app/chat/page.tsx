@@ -17,6 +17,7 @@ import {
   Mic, Square, Phone, Video, Play, QrCode,
 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
+import ImageCropEditor from '@/components/ui/ImageCropEditor';
 import PullToRefresh from '@/components/ui/PullToRefresh';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import { useToast } from '@/components/ui/Toast';
@@ -475,6 +476,7 @@ export default function MessagesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showMobileList, setShowMobileList] = useState(true);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [photoCrop, setPhotoCrop] = useState<{ kind: 'create' | 'edit'; file: File; entityId?: string; conversationId?: string } | null>(null);
   const [creatorFollowers, setCreatorFollowers] = useState<any[]>([]);
   const [followersLoading, setFollowersLoading] = useState(false);
   const [autoDeleteSeconds, setAutoDeleteSeconds] = useState(0);
@@ -1391,6 +1393,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       if (deleteConfirmMessage) return handled(() => setDeleteConfirmMessage(null));
       if (deleteSelectedConfirmOpen) return handled(() => setDeleteSelectedConfirmOpen(false));
       if (leaveDialog) return handled(() => setLeaveDialog(false));
+      if (photoCrop) return handled(() => setPhotoCrop(null));
       if (createModalOpen) return handled(() => setCreateModalOpen(false));
       if (pollDraft) return handled(() => setPollDraft(null));
       if (selectedMessageIds.size > 0) return handled(() => closeMessageSelection());
@@ -1409,7 +1412,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAttachmentSheet, composerEmojiOpen, callMenuOpen, directMenuOpen,
       messageSearchOpen, contactPickerOpen, deleteConfirmMessage, deleteSelectedConfirmOpen,
-      leaveDialog, createModalOpen, pollDraft, selectedMessageIds.size, mediaViewer,
+      leaveDialog, createModalOpen, photoCrop, pollDraft, selectedMessageIds.size, mediaViewer,
       detailsOpen, editEntityOpen, memberBrowserOpen, activeConversation, searchParams, closeChatSubview, handleCloseConversation]);
 
   const handleLeaveActiveConversation = async () => {
@@ -2269,6 +2272,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
 
     setCreateModalOpen(false);
+    setPhotoCrop(null);
     setCreateType(null);
     setAutoDeleteSeconds(0);
     setCreatorFollowers([]);
@@ -2328,6 +2332,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
    */
   const handleCreateImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file || !token || !createType) return;
 
     const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'image/tiff', 'image/heic', 'image/heif'];
@@ -2346,6 +2351,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
 
     setCreateAvatarError(null);
+    setPhotoCrop({ kind: 'create', file: uploadFile });
+  };
+
+  const uploadCroppedCreateAvatar = async (uploadFile: File) => {
+    if (!token || !createType || !createModalOpen) return;
     setIsUploadingAvatar(true);
     try {
       const formData = new FormData();
@@ -2358,6 +2368,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       );
       const url = uploadResult.url;
       const fileId = uploadResult.id ?? uploadResult.file?.id ?? null;
+      const previousFileId = createAvatarFileIdRef.current;
+      if (previousFileId && previousFileId !== fileId) void apiDelete<any>(`/api/upload/files/${previousFileId}`, token).catch(() => undefined);
       setCreateAvatar(url);
       createAvatarFileIdRef.current = fileId;
       setCreateAvatarFileId(fileId);
@@ -2626,11 +2638,18 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file || !token || !activeConv || !editEntityId || !canEditEntityInfo) return;
+    if (!file.type.startsWith('image/') || file.size > 5 * 1024 * 1024) { showToast?.({ type: 'error', title: 'Choose an image up to 5MB' }); return; }
+    setPhotoCrop({ kind: 'edit', file, entityId: editEntityId, conversationId: activeConv.id });
+  };
+
+  const uploadCroppedEntityAvatar = async (file: File, target: NonNullable<typeof photoCrop>) => {
+    if (!token || !activeConv || !editEntityId || !canEditEntityInfo || !editEntityOpen || target.entityId !== editEntityId || target.conversationId !== activeConv.id) return;
+    const conversationId = activeConv.id;
     setIsUploadingAvatar(true);
     try {
       const form = new FormData(); form.append('avatar', file);
       const uploaded = await apiUpload<any>(`/api/upload/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}/avatar`, form, token);
-      setEditAvatar(uploaded.url ?? uploaded.data?.url);
+      if (activeConversationRef.current === conversationId) setEditAvatar(uploaded.url ?? uploaded.data?.url);
     } catch (err: any) { showToast?.({ type: 'error', title: 'Photo upload failed', message: errorMessage(err, { action: 'upload the photo', context: 'photo', fallback: 'Please choose another image.' }) }); }
     finally { setIsUploadingAvatar(false); }
   };
@@ -3967,6 +3986,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
           </>
         )}
       </AnimatePresence>
+
+      {photoCrop && <ImageCropEditor file={photoCrop.file} circular onCancel={() => setPhotoCrop(null)} onApply={file => { const target = photoCrop; setPhotoCrop(null); if (target.kind === 'create') void uploadCroppedCreateAvatar(file); else void uploadCroppedEntityAvatar(file, target); }}/>}
 
       {/* Shared VANTA video trimmer — same UI everywhere (Reel, Post, Story, Chat) */}
       <VideoTrimModal
