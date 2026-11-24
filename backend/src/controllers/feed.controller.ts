@@ -4,6 +4,7 @@ import { feedService, uploadService } from "../services";
 import { prisma } from "../prisma";
 import { cacheService, CACHE_KEYS } from "../services/cache.service";
 import { parseReplyAudience } from "../security/replyAudience";
+import { notificationService } from "../services/notification.service";
 
 const parseLimit = (value: unknown, defaultLimit = 20) => {
   const parsed = typeof value === "string" ? parseInt(value, 10) : NaN;
@@ -175,6 +176,9 @@ export const createPost = async (req: AuthRequest, res: Response): Promise<void>
           cacheService.del(CACHE_KEYS.TRENDING),
           cacheService.del(CACHE_KEYS.EXPLORE),
         ]);
+        // Notify once for a mixed-media publish, linking to its primary content.
+        const primary = created.photoPost ? { kind: "post" as const, id: created.photoPost.id } : { kind: "reel" as const, id: created.reels[0].id };
+        await notificationService.notifyPublishedMentions(userId, caption, primary).catch(() => console.error("[mentions] publish delivery failed", { targetId: primary.id }));
         res.status(201).json({
           id: created.photoPost?.id ?? `video-${created.reels[0].id}`,
           type: created.photoPost ? "post" : "reel",
@@ -207,6 +211,7 @@ export const createPost = async (req: AuthRequest, res: Response): Promise<void>
       throw error;
     }
 
+    await notificationService.notifyPublishedMentions(userId, caption, { kind: "post", id: post.id }).catch(() => console.error("[mentions] publish delivery failed", { targetId: post.id }));
     res.status(201).json({
       ...post,
       attachments: mediaUrls.map((url, index) => ({ url, fileId: mediaFileIds[index] })),
