@@ -156,18 +156,18 @@ export default function EditProfilePage() {
     />
     <form id="edit-profile-form" className="edit-profile-form" onSubmit={submit} noValidate>
       <section className="edit-media">
-        <div className={`edit-cover ${cover.preview ? 'has-photo' : ''}`} style={cover.preview ? { backgroundImage: `url("${cover.preview.replace(/"/g, '%22')}")` } : undefined}><button type="button" onClick={() => coverInput.current?.click()}><ImagePlus size={17} />Change cover</button></div>
-        <div className="edit-avatar" style={avatar.preview ? { backgroundImage: `url("${avatar.preview.replace(/"/g, '%22')}")` } : undefined}>{!avatar.preview && <UserRound size={34} />}<button type="button" onClick={() => avatarInput.current?.click()} aria-label="Change profile photo"><Camera size={17} /></button></div>
-        <div className="media-copy"><b>Profile photo and cover</b><span>JPG, PNG or WebP. Profile photo up to 5MB; cover up to 10MB.</span></div>
+        <div className={`edit-cover ${cover.preview ? 'has-photo' : ''}`} style={cover.preview ? { backgroundImage: `url("${cover.preview.replace(/"/g, '%22')}")` } : undefined}><button type="button" aria-label="Change cover photo" disabled={saving} onClick={() => coverInput.current?.click()}><ImagePlus size={19} />Change cover</button></div>
+        <div className="edit-avatar" style={avatar.preview ? { backgroundImage: `url("${avatar.preview.replace(/"/g, '%22')}")` } : undefined}>{!avatar.preview && <UserRound size={34} />}<button type="button" onClick={() => avatarInput.current?.click()} disabled={saving} aria-label="Change profile photo"><Camera size={17} /></button></div>
+        <div className="media-copy"><b>Profile photo and cover</b><span>Tap either photo to choose and adjust your image.</span></div>
         <input ref={avatarInput} hidden type="file" accept={types.join(',')} onChange={event => selectImage('avatar', event)} /><input ref={coverInput} hidden type="file" accept={types.join(',')} onChange={event => selectImage('cover', event)} />
       </section>
-      <section className="edit-fields">
+      <section className="edit-fields" aria-label="Profile information">
         <Field label="Display name" count={`${form.fullName.length} / 50`}><input value={form.fullName} maxLength={50} autoComplete="name" onChange={event => setField('fullName', event.target.value)} /></Field>
         <Field label="Username" hint={availabilityText(availability)} status={availability}><div className="username-input"><span>@</span><input value={form.username} maxLength={30} autoComplete="username" spellCheck={false} onChange={event => setField('username', event.target.value.replace(/^@/, '').toLowerCase())} /></div></Field>
-        <Field label="Bio" count={`${form.bio.length} / 260`}><textarea value={form.bio} maxLength={260} rows={5} onChange={event => setField('bio', event.target.value)} /></Field>
+        <Field label="Bio" count={`${form.bio.length} / 260`}><textarea value={form.bio} maxLength={260} rows={3} onChange={event => setField('bio', event.target.value)} /></Field>
         <Field label="Location" optional><input value={form.city} maxLength={100} autoComplete="address-level2" placeholder="City or region" onChange={event => setField('city', event.target.value)} /></Field>
-        <Field label="Date of birth" optional><input type="date" value={form.dateOfBirth} max={new Date().toISOString().slice(0, 10)} onChange={event => setField('dateOfBirth', event.target.value)} /></Field>
         <Field label="Website" optional><input value={form.website} inputMode="url" autoComplete="url" placeholder="https://example.com" onChange={event => setField('website', event.target.value)} /></Field>
+        <Field label="Date of birth" optional><input type="date" value={form.dateOfBirth} max={new Date().toISOString().slice(0, 10)} onChange={event => setField('dateOfBirth', event.target.value)} /></Field>
       </section>
       {progress && <div className="edit-feedback progress"><Loader2 className="spin" size={15} />{progress}</div>}{error && <div className="edit-feedback error" role="alert"><X size={15} />{error}</div>}{success && <div className="edit-feedback success" role="status"><Check size={15} />{success}</div>}
       <footer><button type="button" onClick={leave}>Cancel</button><button className="save" type="submit" disabled={!dirty || saving}>{saving ? <Loader2 className="spin" size={16} /> : <Save size={16} />}{saving ? 'Saving...' : 'Save changes'}</button></footer>
