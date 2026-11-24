@@ -578,6 +578,7 @@ const MediaUploader = forwardRef<MediaUploaderHandle, MediaUploaderProps>(functi
 
       {/* Shared video trimmer — same UI for Posts and Stories */}
       <VideoTrimModal
+        maxDurationSeconds={storyMode ? 120 : undefined}
         open={pendingTrimQueue.length > 0}
         file={pendingTrimFile}
         onClose={handleTrimCancel}
