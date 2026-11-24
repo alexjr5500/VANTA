@@ -69,6 +69,48 @@ describeWithDatabase('DurableQueueRepository PostgreSQL integration', () => {
     expect(unfiltered.oldestPendingAgeSeconds).toBeGreaterThan(1000);
   });
 
+  it('measures due work, retry pressure and recent completions without counting historical throughput', async () => {
+    await repository.enqueue('push:deliver', {}, { id: 'due' });
+    await repository.enqueue('push:deliver', {}, { id: 'future', runAt: new Date(Date.now() + 3600000) });
+    await repository.enqueue('push:deliver', {}, { id: 'retry' });
+    await repository.enqueue('push:deliver', {}, { id: 'recent' });
+    await repository.enqueue('push:deliver', {}, { id: 'historical' });
+    await repository.enqueue('image:optimize', {}, { id: 'excluded' });
+    await pool.query(`UPDATE "QueueJob" SET "attempts" = 1, "runAt" = NOW() + INTERVAL '1 hour' WHERE "id" = 'retry'`);
+    await pool.query(`UPDATE "QueueJob" SET "status" = 'completed', "createdAt" = NOW() - INTERVAL '10 seconds',
+      "completedAt" = NOW() WHERE "id" = 'recent'`);
+    await pool.query(`UPDATE "QueueJob" SET "status" = 'completed', "createdAt" = NOW() - INTERVAL '2 hours',
+      "completedAt" = NOW() - INTERVAL '1 hour' WHERE "id" = 'historical'`);
+    const health = await getDurableQueueHealth(queueClient, ['image:optimize']);
+    expect(health).toMatchObject({ pending: 3, duePending: 1, retryPending: 1, completed: 2,
+      recentCompletions: 1, recentCompletionLatencySeconds: 10 });
+    await pool.query(`DELETE FROM "QueueJob" WHERE "id" = 'recent'`);
+    await expect(getDurableQueueHealth(queueClient, ['image:optimize'])).resolves.toMatchObject({
+      recentCompletions: 0, recentCompletionLatencySeconds: null,
+    });
+  });
+
+  it('drains a bounded burst concurrently without duplicate claims or lost completions', async () => {
+    const count = 64;
+    await Promise.all(Array.from({ length: count }, (_, i) =>
+      repository.enqueue('integration:burst', {}, { id: 'burst-' + i })));
+    const claimed: string[] = [];
+    await Promise.all(Array.from({ length: 8 }, async (_, i) => {
+      const worker = 'burst-worker-' + i;
+      while (true) {
+        const job = await repository.claim(worker);
+        if (!job) break;
+        claimed.push(job.id);
+        expect(await repository.complete(job.id, worker)).toBe(true);
+      }
+    }));
+    expect(claimed).toHaveLength(count);
+    expect(new Set(claimed).size).toBe(count);
+    const health = await getDurableQueueHealth(queueClient);
+    expect(health).toMatchObject({ pending: 0, duePending: 0, retryPending: 0, active: 0,
+      completed: count, recentCompletions: count, failed: 0 });
+  });
+
   it('leaves disabled media jobs pending while claiming eligible jobs', async () => {
     await repository.enqueue('image:optimize', {}, { id: 'media-job', priority: 10 });
     await repository.enqueue('push:deliver', {}, { id: 'push-job', priority: 0 });

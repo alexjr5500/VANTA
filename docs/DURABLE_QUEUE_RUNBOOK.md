@@ -71,6 +71,8 @@ failed, oldest **due** pending age, expired leases, and terminal failures
 within the last **15 minutes**. Future-scheduled jobs do not contribute to
 overdue age; historical failures alone do not trigger alerts.
 
+The snapshot also reports due pending work, pending retries (including scheduled retries), successful completions in the last 15 minutes, and mean enqueue-to-completion time for those completions (null when there are none). This latency includes scheduling and retry delays; it is not handler execution time. Use these metrics to establish a staging throughput and retry-pressure baseline before choosing additional alert thresholds. CI exercises a bounded 64-job burst with eight concurrent claimers; this is a correctness test, not a production load benchmark.
+
 Initial conservative thresholds (tune after staging baselines):
 - Pending overdue: warning at 120 seconds, critical at 600 seconds.
 - Expired worker leases: warning at 1, critical at 3.

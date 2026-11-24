@@ -2,6 +2,14 @@ import { DurableQueueClient } from './durable-queue.repository';
 
 export interface DurableQueueHealth {
   pending: number;
+  /** Pending jobs whose scheduled time has arrived, including due retries. */
+  duePending: number;
+  /** Pending jobs that have already been claimed at least once. */
+  retryPending: number;
+  /** Successful completions in the last 15 minutes. */
+  recentCompletions: number;
+  /** Mean enqueue-to-completion time in seconds over recent completions; null when none. */
+  recentCompletionLatencySeconds: number | null;
   active: number;
   completed: number;
   failed: number;
@@ -12,7 +20,12 @@ export interface DurableQueueHealth {
   recentFailures: number;
 }
 
-function safeCount(value: bigint | number, field: string): number {
+function safeCount(value: unknown, field: string): number {
+  // Prisma returns bigint; node-postgres returns int8 as a decimal string.
+  if (typeof value !== 'bigint' && typeof value !== 'number' &&
+      !(typeof value === 'string' && /^[0-9]+$/.test(value))) {
+    throw new Error('Invalid durable queue health count for ' + field);
+  }
   const count = Number(value);
   if (!Number.isSafeInteger(count) || count < 0) {
     throw new Error('Invalid durable queue health count for ' + field);
@@ -33,15 +46,24 @@ export async function getDurableQueueHealth(
     throw new Error('Excluded queue job types must be nonempty strings');
   }
   const rows = await db.$queryRawUnsafe<Array<{
-    pending: bigint; active: bigint; completed: bigint; failed: bigint;
+    pending: bigint; duePending: bigint; retryPending: bigint; recentCompletions: bigint;
+    recentCompletionLatencySeconds: number | null;
+    active: bigint; completed: bigint; failed: bigint;
     oldestPendingAgeSeconds: number | null; expiredLeases: bigint; recentFailures: bigint;
   }>>(`
     WITH monitored AS (
-      SELECT "status", "runAt", "lockedUntil", "updatedAt"
+      SELECT "status", "runAt", "lockedUntil", "updatedAt", "attempts", "createdAt", "completedAt"
       FROM "QueueJob" WHERE "type" <> ALL($1::text[])
     )
     SELECT
       COUNT(*) FILTER (WHERE "status" = 'pending') AS pending,
+      COUNT(*) FILTER (WHERE "status" = 'pending' AND "runAt" <= NOW()) AS "duePending",
+      COUNT(*) FILTER (WHERE "status" = 'pending' AND "attempts" > 0) AS "retryPending",
+      COUNT(*) FILTER (WHERE "status" = 'completed' AND "completedAt" >= NOW() - INTERVAL '15 minutes'
+        AND "completedAt" <= NOW()) AS "recentCompletions",
+      AVG(EXTRACT(EPOCH FROM "completedAt" - "createdAt")) FILTER
+        (WHERE "status" = 'completed' AND "completedAt" >= NOW() - INTERVAL '15 minutes'
+          AND "completedAt" <= NOW())::float8 AS "recentCompletionLatencySeconds",
       COUNT(*) FILTER (WHERE "status" = 'active') AS active,
       COUNT(*) FILTER (WHERE "status" = 'completed') AS completed,
       COUNT(*) FILTER (WHERE "status" = 'failed') AS failed,
@@ -56,7 +78,15 @@ export async function getDurableQueueHealth(
   if (!row) throw new Error('Queue health query returned no rows');
   const age = Number(row.oldestPendingAgeSeconds);
   if (!Number.isFinite(age) || age < 0) throw new Error('Invalid oldest pending job age');
+  const latency = row.recentCompletionLatencySeconds;
+  if (latency !== null && (!Number.isFinite(latency) || latency < 0)) {
+    throw new Error('Invalid recent completion latency');
+  }
   return {
+    duePending: safeCount(row.duePending, 'duePending'),
+    retryPending: safeCount(row.retryPending, 'retryPending'),
+    recentCompletions: safeCount(row.recentCompletions, 'recentCompletions'),
+    recentCompletionLatencySeconds: latency,
     pending: safeCount(row.pending, 'pending'),
     active: safeCount(row.active, 'active'),
     completed: safeCount(row.completed, 'completed'),

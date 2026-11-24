@@ -2,7 +2,8 @@ import { evaluateDurableQueueHealth } from '../services/durable-queue.alerts';
 import { DurableQueueHealth } from '../services/durable-queue.health';
 
 const baseline: DurableQueueHealth = {
-  pending: 0, active: 0, completed: 20, failed: 4,
+  pending: 0, duePending: 0, retryPending: 0, recentCompletions: 0,
+  recentCompletionLatencySeconds: null, active: 0, completed: 20, failed: 4,
   oldestPendingAgeSeconds: 0, expiredLeases: 0, recentFailures: 0,
 };
 
