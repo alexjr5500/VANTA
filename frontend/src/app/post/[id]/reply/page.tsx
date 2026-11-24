@@ -223,7 +223,7 @@ export default function DirectPostReplyPage({ params }: { params: Promise<{ id: 
                   }
                 }}
                 rows={4}
-                maxLength={5000}
+                maxLength={2000}
                 disabled={!token || submitting}
                 placeholder={token ? 'Post your reply' : 'Sign in to reply'}
                 className="min-h-[160px] w-full resize-none border-0 bg-transparent pt-1 text-[19px] leading-7 text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)] focus:outline-none"
