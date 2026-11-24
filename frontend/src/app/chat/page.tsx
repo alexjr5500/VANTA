@@ -476,6 +476,7 @@ export default function MessagesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showMobileList, setShowMobileList] = useState(true);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createStep, setCreateStep] = useState<'details' | 'settings' | 'people'>('details');
   const [photoCrop, setPhotoCrop] = useState<{ kind: 'create' | 'edit'; file: File; entityId?: string; conversationId?: string } | null>(null);
   const [creatorFollowers, setCreatorFollowers] = useState<any[]>([]);
   const [followersLoading, setFollowersLoading] = useState(false);
@@ -1394,7 +1395,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       if (deleteSelectedConfirmOpen) return handled(() => setDeleteSelectedConfirmOpen(false));
       if (leaveDialog) return handled(() => setLeaveDialog(false));
       if (photoCrop) return handled(() => setPhotoCrop(null));
-      if (createModalOpen) return handled(() => setCreateModalOpen(false));
+      if (createModalOpen) return handled(() => { if (createStep === 'people') setCreateStep(createType === 'channel' ? 'settings' : 'details'); else if (createStep === 'settings') setCreateStep('details'); else setCreateModalOpen(false); });
       if (pollDraft) return handled(() => setPollDraft(null));
       if (selectedMessageIds.size > 0) return handled(() => closeMessageSelection());
       if (memberBrowserOpen && !mediaViewer && !editEntityOpen) return handled(() => setMemberBrowserOpen(false));
@@ -1412,7 +1413,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAttachmentSheet, composerEmojiOpen, callMenuOpen, directMenuOpen,
       messageSearchOpen, contactPickerOpen, deleteConfirmMessage, deleteSelectedConfirmOpen,
-      leaveDialog, createModalOpen, photoCrop, pollDraft, selectedMessageIds.size, mediaViewer,
+      leaveDialog, createModalOpen, createStep, createType, photoCrop, pollDraft, selectedMessageIds.size, mediaViewer,
       detailsOpen, editEntityOpen, memberBrowserOpen, activeConversation, searchParams, closeChatSubview, handleCloseConversation]);
 
   const handleLeaveActiveConversation = async () => {
@@ -2272,6 +2273,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
 
     setCreateModalOpen(false);
+    setCreateStep('details');
     setPhotoCrop(null);
     setCreateType(null);
     setAutoDeleteSeconds(0);
@@ -2290,9 +2292,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
   const handleOpenCreateModal = (type: 'group' | 'channel') => {
     setCreateType(type);
+    setCreateStep('details');
     setCreateModalOpen(true);
     setAutoDeleteSeconds(0);
-    if (type === 'group' && token) {
+    if (token) {
       setFollowersLoading(true);
       apiGet<any>('/api/profiles/me/followers?limit=100', token)
         .then(result => { const items = result?.items ?? result?.data?.items ?? []; setCreatorFollowers(items); setMemberSearchResults(items.filter((item: any) => item.id !== user?.id)); })
@@ -2393,6 +2396,17 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
   };
 
+  const previousCreateStep = () => {
+    if (createStep === 'people') setCreateStep(createType === 'channel' ? 'settings' : 'details');
+    else if (createStep === 'settings') setCreateStep('details');
+    else resetCreateModal();
+  };
+  const advanceCreateStep = () => {
+    if (!createName.trim()) { setCreateValidationError('Please enter a name.'); return; }
+    if (createStep === 'details') setCreateStep(createType === 'channel' ? 'settings' : 'people');
+    else if (createStep === 'settings') setCreateStep('people');
+    else void handleCreateEntity();
+  };
   const handleCreateEntity = async () => {
     if (!token || !createType) return;
     if (!createName.trim()) {
@@ -3909,20 +3923,20 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               className="vanta-entity-create fixed inset-0 z-[61] flex h-[100dvh] min-h-0 w-screen max-w-none flex-col overflow-hidden bg-[#1F2630] text-white"
             >
               <header className="flex shrink-0 items-center gap-3 border-b border-white/[0.07] bg-[#1F2630] px-4 pb-3 pt-[max(14px,env(safe-area-inset-top))] sm:px-7">
-                <button type="button" onClick={() => resetCreateModal()} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white/65 transition hover:bg-white/[0.07] hover:text-white" aria-label="Go back"><ArrowLeft size={19} /></button>
+                <button type="button" onClick={previousCreateStep} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white/65 transition hover:bg-white/[0.07] hover:text-white" aria-label="Go back"><ArrowLeft size={19} /></button>
                 
                 <div className="min-w-0 flex-1">
                   
-                  <h2 id="entity-create-title" className="truncate text-base font-semibold tracking-tight">{createType === 'group' ? 'New Group' : 'New Channel'}</h2><p className="mt-0.5 text-[11px] text-white/40">{createType === 'group' ? 'Bring your people together' : 'Share updates with your audience'}</p>
+                  <h2 id="entity-create-title" className="truncate text-base font-semibold tracking-tight">{createStep === 'settings' ? 'Channel settings' : createStep === 'people' ? (createType === 'group' ? 'Add members' : 'Add subscribers') : createType === 'group' ? 'New Group' : 'New Channel'}</h2><p className="mt-0.5 text-[11px] text-white/40">{createStep === 'details' ? 'Name and photo' : createStep === 'settings' ? 'Choose channel access' : 'Select people to add'}</p>
                 </div>
                 <span className="h-9 w-9 shrink-0" aria-hidden="true" />
               </header>
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-7 sm:py-6 [-webkit-overflow-scrolling:touch]">
                 <div className="mx-auto grid w-full max-w-none gap-5 pb-6">
-                  <section className="grid justify-items-center gap-2 px-2 py-1">
+                  <div hidden={createStep !== 'details'} className="space-y-4"><div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-xl border border-white/[0.07] bg-[#18212b] p-3"><section className="grid justify-items-center gap-2">
                     <div className="relative">
                       <button type="button" onClick={() => avatarInputRef.current?.click()} disabled={isUploadingAvatar}
-                        className="relative grid h-24 w-24 place-items-center overflow-hidden rounded-full border border-[#d6a83f]/25 bg-[#303b49] text-white/80 transition hover:bg-[#394656] disabled:opacity-60"
+                        className="relative grid h-16 w-16 place-items-center overflow-hidden rounded-full border border-[#d6a83f]/25 bg-[#303b49] text-white/80 transition hover:bg-[#394656] disabled:opacity-60"
                         aria-label={createAvatar ? "Change image" : "Choose image"}>
                         {isUploadingAvatar ? <Loader2 size={24} className="animate-spin" /> : createAvatar ? <Avatar src={createAvatar} alt="Image preview" size="xl" className="!h-full !w-full" /> : <Camera size={28} />}
                       </button>
@@ -3930,13 +3944,13 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                         <Pencil size={14} />
                       </span>
                     </div>
-                    <p className="text-xs text-white/40">{createAvatar ? "Tap photo to change" : "Add photo (optional)"}</p>
+                    <p className="text-[10px] text-white/40">{createAvatar ? "Change" : "Add photo"}</p>
                     {createAvatar && !isUploadingAvatar && <button type="button" onClick={() => void removeCreateAvatar()} className="text-xs font-medium text-red-300 hover:text-red-200">Remove photo</button>}
                     {createAvatarFileId && !isUploadingAvatar && <p className="text-[10px] text-emerald-300">Photo uploaded</p>}
                     <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" className="hidden" onChange={handleCreateImageUpload} />
                     {createAvatarError && <p className="text-xs text-red-300">{createAvatarError}</p>}
                   </section>
-                  <section className="grid gap-4 rounded-2xl border border-white/[0.07] bg-[#18212b] p-4 sm:p-5">
+                  <section className="grid min-w-0 gap-3">
                     <div>
                       <label className="mb-2 block text-xs font-semibold text-white/65">{createType === 'group' ? 'Group name' : 'Channel name'}</label>
                       <input value={createName} onChange={e => { setCreateName(e.target.value); if (createValidationError) setCreateValidationError(null); }} placeholder={createType === 'group' ? 'Give your group a name' : 'Give your channel a name'} maxLength={60} autoComplete="off" className={cn('h-12 w-full rounded-xl border bg-[#202b37] px-4 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#d6a83f]/60', createValidationError ? 'border-red-400/60' : 'border-white/[0.07]')} />
@@ -3951,8 +3965,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                       </div>
                     )}
                   </section>
+                  </div>
                   {createType === 'group' && <section className="rounded-2xl border border-white/[0.07] bg-[#18212b] p-4"><div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-white">Auto-Delete Messages</h3></div><select aria-label="Auto delete messages" value={autoDeleteSeconds === 0 ? '0' : [86400,604800,2592000].includes(autoDeleteSeconds) ? String(autoDeleteSeconds) : 'custom'} onChange={e => setAutoDeleteSeconds(e.target.value === 'custom' ? 172800 : Number(e.target.value))} className="rounded-xl border border-white/[0.08] bg-[#202b37] px-3 py-2.5 text-sm text-[#e6bd58]"><option value="0">Off</option><option value="86400">1 day</option><option value="604800">1 week</option><option value="2592000">1 month</option><option value="custom">Custom time</option></select></div>{![0,86400,604800,2592000].includes(autoDeleteSeconds) && <div className="mt-3 flex items-center gap-2"><input aria-label="Custom auto delete days" type="number" min="1" max="365" value={customDeleteDays} onChange={e => {setCustomDeleteDays(e.target.value);setAutoDeleteSeconds(Math.max(1,Math.min(365,Number(e.target.value)||1))*86400);}} className="h-10 w-24 rounded-lg border border-white/[0.08] bg-[#202b37] px-3 text-sm text-white"/><span className="text-xs text-white/45">days</span></div>}</section>}
-                  {createType === 'channel' && (
+                  </div>
+                  {createStep === 'settings' && createType === 'channel' && (
                     <section className="grid gap-4 rounded-2xl border border-white/[0.07] bg-[#18212b] p-4 sm:grid-cols-2 sm:p-5">
                       <div>
                         <label className="mb-2 block text-xs font-semibold text-white/65">Channel handle</label>
@@ -3965,11 +3981,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                       </div>
                     </section>
                   )}
-                  {createType === 'group' && (<section className="grid gap-3 rounded-2xl border border-white/[0.07] bg-[#18212b] p-4">
-                    <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-white">Members</h3><span className="text-xs tabular-nums text-[#e6bd58]">{selectedMembers.filter((member) => member.id !== user?.id).length} selected</span></div>
+                  {createStep === 'people' && (<section className="grid gap-3 rounded-2xl border border-white/[0.07] bg-[#18212b] p-4">
+                    <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-white">{createType === 'group' ? 'Members' : 'Subscribers'}</h3><span className="text-xs tabular-nums text-[#e6bd58]">{selectedMembers.filter((member) => member.id !== user?.id).length} selected</span></div>
                     {selectedMembers.length > 0 && <div className="flex flex-wrap gap-2">{selectedMembers.map(member => <button key={member.id} type="button" onClick={() => toggleMemberSelection(member)} className="flex items-center gap-2 rounded-full bg-[#26313e] py-1.5 pl-1.5 pr-3 text-xs text-white/80 transition hover:bg-[#303d4b]"><Avatar src={member.avatar} alt={member.username || member.fullName} size="xs" /><span>{member.id === user?.id ? 'You' : member.username || member.fullName}</span>{member.id !== user?.id && <X size={12} className="text-white/40" />}</button>)}</div>}
-                    <div className="relative"><Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-white/35" /><input value={memberSearch} onChange={e => handleSearchMembers(e.target.value)} placeholder="Search VANTA members" className="h-11 w-full rounded-xl border border-white/[0.07] bg-[#202b37] pl-10 pr-4 text-sm text-white outline-none placeholder:text-white/30 focus:border-[#d6a83f]/60" /></div>
-                    {createType === 'group' && <div className="max-h-56 space-y-1 overflow-y-auto overscroll-contain">{followersLoading ? <p className="px-3 py-5 text-center text-xs text-white/40">Loading your followers…</p> : memberSearchResults.map((item: any) => <button key={item.id} type="button" onClick={() => toggleMemberSelection(item)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.05]"><Avatar src={item.avatar} alt={item.username || item.fullName} size="sm" /><span className="min-w-0 flex-1"><span className="block truncate text-sm text-white">{item.fullName || item.username}</span><span className="mt-0.5 block truncate text-[10px] text-white/40">@{item.username}</span></span><UserPlus size={15} className="text-[#d6a83f]" /></button>)}{!followersLoading && memberSearchResults.length === 0 && <p className="px-3 py-5 text-center text-xs text-white/40">{memberSearch ? 'No matching followers found.' : 'No followers available to add.'}</p>}</div>}
+                    <div className="relative"><Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-white/35" /><input value={memberSearch} onChange={e => handleSearchMembers(e.target.value)} placeholder={createType === 'group' ? "Search followers" : "Search subscribers"} className="h-11 w-full rounded-xl border border-white/[0.07] bg-[#202b37] pl-10 pr-4 text-sm text-white outline-none placeholder:text-white/30 focus:border-[#d6a83f]/60" /></div>
+                    {<div className="max-h-[55dvh] space-y-1 overflow-y-auto overscroll-contain">{followersLoading ? <p className="px-3 py-5 text-center text-xs text-white/40">Loading your followers…</p> : memberSearchResults.map((item: any) => <button key={item.id} type="button" onClick={() => toggleMemberSelection(item)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.05]"><Avatar src={item.avatar} alt={item.username || item.fullName} size="sm" /><span className="min-w-0 flex-1"><span className="block truncate text-sm text-white">{item.fullName || item.username}</span><span className="mt-0.5 block truncate text-[10px] text-white/40">@{item.username}</span></span><UserPlus size={15} className="text-[#d6a83f]" /></button>)}{!followersLoading && memberSearchResults.length === 0 && <p className="px-3 py-5 text-center text-xs text-white/40">{memberSearch ? 'No matching followers found.' : 'No followers available to add.'}</p>}</div>}
                   </section>)}
                 </div>
               </div>
@@ -3977,8 +3993,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                 <p className="hidden text-[11px] text-white/35 sm:block">You can edit these details later.</p>
                 <div className="ml-auto flex items-center gap-2">
                   <button type="button" onClick={() => resetCreateModal()} className="h-11 rounded-xl px-4 text-sm font-medium text-white/60 transition hover:bg-white/[0.06] hover:text-white">Cancel</button>
-                  <button type="button" onClick={() => void handleCreateEntity()} disabled={isCreatingEntity || isUploadingAvatar || !createName.trim()} className="inline-flex h-11 min-w-36 items-center justify-center gap-2 rounded-xl bg-[#d6a83f] px-5 text-sm font-semibold text-[#17130a] transition hover:bg-[#e4b94f] disabled:cursor-not-allowed disabled:opacity-50">
-                    {isCreatingEntity ? <><Loader2 size={15} className="animate-spin" /> Creating…</> : <>{createType === 'group' ? <Users size={15} /> : <Megaphone size={15} />} Create {createType}</>}
+                  <button type="button" onClick={advanceCreateStep} disabled={isCreatingEntity || isUploadingAvatar || !createName.trim()} className="inline-flex h-11 min-w-36 items-center justify-center gap-2 rounded-xl bg-[#d6a83f] px-5 text-sm font-semibold text-[#17130a] transition hover:bg-[#e4b94f] disabled:cursor-not-allowed disabled:opacity-50">
+                    {isCreatingEntity ? <><Loader2 size={15} className="animate-spin" /> Creating…</> : <>{createStep === 'people' ? <>{createType === 'group' ? <Users size={15} /> : <Megaphone size={15} />} Create {createType}</> : <>Next <ChevronRight size={15}/></>}</>}
                   </button>
                 </div>
               </footer>
