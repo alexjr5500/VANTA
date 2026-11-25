@@ -246,3 +246,13 @@ jobs:
         env:
           VANTA_CI_REDIS_URL: redis://127.0.0.1:6379
         run: npm --prefix backend run test -- --runInBand src/__tests__/realtime-redis.integration.test.ts
+
+  staging-load-harness:
+    name: Staging load harness safety tests (no external traffic)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test backend/scripts/staging-load-test.test.mjs

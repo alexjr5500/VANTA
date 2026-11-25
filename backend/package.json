@@ -17,6 +17,7 @@
     "media:verify-hls": "node dist/media-hls-acceptance-cli.js",
     "media:audit-storage": "node dist/media-storage-audit-cli.js",
     "db:verify-replica": "node dist/database-replica-readiness-cli.js",
+    "load:staging": "node scripts/staging-load-test.mjs",
     "test": "jest --config jest.config.js",
     "test:coverage": "jest --config jest.config.js --coverage",
     "test:watch": "jest --config jest.config.js --watch",
