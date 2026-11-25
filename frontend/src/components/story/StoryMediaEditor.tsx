@@ -214,6 +214,7 @@ export default function StoryMediaEditor({ source, initialFiles, onBack, onText,
   // Ref-based submission lock: set synchronously BEFORE the first await so a
   // rapid double-tap on Post Status can never create duplicate drafts/uploads.
   const publishingRef = useRef(false);
+  const editorRef = useRef<HTMLDivElement>(null);
 
   const appliedInitialFilesRef = useRef(false);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
@@ -457,6 +458,8 @@ useEffect(() => {
   const publish = useCallback(() => {
     if (!token || publishingRef.current || items.length === 0 || atQuota) return;
     publishingRef.current = true;
+    // Stop the visible player synchronously, before the exit animation or routing.
+    editorRef.current?.querySelectorAll('video').forEach(video => { video.pause(); video.muted = true; });
     const normalizedCaption = normalizeStatusEditorValue(caption).trim() || undefined;
     // The detached task owns independent blob URLs. Closing the editor can
     // revoke its previews without interrupting video preparation.
@@ -511,7 +514,7 @@ useEffect(() => {
   const active = useMemo(() => items.find((item) => item.id === activeId) || items[0] || null, [items, activeId]);
 
   return (
-    <div className={cn('flex h-full flex-col', items.length === 0 ? 'bg-[#121719]' : 'bg-[#1F2630]')}>
+    <div ref={editorRef} className={cn('flex h-full flex-col', items.length === 0 ? 'bg-[#121719]' : 'bg-[#1F2630]')}>
       {/* Hidden inputs */}
       <input
         ref={galleryInputRef}
