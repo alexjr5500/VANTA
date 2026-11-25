@@ -48,6 +48,7 @@ import { normalizeGiftCatalog } from '@/lib/giftCatalog';
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { chooseReelPlaybackSource } from '@/lib/reelPlaybackSource';
+import { shouldMountReelVideo } from '@/lib/reelMediaPolicy';
 import { renderTextWithLinks } from '@/lib/linkify';
 import { feedFromSwipe, settleFeedSwipe, startFeedSwipe, trackFeedSwipe } from '@/lib/feedSwipe';
 
@@ -131,6 +132,17 @@ export default function ReelsPage() {
   const [active, setActive] = useState(0);
   const muted = false;
   const [paused, setPaused] = useState(false);
+  const { prefs } = useContentPrefs();
+  const [pageVisible, setPageVisible] = useState(true);
+  const [networkSaveData, setNetworkSaveData] = useState(false);
+  const lowerData = prefs.lowerData || networkSaveData;
+  useEffect(() => {
+    const connection = (navigator as Navigator & { connection?: EventTarget & { saveData?: boolean } }).connection;
+    const sync = () => setNetworkSaveData(connection?.saveData === true);
+    sync();
+    connection?.addEventListener('change', sync);
+    return () => connection?.removeEventListener('change', sync);
+  }, []);
   const [commentsFor, setCommentsFor] = useState<Reel | null>(null);
   const [shareFor, setShareFor] = useState<Reel | null>(null);
   const [moreFor, setMoreFor] = useState<Reel | null>(null);
@@ -219,7 +231,9 @@ export default function ReelsPage() {
   // app/page in the background (including mobile app task switching).
   useEffect(() => {
     let wasHidden = document.visibilityState === 'hidden';
+    setPageVisible(!wasHidden);
     const onVisibilityChange = () => {
+      setPageVisible(document.visibilityState !== 'hidden');
       if (document.visibilityState === 'hidden') {
         wasHidden = true;
         Object.values(videos.current).forEach(video => video?.pause());
@@ -227,11 +241,11 @@ export default function ReelsPage() {
       }
       if (wasHidden) {
         wasHidden = false;
-        void refreshReels();
+        void refreshReels().catch(() => undefined);
       }
     };
     const onPageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) void refreshReels();
+      if (event.persisted) void refreshReels().catch(() => undefined);
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('pageshow', onPageShow);
@@ -259,8 +273,8 @@ export default function ReelsPage() {
   // loaded Reels. The order stays stable because the session seed is fixed and the
   // server returns the same deterministic shuffle for every page request.
   useEffect(() => {
-    if (active >= reels.length - 3) void loadMore();
-  }, [active, reels.length, loadMore]);
+    if (pageVisible && active >= reels.length - (lowerData ? 1 : 3)) void loadMore();
+  }, [active, reels.length, loadMore, pageVisible, lowerData]);
 
   useEffect(() => {
     const requested = params.get('reel');
@@ -288,7 +302,7 @@ export default function ReelsPage() {
       const video = videos.current[reel.id];
       if (!video) return;
       video.muted = muted;
-      if (index === active && !paused) {
+      if (pageVisible && document.visibilityState !== 'hidden' && index === active && !paused) {
         // Calling play here, rather than relying only on the attribute, makes
         // activation deterministic after an IntersectionObserver transition.
         void video.play().catch(error => {
@@ -303,15 +317,16 @@ export default function ReelsPage() {
       }
     });
     const reel = reels[active];
-    if (!token || !reel || viewed.current.has(reel.id) || paused) return;
+    if (!pageVisible || !token || !reel || viewed.current.has(reel.id) || paused) return;
     const timer = window.setTimeout(() => {
+      if (document.visibilityState === 'hidden' || videos.current[reel.id]?.paused !== false) return;
       viewed.current.add(reel.id);
       void apiPost<{ counted: boolean; views: number }>(`/api/reels/${reel.id}/views`, { watchTime: 2 }, token)
         .then(result => setReels(items => items.map(item => item.id === reel.id ? { ...item, views: result.views } : item)))
         .catch(() => viewed.current.delete(reel.id));
     }, 2000);
     return () => window.clearTimeout(timer);
-  }, [active, muted, paused, reels, token]);
+  }, [active, muted, paused, reels, token, pageVisible]);
 
   useEffect(() => () => {
     Object.values(videos.current).forEach(video => video?.pause());
@@ -323,7 +338,7 @@ export default function ReelsPage() {
   // the user taps/keys, preserving their audio preference (`muted`) for the feed.
   useEffect(() => {
     const retrySound = () => {
-      if (!userInteractedRef.current) return;
+      if (!userInteractedRef.current || document.visibilityState === 'hidden') return;
       const activeVideo = videos.current[reels[active]?.id];
       if (activeVideo && activeVideo.paused && !paused && !muted) {
         void activeVideo.play().catch(() => undefined);
@@ -714,7 +729,7 @@ export default function ReelsPage() {
             isOwn={Boolean(user && ((user.id && String(reel.author.id) === String(user.id)) || (user.username && reel.author.username?.toLowerCase() === user.username.toLowerCase())))}
             index={index}
             active={active === index}
-            nearby={Math.abs(active - index) <= 1}
+            nearby={shouldMountReelVideo(index, active, pageVisible, lowerData)}
             muted={muted}
             paused={paused}
             videos={videos}
@@ -800,15 +815,8 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
     setNativeHlsSupported(Boolean(probe.canPlayType('application/vnd.apple.mpegurl')));
   }, []);
 
-  // If native HLS fails, retry the original MP4 source before reporting an
-  // error. No hls.js dependency is needed on unsupported browsers.
-  useEffect(() => {
-    if (!hlsFailed) return;
-    const player = videos.current[reel.id];
-    if (!player) return;
-    player.load();
-    if (active && !paused && autoplayEnabled) void player.play().catch(() => undefined);
-  }, [hlsFailed, reel.id, active, paused, autoplayEnabled, videos]);
+  // Changing src to the original MP4 triggers the browser's resource
+  // selection. Do not call load() again on every pause or swipe after fallback.
 
   const playbackSource = chooseReelPlaybackSource(reel.videoUrl, reel.hlsUrl, nativeHlsSupported, hlsFailed);
 
@@ -849,7 +857,7 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
     setVideoError('');
     setVideoLoading(true);
     video?.load();
-    if (active && !paused && autoplayEnabled) void video?.play().catch(() => {});
+    if (active && !paused && autoplayEnabled && document.visibilityState !== 'hidden') void video?.play().catch(() => {});
   };
 
   return (
@@ -858,7 +866,7 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
         <div className="relative h-full w-full overflow-hidden bg-black md:max-w-[480px]">
           {/* Keep the ambient fill as a thumbnail only. A second video decoder
               is unnecessary and can compete with the active Reel on Android. */}
-          {reel.thumbnailUrl ? (
+          {active && reel.thumbnailUrl ? (
             <img
               src={resolveMediaUrl(reel.thumbnailUrl)}
               alt=""
@@ -866,7 +874,7 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
               className="pointer-events-none absolute inset-0 z-0 h-full w-full scale-110 object-cover blur-[28px]"
             />
           ) : null}
-          {reel.thumbnailUrl && <img src={resolveMediaUrl(reel.thumbnailUrl)} alt="" className={cn('absolute inset-0 z-0 h-full w-full object-contain transition-opacity duration-300', !videoLoading && !videoFailed && 'opacity-0')} />}
+          {reel.thumbnailUrl && <img src={resolveMediaUrl(reel.thumbnailUrl)} alt="" loading={active ? 'eager' : 'lazy'} decoding="async" className={cn('absolute inset-0 z-0 h-full w-full object-contain transition-opacity duration-300', !videoLoading && !videoFailed && 'opacity-0')} />}
           {nearby && !videoFailed && (
             <video
               ref={node => { videos.current[reel.id] = node; }}
@@ -900,10 +908,13 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
               }}
               onCanPlay={event => {
                 setVideoLoading(false);
-                if (active && !paused) void event.currentTarget.play().catch(() => {});
+                if (active && !paused && document.visibilityState !== 'hidden') void event.currentTarget.play().catch(() => {});
               }}
               onWaiting={() => setVideoLoading(true)}
-              onPlaying={() => setVideoLoading(false)}
+              onPlaying={event => {
+                if (!active || document.visibilityState === 'hidden') { event.currentTarget.pause(); return; }
+                setVideoLoading(false);
+              }}
               onTimeUpdate={event => { const video = event.currentTarget; setProgress(video.duration ? (video.currentTime / video.duration) * 100 : 0); }}
               className="absolute inset-0 z-[1] h-full w-full object-contain"
               aria-label={`Reel by ${reel.author.username}`}
@@ -911,7 +922,7 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
           )}
           <div className="pointer-events-none absolute inset-0 z-[2] bg-gradient-to-t from-black/90 via-transparent to-black/35" />
 
-          {videoLoading && !videoFailed && <div className="pointer-events-none absolute inset-0 grid place-items-center"><Loader2 className="animate-spin text-white/70" size={28} /></div>}
+          {active && videoLoading && !videoFailed && <div className="pointer-events-none absolute inset-0 grid place-items-center"><Loader2 className="animate-spin text-white/70" size={28} /></div>}
           {videoFailed && <div className="absolute inset-0 z-20 grid place-items-center bg-black/75 px-8 text-center"><div><Clapperboard className="mx-auto text-white/40" /><h3 className="mt-4 font-semibold">Unable to load Reel</h3><p className="mt-1 max-w-xs text-xs leading-5 text-white/45">{videoError || 'The video could not be played.'}</p><button type="button" onClick={retry} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-white/15 px-4 py-2 text-sm"><RefreshCw size={15} />Retry</button></div></div>}
 
           <div className="absolute right-3 top-16 z-10 flex gap-2">

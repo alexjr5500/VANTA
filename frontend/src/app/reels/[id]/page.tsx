@@ -133,8 +133,16 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
     const element = videoRef.current;
     if (!element) return;
     element.load();
-    void element.play().then(() => setPaused(false)).catch(() => setPaused(true));
+    if (document.visibilityState !== 'hidden') void element.play().then(() => setPaused(false)).catch(() => setPaused(true));
   }, [hlsFailed]);
+
+  useEffect(() => {
+    const pauseWhenHidden = () => {
+      if (document.visibilityState === 'hidden') videoRef.current?.pause();
+    };
+    document.addEventListener('visibilitychange', pauseWhenHidden);
+    return () => document.removeEventListener('visibilitychange', pauseWhenHidden);
+  }, []);
 
   // Derived engagement state — declared before event handlers so the toggles
   // can read the current Reel state safely.
@@ -337,9 +345,8 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
     <div className="relative mx-auto h-full w-full max-w-[520px] overflow-hidden bg-[var(--background)]">
       {/* Full-bleed ambient backdrop so non-portrait uploads never letterbox
           into a thin strip: the contained video keeps its true aspect ratio
-          (never stretched/cropped) over a blurred copy of the same frame.
-          Falls back to a muted clone of the video itself when no thumbnail
-          is available, so the fill still shows. */}
+          (never stretched/cropped) over a blurred thumbnail. If absent,
+          use the solid stage background instead of a second video decoder. */}
       {posterSrc ? (
         <img
           src={posterSrc}
@@ -347,18 +354,7 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-[28px]"
         />
-      ) : (
-        <video
-          src={resolveMediaUrl(reel.videoUrl)}
-          muted
-          playsInline
-          loop
-          autoPlay
-          preload="metadata"
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-[28px]"
-        />
-      )}
+      ) : null}
       {/* Poster frame beneath the video while it loads or when it fails. */}
       {posterSrc && (
         <img
@@ -379,7 +375,10 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
         preload="auto"
         onClick={handleVideoTap}
         onDoubleClick={likeWithFeedback}
-        onPlay={() => setPaused(false)}
+        onPlay={event => {
+          if (document.visibilityState === 'hidden') { event.currentTarget.pause(); return; }
+          setPaused(false);
+        }}
         onPause={() => setPaused(true)}
         onLoadStart={() => { setVideoLoading(true); setVideoFailed(false); }}
         onWaiting={() => setVideoLoading(true)}
