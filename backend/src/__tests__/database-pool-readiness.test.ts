@@ -1,5 +1,5 @@
 import { configureDatabasePool, calculateConnectionBudget } from '../config/database-pool';
-import { evaluateReplicaReadiness, ReplicaState } from '../services/database-replica-readiness';
+import { evaluateReplicaReadiness, evaluateReplicaIdentity, ReplicaState } from '../services/database-replica-readiness';
 
 describe('database connection budget', () => {
   const url = 'postgresql://test:test@localhost/db?schema=public&sslmode=require';
@@ -46,5 +46,15 @@ describe('read replica readiness', () => {
     expect(evaluateReplicaReadiness(false, state, -1).reason).toBe('lag_unknown');
     expect(evaluateReplicaReadiness(false, state, 11, 10).reason).toBe('lag_exceeded');
     expect(evaluateReplicaReadiness(false, state, 10, 10).status).toBe('ready');
+  });
+});
+
+describe('replica identity gate', () => {
+  const primary = { systemId: '1234567890123456789', database: 'test' };
+  it('rejects unrelated clusters, wrong databases and unknown identifiers', () => {
+    expect(evaluateReplicaIdentity(primary, { ...primary, systemId: '222' })?.reason).toBe('cluster_mismatch');
+    expect(evaluateReplicaIdentity(primary, { ...primary, database: 'other' })?.reason).toBe('database_mismatch');
+    expect(evaluateReplicaIdentity(primary, { ...primary, systemId: null })?.reason).toBe('cluster_identity_unknown');
+    expect(evaluateReplicaIdentity(primary, primary)).toBeNull();
   });
 });

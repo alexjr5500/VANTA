@@ -259,3 +259,18 @@ jobs:
         with:
           node-version: 22
       - run: node --test backend/scripts/staging-load-test.test.mjs
+
+  database-streaming-replication:
+    name: Disposable PostgreSQL streaming replica and fenced failover
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm --prefix backend install
+      - name: Verify real streaming standby and fenced promotion
+        env:
+          VANTA_CI_DISPOSABLE_REPLICATION: "yes"
+        run: bash backend/scripts/ci-streaming-replication.sh
