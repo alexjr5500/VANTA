@@ -11,6 +11,7 @@ export type GiftArtworkProps = {
   artworkType?: string;
   assetUrl?: string;
   size?: number;
+  responsive?: boolean;
   animate?: boolean;
   className?: string;
   /** 0-5 artistic intensity derived from the existing price/rarity/impact. */
@@ -27,6 +28,7 @@ export default function GiftArtwork({
   name,
   assetUrl,
   size = 120,
+  responsive = false,
   animate = true,
   className = '',
   quality = 1,
@@ -44,7 +46,7 @@ export default function GiftArtwork({
   };
 
   return (
-    <motion.div {...common} className={`relative shrink-0 ${className}`} style={{ width: size, height: size }}>
+    <motion.div {...common} className={`relative shrink-0 ${className}`} style={responsive ? { width: '100%', height: '100%' } : { width: size, height: size }}>
       {showAsset && resolvedAssetUrl ? (
         isVideo ? (
           <video
