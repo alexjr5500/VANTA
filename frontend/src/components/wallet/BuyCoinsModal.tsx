@@ -22,7 +22,7 @@ export default function BuyCoinsModal({ open, onClose }: BuyCoinsModalProps) {
         aria-labelledby="coin-maintenance-title"
         ref={dialogRef}
         tabIndex={-1}
-        className="w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl border border-white/10 bg-[var(--surface)] p-6 text-center shadow-2xl"
+        className="vanta-wallet-ui w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl border border-white/10 bg-[var(--surface)] p-6 text-center shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
