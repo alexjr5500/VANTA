@@ -58,15 +58,25 @@ async function readBounded(response: Response, limit: number, allowSample: boole
   return Buffer.concat(chunks);
 }
 
-async function retrieve(url: URL, fetcher: Fetcher, playlist: boolean): Promise<Buffer> {
+interface ByteRange { start: number; length: number }
+async function retrieve(url: URL, fetcher: Fetcher, playlist: boolean, range?: ByteRange): Promise<Buffer> {
+  const start = range?.start ?? 0;
+  const end = start + Math.min(range?.length ?? SEGMENT_SAMPLE_LIMIT, SEGMENT_SAMPLE_LIMIT) - 1;
   const response = await fetcher(url.href, {
     method: 'GET',
     redirect: 'manual',
-    headers: playlist ? { Accept: 'application/vnd.apple.mpegurl' } : { Range: 'bytes=0-4095' },
+    headers: playlist ? { Accept: 'application/vnd.apple.mpegurl' } : { Range: 'bytes=' + start + '-' + end },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (playlist ? response.status !== 200 : ![200, 206].includes(response.status)) {
     throw new Error('HLS resource unavailable (HTTP ' + response.status + ')');
+  }
+  if (range) {
+    const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/.exec(response.headers.get('content-range') || '');
+    if (response.status !== 206 || !match || Number(match[1]) !== start || Number(match[2]) !== end) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error('HLS segment byte range was not honored');
+    }
   }
   const mime = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
   if (mime === 'text/html' ||
@@ -74,7 +84,9 @@ async function retrieve(url: URL, fetcher: Fetcher, playlist: boolean): Promise<
                             'audio/mpegurl', 'application/octet-stream', 'text/plain'].includes(mime))) {
     throw new Error('HLS endpoint did not return a playlist or media segment');
   }
-  return readBounded(response, playlist ? MANIFEST_LIMIT : SEGMENT_SAMPLE_LIMIT, !playlist);
+  const bytes = await readBounded(response, playlist ? MANIFEST_LIMIT : Math.min(range?.length ?? SEGMENT_SAMPLE_LIMIT, SEGMENT_SAMPLE_LIMIT), !playlist);
+  if (range && bytes.length !== end - start + 1) throw new Error('HLS segment byte range is incomplete');
+  return bytes;
 }
 
 function playlistLines(bytes: Buffer): string[] {
@@ -118,16 +130,37 @@ export async function verifyPublicCloudinaryHls(
     if (!lines.includes('#EXT-X-ENDLIST')) {
       throw new Error('HLS variant is incomplete: missing ENDLIST');
     }
+    // EXTINF describes the next media URI, not necessarily the next line.
+    // RFC 8216 permits EXT-X-BYTERANGE and other segment metadata between them.
     let firstSegment: string | undefined;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].startsWith('#EXTINF:')) {
-        firstSegment = lines[i + 1];
+    let range: ByteRange | undefined;
+    let durationSeen = false;
+    for (const line of lines.slice(1)) {
+      if (line.startsWith('#EXTINF:')) {
+        if (durationSeen) throw new Error('Invalid HLS playlist reference');
+        durationSeen = true;
+      } else if (line.startsWith('#EXT-X-BYTERANGE:')) {
+        const match = /^#EXT-X-BYTERANGE:(\d+)@(\d+)$/.exec(line);
+        // The first segment cannot inherit an offset from a previous segment.
+        if (!match || range) throw new Error('Invalid first HLS segment byte range');
+        const length = Number(match[1]);
+        const start = Number(match[2]);
+        if (!Number.isSafeInteger(length) || length <= 0 || !Number.isSafeInteger(start) ||
+            !Number.isSafeInteger(start + length - 1)) throw new Error('Invalid first HLS segment byte range');
+        range = { start, length };
+      } else if (!line.startsWith('#')) {
+        if (!durationSeen) throw new Error('Invalid HLS playlist reference');
+        firstSegment = line;
         break;
+      } else if (line === '#EXT-X-ENDLIST' ||
+                 (durationSeen && line.startsWith('#EXT') &&
+                  !line.startsWith('#EXT-X-PROGRAM-DATE-TIME:') && line !== '#EXT-X-DISCONTINUITY')) {
+        throw new Error('Invalid HLS playlist reference');
       }
     }
     if (!firstSegment) throw new Error('HLS variant has no media segments');
     const segmentUrl = resolveChild(variantUrl, firstSegment, cloudName, /\.(?:ts|m4s|mp4)$/i);
-    const sample = await retrieve(segmentUrl, fetcher, false);
+    const sample = await retrieve(segmentUrl, fetcher, false, range);
     if (!sample.length || (segmentUrl.pathname.toLowerCase().endsWith('.ts') && sample[0] !== 0x47)) {
       throw new Error('HLS variant segment is empty or not valid transport-stream media');
     }
