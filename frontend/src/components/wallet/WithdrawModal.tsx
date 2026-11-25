@@ -25,6 +25,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
   const [address, setAddress] = useState(walletAddress || '');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
+  const [uncertain, setUncertain] = useState(false);
   const [receipt, setReceipt] = useState<WalletReceipt | null>(null);
   const [pinCode, setPinCode] = useState('');
   const [twoFactorEnabled, setTwoFactorEnabled] = useState<boolean | null>(null);
@@ -51,6 +52,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
       setStep('form');
       setSending(false);
       setReceipt(null);
+      setUncertain(false);
       submitLock.current = false;
       setAmount(0);
       setAddress(walletAddress || '');
@@ -71,7 +73,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
   };
 
   const handleWithdraw = async () => {
-    if (!token || sending || submitLock.current || twoFactorEnabled === null) return;
+    if (!token || sending || uncertain || submitLock.current || twoFactorEnabled === null) return;
     if (!/^\d{4,6}$/.test(pinCode)) { setError('Enter your 4-6 digit wallet PIN.'); return; }
     if (twoFactorEnabled && !twoFactorCode.trim()) { setError('Enter your authenticator or backup code.'); return; }
     submitLock.current = true;
@@ -85,15 +87,16 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
         walletAddress: address.trim(),
         pinCode,
         twoFactorCode: twoFactorEnabled ? twoFactorCode : undefined,
-      }, token);
+      }, token, undefined, { noRetry: true });
       const confirmed = readWalletReceipt(result?.withdrawal);
-      if (!confirmed) { setError('The request outcome could not be confirmed. Close and check withdrawal history before retrying.'); setStep('review'); setSending(false); return; }
+      if (!confirmed) { setUncertain(true); setError('The request outcome could not be confirmed. Close and check withdrawal history before retrying.'); setStep('review'); setSending(false); return; }
       setReceipt(confirmed);
       setPinCode('');
       setTwoFactorCode('');
       setStep('success');
     } catch (err: any) {
-      setError(err.message || 'Withdrawal failed. Please try again.');
+      if (typeof err?.statusCode !== 'number' || err.statusCode >= 500) { setUncertain(true); setError('Withdrawal outcome is uncertain. Close and check withdrawal history before trying again.'); }
+      else setError(err.message || 'Withdrawal request rejected.');
       setStep('review');
       setSending(false);
     } finally { submitLock.current = false; }
@@ -297,9 +300,10 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                     </div>
                   )}
 
+                  {uncertain && <button type="button" onClick={()=>{onClose();onSuccess();}} className="min-h-11 w-full rounded-xl border border-[var(--border)] text-sm">Close and refresh wallet</button>}
                   <button
                     onClick={handleWithdraw}
-                    disabled={sending || twoFactorEnabled === null || (twoFactorEnabled && !twoFactorCode.trim())}
+                    disabled={sending || uncertain || twoFactorEnabled === null || (twoFactorEnabled && !twoFactorCode.trim())}
                     className="w-full py-3 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
                     {sending ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Confirm withdrawal request'}
