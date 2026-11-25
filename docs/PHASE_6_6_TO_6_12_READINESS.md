@@ -38,6 +38,7 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 - [x] Implement lightweight liveness/readiness, bounded single-flight database probes and opt-in graceful shutdown; staging routing and active Socket.IO session tests remain required.
 - [x] Add opt-in per-process connection pool bounds, connection budget calculation and read-only replica readiness probe; actual replica provisioning, lag baselines and routing remain gated.
 - [x] Require matching physical PostgreSQL cluster/database identity for standby readiness; add disposable CI streaming replication and fenced promotion exercise. Managed staging topology, failover RTO/RPO and application read routing remain unverified.
+- [x] Add read-only catalog sharding/partition assessment with PostgreSQL integration fixtures; actual workload, key skew, cross-shard semantics and migration design remain gated.
 - [ ] Verify mobile bandwidth and video rendition switching.
 - [x] Add opt-in shared-only Redis cache mode and cross-client regression tests; live staging and distributed tag invalidation/call-site review remain required.
 - [x] Add opt-in Socket.IO Redis room adapter and two-server integration coverage; distributed presence, authorization state, sticky routing and real client acceptance remain gated.
