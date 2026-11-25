@@ -15,7 +15,7 @@ export const getGifts = async (req: Request, res: Response): Promise<void> => {
 export const sendGift = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const senderId = req.user?.userId;
-    const { receiverId, giftId, streamId, videoId, quantity, message, isAnon, requestId } = req.body;
+    const { receiverId, giftId, streamId, videoId, quantity, message, isAnon, requestId, expectedPrice } = req.body;
 
     if (!senderId) {
       res.status(401).json({ error: 'Unauthorized' });
@@ -56,7 +56,7 @@ export const sendGift = async (req: AuthRequest, res: Response): Promise<void> =
       return;
     }
 
-    const giftResult = await giftService.sendGift(senderId, receiverId, giftId, streamId, { quantity, message, isAnon: isAnon === true, requestId, videoId });
+    const giftResult = await giftService.sendGift(senderId, receiverId, giftId, streamId, { quantity, message, isAnon: isAnon === true, requestId, videoId, expectedPrice, requireExpectedPrice: true });
     res.status(201).json({
       message: 'Gift sent successfully',
       ...giftResult,
