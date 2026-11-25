@@ -143,7 +143,10 @@ class MainActivity : Activity() {
                 }
                 // FrameLayout lays its MATCH_PARENT WebView inside this
                 // padding, leaving the system navigation region native-owned.
-                view.setPadding(left, top, right, bottom)
+                if (view.paddingLeft != left || view.paddingTop != top ||
+                    view.paddingRight != right || view.paddingBottom != bottom) {
+                    view.setPadding(left, top, right, bottom)
+                }
                 insets
             }
         }
@@ -223,8 +226,12 @@ class MainActivity : Activity() {
                     super.onPageStarted(view, url, favicon)
                 }
 
-                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-                    nativeGallery.intercept(request, galleryPageTrusted, hasStatusGalleryAccess())
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                    // Ordinary assets and API calls never need MediaStore permission
+                    // checks or initialization of the native gallery.
+                    if (!NativeStatusGallery.isGalleryPath(request.url.path)) return null
+                    return nativeGallery.intercept(request, galleryPageTrusted, hasStatusGalleryAccess())
+                }
 
                 override fun shouldOverrideUrlLoading(
                     view: WebView,
@@ -378,13 +385,15 @@ class MainActivity : Activity() {
     }
 
     private fun publishNativeFcmToken(tokenOverride: String? = null) {
-        if (!::webView.isInitialized || webView.url.isNullOrBlank() || !isTrustedPage(webView.url)) return
+        if (isDestroyed || isFinishing || !::webView.isInitialized || webView.url.isNullOrBlank() || !isTrustedPage(webView.url)) return
         val token = tokenOverride ?: getSharedPreferences(VantaFirebaseMessagingService.PREFS, MODE_PRIVATE)
             .getString(VantaFirebaseMessagingService.KEY_FCM_TOKEN, null)
         if (token.isNullOrBlank()) return
         val safeToken = org.json.JSONObject.quote(token)
-        webView.post {
-            webView.evaluateJavascript("window.__VANTA_NATIVE_FCM_TOKEN__ = " + safeToken + "; window.dispatchEvent(new CustomEvent('vanta-native-fcm-token', { detail: { token: " + safeToken + " } }));", null)
+        val target = webView
+        target.post {
+            if (isDestroyed || isFinishing || target !== webView || !isTrustedPage(target.url)) return@post
+            target.evaluateJavascript("window.__VANTA_NATIVE_FCM_TOKEN__ = " + safeToken + "; window.dispatchEvent(new CustomEvent('vanta-native-fcm-token', { detail: { token: " + safeToken + " } }));", null)
         }
     }
 
@@ -1067,6 +1076,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        galleryPageTrusted = false
         pendingFileCallback?.onReceiveValue(null)
         pendingFileCallback = null
         pendingGeolocationCallback?.invoke(pendingGeolocationOrigin, false, false)
@@ -1081,6 +1091,7 @@ class MainActivity : Activity() {
             webView.stopLoading()
             webView.webChromeClient = null
             webView.webViewClient = WebViewClient()
+            (webView.parent as? ViewGroup)?.removeView(webView)
             webView.destroy()
         }
         super.onDestroy()
