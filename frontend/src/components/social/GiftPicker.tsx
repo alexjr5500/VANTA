@@ -16,12 +16,10 @@ interface Recipient { id: string; username: string; fullName?: string; avatar?: 
 const number = (value: number) => new Intl.NumberFormat().format(value);
 
 function Visual({ gift, preview = false, size = 68 }: { gift: GiftCatalogItem; preview?: boolean; size?: number }) {
-  const [failed, setFailed] = useState(false);
   const asset = preview ? gift.previewAssetUrl || gift.animationUrl || gift.image || gift.thumbnailUrl : gift.thumbnailUrl || gift.image;
-  if (asset && !failed) return /\.(mp4|webm)(\?|$)/i.test(asset)
-    ? <video src={asset} autoPlay={preview} loop muted playsInline preload={preview ? 'metadata' : 'none'} onError={() => setFailed(true)} className="h-full w-full object-contain" />
-    : <img src={asset} alt="" loading={preview ? 'eager' : 'lazy'} onError={() => setFailed(true)} className="h-full w-full object-contain" />;
-  return <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={asset} size={size} animate={preview} quality={giftVisualQuality(gift)} />;
+  // One renderer for every gift surface: old remote thumbnails must not
+  // bypass the approved catalog artwork or reduced-motion preference.
+  return <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={asset} size={size} responsive={!preview} animate={preview} quality={giftVisualQuality(gift)} />;
 }
 
 export default function GiftPicker({ gifts, balance, recipient, token, streamId, videoId, initialGift, loading = false, loadError, onRetry, onClose, onSent }: { gifts: GiftCatalogItem[]; balance: number; recipient: Recipient; token: string; streamId?: string; videoId?: string; initialGift?: GiftCatalogItem | null; loading?: boolean; loadError?: string; onRetry?: () => void; onClose: () => void; onSent: (_balance: number, _amount: number, _gift: GiftCatalogItem, _quantity?: number) => void }) {
@@ -102,9 +100,9 @@ export default function GiftPicker({ gifts, balance, recipient, token, streamId,
                     <Visual gift={gift} size={80} />
                   </span>
                 </span>
-                <b className="max-w-full truncate text-[10px] font-bold leading-tight text-white sm:text-[11px]">{gift.name}</b>
-                <span className={`mt-1 flex max-w-full items-center justify-center gap-0.5 whitespace-nowrap text-[9px] font-semibold tabular-nums sm:text-[10px] ${active ? 'text-[#f0d36d]' : 'text-white/50'}`}>
-                  <VantaCoinIcon size={10} className={active ? 'text-[var(--vanta-gold-bright)]' : 'text-[#d8d8d8]'} />{number(gift.price)}
+                <b className="flex min-h-[2.2em] w-full items-center justify-center break-words text-[11px] font-medium leading-tight text-white">{gift.name}</b>
+                <span className={`mt-1 flex max-w-full items-center justify-center gap-1 text-[11px] font-medium tabular-nums ${active ? 'text-[#f0d36d]' : 'text-white/50'}`}>
+                  <VantaCoinIcon size={12} decorative />{number(gift.price)}
                 </span>
               </button>;
             })}
