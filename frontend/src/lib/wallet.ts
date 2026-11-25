@@ -60,3 +60,16 @@ export function formatCoinsCompact(coins: number): string {
 }
 
 
+
+/** Highest whole-coin transfer that still leaves enough to pay its fee. */
+export function maxTransferableCoins(balance: number): number {
+  if (!Number.isSafeInteger(balance) || balance <= 0) return 0;
+  let low = 0;
+  let high = balance;
+  while (low < high) {
+    const middle = low + Math.ceil((high - low) / 2);
+    if (middle + calculateTransferFee(middle) <= balance) low = middle;
+    else high = middle - 1;
+  }
+  return low;
+}

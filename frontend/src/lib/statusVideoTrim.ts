@@ -12,6 +12,7 @@ export async function prepareStatusVideo(file: File, src: string, range: StatusT
   if (signal.aborted) throw new DOMException('Trimming cancelled', 'AbortError');
   const video = document.createElement('video');
   video.playsInline = true;
+  video.volume = 0;
   video.preload = 'auto';
   video.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
   document.body.appendChild(video);
@@ -36,7 +37,7 @@ export async function prepareStatusVideo(file: File, src: string, range: StatusT
     if (!Number.isFinite(end) || end - start < VIDEO_MIN_GAP_SECONDS) throw new Error('Select a valid video range.');
     if (start <= 0.01 && end >= video.duration - 0.01) return file;
     if (signal.aborted) throw new DOMException('Trimming cancelled', 'AbortError');
-    const blob = await trimVideoSegment({ video, start, end, signal });
+    const blob = await trimVideoSegment({ video, start, end, signal, silentPlayback: true });
     if (signal.aborted) throw new DOMException('Trimming cancelled', 'AbortError');
     if (!blob.size) throw new Error('The trimmed video is empty. Adjust the range and try again.');
     const result = buildTrimmedVideoFile(blob, file.name);

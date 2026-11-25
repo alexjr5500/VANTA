@@ -24,6 +24,10 @@ export default function StatusVideoPreview({ src, duration, size, poster, range,
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState(false);
   const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const video = player.current;
+    return () => { if (video) { video.pause(); video.muted = true; } };
+  }, [src]);
   const start = Math.min(range?.start ?? 0, detected || Infinity);
   const end = Math.min(range?.end ?? detected, detected || Infinity);
   useEffect(() => {

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import StoryCard from '@/components/story/StoryCard';
+import StatusUploadProgress from '@/components/story/StatusUploadProgress';
 import {
   fetchStoryGroups,
   type StoryGroup,
@@ -173,6 +174,7 @@ export default function StoryTray({
           )}
 
         </div>
+    <StatusUploadProgress />
     </section>
   );
 }

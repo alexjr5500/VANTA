@@ -48,8 +48,6 @@ import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 // navigation below stays focused on the five primary product actions.
 const mainNavItems = [
   { href: '/live', icon: Video, label: 'Live' },
-  { href: '/chat', icon: MessageCircle, label: 'Chat' },
-  { href: '/notifications', icon: Bell, label: 'Notifications' },
   { href: '/balance', icon: WalletCards, label: 'Balance' },
   { href: '/bookmarks', icon: Bookmark, label: 'Bookmarks' },
   { href: '/creator', icon: Sparkles, label: 'Creator Studio' },
@@ -158,7 +156,7 @@ const MobileMenu = memo(function MobileMenu({
                       )}
                     >
                       <span className="relative">
-                        <Icon size={17} className={item.href === "/notifications" || item.href === "/settings" ? "text-[#dfbd55]" : "text-gray-400"} />
+                        <Icon size={17} className="text-[var(--vanta-gold-bright)]" />
                         {navBadgeFor(item.href) > 0 && (
                           <span className="absolute -right-2 -top-2 grid h-4 min-w-[16px] place-items-center rounded-full bg-[#c9a227] px-1 text-[9px] font-bold leading-none text-black ring-2 ring-[#0d0d0f]">
                             {navBadgeFor(item.href) > 99 ? '99+' : navBadgeFor(item.href)}
