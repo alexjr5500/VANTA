@@ -233,6 +233,9 @@ const makeRequestInternal = async <T>(
         return executeFetch(retryCount + 1);
       }
 
+      // Preserve structured server errors after retry exhaustion or explicit no-retry.
+      if (error instanceof ApiError) throw error;
+
       // Network error or parsing error after all retries
       console.error(`[API] Error ${method} ${url}:`, error);
       throw new ApiError(
