@@ -12,13 +12,25 @@ const execFileAsync = promisify(execFile);
  * successful retry. A playlist can reference a missing segment even when all
  * the files that happen to be present are nonempty.
  */
+const MAX_PLAYLIST_BYTES = 1024 * 1024;
+function readPlaylist(file: string): string[] | null {
+  if (!fs.existsSync(file)) return null;
+  const stat = fs.lstatSync(file);
+  if (!stat.isFile() || stat.size === 0 || stat.size > MAX_PLAYLIST_BYTES) return null;
+  return fs.readFileSync(file, 'utf8').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+}
+
 function completeHlsVariant(variant: string): boolean {
   const playlist = path.join(variant, 'playlist.m3u8');
   if (!fs.existsSync(variant) || !fs.lstatSync(variant).isDirectory() ||
       fs.realpathSync(variant) !== variant ||
       !fs.existsSync(playlist) || !fs.lstatSync(playlist).isFile()) return false;
-  const lines = fs.readFileSync(playlist, 'utf8').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-  if (lines[0] !== '#EXTM3U' || !lines.includes('#EXT-X-ENDLIST')) return false;
+  const lines = readPlaylist(playlist);
+  if (!lines || lines[0] !== '#EXTM3U' || lines[lines.length - 1] !== '#EXT-X-ENDLIST') return false;
+  // This worker creates plain, self-contained VOD TS playlists only. Reject
+  // key/map/alternate-media URIs or any unexpected tag on an existing output.
+  if (lines.some(line => line.startsWith('#') &&
+      !/^(?:#EXTM3U|#EXT-X-ENDLIST|#EXT-X-VERSION:\d+|#EXT-X-TARGETDURATION:\d+|#EXT-X-MEDIA-SEQUENCE:\d+|#EXT-X-PLAYLIST-TYPE:VOD|#EXTINF:\d+(?:\.\d+)?,)$/.test(line))) return false;
   const referenced = lines.filter(line => !line.startsWith('#'));
   const durationEntries = lines.filter(line => line.startsWith('#EXTINF:'));
   if (referenced.length === 0 || referenced.length !== durationEntries.length ||
@@ -44,7 +56,7 @@ export async function transcodeLocalHls(storageRoot: string, job: TranscodeJob):
   const name = safeMediaOutputName(job.outputName);
   const requested = job.qualities ?? ['360p', '480p'];
   if (!Array.isArray(requested) || !requested.length || requested.length > 3 ||
-      requested.some(q => typeof q !== 'string' || !QUALITIES[q]) ||
+      requested.some(q => typeof q !== 'string' || !Object.prototype.hasOwnProperty.call(QUALITIES, q)) ||
       new Set(requested).size !== requested.length) throw new Error('Unsupported HLS qualities');
   const root = fs.realpathSync(path.resolve(storageRoot));
   const videos = path.join(root, 'videos');
@@ -57,13 +69,21 @@ export async function transcodeLocalHls(storageRoot: string, job: TranscodeJob):
       throw new Error('Unsafe existing HLS output');
     }
     if (fs.existsSync(master) && fs.lstatSync(master).isFile() && fs.statSync(master).size > 0) {
-      const masterText = fs.readFileSync(master, 'utf8');
-      const masterLines = masterText.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-      const masterEntries = masterLines.filter(line => !line.startsWith('#'));
-      const valid = masterLines[0] === '#EXTM3U' &&
-        requested.every(quality => masterEntries.includes(`${quality}/playlist.m3u8`) &&
-          completeHlsVariant(path.join(destination, quality)));
-      if (valid) return '/uploads/videos/' + name + '/master.m3u8';
+      const lines = readPlaylist(master);
+      if (lines && lines[0] === '#EXTM3U' && lines[1] === '#EXT-X-VERSION:3' &&
+          lines.length >= 4 && (lines.length - 2) % 2 === 0) {
+        const found = new Set<string>();
+        let valid = true;
+        for (let i = 2; i < lines.length; i += 2) {
+          const quality = Object.keys(QUALITIES).find(q => lines[i + 1] === q + '/playlist.m3u8');
+          const preset = quality ? QUALITIES[quality] : undefined;
+          if (!quality || !preset || found.has(quality) ||
+              lines[i] !== `#EXT-X-STREAM-INF:BANDWIDTH=${preset.bandwidth},RESOLUTION=${preset.width}x${preset.height}` ||
+              !completeHlsVariant(path.join(destination, quality))) { valid = false; break; }
+          found.add(quality);
+        }
+        if (valid && requested.every(q => found.has(q))) return '/uploads/videos/' + name + '/master.m3u8';
+      }
     }
     throw new Error('Incomplete existing HLS output requires manual recovery');
   }
@@ -76,7 +96,11 @@ export async function transcodeLocalHls(storageRoot: string, job: TranscodeJob):
       const dir = path.join(staging, quality);
       fs.mkdirSync(dir);
       const args = [
-        '-hide_banner', '-nostdin', '-loglevel', 'error', '-y', '-i', input,
+        '-hide_banner', '-nostdin', '-loglevel', 'error', '-y',
+        // Permit local, self-contained video containers only; no playlist or
+        // network input protocols, even when a file has a misleading extension.
+        '-protocol_whitelist', 'file', '-format_whitelist', 'mov,matroska,webm',
+        '-i', input,
         '-map', '0:v:0', '-map', '0:a:0?', '-vf',
         `scale=w=${preset.width}:h=${preset.height}:force_original_aspect_ratio=decrease,pad=${preset.width}:${preset.height}:(ow-iw)/2:(oh-ih)/2`,
         '-c:v', 'libx264', '-preset', 'veryfast', '-threads', '2', '-filter_threads', '2', '-b:v', preset.bitrate,
@@ -88,10 +112,7 @@ export async function transcodeLocalHls(storageRoot: string, job: TranscodeJob):
       await execFileAsync(process.env.FFMPEG_PATH || 'ffmpeg', args, {
         timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024,
       });
-      const playlist = path.join(dir, 'playlist.m3u8');
-      const segments = fs.readdirSync(dir).filter(f => /^segment-\d{5}\.ts$/.test(f));
-      if (!fs.existsSync(playlist) || !segments.length ||
-          segments.some(f => fs.statSync(path.join(dir, f)).size === 0)) {
+      if (!completeHlsVariant(dir)) {
         throw new Error('FFmpeg did not produce playable HLS segments');
       }
       variants.push(`#EXT-X-STREAM-INF:BANDWIDTH=${preset.bandwidth},RESOLUTION=${preset.width}x${preset.height}\n${quality}/playlist.m3u8`);

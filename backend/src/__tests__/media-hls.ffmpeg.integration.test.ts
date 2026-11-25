@@ -41,6 +41,26 @@ describe('real FFmpeg HLS integration', () => {
       await expect(transcodeLocalHls(root, {
         inputPath: 'fixture.mp4', outputName: 'fixture', qualities: ['360p'],
       })).resolves.toBe(result);
+      // Reject unexpected entries even when requested variants are complete.
+      fs.appendFileSync(path.join(dir, 'master.m3u8'), '#EXT-X-STREAM-INF:BANDWIDTH=1\nhttps://example.invalid/other.m3u8\n');
+      await expect(transcodeLocalHls(root, {
+        inputPath: 'fixture.mp4', outputName: 'fixture', qualities: ['360p'],
+      })).rejects.toThrow('Incomplete existing HLS output');
+      fs.writeFileSync(path.join(dir, 'master.m3u8'), master);
+      const variant = path.join(dir, '360p', 'playlist.m3u8');
+      const original = fs.readFileSync(variant, 'utf8');
+      fs.writeFileSync(variant, original.replace('#EXT-X-ENDLIST', '#EXT-X-KEY:METHOD=AES-128,URI="https://example.invalid/key"\n#EXT-X-ENDLIST'));
+      await expect(transcodeLocalHls(root, {
+        inputPath: 'fixture.mp4', outputName: 'fixture', qualities: ['360p'],
+      })).rejects.toThrow('Incomplete existing HLS output');
+
+      // A playlist masquerading as an upload must fail rather than read
+      // referenced files. The fixture only references synthetic local media.
+      fs.writeFileSync(path.join(root, 'disguised.mp4'), "ffconcat version 1.0\nfile fixture.mp4\n");
+      await expect(transcodeLocalHls(root, {
+        inputPath: 'disguised.mp4', outputName: 'disguised', qualities: ['360p'],
+      })).rejects.toThrow();
+      expect(fs.existsSync(path.join(root, 'videos', 'disguised'))).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

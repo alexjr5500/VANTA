@@ -26,6 +26,9 @@ export function cleanupExpiredMediaTemp(
   }
   if (!fs.existsSync(candidatePath)) return false;
   const candidate = resolveLocalMediaInput(temporaryRoot, relativePath);
+  // Never unlink a different file reached through a symlink alias, even
+  // when both names are inside the temporary directory.
+  if (candidate !== candidatePath) throw new Error('Unsafe temporary media symlink');
   const stat = fs.lstatSync(candidate);
   if (!stat.isFile()) throw new Error('Temporary media target must be a regular file');
   if (now - stat.mtimeMs < olderThanMs) return false;
