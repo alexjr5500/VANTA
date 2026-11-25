@@ -1,4 +1,6 @@
 'use client';
+
+import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
 import { useEffect, useState } from 'react';
 import { TrendingUp } from 'lucide-react';
 import { apiGet } from '@/lib/apiClient';
@@ -27,7 +29,7 @@ export default function WalletActivity({token, hidden}: {token: string; hidden: 
     <h2 className="flex items-center gap-2 text-sm font-semibold"><TrendingUp size={17} className="text-[var(--vanta-gold-bright)]"/>Balance activity</h2>
     <div className="flex gap-2">{([7,30,90] as const).map(n => <button key={n} type="button" aria-pressed={days===n} onClick={()=>setDays(n)} className={'min-h-11 flex-1 rounded-lg text-xs font-semibold '+(days===n?'bg-[var(--vanta-gold)] text-black':'bg-[var(--surface-secondary)] text-[var(--text-primary)]')}>{n} days</button>)}</div>
     {hidden ? <p className="text-sm text-[var(--text-secondary)]">Activity hidden by wallet privacy.</p> : loading ? <p role="status" className="text-sm">Loading activity…</p> : error || !report || !sums ? <p role="alert" className="text-sm">Activity unavailable. <button type="button" onClick={()=>setRetry(v=>v+1)} className="min-h-11 text-[var(--vanta-gold-bright)]">Retry</button></p> : <>
-      <div className="grid grid-cols-2 gap-2 text-xs">{Object.entries({Received:sums.incoming,Spent:sums.outgoing,Purchased:sums.purchases,'Gift coins sent':sums.giftsSent,'Gift coins received':sums.giftsReceived,'Transfer fees':sums.transferFees,'Net movement':sums.net}).map(([label,value])=><div key={label} className="min-w-0 rounded-lg bg-[var(--surface-secondary)] p-2"><p className="text-[var(--text-secondary)]">{label}</p><p className="break-all font-semibold tabular-nums">{value.toLocaleString()}</p></div>)}</div>
+      <div className="grid grid-cols-2 gap-2 text-xs">{Object.entries({Received:sums.incoming,Spent:sums.outgoing,Purchased:sums.purchases,'Gift coins sent':sums.giftsSent,'Gift coins received':sums.giftsReceived,'Transfer fees':sums.transferFees,'Net movement':sums.net}).map(([label,value])=><div key={label} className="min-w-0 rounded-lg bg-[var(--surface-secondary)] p-2"><p className="text-[var(--text-secondary)]">{label}</p><p className="break-all font-semibold tabular-nums">{value.toLocaleString()} <VantaCoinIcon size={14} /></p></div>)}</div>
       <svg viewBox="0 0 320 96" className="w-full" role="img" aria-label="Daily completed coin inflows and outflows; totals are listed above">
         {[24,48,72,96].map(y=><line key={y} x1="0" x2="320" y1={y} y2={y} stroke="currentColor" opacity=".12"/>)}
         {report.buckets.map((b,i)=>{const width=320/days; return <g key={b.date}><rect x={i*width} y={96-b.incoming/max*90} width={width*.44} height={b.incoming/max*90} fill="#dfbd55"/><rect x={i*width+width*.48} y={96-b.outgoing/max*90} width={width*.44} height={b.outgoing/max*90} fill="#9ca3af"/></g>})}
