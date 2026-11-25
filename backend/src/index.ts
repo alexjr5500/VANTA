@@ -64,6 +64,7 @@ import { apiLatencyMiddleware, healthStatus, metricsCollector, cacheService, set
 import { uploadStorageDir, getStorageDiagnostics } from './services/upload.service';
 import { ServerReadiness, BackgroundDrain, shutdownWithin } from './services/server-lifecycle';
 import { HttpTelemetry, startHttpTelemetry } from './services/http-telemetry';
+import { DependencyProbe, DependencyTelemetry } from './services/dependency-telemetry';
 import { realtimeRedisConfig, RealtimeRedisAdapter } from './services/realtime-redis-adapter';
 import { DistributedMaintenance, maintenanceConnectionUrl, type MaintenanceTask } from './services/distributed-maintenance';
 
@@ -876,6 +877,14 @@ async function startServer() {
     if (traffic.draining) { realtimeAdapter.close(); return; }
     httpServer.listen(PORT, () => {
       traffic.markServing();
+      if (process.env.VANTA_DEPENDENCY_TELEMETRY_ENABLED === 'true' && !traffic.draining) {
+        const dependencies = new DependencyTelemetry({
+          postgres: new DependencyProbe(true, async () => { await prisma.$queryRaw`SELECT 1`; return true; }),
+          redis_cache: new DependencyProbe(process.env.VANTA_REDIS_CACHE_ENABLED === 'true', () => cacheService.probeRedis()),
+          redis_realtime: new DependencyProbe(Boolean(realtimeConfig), async () => realtimeAdapter.ready),
+        });
+        backgroundDrain.schedule(() => dependencies.sample(), 60000);
+      }
       console.info(`Server running on port ${PORT}`);
       console.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });

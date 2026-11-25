@@ -259,6 +259,12 @@ class CacheService {
     return this.isRedisAvailable;
   }
 
+  async probeRedis(): Promise<boolean> {
+    const client = redisClient;
+    if (!client || !this.isRedisAvailable) return false;
+    return (await client.ping()) === 'PONG' && this.isRedisAvailable;
+  }
+
   async closeRedisConnection(): Promise<void> {
     await this.initialization;
     redisClient?.disconnect();
