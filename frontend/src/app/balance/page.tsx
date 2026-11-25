@@ -66,10 +66,10 @@ function formatTxLabel(type: string) {
 }
 
 function getTxIcon(type: string) {
-  if (INCOMING_TYPES.has(type)) return <ArrowDownLeft size={15} className="text-[#8A8A8A]" />;
-  if (type === 'GIFT_SENT') return <Gift size={15} className="text-[#8A8A8A]" />;
-  if (type === 'WITHDRAWAL') return <ArrowUpFromLine size={15} className="text-[#8A8A8A]" />;
-  return <ArrowUpRight size={15} className="text-[#8A8A8A]" />;
+  if (INCOMING_TYPES.has(type)) return <ArrowDownLeft size={15} className="text-[var(--vanta-gold-bright)]" />;
+  if (type === 'GIFT_SENT') return <Gift size={15} className="text-[var(--vanta-gold-bright)]" />;
+  if (type === 'WITHDRAWAL') return <ArrowUpFromLine size={15} className="text-[var(--vanta-gold-bright)]" />;
+  return <ArrowUpRight size={15} className="text-[var(--vanta-gold-bright)]" />;
 }
 
 function getTxColor(type: string) {
@@ -298,14 +298,14 @@ export default function BalancePage() {
   if (error) {
     return (
       <div className="mx-auto flex min-h-[calc(100dvh-8rem)] max-w-sm flex-col items-center justify-center px-4 text-center">
-        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg border border-white/[0.08] bg-[#0D0D0F]">
-          <Loader2 size={24} className="text-[#8A8A8A]" />
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)]">
+          <Loader2 size={24} className="text-[var(--text-secondary)]" />
         </div>
-        <h2 className="mb-2 text-base font-semibold text-[#F5F5F5]">Balance could not load</h2>
-        <p className="mb-6 text-sm leading-5 text-[#8A8A8A]">{error}</p>
+        <h2 className="mb-2 text-base font-semibold text-[var(--text-primary)]">Balance could not load</h2>
+        <p className="mb-6 text-sm leading-5 text-[var(--text-secondary)]">{error}</p>
         <button
           onClick={fetchWallet}
-          className="px-5 py-2.5 rounded-2xl bg-[#F5F5F5] text-black text-sm font-bold hover:bg-white transition-all"
+          className="px-5 py-2.5 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold hover:bg-[var(--vanta-gold-bright)] transition-all"
         >
           Try Again
         </button>
@@ -321,15 +321,15 @@ export default function BalancePage() {
     >
       {/* Header — Discover-style full-bleed sticky bar that stays fixed at the top
           while the balance and transaction content scroll beneath it. */}
-      <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[#080808]/90 px-4 backdrop-blur-xl">
-        <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><ArrowLeft size={20} /></button>
-        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[#f5f5f5]">Balance</h1>
+      <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[var(--header-surface)] px-4 backdrop-blur-xl">
+        <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-white/[.05] hover:text-white"><ArrowLeft size={20} /></button>
+        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[var(--text-primary)]">Balance</h1>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <button
             type="button"
             onClick={() => setHideBalance(!hideBalance)}
             aria-label={hideBalance ? 'Show balance' : 'Hide balance'}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[#0D0D0F] text-[#8A8A8A] transition hover:text-white"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] text-[var(--text-secondary)] transition hover:text-white"
           >
             {hideBalance ? <EyeOff size={18} /> : <Eye size={18} />}
           </button>
@@ -340,13 +340,13 @@ export default function BalancePage() {
       <motion.section
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-[#11151b] px-4 py-4"
+        className="relative overflow-hidden rounded-2xl border border-[var(--gold-border)] bg-[var(--surface)] px-4 py-4"
         aria-label="Available balance"
       >
         <div className="relative">
           <div className="mb-3 flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs font-medium text-white/55">
-              <Sparkles size={14} className="text-[#F5F5F5]" />
+            <div className="flex items-center gap-2 text-xs font-medium text-[var(--text-secondary)]">
+              <Sparkles size={14} className="text-[var(--vanta-gold-bright)]" />
           VANTA Coins
             </div>
             <div className="flex gap-2">
@@ -356,13 +356,13 @@ export default function BalancePage() {
                 </span>
               )}
               {!isFrozen && (
-                <span className="flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[.04] px-2.5 py-1 text-[10px] text-[#8A8A8A]">
+                <span className="flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[.04] px-2.5 py-1 text-[10px] text-[var(--text-secondary)]">
                   <i className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Active
                 </span>
               )}
             </div>
           </div>
-          <p className="mb-1.5 text-xs font-medium text-[#8A8A8A]">Available balance</p>
+          <p className="mb-1.5 text-xs font-medium text-[var(--text-secondary)]">Available balance</p>
           <motion.div key={coinBalance} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
             <div className="flex min-w-0 items-center gap-2.5">
               <VantaCoinIcon size={24} className="shrink-0 text-[var(--vanta-gold)]" />
@@ -370,7 +370,7 @@ export default function BalancePage() {
                 {hideBalance ? '••••••' : coinBalance.toLocaleString()}
               </h2>
             </div>
-            <p className="mt-1.5 text-xs font-medium text-[#8A8A8A]">VANTA Coins</p>
+            <p className="mt-1.5 text-xs font-medium text-[var(--text-secondary)]">VANTA Coins</p>
             <p className="mt-2 text-xs font-medium text-white/55">
               ≈ ${hideBalance ? '••••' : ((coinBalance / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))} USD
             </p>
@@ -387,14 +387,14 @@ export default function BalancePage() {
             </button>
             <button
               onClick={() => setShowSendModal(true)}
-              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#151517] px-2 py-2.5 text-xs font-medium text-[#F5F5F5] active:scale-[.98]"
+              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98]"
             >
               <ArrowUpRight size={16} />
                Send
             </button>
             <button
               onClick={() => router.push('/gifts')}
-              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#151517] px-2 py-2.5 text-xs font-medium text-[#F5F5F5] active:scale-[.98]"
+              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98]"
             >
               <Gift size={16} />
               Gift
@@ -402,7 +402,7 @@ export default function BalancePage() {
             {isCreator && earningsBalance > 0 && (
               <button
                 onClick={() => setShowWithdrawModal(true)}
-                className="col-span-3 flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#151517] px-2 py-2.5 text-xs font-medium text-[#F5F5F5] active:scale-[.98]"
+                className="col-span-3 flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98]"
               >
                 <ArrowUpFromLine size={16} />
                 Withdraw ${earningsBalance.toFixed(2)}
@@ -411,7 +411,7 @@ export default function BalancePage() {
           </div>
 
 
-          <div className="mt-3 flex items-center gap-2 border-t border-white/[.06] pt-2.5 text-[10px] text-[#8A8A8A]">
+          <div className="mt-3 flex items-center gap-2 border-t border-white/[.06] pt-2.5 text-[10px] text-[var(--text-secondary)]">
             <Lock size={14} />
             Protected by VANTA Balance security
           </div>
@@ -432,19 +432,19 @@ export default function BalancePage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.08 + i * 0.04 }}
-            className="min-w-0 rounded-lg bg-[#11151b] px-3 py-3"
+            className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-3.5"
           >
-            <div className="mb-1.5 flex h-6 w-6 items-center justify-center rounded-md bg-white/[0.05] text-[#8A8A8A]">
+            <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--active-soft)] text-[var(--vanta-gold-bright)]">
               {stat.icon}
             </div>
-            <p className="truncate text-[11px] font-bold text-[#F5F5F5]">{stat.value}</p>
-            <p className="truncate text-[9px] text-[#8A8A8A] mt-0.5">{stat.label}</p>
+            <p className="truncate text-lg font-semibold tabular-nums text-[var(--text-primary)]">{stat.value}</p>
+            <p className="mt-0.5 truncate text-[11px] font-medium text-[var(--text-secondary)]">{stat.label}</p>
           </motion.div>
         ))}
       </div>
 
       {/* Tabs */}
-      <div className="flex w-full min-w-0 items-center gap-1 overflow-x-auto border-b border-white/[0.08] pb-1 scrollbar-hide">
+      <div className="flex w-full min-w-0 items-center gap-1 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1 scrollbar-hide">
         {[
           { id: 'overview', label: 'Overview', icon: <Wallet size={12} /> },
           { id: 'transactions', label: 'Transactions', icon: <History size={12} /> },
@@ -456,12 +456,13 @@ export default function BalancePage() {
           <button
             key={tab.id}
             onClick={() => changeTab(tab.id as BalanceTab)}
+            aria-pressed={activeTab === tab.id}
             className={cn(
-               'min-h-9 px-3 py-2 rounded-md text-[11px] font-medium whitespace-nowrap transition-all',
-              activeTab === tab.id ? 'bg-white text-black' : 'text-[#8A8A8A] hover:text-white'
+               'flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold whitespace-nowrap transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vanta-gold-bright)]',
+              activeTab === tab.id ? 'bg-[var(--vanta-gold)] text-black' : 'text-[var(--text-secondary)] hover:text-white'
             )}
           >
-            <span className="inline mr-1.5">{tab.icon}</span>
+            <span className="shrink-0">{tab.icon}</span>
             {tab.label}
           </button>
         ))}
@@ -475,15 +476,15 @@ export default function BalancePage() {
           className="space-y-3"
         >
           {/* Recent Transactions */}
-          <section className="rounded-xl border border-white/[0.07] bg-[#11151b] p-3">
+          <section className="rounded-xl border border-white/[0.07] bg-[var(--surface)] p-3">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                <History size={16} className="text-[#8A8A8A]" />
-                <h2 className="text-sm font-semibold text-[#F5F5F5]">Recent activity</h2>
+                <History size={16} className="text-[var(--vanta-gold-bright)]" />
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">Recent activity</h2>
               </div>
               <button
                 onClick={() => changeTab('transactions')}
-                className="flex items-center gap-1 text-xs text-[#8A8A8A] hover:text-white transition"
+                className="flex items-center gap-1 text-xs text-[var(--text-secondary)] hover:text-white transition"
               >
                 View all <ChevronRight size={12} />
               </button>
@@ -492,7 +493,7 @@ export default function BalancePage() {
             {recentTx.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center">
                 <History size={28} className="text-white/10 mb-3" />
-                <p className="text-sm text-[#8A8A8A]">No transactions yet.</p>
+                <p className="text-sm text-[var(--text-secondary)]">No transactions yet.</p>
               </div>
             ) : (
               <div className="space-y-1">
@@ -512,22 +513,22 @@ export default function BalancePage() {
                         {getTxIcon(tx.type)}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[#F5F5F5] truncate">
+                        <p className="text-sm font-medium text-[var(--text-primary)] truncate">
                           {tx.description || formatTxLabel(tx.type)}
                         </p>
                         <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] text-[#8A8A8A]">
+                          <span className="text-[10px] text-[var(--text-secondary)]">
                             {formatDate(tx.createdAt)} · {formatTime(tx.createdAt)}
                           </span>
-                          <span className="text-[10px] text-[#8A8A8A]">·</span>
-                          <span className="text-[10px] text-[#8A8A8A]">{formatTxLabel(tx.type)}</span>
+                          <span className="text-[10px] text-[var(--text-secondary)]">·</span>
+                          <span className="text-[10px] text-[var(--text-secondary)]">{formatTxLabel(tx.type)}</span>
                         </div>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className={cn('text-sm font-bold tabular-nums', isIncoming ? 'text-emerald-400' : 'text-[#F5F5F5]')}>
+                        <p className={cn('text-sm font-bold tabular-nums', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                           {sign}{isUsd ? '$' : ''}{formattedAmount}
                         </p>
-                        <p className="text-[9px] text-[#8A8A8A]">{tx.status}</p>
+                        <p className="text-[9px] text-[var(--text-secondary)]">{tx.status}</p>
                       </div>
                     </button>
                   );
@@ -537,16 +538,16 @@ export default function BalancePage() {
           </section>
 
           {/* Recent Gifts */}
-          <section className="rounded-xl border border-white/[0.07] bg-[#11151b] p-3">
+          <section className="rounded-xl border border-white/[0.07] bg-[var(--surface)] p-3">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                <Gift size={16} className="text-[#8A8A8A]" />
-                <h2 className="text-sm font-semibold text-[#F5F5F5]">Recent gifts</h2>
+                <Gift size={16} className="text-[var(--vanta-gold-bright)]" />
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">Recent gifts</h2>
 
               </div>
               <button
                 onClick={() => changeTab('gifts')}
-                className="flex items-center gap-1 text-xs text-[#8A8A8A] hover:text-white transition"
+                className="flex items-center gap-1 text-xs text-[var(--text-secondary)] hover:text-white transition"
               >
                 View all <ChevronRight size={12} />
               </button>
@@ -555,7 +556,7 @@ export default function BalancePage() {
             {recentGifts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center">
                 <Gift size={28} className="text-white/10 mb-3" />
-                <p className="text-sm text-[#8A8A8A]">No gift activity yet.</p>
+                <p className="text-sm text-[var(--text-secondary)]">No gift activity yet.</p>
               </div>
             ) : (
               <div className="space-y-1">
@@ -566,22 +567,22 @@ export default function BalancePage() {
                   return (
                     <div key={gift.id} className="flex items-center gap-4 p-3 rounded-lg hover:bg-white/[0.03] transition-colors">
                       <div className="w-9 h-9 rounded-lg bg-white/[0.035] flex items-center justify-center shrink-0">
-                        {gift.gift ? <GiftArtwork slug={gift.gift.slug} name={gift.gift.name} size={38} quality={giftVisualQuality(gift.gift)} /> : <Gift size={16} className="text-[#8A8A8A]" />}
+                        {gift.gift ? <GiftArtwork slug={gift.gift.slug} name={gift.gift.name} size={38} quality={giftVisualQuality(gift.gift)} /> : <Gift size={16} className="text-[var(--vanta-gold-bright)]" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[#F5F5F5] truncate">
+                        <p className="text-sm font-medium text-[var(--text-primary)] truncate">
                           {isIncoming ? `Received ${gift.gift?.name || 'Gift'} from ` : `Sent ${gift.gift?.name || 'Gift'} to `}
-                          <span className="text-[#8A8A8A]">{displayName}</span>
+                          <span className="text-[var(--text-secondary)]">{displayName}</span>
                         </p>
-                        <p className="text-[10px] text-[#8A8A8A] mt-0.5">
+                        <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">
                           {formatDate(gift.createdAt)} · {formatTime(gift.createdAt)}
                         </p>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className={cn('text-sm font-bold', isIncoming ? 'text-emerald-400' : 'text-[#F5F5F5]')}>
+                        <p className={cn('text-sm font-bold', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                           {isIncoming ? '+' : '-'}{(gift.amount ?? 0).toLocaleString()}
                         </p>
-                        <p className="text-[9px] text-[#8A8A8A]">{isIncoming ? 'Received' : 'Sent'}</p>
+                        <p className="text-[9px] text-[var(--text-secondary)]">{isIncoming ? 'Received' : 'Sent'}</p>
                       </div>
                     </div>
                   );
@@ -592,31 +593,31 @@ export default function BalancePage() {
 
           {/* Creator Earnings Preview */}
           {isCreator && (
-            <section className="rounded-lg border border-white/[0.08] bg-[#101010] p-5">
+            <section className="rounded-lg border border-white/[0.08] bg-[var(--surface)] p-5">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <TrendingUp size={16} className="text-[#8A8A8A]" />
-                  <h2 className="text-base font-bold text-[#F5F5F5]">Creator Earnings</h2>
+                  <TrendingUp size={16} className="text-[var(--vanta-gold-bright)]" />
+                  <h2 className="text-base font-bold text-[var(--text-primary)]">Creator Earnings</h2>
                 </div>
                 <button
                   onClick={() => changeTab('earnings')}
-                  className="flex items-center gap-1 text-xs text-[#8A8A8A] hover:text-white transition"
+                  className="flex items-center gap-1 text-xs text-[var(--text-secondary)] hover:text-white transition"
                 >
                   View all <ChevronRight size={12} />
                 </button>
               </div>
               <div className="grid grid-cols-2  gap-3">
                 <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4">
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-[#8A8A8A]">Available</p>
-                  <p className="mt-1 text-xl font-bold text-[#F5F5F5]">${earningsBalance.toFixed(2)}</p>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-secondary)]">Available</p>
+                  <p className="mt-1 text-xl font-bold text-[var(--text-primary)]">${earningsBalance.toFixed(2)}</p>
                 </div>
                 <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4">
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-[#8A8A8A]">Lifetime</p>
-                  <p className="mt-1 text-xl font-bold text-[#F5F5F5]">${lifetimeEarnings.toFixed(2)}</p>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-secondary)]">Lifetime</p>
+                  <p className="mt-1 text-xl font-bold text-[var(--text-primary)]">${lifetimeEarnings.toFixed(2)}</p>
                 </div>
                 <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4">
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-[#8A8A8A]">Withdrawn</p>
-                  <p className="mt-1 text-xl font-bold text-[#F5F5F5]">${totalWithdrawn.toFixed(2)}</p>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-secondary)]">Withdrawn</p>
+                  <p className="mt-1 text-xl font-bold text-[var(--text-primary)]">${totalWithdrawn.toFixed(2)}</p>
                 </div>
               </div>
             </section>
@@ -634,13 +635,13 @@ export default function BalancePage() {
           {/* Search & Filters */}
           <div className="flex flex-col gap-3">
             <div className="relative">
-              <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#8A8A8A]" />
+              <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)]" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 placeholder="Search transactions..."
-                className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-[#F5F5F5] placeholder-[#8A8A8A] outline-none transition-all"
+                className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-[var(--text-primary)] placeholder-[#8A8A8A] outline-none transition-all"
               />
             </div>
             <div className="flex min-w-0 items-center gap-2 flex-wrap">
@@ -655,7 +656,7 @@ export default function BalancePage() {
                     onClick={() => setFilter(f.id)}
                     className={cn(
                       'px-3 py-1.5 rounded-lg text-[10px] font-medium whitespace-nowrap transition-all',
-                      filter === f.id ? 'bg-white text-black' : 'text-[#8A8A8A] hover:text-white'
+                      filter === f.id ? 'bg-[var(--vanta-gold)] text-black' : 'text-[var(--text-secondary)] hover:text-white'
                     )}
                   >
                     {f.label}
@@ -665,7 +666,7 @@ export default function BalancePage() {
               <button
                 onClick={handleExport}
                 disabled={exporting || transactions.length === 0}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[10px] text-[#8A8A8A] hover:text-white disabled:opacity-50 transition-all"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[10px] text-[var(--text-secondary)] hover:text-white disabled:opacity-50 transition-all"
               >
                 {exporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
                 Export CSV
@@ -703,18 +704,18 @@ export default function BalancePage() {
                       {getTxIcon(tx.type)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-[#F5F5F5] truncate">
+                      <p className="text-sm font-medium text-[var(--text-primary)] truncate">
                         {tx.description || formatTxLabel(tx.type)}
                       </p>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-[10px] text-[#8A8A8A]">
+                        <span className="text-[10px] text-[var(--text-secondary)]">
                           {formatDate(tx.createdAt)} · {formatTime(tx.createdAt)}
                         </span>
-                        <span className="text-[10px] text-[#8A8A8A]">·</span>
-                        <span className="text-[10px] text-[#8A8A8A]">{formatTxLabel(tx.type)}</span>
+                        <span className="text-[10px] text-[var(--text-secondary)]">·</span>
+                        <span className="text-[10px] text-[var(--text-secondary)]">{formatTxLabel(tx.type)}</span>
                         {tx.fee > 0 && (
                           <>
-                            <span className="text-[10px] text-[#8A8A8A]">·</span>
+                            <span className="text-[10px] text-[var(--text-secondary)]">·</span>
                             <span className="text-[10px] text-amber-400/70">Fee: {tx.currency === 'USD' ? '$' + Number(tx.fee).toFixed(2) : tx.fee.toLocaleString()}</span>
                           </>
                         )}
@@ -730,10 +731,10 @@ export default function BalancePage() {
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className={cn('text-sm font-bold tabular-nums', isIncoming ? 'text-emerald-400' : 'text-[#F5F5F5]')}>
+                      <p className={cn('text-sm font-bold tabular-nums', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                         {sign}{isUsd ? '$' : ''}{formattedAmount}
                       </p>
-                      <p className="text-[9px] text-[#8A8A8A]">Balance: {isUsd ? '$' : ''}{isUsd ? Number(tx.balance ?? 0).toFixed(2) : (tx.balance ?? 0).toLocaleString()}</p>
+                      <p className="text-[9px] text-[var(--text-secondary)]">Balance: {isUsd ? '$' : ''}{isUsd ? Number(tx.balance ?? 0).toFixed(2) : (tx.balance ?? 0).toLocaleString()}</p>
                     </div>
                   </motion.button>
                 );
@@ -752,12 +753,12 @@ export default function BalancePage() {
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Gift size={16} className="text-[#8A8A8A]" />
-              <h2 className="text-lg font-bold text-[#F5F5F5]">Gift History</h2>
+              <Gift size={16} className="text-[var(--vanta-gold-bright)]" />
+              <h2 className="text-lg font-bold text-[var(--text-primary)]">Gift History</h2>
             </div>
             <button
               onClick={() => router.push('/gifts')}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.05] border border-white/[0.08] text-xs text-[#8A8A8A] hover:text-white transition-all"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.05] border border-white/[0.08] text-xs text-[var(--text-secondary)] hover:text-white transition-all"
             >
               <Gift size={12} />
               Open Gift Store
@@ -787,30 +788,30 @@ export default function BalancePage() {
                     className="flex items-center gap-4 p-4 rounded-lg hover:bg-white/[0.03] transition-colors"
                   >
                     <div className="w-9 h-9 rounded-lg bg-white/[0.035] flex items-center justify-center shrink-0">
-                      {gift.gift ? <GiftArtwork slug={gift.gift.slug} name={gift.gift.name} size={38} quality={giftVisualQuality(gift.gift)} /> : <Gift size={16} className="text-[#8A8A8A]" />}
+                      {gift.gift ? <GiftArtwork slug={gift.gift.slug} name={gift.gift.name} size={38} quality={giftVisualQuality(gift.gift)} /> : <Gift size={16} className="text-[var(--vanta-gold-bright)]" />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-[#F5F5F5] truncate">
+                      <p className="text-sm font-medium text-[var(--text-primary)] truncate">
                         {isIncoming ? `Received ${gift.gift?.name || 'Gift'} from ` : `Sent ${gift.gift?.name || 'Gift'} to `}
-                        <span className="text-[#8A8A8A]">{displayName}</span>
+                        <span className="text-[var(--text-secondary)]">{displayName}</span>
                       </p>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] text-[#8A8A8A]">
+                        <span className="text-[10px] text-[var(--text-secondary)]">
                           {formatDate(gift.createdAt)} · {formatTime(gift.createdAt)}
                         </span>
                         {gift.streamId && (
                           <>
-                            <span className="text-[10px] text-[#8A8A8A]">·</span>
-                            <span className="text-[10px] text-[#8A8A8A]">Live Stream</span>
+                            <span className="text-[10px] text-[var(--text-secondary)]">·</span>
+                            <span className="text-[10px] text-[var(--text-secondary)]">Live Stream</span>
                           </>
                         )}
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className={cn('text-sm font-bold', isIncoming ? 'text-emerald-400' : 'text-[#F5F5F5]')}>
+                      <p className={cn('text-sm font-bold', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                         {isIncoming ? '+' : '-'}{(gift.amount ?? 0).toLocaleString()}
                       </p>
-                      <p className="text-[9px] text-[#8A8A8A]">{isIncoming ? 'Received' : 'Sent'}</p>
+                      <p className="text-[9px] text-[var(--text-secondary)]">{isIncoming ? 'Received' : 'Sent'}</p>
                     </div>
                   </motion.div>
                 );
@@ -841,11 +842,11 @@ export default function BalancePage() {
                 transition={{ delay: i * 0.04 }}
                 className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4"
               >
-                <div className="w-8 h-8 rounded-lg bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-[#8A8A8A] mb-2">
+                <div className="w-8 h-8 rounded-lg bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-[var(--text-secondary)] mb-2">
                   {stat.icon}
                 </div>
-                <p className="text-lg font-bold text-[#F5F5F5]">{stat.value}</p>
-                <p className="text-[10px] text-[#8A8A8A] mt-0.5">{stat.label}</p>
+                <p className="text-lg font-bold text-[var(--text-primary)]">{stat.value}</p>
+                <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">{stat.label}</p>
               </motion.div>
             ))}
           </div>
@@ -853,7 +854,7 @@ export default function BalancePage() {
           {earningsBalance > 0 && (
             <button
               onClick={() => setShowWithdrawModal(true)}
-              className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-[#F5F5F5] text-black text-sm font-bold hover:bg-white transition-all"
+              className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold hover:bg-[var(--vanta-gold-bright)] transition-all"
             >
               <ArrowUpFromLine size={16} />
               Withdraw ${earningsBalance.toFixed(2)}
@@ -881,13 +882,13 @@ export default function BalancePage() {
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <ArrowUpFromLine size={16} className="text-[#8A8A8A]" />
-              <h2 className="text-lg font-bold text-[#F5F5F5]">Withdrawal History</h2>
+              <ArrowUpFromLine size={16} className="text-[var(--vanta-gold-bright)]" />
+              <h2 className="text-lg font-bold text-[var(--text-primary)]">Withdrawal History</h2>
             </div>
             {earningsBalance > 0 && (
               <button
                 onClick={() => setShowWithdrawModal(true)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#F5F5F5] text-black text-xs font-bold hover:bg-white transition-all"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--vanta-gold)] text-black text-xs font-bold hover:bg-[var(--vanta-gold-bright)] transition-all"
               >
                 <ArrowUpFromLine size={12} />
                 Withdraw
@@ -908,20 +909,20 @@ export default function BalancePage() {
               {withdrawals.map((wd: any) => (
                 <div key={wd.id} className="flex items-center gap-4 p-4 rounded-lg hover:bg-white/[0.03] transition-colors">
                   <div className="w-9 h-9 rounded-lg bg-white/[0.035] flex items-center justify-center shrink-0">
-                    <ArrowUpFromLine size={16} className="text-[#8A8A8A]" />
+                    <ArrowUpFromLine size={16} className="text-[var(--vanta-gold-bright)]" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-[#F5F5F5]">
+                    <p className="text-sm font-medium text-[var(--text-primary)]">
                       Withdrawal of ${wd.amount.toFixed(2)}
                     </p>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-[#8A8A8A]">
+                      <span className="text-[10px] text-[var(--text-secondary)]">
                         {formatDate(wd.createdAt)} · {formatTime(wd.createdAt)}
                       </span>
-                      <span className="text-[10px] text-[#8A8A8A]">·</span>
-                      <span className="text-[10px] text-[#8A8A8A]">Fee: ${wd.fee.toFixed(2)}</span>
-                      <span className="text-[10px] text-[#8A8A8A]">·</span>
-                      <span className="text-[10px] text-[#8A8A8A]">Net: ${wd.netAmount.toFixed(2)}</span>
+                      <span className="text-[10px] text-[var(--text-secondary)]">·</span>
+                      <span className="text-[10px] text-[var(--text-secondary)]">Fee: ${wd.fee.toFixed(2)}</span>
+                      <span className="text-[10px] text-[var(--text-secondary)]">·</span>
+                      <span className="text-[10px] text-[var(--text-secondary)]">Net: ${wd.netAmount.toFixed(2)}</span>
                     </div>
                   </div>
                   <div className="text-right shrink-0">
@@ -950,53 +951,53 @@ export default function BalancePage() {
         >
           <div className="rounded-3xl border border-white/[0.06] bg-white/[0.02] p-5">
             <div className="flex items-center gap-2 mb-4">
-              <Shield size={16} className="text-[#8A8A8A]" />
-              <h2 className="text-base font-bold text-[#F5F5F5]">Balance Security</h2>
+              <Shield size={16} className="text-[var(--vanta-gold-bright)]" />
+              <h2 className="text-base font-bold text-[var(--text-primary)]">Balance Security</h2>
             </div>
 
             <div className="grid grid-cols-1  gap-3">
               <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-[#8A8A8A]">Wallet PIN</span>
+                  <span className="text-xs text-[var(--text-secondary)]">Wallet PIN</span>
                   <span className={cn('text-xs', hasPin ? 'text-emerald-400' : 'text-amber-400')}>
                     {hasPin ? 'Set' : 'Not Set'}
                   </span>
                 </div>
-                <p className="text-[10px] text-[#8A8A8A]">
+                <p className="text-[10px] text-[var(--text-secondary)]">
                   {hasPin ? 'Your PIN protects transfers and withdrawals.' : 'Set a PIN to protect your transfers and withdrawals.'}
                 </p>
               </div>
 
               <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-[#8A8A8A]">Two-Factor Auth</span>
-                  <span className="text-xs text-[#8A8A8A]">Via Account</span>
+                  <span className="text-xs text-[var(--text-secondary)]">Two-Factor Auth</span>
+                  <span className="text-xs text-[var(--text-secondary)]">Via Account</span>
                 </div>
-                <p className="text-[10px] text-[#8A8A8A]">
+                <p className="text-[10px] text-[var(--text-secondary)]">
                   Enable 2FA in your account settings for stronger protection.
                 </p>
               </div>
 
               <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-[#8A8A8A]">USDT Wallet</span>
-                  <span className={cn('text-xs', usdtWalletAddress ? 'text-emerald-400' : 'text-[#8A8A8A]')}>
+                  <span className="text-xs text-[var(--text-secondary)]">USDT Wallet</span>
+                  <span className={cn('text-xs', usdtWalletAddress ? 'text-emerald-400' : 'text-[var(--text-secondary)]')}>
                     {usdtWalletAddress ? 'Connected' : 'Not Set'}
                   </span>
                 </div>
-                <p className="text-[10px] text-[#8A8A8A] truncate">
+                <p className="text-[10px] text-[var(--text-secondary)] truncate">
                   {usdtWalletAddress || 'Connect a USDT (BEP-20) wallet for withdrawals.'}
                 </p>
               </div>
 
               <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-[#8A8A8A]">Account Status</span>
+                  <span className="text-xs text-[var(--text-secondary)]">Account Status</span>
                   <span className={cn('text-xs', isFrozen ? 'text-red-400' : 'text-emerald-400')}>
                     {isFrozen ? 'Frozen' : 'Active'}
                   </span>
                 </div>
-                <p className="text-[10px] text-[#8A8A8A]">
+                <p className="text-[10px] text-[var(--text-secondary)]">
                   {isFrozen ? 'Your balance is frozen. Contact support.' : 'Your balance is active and secure.'}
                 </p>
               </div>
@@ -1020,7 +1021,7 @@ export default function BalancePage() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="fixed inset-x-0 top-[max(12px,env(safe-area-inset-top))] bottom-[max(12px,env(safe-area-inset-bottom))] z-[101] mx-auto flex min-h-0 w-[calc(100%-1.5rem)] max-w-[456px] flex-col overflow-hidden rounded-3xl border border-white/[0.08] bg-[#101010]/95 shadow-2xl backdrop-blur-2xl"
+              className="fixed inset-x-0 top-[max(12px,env(safe-area-inset-top))] bottom-[max(12px,env(safe-area-inset-bottom))] z-[101] mx-auto flex min-h-0 w-[calc(100%-1.5rem)] max-w-[456px] flex-col overflow-hidden rounded-3xl border border-white/[0.08] bg-[var(--background-secondary)] shadow-2xl backdrop-blur-2xl"
               role="dialog"
               aria-modal="true"
               aria-label="Transaction details"
@@ -1031,40 +1032,40 @@ export default function BalancePage() {
                     {getTxIcon(selectedTx.type)}
                   </div>
                   <div>
-                    <h2 className="text-lg font-bold text-[#F5F5F5]">Transaction Details</h2>
-                    <p className="text-[10px] text-[#8A8A8A]">{formatTxLabel(selectedTx.type)}</p>
+                    <h2 className="text-lg font-bold text-[var(--text-primary)]">Transaction Details</h2>
+                    <p className="text-[10px] text-[var(--text-secondary)]">{formatTxLabel(selectedTx.type)}</p>
                   </div>
                 </div>
-                <button onClick={() => setSelectedTx(null)} className="rounded-xl p-2 text-[#8A8A8A] hover:text-white hover:bg-white/[0.05] transition" aria-label="Close">
+                <button onClick={() => setSelectedTx(null)} className="rounded-xl p-2 text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.05] transition" aria-label="Close">
                   <X size={18} />
                 </button>
               </div>
 
               <div className="flex-1 overflow-y-auto scrollbar-hide p-6 space-y-4">
                 <div className="text-center">
-                  <p className={cn('text-3xl font-bold tabular-nums', selectedTx.isIncoming ? 'text-emerald-400' : 'text-[#F5F5F5]')}>
+                  <p className={cn('text-3xl font-bold tabular-nums', selectedTx.isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                     {selectedTx.isIncoming ? '+' : '-'}{selectedTx.currency === 'USD' ? '$' : ''}{selectedTx.currency === 'USD' ? Math.abs(selectedTx.displayAmount ?? selectedTx.amount ?? 0).toFixed(2) : Math.abs(selectedTx.displayAmount ?? selectedTx.amount ?? 0).toLocaleString()}
                   </p>
-                  <p className="mt-1 text-xs text-[#8A8A8A]">{selectedTx.currency === 'USD' ? 'USD / USDT' : 'VANTA Coins'}</p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">{selectedTx.currency === 'USD' ? 'USD / USDT' : 'VANTA Coins'}</p>
                 </div>
 
                 <div className="rounded-2xl bg-white/[0.02] border border-white/[0.06] p-4 space-y-2.5">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-[#8A8A8A]">Type</span>
-                    <span className="font-medium text-[#F5F5F5]">{formatTxLabel(selectedTx.type)}</span>
+                    <span className="text-[var(--text-secondary)]">Type</span>
+                    <span className="font-medium text-[var(--text-primary)]">{formatTxLabel(selectedTx.type)}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-[#8A8A8A]">Amount</span>
-                    <span className="font-medium text-[#F5F5F5]">{selectedTx.currency === 'USD' ? '$' : ''}{selectedTx.currency === 'USD' ? Math.abs(selectedTx.amount ?? 0).toFixed(2) : Math.abs(selectedTx.amount ?? 0).toLocaleString()}</span>
+                    <span className="text-[var(--text-secondary)]">Amount</span>
+                    <span className="font-medium text-[var(--text-primary)]">{selectedTx.currency === 'USD' ? '$' : ''}{selectedTx.currency === 'USD' ? Math.abs(selectedTx.amount ?? 0).toFixed(2) : Math.abs(selectedTx.amount ?? 0).toLocaleString()}</span>
                   </div>
                   {selectedTx.fee > 0 && (
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-[#8A8A8A]">Fee</span>
-                      <span className="font-medium text-[#F5F5F5]">{selectedTx.currency === 'USD' ? '$' : ''}{selectedTx.currency === 'USD' ? selectedTx.fee.toFixed(2) : selectedTx.fee.toLocaleString()}</span>
+                      <span className="text-[var(--text-secondary)]">Fee</span>
+                      <span className="font-medium text-[var(--text-primary)]">{selectedTx.currency === 'USD' ? '$' : ''}{selectedTx.currency === 'USD' ? selectedTx.fee.toFixed(2) : selectedTx.fee.toLocaleString()}</span>
                     </div>
                   )}
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-[#8A8A8A]">Status</span>
+                    <span className="text-[var(--text-secondary)]">Status</span>
                     <span className={cn(
                       'font-medium',
                       selectedTx.status === 'COMPLETED' && 'text-emerald-400',
@@ -1075,32 +1076,32 @@ export default function BalancePage() {
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-[#8A8A8A]">Date</span>
-                    <span className="font-medium text-[#F5F5F5]">{formatDate(selectedTx.createdAt)} · {formatTime(selectedTx.createdAt)}</span>
+                    <span className="text-[var(--text-secondary)]">Date</span>
+                    <span className="font-medium text-[var(--text-primary)]">{formatDate(selectedTx.createdAt)} · {formatTime(selectedTx.createdAt)}</span>
                   </div>
                   {selectedTx.counterparty && (
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-[#8A8A8A]">Counterparty</span>
-                      <span className="font-medium text-[#F5F5F5]">@{selectedTx.counterparty.username}</span>
+                      <span className="text-[var(--text-secondary)]">Counterparty</span>
+                      <span className="font-medium text-[var(--text-primary)]">@{selectedTx.counterparty.username}</span>
                     </div>
                   )}
                   {selectedTx.reference && (
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-[#8A8A8A]">Reference</span>
-                      <span className="font-medium text-[#F5F5F5] font-mono text-[10px] truncate max-w-[180px]">{selectedTx.reference}</span>
+                      <span className="text-[var(--text-secondary)]">Reference</span>
+                      <span className="font-medium text-[var(--text-primary)] font-mono text-[10px] truncate max-w-[180px]">{selectedTx.reference}</span>
                     </div>
                   )}
                 </div>
 
                 {selectedTx.description && (
-                  <p className="text-xs text-[#8A8A8A] leading-relaxed">{selectedTx.description}</p>
+                  <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{selectedTx.description}</p>
                 )}
               </div>
 
               <div className="shrink-0 border-t border-white/[0.06] px-6 py-4">
                 <button
                   onClick={() => setSelectedTx(null)}
-                  className="w-full py-2.5 rounded-2xl bg-white/[0.05] border border-white/[0.08] text-sm font-medium text-[#F5F5F5] hover:bg-white/[0.08] transition-all"
+                  className="w-full py-2.5 rounded-2xl bg-white/[0.05] border border-white/[0.08] text-sm font-medium text-[var(--text-primary)] hover:bg-white/[0.08] transition-all"
                 >
                   Close
                 </button>
