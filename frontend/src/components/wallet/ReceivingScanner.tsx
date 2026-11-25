@@ -10,6 +10,8 @@ function getDetector(): DetectorCtor | undefined {
 export default function ReceivingScanner({onScan, onCancel}: {onScan:(value:string)=>void;onCancel:()=>void}) {
   const video = useRef<HTMLVideoElement>(null);
   const callback = useRef(onScan);
+  const mounted = useRef(false);
+  useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;};},[]);
   const [error,setError] = useState('');
   const [camera,setCamera] = useState(false);
   const [supported,setSupported] = useState(false);
@@ -55,9 +57,10 @@ export default function ReceivingScanner({onScan, onCancel}: {onScan:(value:stri
       if(!Ctor)throw new Error('Unavailable');
       bitmap=await createImageBitmap(file);
       const codes=await new Ctor({formats:['qr_code']}).detect(bitmap);
+      if(!mounted.current)return;
       if(codes.length!==1){setError('Choose an image containing exactly one QR code.');return;}
-      callback.current(codes[0].rawValue);
-    }catch{setError('Could not read the QR image. Paste the receiving link instead.');}
+      if(mounted.current)callback.current(codes[0].rawValue);
+    }catch{if(mounted.current)setError('Could not read the QR image. Paste the receiving link instead.');}
     finally{bitmap?.close();}
   }
   return <div className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
