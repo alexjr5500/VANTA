@@ -28,6 +28,7 @@ interface UserResult {
 interface SendCoinsModalProps {
   open: boolean;
   balance: number;
+  hideBalance?: boolean;
   transferBudget?: number;
   dailyRemaining?: number;
   initialRecipientId?: string | null;
@@ -35,7 +36,7 @@ interface SendCoinsModalProps {
   onSuccess: () => void;
 }
 
-export default function SendCoinsModal({ open, balance, transferBudget = balance, dailyRemaining, initialRecipientId, onClose, onSuccess }: SendCoinsModalProps) {
+export default function SendCoinsModal({ open, balance, hideBalance = false, transferBudget = balance, dailyRemaining, initialRecipientId, onClose, onSuccess }: SendCoinsModalProps) {
   const { token, user } = useAuth();
   const [step, setStep] = useState<'recipient' | 'amount' | 'review' | 'otp' | 'processing' | 'success'>('recipient');
   const [searchQuery, setSearchQuery] = useState('');
@@ -314,7 +315,7 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
               {/* Balance */}
               <div className="mb-5 rounded-2xl bg-white/[0.03] border border-white/[0.06] px-4 py-3 flex items-center justify-between">
                 <span className="text-xs text-[var(--text-secondary)]">Available to spend</span>
-                <span className="text-sm font-bold text-white">{balance.toLocaleString()} <VantaCoinIcon size={14} className="inline-block text-[var(--vanta-gold-bright)]" /></span>
+                <span className="text-sm font-bold text-white">{hideBalance ? '••••••' : balance.toLocaleString()} <VantaCoinIcon size={14} className="inline-block text-[var(--vanta-gold-bright)]" /></span>
               </div>
 
               {notice && <p role="status" className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-sm text-[var(--text-primary)]">{notice}</p>}
@@ -471,8 +472,8 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
                     />
                   </div>
 
-                  <p className="text-xs text-[var(--text-secondary)]">Maximum including fees and limits: {maxAmount.toLocaleString()} VANTA.</p>
-                  {dailyRemaining !== undefined && <p className="text-xs text-[var(--text-secondary)]">Remaining daily allowance (including fees): {dailyRemaining.toLocaleString()} VANTA.</p>}
+                  <p className="text-xs text-[var(--text-secondary)]">Maximum including fees and limits: {hideBalance ? '••••••' : maxAmount.toLocaleString()} VANTA.</p>
+                  {dailyRemaining !== undefined && <p className="text-xs text-[var(--text-secondary)]">Remaining daily allowance (including fees): {hideBalance ? '••••••' : dailyRemaining.toLocaleString()} VANTA.</p>}
                   {totalDeduction > budget && <p role="alert" className="text-sm text-red-300">The transfer and fee exceed your spendable balance or transfer allowance.</p>}
                   {/* Fee breakdown */}
                   {amount > 0 && (
