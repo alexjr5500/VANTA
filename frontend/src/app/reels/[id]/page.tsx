@@ -1,12 +1,14 @@
 'use client';
 
+import BookmarkIcon from '@/components/ui/BookmarkIcon';
+
 import DeleteConfirmDialog from '@/components/ui/DeleteConfirmDialog';
 
 import { use, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Bookmark, Clapperboard, Eye, Heart, Loader2, MessageCircle, MoreHorizontal, Play, RefreshCw, Share2, Trash2, Volume2, VolumeX, X } from 'lucide-react';
+import { ArrowLeft, Clapperboard, Eye, Heart, Loader2, MessageCircle, MoreHorizontal, Play, RefreshCw, Share2, Trash2, Volume2, VolumeX, X } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import type { VerificationType } from '@/types/verification';
@@ -456,7 +458,7 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
           </span>
         </Link>
         {captionText && (
-          <p className={cn('mt-2 max-w-[44ch] whitespace-pre-wrap break-words text-sm leading-5 text-white/90', !expandedCaption && 'line-clamp-2')}>{renderTextWithLinks(captionText, 'linkify', { mentions: true, hashtags: true })}</p>
+          <p className={cn('mt-2 max-w-[44ch] whitespace-pre-wrap break-words text-sm leading-5 text-white/90', !expandedCaption && !/(?:https?:\/\/|www\.)/i.test(captionText) && 'line-clamp-2')}>{renderTextWithLinks(captionText, 'linkify', { mentions: true, hashtags: true })}</p>
         )}
         {captionText.length > 110 && (
           <button type="button" onClick={() => setExpandedCaption(value => !value)} className="mt-0.5 text-xs text-white/60 hover:text-white">{expandedCaption ? 'less' : 'more'}</button>
@@ -472,7 +474,7 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
         <ReelRailAction icon={<MessageCircle />} label={formatCount(commentCount)} ariaLabel="Open comments" onClick={openComments} />
         <ReelRailAction icon={<RefreshCw />} label={formatCount(reel.reposts || 0)} ariaLabel={reel.isReposted ? 'Remove repost' : 'Repost reel'} onClick={() => void repost()} active={Boolean(reel.isReposted)} />
         <ReelRailAction icon={<Share2 />} label="Share" ariaLabel="Share reel" onClick={() => setShareOpen(true)} />
-        <ReelRailAction icon={<Bookmark className={savedState ? 'fill-current' : ''} />} label={savedState ? 'Saved' : 'Save'} ariaLabel={savedState ? 'Remove from saved' : 'Save reel'} onClick={() => void toggleSave()} active={savedState} />
+        <ReelRailAction icon={<BookmarkIcon saved={savedState} />} label={savedState ? 'Saved' : 'Save'} ariaLabel={savedState ? 'Remove from saved' : 'Save reel'} onClick={() => void toggleSave()} active={savedState} />
         <ReelRailAction icon={<MoreHorizontal />} label="More" ariaLabel="More reel actions" onClick={() => setMoreOpen(true)} />
       </div>
 

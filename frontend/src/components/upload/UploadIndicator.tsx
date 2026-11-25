@@ -50,12 +50,14 @@ function ProgressRing({ progress, size = 34, stroke = 3 }: { progress: number; s
 const kindIcon = (kind: UploadJob['kind']) => (kind === 'story' ? <Zap size={13} /> : <Clapperboard size={13} />);
 
 export default function UploadIndicator() {
-  const { jobs, activeCount, retryUpload, cancelUpload, dismissUpload } = useUploadManager();
+  const { jobs, retryUpload, cancelUpload, dismissUpload } = useUploadManager();
   const [open, setOpen] = useState(false);
 
   // Cancelled jobs must remain visible until dismissed: otherwise their in-memory
   // File/token caches have no user-facing cleanup action or retry path.
-  const visible = jobs;
+  // Status uploads live inline in the Status tray, not in a floating panel.
+  const visible = jobs.filter(job => job.kind === 'reel');
+  const activeCount = visible.filter(job => job.phase === 'starting' || job.phase === 'uploading' || job.phase === 'processing').length;
   const hasActive = visible.some((job) => job.phase === 'starting' || job.phase === 'uploading' || job.phase === 'processing');
   const hasFailed = visible.some((job) => job.phase === 'failed');
   const hasCancelled = visible.some((job) => job.phase === 'cancelled');
@@ -63,14 +65,13 @@ export default function UploadIndicator() {
   // Auto-clear completed jobs once idle (no active/failed jobs left) so the
   // tray never accumulates stale "done" rows.
   useEffect(() => {
-    const completed = visible.filter((job) => job.phase === 'completed');
+    const completed = jobs.filter((job) => job.phase === 'completed');
     if (completed.length === 0) return;
-    if (hasActive || hasFailed) return; // wait until the tray is quiet
     const timer = window.setTimeout(() => {
       for (const job of completed) dismissUpload(job.id);
     }, 4000);
     return () => window.clearTimeout(timer);
-  }, [hasActive, hasFailed, visible, dismissUpload]);
+  }, [jobs, dismissUpload]);
 
   if (visible.length === 0) return null;
 

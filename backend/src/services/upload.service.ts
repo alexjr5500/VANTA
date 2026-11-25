@@ -127,6 +127,11 @@ if (cloudinaryMediaProducerEnabled && !useCloudinary) {
 }
 const execFileAsync = promisify(execFile);
 const maxVideoDurationSeconds = Number(process.env.MAX_VIDEO_DURATION_SECONDS || 600);
+export const STATUS_MAX_VIDEO_SECONDS = 120;
+export function assertStatusVideoDuration(duration: unknown): void {
+  if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) throw new Error("Unable to verify Status video duration. Choose a supported video.");
+  if (duration > STATUS_MAX_VIDEO_SECONDS) throw new Error("Status videos are limited to 2 minutes (120 seconds).");
+}
 
 if (useCloudinary) {
   cloudinary.config({
@@ -324,13 +329,41 @@ const probeVideoDuration = async (filePath: string): Promise<number | undefined>
       "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath,
     ], { timeout: 15_000 });
     const duration = Number(stdout.trim());
-    return Number.isFinite(duration) ? duration : undefined;
+    return Number.isFinite(duration) && duration > 0 ? duration : undefined;
   } catch {
     // ffprobe is optional in development. Cloudinary validates/probes cloud video;
     // production local-storage deployments should provide FFPROBE_PATH.
     return undefined;
   }
 };
+
+// MediaRecorder's streaming WebM may lack a container Duration element.
+// Remux without re-encoding, then validate the actual output with ffprobe.
+// Never accept the browser's requested trim range as proof of duration.
+async function remuxStatusWebm(file: Express.Multer.File): Promise<number | undefined> {
+  const temp = path.join(path.dirname(file.path), `.status-remux-${crypto.randomUUID()}.webm`);
+  try {
+    await execFileAsync(process.env.FFMPEG_PATH || "ffmpeg", [
+      "-nostdin", "-v", "error", "-xerror", "-i", file.path,
+      "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-f", "webm", temp,
+    ], { timeout: 20_000, maxBuffer: 256 * 1024 });
+    const duration = await probeVideoDuration(temp);
+    if (duration === undefined) return undefined;
+    assertStatusVideoDuration(duration);
+    const size = fs.statSync(temp).size;
+    if (size <= 0 || size > UPLOAD_LIMITS.VIDEO) return undefined;
+    fs.renameSync(temp, file.path);
+    file.size = size;
+    return duration;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("2 minutes")) throw error;
+    // ffmpeg is optional; if unavailable, the normal trusted storage probe
+    // remains authoritative. Never accept an unverifiable Status video.
+    return undefined;
+  } finally {
+    removeLocalFile(temp);
+  }
+}
 
 const getAllowedExtensions = (mimetype: string): string[] => {
   if (mimetype.startsWith("image/")) {
@@ -546,8 +579,18 @@ export class UploadService {
     const url = buildUploadUrl(req, file.filename);
     const fileType = getFileType(file.mimetype);
 
+    const isStatus = category === "story" || recordType === "Story";
+    let probedDuration: number | undefined;
     if (fileType === "VIDEO") {
-      const duration = await probeVideoDuration(file.path);
+      let duration = await probeVideoDuration(file.path);
+      if (isStatus && duration === undefined && normalizeMimeType(file.mimetype) === "video/webm") {
+        try { duration = await remuxStatusWebm(file); }
+        catch (error) { removeLocalFile(file.path); throw error; }
+      }
+      probedDuration = duration;
+      if (isStatus && (duration !== undefined || !useCloudinary)) {
+        try { assertStatusVideoDuration(duration); } catch (error) { removeLocalFile(file.path); throw error; }
+      }
       if (duration !== undefined && duration > maxVideoDurationSeconds) {
         removeLocalFile(file.path);
         throw new Error(`Video duration exceeds the ${Math.floor(maxVideoDurationSeconds / 60)} minute limit.`);
@@ -587,6 +630,10 @@ export class UploadService {
           unique_filename: true,
           overwrite: false,
         });
+        if (isStatus && fileType === "VIDEO") {
+          try { assertStatusVideoDuration(cloudResult.duration ?? probedDuration); }
+          catch (error) { await cloudinary.uploader.destroy(cloudResult.public_id, { resource_type: "video", invalidate: true }); throw error; }
+        }
         finalUrl = cloudResult.secure_url;
         storagePath = `cloudinary:${resourceType}:${cloudResult.public_id}`;
         if (fileType === "VIDEO") {
@@ -655,11 +702,25 @@ export class UploadService {
     };
   }
 
+  /** Verify duration from trusted storage metadata, including pre-existing uploads. */
+  async assertStatusMediaDuration(file: { fileType: string; path: string | null; filename: string }): Promise<void> {
+    if (file.fileType !== "VIDEO") return;
+    const match = /^cloudinary:video:(.+)$/.exec(file.path || "");
+    if (match) {
+      const resource = await cloudinary.api.resource(match[1], { resource_type: "video", type: "upload" });
+      assertStatusVideoDuration(resource.duration);
+      return;
+    }
+    if (path.basename(file.filename) !== file.filename) throw new Error("Invalid Status video storage reference.");
+    assertStatusVideoDuration(await probeVideoDuration(path.join(uploadDir, file.filename)));
+  }
+
   private async deleteStorageAsset(filename: string, storagePath?: string | null): Promise<boolean> {
     if (storagePath?.startsWith("cloudinary:")) {
       const [, resourceType, ...publicIdParts] = storagePath.split(":");
-      await cloudinary.uploader.destroy(publicIdParts.join(":"), { resource_type: resourceType as any, invalidate: true });
-      return true;
+      const result = await cloudinary.uploader.destroy(publicIdParts.join(":"), { resource_type: resourceType as any, invalidate: true });
+      if (result.result !== "ok" && result.result !== "not found") throw new Error("Storage provider did not confirm asset deletion");
+      return result.result === "ok";
     }
     const safeFilename = path.basename(filename);
     if (safeFilename !== filename) return false;

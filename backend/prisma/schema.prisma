@@ -428,6 +428,7 @@ model Story {
   // upload failed and the draft can be retried). Legacy rows default to
   // "PUBLISHED" so existing production data needs no migration value.
   publishStatus String         @default("PUBLISHED")
+  replyAudience String         @default("EVERYONE")
   moderationRemovedAt DateTime?
   // JSON styling payload for TEXT (Status) stories — font family, size, color,
   // alignment, weight, style, line-height and the curated background key used to
@@ -787,6 +788,7 @@ model Post {
   author     User          @relation("UserPosts", fields: [authorId], references: [id], onDelete: Cascade)
   content    String
   mediaUrl   String?
+  replyAudience String         @default("EVERYONE")
   pinned     Boolean       @default(false)
   likes      PostLike[]
   comments   PostComment[]

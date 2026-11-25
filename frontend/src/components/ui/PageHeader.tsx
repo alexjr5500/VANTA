@@ -4,6 +4,7 @@ import React from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Menu } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 
 export interface PageHeaderProps {
   /** Primary title. Long titles truncate instead of pushing actions off-screen. */
@@ -47,6 +48,7 @@ export default function PageHeader({
   className,
 }: PageHeaderProps) {
   const router = useRouter();
+  const tr = useLocalizedUiText();
 
   const handleBack = () => {
     if (typeof back === 'function') back();
@@ -107,7 +109,7 @@ export default function PageHeader({
             </span>
           )}
           {title && (
-            <h1 className="min-w-0 truncate text-base font-semibold leading-none text-[#F5F5F5]">{title}</h1>
+            <h1 className="min-w-0 truncate text-base font-semibold leading-none text-[#F5F5F5]">{typeof title === 'string' ? tr(title) : title}</h1>
           )}
         </div>
       )}

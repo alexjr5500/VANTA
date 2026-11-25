@@ -8,7 +8,6 @@ import {
   AtSign,
   Bell,
   Check,
-  ChevronRight,
   CircleAlert,
   Gift,
   Heart,
@@ -27,6 +26,8 @@ import { useNotifications, type VantaNotification } from '@/context/Notification
 import { apiGet, apiPatch } from '@/lib/apiClient';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { cn } from '@/lib/utils';
+import { notificationDestination } from '@/lib/notificationDestination';
+import { previewExcerpt } from '@/lib/linkify';
 
 type NotificationResponse = {
   items: VantaNotification[];
@@ -41,7 +42,6 @@ const filters: Filter[] = [
   { id: 'likes', label: 'Likes', types: ['like'] },
   { id: 'comments', label: 'Comments', types: ['comment'] },
   { id: 'follows', label: 'Follows', types: ['follow'] },
-  { id: 'mentions', label: 'Mentions', types: ['mention'] },
   { id: 'live', label: 'Live', types: ['live', 'stream'] },
   { id: 'gifts', label: 'Gifts', types: ['gift', 'wallet', 'wallet_deposit', 'wallet_transfer_received', 'wallet_transfer_sent'] },
   { id: 'system', label: 'System', types: ['system', 'milestone'] },
@@ -65,32 +65,17 @@ const iconByType: Record<string, typeof Bell> = {
 };
 
 const normalizedTypeOf = (notification: VantaNotification) => notification.type.trim().toLowerCase();
-const CHAT_NOTIFICATION_TYPES = new Set(['message', 'group', 'channel', 'direct_message', 'chat_message', 'mention']);
-const isChatNotification = (notification: VantaNotification) => CHAT_NOTIFICATION_TYPES.has(normalizedTypeOf(notification));
+const CHAT_NOTIFICATION_TYPES = new Set(['message', 'group', 'channel', 'direct_message', 'chat_message']);
+const isChatNotification = (notification: VantaNotification) => {
+  const type = normalizedTypeOf(notification);
+  const data = metadataOf(notification);
+  return CHAT_NOTIFICATION_TYPES.has(type) || (type === 'mention' && Boolean(data.conversationId || data.groupId || data.channelId || notification.entityType === 'conversation'));
+};
 
 const metadataOf = (notification: VantaNotification): Record<string, any> => {
   if (!notification.data) return {};
   if (typeof notification.data === 'object') return notification.data;
-  try { return JSON.parse(notification.data); } catch { return {}; }
-};
-
-const destinationOf = (notification: VantaNotification) => {
-  const data = metadataOf(notification);
-  const type = normalizedTypeOf(notification);
-  if (typeof data.destination === 'string' && data.destination.startsWith('/')) return data.destination;
-  const streamId = data.streamId || (notification.entityType === 'live' ? notification.entityId : null);
-  if (streamId) return `/live/${streamId}`;
-  const conversationId = data.conversationId || (notification.entityType === 'conversation' ? notification.entityId : null);
-  if (conversationId) return `/chat/${conversationId}`;
-  if (data.groupId) return `/chat/${data.groupId}`;
-  if (data.channelId) return `/chat/${data.channelId}`;
-  const postId = data.postId || (notification.entityType === 'post' ? notification.entityId : null);
-  if (postId) return `/home?post=${postId}${data.commentId ? `&comment=${data.commentId}` : ''}`;
-  if (data.reelId || notification.entityType === 'reel') return `/reels?reel=${data.reelId || notification.entityId}`;
-  if (data.transactionId || type === 'wallet' || type.startsWith('wallet_')) return '/balance/transactions';
-  const actor = notification.actor?.username || notification.actorId || data.actorId || data.followerId;
-  if (actor) return `/profile/${actor}`;
-  return null;
+  try { const value = JSON.parse(notification.data); return value && typeof value === 'object' ? value : {}; } catch { return {}; }
 };
 
 const localTime = (value: string) => {
@@ -106,16 +91,67 @@ const localTime = (value: string) => {
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date);
 };
 
+const activityTabs = [
+  { id: 'all', label: 'All' },
+  { id: 'mentions', label: 'Mentions' },
+  { id: 'verified', label: 'Verified' },
+] as const;
+
+type ActivityTab = typeof activityTabs[number]['id'];
+
+function activityMessage(notification: VantaNotification, actorName?: string | null) {
+  const message = notification.message || notification.title || 'New notification';
+  if (!actorName) return message;
+  const data = metadataOf(notification);
+  const names = [actorName, notification.actor?.username, data.followerUsername, data.likerUsername, data.commenterUsername, data.senderUsername]
+    .filter((name): name is string => typeof name === 'string' && Boolean(name.trim()))
+    .flatMap(name => [name, '@' + name]).sort((a, b) => b.length - a.length);
+  const prefix = names.find(name => message.toLowerCase().startsWith(name.toLowerCase() + ' '));
+  return prefix ? message.slice(prefix.length).trimStart() : message;
+}
+
+function activityColor(type: string) {
+  if (type === 'like') return 'text-rose-500 fill-current';
+  if (type === 'follow') return 'text-sky-400';
+  if (type === 'comment' || type === 'mention') return 'text-[#d6a83f]';
+  if (type === 'gift' || type.startsWith('wallet')) return 'text-[#d6a83f]';
+  return 'text-white/55';
+}
+
+function RelatedPreview({ notification, token }: { notification: VantaNotification; token: string | null }) {
+  const data = metadataOf(notification);
+  const type = normalizedTypeOf(notification);
+  const provided = [data.postContent, data.postText, data.replyContent, data.commentContent, data.contentPreview]
+    .find((value): value is string => typeof value === 'string' && Boolean(value.trim()));
+  const postId = typeof data.postId === 'string' ? data.postId : notification.entityType === 'post' ? notification.entityId : null;
+  const lookupId = !provided && type === 'like' ? postId : null;
+  const [preview, setPreview] = useState<{ id: string; token: string; text: string } | null>(null);
+  useEffect(() => {
+    if (!lookupId || !token) return;
+    let current = true;
+    // Use the same authenticated, visibility-checked endpoint as Post Detail.
+    void apiGet<{ content?: string | null }>(`/api/feed/${encodeURIComponent(lookupId)}`, token, { skipCache: true })
+      .then(post => {
+        if (current && typeof post.content === 'string') setPreview({ id: lookupId, token, text: post.content });
+      }).catch(() => { /* Deleted or inaccessible content has no preview. */ });
+    return () => { current = false; };
+  }, [lookupId, token]);
+  const text = provided || (lookupId && preview?.id === lookupId && preview.token === token ? preview.text : '');
+  if (!text?.trim()) return null;
+  return <p className="mt-1 line-clamp-3 break-words text-sm leading-5 text-white/50">{previewExcerpt(text)}</p>;
+}
+
 function Skeletons() {
-  return <div aria-label="Loading notifications" className="">{[0, 1, 2, 3, 4].map(item => <div key={item} className="flex min-h-20 items-center gap-3 px-4 py-3"><div className="h-11 w-11 animate-pulse rounded-full bg-white/[0.07]" /><div className="flex-1 space-y-2"><div className="h-3.5 w-3/4 animate-pulse rounded bg-white/[0.07]" /><div className="h-3 w-24 animate-pulse rounded bg-white/[0.04]" /></div></div>)}</div>;
+  return <div aria-label="Loading notifications">{[0, 1, 2, 3, 4].map(item => <div key={item} className="flex gap-3 border-b border-white/[0.07] px-4 py-4"><div className="mt-2 h-6 w-6 animate-pulse rounded bg-white/[0.07]" /><div className="min-w-0 flex-1 space-y-2"><div className="h-9 w-9 animate-pulse rounded-full bg-white/[0.07]" /><div className="h-3.5 w-3/4 animate-pulse rounded bg-white/[0.07]" /><div className="h-3 w-1/2 animate-pulse rounded bg-white/[0.04]" /></div></div>)}</div>;
 }
 
 export default function NotificationsPage() {
   const router = useRouter();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { latestNotification, notificationRevision, setAuthoritativeUnreadCount, decrementUnreadCount, clearUnreadCount } = useNotifications();
   const [items, setItems] = useState<VantaNotification[]>([]);
   const [filterId, setFilterId] = useState('all');
+  const [activityTab, setActivityTab] = useState<ActivityTab>('all');
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [nextCursor, setNextCursor] = useState<string>();
   const [loading, setLoading] = useState(true);
@@ -129,9 +165,10 @@ export default function NotificationsPage() {
     const params = new URLSearchParams({ limit: '25' });
     if (cursor) params.set('cursor', cursor);
     if (unreadOnly) params.set('unread', 'true');
-    if (activeFilter.types) params.set('types', activeFilter.types.join(','));
+    if (activityTab === 'mentions') params.set('types', 'mention');
+    else if (activeFilter.types) params.set('types', activeFilter.types.join(','));
     return `/api/notifications?${params}`;
-  }, [activeFilter, unreadOnly]);
+  }, [activeFilter, activityTab, unreadOnly]);
 
   const load = useCallback(async (cursor?: string, quiet = false) => {
     if (!token) return;
@@ -172,7 +209,7 @@ export default function NotificationsPage() {
 
   const openNotification = async (notification: VantaNotification) => {
     await markRead(notification);
-    const destination = destinationOf(notification);
+    const destination = notificationDestination(notification);
     if (destination) router.push(destination);
   };
 
@@ -191,41 +228,61 @@ export default function NotificationsPage() {
     } finally { setMarkingAll(false); }
   };
 
+  const visibleItems = activityTab === 'verified' ? items.filter(item => item.actor?.verified && item.actor.verificationType) : items;
   const visibleUnread = items.some(item => !item.read);
 
   return (
-    <main className="flex min-h-[100dvh] w-full flex-col px-0 pb-[env(safe-area-inset-bottom)] text-[var(--vanta-white)]">
-      <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 bg-[var(--header-surface)] px-4">
-        <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><ArrowLeft size={20} /></button>
-        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[#f5f5f5]">Notifications</h1>
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          {visibleUnread && <button onClick={markAllRead} disabled={markingAll} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#C8C8CC] transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-50" aria-label="Mark all notifications as read">{markingAll ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}</button>}
-          <button onClick={() => router.push('/settings/notifications')} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#C8C8CC] transition hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50" aria-label="Notification settings"><Settings size={19} /></button>
+    <main className="-mx-4 flex min-h-[100dvh] w-[calc(100%+2rem)] flex-col bg-[var(--background)] pb-[env(safe-area-inset-bottom)] text-[var(--vanta-white)]">
+      <header className="sticky top-0 z-30 shrink-0 bg-[var(--header-surface)]">
+        <div className="grid h-14 grid-cols-[1fr_auto_1fr] items-center px-3">
+          <div className="flex min-w-0 items-center gap-1">
+            <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-8 shrink-0 items-center justify-center rounded-lg text-white/60 hover:bg-white/[0.05] focus-visible:ring-2 focus-visible:ring-white/50"><ArrowLeft size={19} /></button>
+            <button type="button" onClick={() => router.push('/profile')} aria-label="Your profile" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:ring-white/50"><Avatar src={user?.avatar ?? user?.avatarUrl} alt="" size="sm" /></button>
+          </div>
+          <h1 className="text-base font-bold text-white">Notifications</h1>
+          <button onClick={() => router.push('/settings/notifications')} className="ml-auto flex h-10 w-10 items-center justify-center rounded-lg text-[#dfbd55] hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#dfbd55]" aria-label="Notification settings"><Settings size={23} /></button>
+        </div>
+        <div className="grid grid-cols-3 border-b border-white/[0.08]" role="tablist" aria-label="Notification activity">
+          {activityTabs.map(tab => <button key={tab.id} role="tab" aria-selected={activityTab === tab.id} onClick={() => { setActivityTab(tab.id); setFilterId('all'); }} className={cn('relative flex min-h-12 items-center justify-center gap-1.5 px-1 text-sm font-semibold focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/50', activityTab === tab.id ? 'text-[#d6a83f] after:absolute after:inset-x-3 after:bottom-0 after:h-[3px] after:rounded-full after:bg-[#d6a83f]' : 'text-white/50 hover:text-white')}>
+            {tab.id === 'all' && <Bell size={17} className="text-[#dfbd55]" aria-hidden="true" />}{tab.label}
+          </button>)}
+        </div>
+        <div className="flex min-h-11 items-center gap-2 border-b border-white/[0.07] px-4">
+          {activityTab !== 'mentions' && <select aria-label="Notification category" value={filterId} onChange={event => setFilterId(event.target.value)} className="min-w-0 max-w-[42%] rounded-md bg-[var(--surface)] px-2 py-1.5 text-xs text-white/80 focus-visible:ring-2 focus-visible:ring-[#d6a83f]">{filters.map(filter => <option key={filter.id} value={filter.id}>{filter.id === 'all' ? 'All activity' : filter.label}</option>)}</select>}
+          <button type="button" aria-pressed={unreadOnly} onClick={() => setUnreadOnly(value => !value)} className={cn('shrink-0 rounded-md px-2 py-1.5 text-xs focus-visible:ring-2 focus-visible:ring-[#d6a83f]', unreadOnly ? 'bg-[var(--surface)] text-[#d6a83f]' : 'text-white/55')}>Unread only</button>
+          {visibleUnread && <button type="button" onClick={() => void markAllRead()} disabled={markingAll} className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-md px-1 py-2 text-xs text-white/65 focus-visible:ring-2 focus-visible:ring-[#d6a83f] disabled:opacity-50" aria-label="Mark all notifications as read">{markingAll ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}<span>Mark all read</span></button>}
         </div>
       </header>
-      <div className="mt-1 flex items-end justify-between gap-3 px-3">
-          <div className="flex min-w-0 gap-5 overflow-x-auto" role="tablist" aria-label="Notification categories">{filters.map(filter => <button key={filter.id} role="tab" aria-selected={filterId === filter.id} onClick={() => setFilterId(filter.id)} className={cn('relative shrink-0 pb-3 text-xs font-medium transition focus-visible:outline-none focus-visible:text-white', filterId === filter.id ? 'text-[#d6a83f]' : 'text-[#8a8a8a] hover:text-white')}>{filter.label}</button>)}</div>
-          <div className="mb-2 flex shrink-0 rounded-md bg-[var(--surface)] p-0.5" aria-label="Read status filter">{[false, true].map(value => <button key={String(value)} onClick={() => setUnreadOnly(value)} className={cn('rounded px-2.5 py-1.5 text-[11px] transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/50', unreadOnly === value ? 'text-[#d6a83f]' : 'text-[#8a8a8a] hover:text-white')}>{value ? 'Unread' : 'All'}</button>)}</div>
-        </div>
 
-      <section className="overflow-hidden bg-[var(--background)]" aria-live="polite">
-        {loading ? <Skeletons /> : error ? <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center"><CircleAlert size={28} className="text-[#b8b8b8]" /><h2 className="mt-4 text-base font-semibold text-white">Couldn&apos;t load your notifications.</h2><button onClick={() => void load()} className="mt-5 inline-flex items-center gap-2 rounded-md border border-white/[0.12] bg-[#161616] px-4 py-2.5 text-sm text-white hover:bg-[#1c1c1c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"><RefreshCw size={15} />Try Again</button></div> : items.length === 0 ? <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center"><div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/[0.1] bg-[var(--surface)]"><Bell size={23} className="text-[#b8b8b8]" /></div><h2 className="mt-4 text-base font-semibold text-white">You&apos;re all caught up</h2><p className="mt-1 text-sm text-[#666]">No new activity right now.</p></div> : <div>{items.map((notification, index) => {
-          const normalizedType = normalizedTypeOf(notification);
-          const Icon = iconByType[normalizedType] ?? Bell;
-          const data = metadataOf(notification);
-          const actorName = notification.actor?.fullName || notification.actor?.username;
-          const destination = destinationOf(notification);
-          const thumbnail = data.thumbnailUrl || data.imageUrl;
-          return <motion.article key={notification.id} initial={index === 0 && latestNotification?.id === notification.id ? { opacity: 0, y: -8 } : false} animate={{ opacity: 1, y: 0 }} className={cn('group relative flex min-h-16 items-center gap-2.5 px-2.5 py-2 transition-colors', notification.read ? 'bg-[var(--background)] hover:bg-[var(--surface)]' : 'bg-[#1F2630]/75 hover:bg-[#1F2630]')}>
-            <button onClick={() => void openNotification(notification)} className="absolute inset-0 z-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/50" aria-label={`${notification.read ? 'Read' : 'Unread'} notification: ${notification.message || notification.title || 'New notification'}${destination ? '. Open related content' : ''}`} />
-            <div className="relative z-10 shrink-0 pointer-events-none"><Avatar src={notification.actor?.avatar || undefined} alt={actorName || 'VANTA'} size="md" /><span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-[#101010] bg-[#f5f5f5] text-black"><Icon size={10} strokeWidth={2.3} /></span></div>
-            <div className="pointer-events-none relative z-10 min-w-0 flex-1"><p className="text-[13px] leading-[1.35rem] text-white/75">{actorName && <span className="mr-1 inline-flex max-w-full flex-wrap items-center gap-x-1 align-middle"><strong className="font-semibold text-white">{actorName}</strong>{notification.actor?.verified && notification.actor?.verificationType && <VerificationBadge verified type={notification.actor.verificationType} size="sm" />}</span>}{notification.message || notification.title || 'New notification'}</p><div className="mt-0.5"><time dateTime={notification.createdAt} className="text-[11px] text-white/45">{localTime(notification.createdAt)}</time></div></div>
-            {/* Notification media may come from user-configured remote hosts. */}
-            {thumbnail && <img src={resolveMediaUrl(thumbnail)} alt="Related content" className="pointer-events-none relative z-10 h-12 w-12 shrink-0 rounded object-cover" /* eslint-disable-line @next/next/no-img-element */ />}
-            {!notification.read && <span className="pointer-events-none relative z-10 h-2 w-2 shrink-0 rounded-full bg-[#d6a83f]" aria-hidden="true" />}
-            {destination && <ChevronRight size={15} className="pointer-events-none relative z-10 shrink-0 text-[#666]" aria-hidden="true" />}
-          </motion.article>;
-        })}{nextCursor && <div className="flex justify-center p-4"><button onClick={() => void load(nextCursor)} disabled={loadingMore} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-white/[0.1] bg-[var(--surface)] px-4 text-xs font-medium text-[#b8b8b8] hover:bg-[#161616] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-50">{loadingMore && <Loader2 size={14} className="animate-spin" />}Load more</button></div>}</div>}
+      <section className="bg-[var(--background)]" aria-live="polite">
+        {loading ? <Skeletons /> : error ? <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center"><CircleAlert size={28} className="text-white/65" /><h2 className="mt-4 text-base font-semibold text-white">Couldn&apos;t load your notifications.</h2><button onClick={() => void load()} className="mt-5 inline-flex items-center gap-2 rounded-md border border-white/[0.12] bg-[var(--surface)] px-4 py-2.5 text-sm text-white focus-visible:ring-2 focus-visible:ring-white/50"><RefreshCw size={15} />Try Again</button></div> : <>
+          {visibleItems.length === 0 && <div className="flex min-h-48 flex-col items-center justify-center px-6 text-center"><Bell size={26} className="text-white/45" /><h2 className="mt-3 text-base font-semibold text-white">{nextCursor ? 'No matching activity on this page' : 'You\u2019re all caught up'}</h2><p className="mt-1 text-sm text-white/50">{nextCursor ? 'Load more to check older notifications.' : 'No matching notifications right now.'}</p></div>}
+          {visibleItems.map((notification, index) => {
+            const normalizedType = normalizedTypeOf(notification);
+            const Icon = iconByType[normalizedType] ?? Bell;
+            const data = metadataOf(notification);
+            const actorName = notification.actor?.fullName || notification.actor?.username;
+            const destination = notificationDestination(notification);
+            const thumbnail = [data.thumbnailUrl, data.imageUrl].find(value => typeof value === 'string' && value.trim());
+            const message = activityMessage(notification, actorName);
+            return <motion.article key={notification.id} initial={index === 0 && latestNotification?.id === notification.id ? { opacity: 0, y: -8 } : false} animate={{ opacity: 1, y: 0 }} className={cn('relative border-b border-white/[0.08] transition-colors hover:bg-[var(--surface)]', !notification.read && 'bg-white/[0.025]')}>
+              <button type="button" onClick={() => void openNotification(notification)} className="flex w-full items-start gap-3 px-4 py-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#d6a83f]" aria-label={`${notification.read ? 'Read' : 'Unread'} notification: ${actorName ? actorName + ' ' : ''}${message}${destination ? '. Open related content' : ''}`}>
+                <span className={cn('mt-1 flex w-7 shrink-0 justify-center', activityColor(normalizedType))}><Icon size={26} strokeWidth={2.2} aria-hidden="true" /></span>
+                <div className="min-w-0 flex-1">
+                  {notification.actor && <div className="mb-1.5"><Avatar src={notification.actor.avatar} alt={actorName || 'User'} size="md" /></div>}
+                  <p className="break-words text-sm leading-5 text-white/85">
+                    {actorName && <><strong className="font-bold text-white">{actorName}</strong>{notification.actor?.verified && notification.actor.verificationType && <span className="ml-1 inline-flex align-middle"><VerificationBadge verified type={notification.actor.verificationType} size="sm" /></span>}{' '}</>}
+                    {message}{' '}<span className="whitespace-nowrap text-white/45">· <time dateTime={notification.createdAt}>{localTime(notification.createdAt)}</time></span>
+                  </p>
+                  <RelatedPreview notification={notification} token={token} />
+                  {thumbnail && <img src={resolveMediaUrl(thumbnail)} alt="Related content" className="mt-2 max-h-20 max-w-32 rounded object-cover" /* eslint-disable-line @next/next/no-img-element */ />}
+                </div>
+                {!notification.read && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-[#d6a83f]" aria-hidden="true" />}
+              </button>
+            </motion.article>;
+          })}
+          {nextCursor && <div className="flex justify-center p-4"><button onClick={() => void load(nextCursor)} disabled={loadingMore} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-white/[0.1] bg-[var(--surface)] px-4 text-xs font-medium text-white/70 focus-visible:ring-2 focus-visible:ring-white/50 disabled:opacity-50">{loadingMore && <Loader2 size={14} className="animate-spin" />}Load more</button></div>}
+        </>}
       </section>
     </main>
   );

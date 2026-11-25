@@ -14,6 +14,10 @@ import { apiPost, invalidateCache } from '@/lib/apiClient';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import QuoteEmbed from '@/components/social/QuoteEmbed';
+import ReplyAudienceSheet from './ReplyAudienceSheet';
+import { REPLY_AUDIENCE_LABELS, isReplyAudience, type ReplyAudience } from '@/lib/replyAudience';
+import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
+import { MentionTextarea } from '@/components/social/MentionTextarea';
 
 const MAX_CHARS = 5000;
 /** VANTA posts accept up to 10 attachments (matches MediaUploader's default). */
@@ -33,6 +37,8 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
   const quoteUrl = quoteTarget && intent !== 'story' ? quoteTarget.url : '';
   const [media, setMedia] = useState<MediaFile[]>([]);
   const [visibility, setVisibility] = useState<'public' | 'followers'>('public');
+  const [replyAudience, setReplyAudience] = useState<ReplyAudience>('EVERYONE');
+  const [showReplyAudience, setShowReplyAudience] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showDrafts, setShowDrafts] = useState(false);
   const [draftNotice, setDraftNotice] = useState('');
@@ -44,6 +50,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const uploaderRef = useRef<MediaUploaderHandle>(null);
+  const mentions = useMentionSuggestions({ value: content, onChange: setContent, token, inputRef: textareaRef });
 
   const isTextStory = isStory && storyKind === 'text';
   const hasContent = content.trim().length > 0 || media.length > 0 || Boolean(quoteUrl);
@@ -94,14 +101,15 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && open) {
-        if (showEmojiPicker) setShowEmojiPicker(false);
+        if (showReplyAudience) setShowReplyAudience(false);
+        else if (showEmojiPicker) setShowEmojiPicker(false);
         else handleClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, showEmojiPicker]);
+  }, [open, showEmojiPicker, showReplyAudience]);
 
   // Click outside emoji picker to close
   useEffect(() => {
@@ -121,27 +129,30 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
     if (hasContent) {
       const confirmed = window.confirm('Save this post as a draft before closing?');
       if (confirmed) {
-        savePostDraft(content, media.map((m) => ({ type: m.type, url: m.url, name: m.name })), visibility);
+        savePostDraft(content, media.map((m) => ({ type: m.type, url: m.url, name: m.name })), visibility, replyAudience);
       }
     }
     setContent('');
     setMedia([]);
     setVisibility('public');
+    setReplyAudience('EVERYONE');
+    setShowReplyAudience(false);
     setShowEmojiPicker(false);
     setShowDrafts(false);
     setDraftNotice('');
     setError(null);
     onClose();
     closeAll();
-  }, [content, media, visibility, hasContent, isSubmitting, onClose, closeAll]);
+  }, [content, media, visibility, replyAudience, hasContent, isSubmitting, onClose, closeAll]);
 
-  const restoreDraft = useCallback((draft: { content: string; media: { type: 'image' | 'video'; url: string; name: string }[] }) => {
+  const restoreDraft = useCallback((draft: { content: string; media: { type: 'image' | 'video'; url: string; name: string }[]; replyAudience?: string }) => {
     if (hasContent && !window.confirm('Replace the current post with this saved draft?')) return;
     setContent(draft.content);
     setMedia([]);
     setUploadSession((session) => session + 1);
     // Drafts do not contain original File bytes: attachments must be reselected.
     setVisibility('public');
+    setReplyAudience(isReplyAudience(draft.replyAudience) ? draft.replyAudience : 'EVERYONE');
     setDraftNotice(draft.media.length ? 'Draft text loaded. This post is public; reattach photos or videos before posting.' : 'Draft loaded. This post will be public.');
     setShowDrafts(false);
     window.requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
@@ -192,6 +203,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
 
         await apiPost('/api/feed', {
           content: [content.trim(), quoteUrl].filter(Boolean).join('\n\n'),
+          replyAudience,
           mediaUrl: mediaUrls[0],
           mediaFileId: mediaFileIds[0],
           media: {
@@ -207,6 +219,8 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
       setContent('');
       setMedia([]);
       setVisibility('public');
+      setReplyAudience('EVERYONE');
+      setShowReplyAudience(false);
       setShowEmojiPicker(false);
       setShowDrafts(false);
       setDraftNotice('');
@@ -217,10 +231,11 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
     } finally {
       setIsSubmitting(false);
     }
-  }, [content, media, canSubmit, isSubmitting, onClose, closeAll, token, intent, isTextStory, quoteUrl]);
+  }, [content, media, canSubmit, isSubmitting, onClose, closeAll, token, intent, isTextStory, quoteUrl, replyAudience]);
 
   const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setContent(e.target.value);
+    mentions.syncCaret(e.target);
     // Auto-resize
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -246,7 +261,7 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0, transition: { duration: 0.18 } }}
             exit={{ opacity: 0, y: 12, transition: { duration: 0.15 } }}
-            className="fixed inset-x-0 top-0 bottom-[var(--vanta-kb,0px)] z-[101] flex min-h-0 w-full flex-col overflow-hidden bg-[#050607] text-white"
+            className="fixed inset-x-0 top-0 bottom-[var(--vanta-kb,0px)] z-[101] flex min-h-0 w-full flex-col overflow-hidden bg-[var(--background)] text-[var(--text-primary)]"
             role="dialog"
             aria-modal="true"
             aria-label={isStory ? 'Create a story' : 'Create a post'}
@@ -299,26 +314,37 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                       </p>
                       <p className="truncate text-xs text-white/40">@{user?.username || 'you'}</p>
                     </div>
-                    <span className="ml-auto flex shrink-0 items-center gap-1.5 rounded-full border border-[#c9a227]/45 px-3 py-1.5 text-xs font-semibold text-[#dfbd55]" aria-label="Posts are visible to everyone">
-                      <Globe2 size={13} /> Everyone
-                    </span>
+                    <button type="button"
+                      onClick={() => { textareaRef.current?.blur(); setShowEmojiPicker(false); setShowReplyAudience(true); }}
+                      disabled={isSubmitting}
+                      aria-label="Who can reply to this post"
+                      aria-haspopup="dialog"
+                      aria-expanded={showReplyAudience}
+                      className="ml-auto flex shrink-0 items-center gap-1.5 rounded-full border border-[#c9a227]/45 px-3 py-1.5 text-xs font-semibold text-[#dfbd55] transition hover:bg-[var(--surface)] disabled:opacity-40"
+                    >
+                      <Globe2 size={13} /> {({ EVERYONE: 'Everyone', VERIFIED: 'Verified', FOLLOWING: 'Following', MENTIONED: 'Mentioned', EXTENDED: 'Follow network' } as const)[replyAudience]}
+                    </button>
                   </div>
                 )}
 
                 {/* Post text - borderless, auto-growing, keyboard friendly */}
                 {!isStory && (
-                  <textarea
+                  <MentionTextarea
                     ref={textareaRef}
                     value={content}
                     onChange={handleTextareaInput}
+                    onClick={e => mentions.syncCaret(e.currentTarget)}
+                    onKeyUp={e => mentions.syncCaret(e.currentTarget)}
+                    onKeyDown={e => { mentions.onKeyDown(e); }}
                     placeholder={intentMeta.placeholder}
                     rows={5}
                     maxLength={MAX_CHARS + 100}
-                    className="min-h-[38dvh] w-full resize-none border-0 bg-transparent text-[23px] leading-relaxed text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 focus:shadow-none"
+                    className={cn('w-full resize-none border-0 bg-transparent text-[23px] leading-relaxed text-white placeholder:text-white/40 outline-none focus:outline-none focus:ring-0 focus:shadow-none', mentions.open ? 'min-h-[90px]' : 'min-h-[38dvh]')}
                     aria-label="Post content"
                   />
                 )}
 
+                {!isStory && <MentionSuggestions mention={mentions} className="rounded-xl" />}
                 {quoteTarget && !isStory && <QuoteEmbed quote={quoteTarget} />}
                 {!isStory && draftNotice && <p role="status" className="text-xs text-[#dfbd55]">{draftNotice}</p>}
 
@@ -481,12 +507,19 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
             </AnimatePresence>
 
             {!isStory && (
-              <div className="flex min-h-[46px] shrink-0 items-center gap-2 border-t border-white/[0.08] px-5 text-xs text-[#dfbd55]">
-                <Globe2 size={16} /> Everyone can reply
-              </div>
+              <button type="button"
+                aria-haspopup="dialog"
+                aria-expanded={showReplyAudience}
+                aria-label="Choose who can reply"
+                disabled={isSubmitting}
+                onClick={() => { textareaRef.current?.blur(); setShowEmojiPicker(false); setShowReplyAudience(true); }}
+                className="flex min-h-[48px] w-full shrink-0 items-center gap-2 border-t border-[var(--border)] px-5 text-left text-xs font-semibold text-[#dfbd55] transition hover:bg-[var(--surface)] disabled:opacity-40"
+              >
+                <Globe2 size={17} /> {REPLY_AUDIENCE_LABELS[replyAudience]}
+              </button>
             )}
             {/* Creation toolbar — all visible controls use the existing uploader. */}
-            <footer className="shrink-0 border-t border-white/[0.08] bg-[#0b1116] px-3 pt-1.5 pb-[max(8px,env(safe-area-inset-bottom))]">
+            <footer className="shrink-0 border-t border-[var(--border)] bg-[var(--background)] px-3 pt-1.5 pb-[max(8px,env(safe-area-inset-bottom))]">
               <div className="flex items-center justify-between">
                 <div className="-ml-1.5 flex items-center">
                   <button
@@ -536,6 +569,13 @@ export default function CreatePostModal({ open, initialIntent = 'post', onClose 
                 {!isStory && <CharacterCounter current={content.length} max={MAX_CHARS} />}
               </div>
             </footer>
+            {!isStory && showReplyAudience && (
+              <ReplyAudienceSheet
+                audience={replyAudience}
+                onSelect={value => { setReplyAudience(value); setShowReplyAudience(false); }}
+                onClose={() => setShowReplyAudience(false)}
+              />
+            )}
           </motion.div>
         </>
       )}

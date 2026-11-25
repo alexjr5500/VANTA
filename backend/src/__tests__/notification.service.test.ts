@@ -3,6 +3,10 @@ import { prisma } from '../prisma';
 
 jest.mock('../prisma', () => ({
   prisma: {
+    user: { findUnique: jest.fn(), findMany: jest.fn() },
+    userSettings: { findMany: jest.fn() },
+    follow: { findMany: jest.fn() },
+    blockedUser: { findMany: jest.fn() },
     notification: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
@@ -35,6 +39,23 @@ describe('NotificationService', () => {
   };
 
   beforeEach(() => jest.clearAllMocks());
+
+  describe('published mentions', () => {
+    test('delivers a canonical post mention once, excluding blocked and restricted recipients', async () => {
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue({ username: 'sender' });
+      (prisma.user.findMany as jest.Mock).mockResolvedValue([{ id: 'anime' }, { id: 'blocked' }, { id: 'restricted' }]);
+      (prisma.userSettings.findMany as jest.Mock).mockResolvedValue([{ userId: 'restricted', mentionPermissions: 'nobody' }]);
+      (prisma.follow.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.blockedUser.findMany as jest.Mock).mockResolvedValue([{ userId: 'blocked', targetId: 'sender' }]);
+      const spy = jest.spyOn(notificationService, 'createNotification').mockResolvedValue(null);
+      try {
+        await notificationService.notifyPublishedMentions('sender', '@anime @ANIME @blocked @restricted', { kind: 'post', id: 'p1' });
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(spy).toHaveBeenCalledWith('anime', 'mention', 'You were mentioned', '@sender mentioned you in a post', expect.objectContaining({ actorId: 'sender', postId: 'p1', entityType: 'post', entityId: 'p1', referenceKey: 'publish-mention:post:p1:anime' }));
+        expect(prisma.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: { not: 'sender' } }) }));
+      } finally { spy.mockRestore(); }
+    });
+  });
 
   describe('getNotifications', () => {
     test('should return notifications with cursor pagination', async () => {

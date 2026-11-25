@@ -22,6 +22,7 @@ export const DAILY_STATUS_LIMIT_FRONTEND = 7;
 export const STORY_ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'image/tiff', 'image/heic', 'image/heif'];
 export const STORY_ACCEPTED_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v'];
 export const STORY_MAX_IMAGE_BYTES = 15 * 1024 * 1024; // matches backend UPLOAD_LIMITS.IMAGE
+export const STORY_MAX_VIDEO_SECONDS = 120;
 export const STORY_MAX_VIDEO_BYTES = 100 * 1024 * 1024; // matches backend UPLOAD_LIMITS.VIDEO
 
 export type StoryMediaKind = 'image' | 'video';
@@ -91,6 +92,9 @@ export function toUserFacingStoryError(reason: unknown): string {
         ? asObject.message
         : String(reason || '');
   const lower = message.toLowerCase();
+  if (/prisma\.|does not exist in the current database|database schema/i.test(message)) {
+    return 'Status posting is temporarily unavailable. Please try again later.';
+  }
   if (/reached today's status limit|status limit of/i.test(message)) {
     return 'You’ve reached today’s Status publishing limit. It resets at midnight — or become a verified creator for unlimited posts.';
   }

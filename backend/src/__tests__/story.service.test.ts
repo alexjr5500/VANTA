@@ -313,3 +313,15 @@ describe('StoryService safe retry after a lost publish response', () => {
     expect(txStoryUpdate).not.toHaveBeenCalled();
   });
 });
+
+
+describe('Status expiry', () => {
+  it('does not extend original expiry on a reshare', async () => {
+    const expiresAt = new Date(Date.now() + 60000);
+    (db.story.findUnique as jest.Mock).mockResolvedValue({ id: 'original', userId: 'owner', mediaUrl: 'https://cdn.example/photo.jpg', mediaType: 'IMAGE', expiresAt, user: { username: 'owner' } });
+    (db.$transaction as jest.Mock).mockImplementation(async (callback: any) => callback({ story: { create: db.story.create } }));
+    (db.story.create as jest.Mock).mockResolvedValue({ id: 'reshare' });
+    await service.reshareStory('viewer', 'original', undefined, { isVerified: true });
+    expect(db.story.create).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ expiresAt }) }));
+  });
+});

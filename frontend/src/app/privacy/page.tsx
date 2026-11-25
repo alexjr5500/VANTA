@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 export default function PrivacyPage() {
   return (
     <div className="min-h-screen bg-[#07070d] text-white">
-      <PageHeader sticky bleed title="Privacy Policy" back="/" />
+      <PageHeader sticky bleed title="Privacy Policy" back />
       <div className="w-full px-4 pb-16 pt-5 sm:px-6 lg:px-8">
         <div className="w-full border-b border-white/[0.08] pb-6">
           <p className="text-sm leading-relaxed text-white/55">How we handle your data</p>

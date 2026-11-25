@@ -14,9 +14,10 @@ import {
   Loader2, Users, ArrowLeft, X, UserPlus, Camera, BellOff, AtSign,
   Pin, Image as ImageIcon, FileText, Info, ChevronRight, Flag, Ban, Pencil, RefreshCw,
   Shield, Trash2, Crown, Globe2, Lock, UserMinus, Copy, Forward, Smile, MoreVertical, MapPin, BarChart3, Music2, Wallet as WalletIcon,
-  Mic, Square, Phone, Video, Play,
+  Mic, Square, Phone, Video, Play, QrCode,
 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
+import ImageCropEditor from '@/components/ui/ImageCropEditor';
 import PullToRefresh from '@/components/ui/PullToRefresh';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import { useToast } from '@/components/ui/Toast';
@@ -37,11 +38,126 @@ import { hasVisibleReadReceipt, outgoingReceiptState, shouldRefreshReadReceipts 
 import { isSecureMediaContext, mapMediaError } from '@/lib/mediaPermissions';
 import { addDrafts, hasBusyDraft, readyDraftCount, removeDraft, type AttachmentDraft } from '@/lib/attachmentDrafts';
 import { renderTextWithLinks } from '@/lib/linkify';
+import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
+import { MentionTextarea } from '@/components/social/MentionTextarea';
 import { extractQuoteRef } from '@/lib/quotePost';
 import QuoteEmbed from '@/components/social/QuoteEmbed';
 import { friendlyError, errorMessage } from '@/lib/errors';
 import type { VerificationType } from '@/types/verification';
 import { nativeGalleryConnection, parseNativeGallery, type NativeRecentMedia, type NativeGalleryStatus } from '@/lib/nativeStatusGallery';
+import { requestNativeLocation } from '@/lib/nativeLocation';
+
+/** Public-only sharing: the API validates current visibility before returning a
+ * canonical link and QR. This component never constructs private invite URLs. */
+function PublicCommunityShare({ entityId }: { entityId: string }) {
+  const { token } = useAuth();
+  const toast = useToast();
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [share, setShare] = useState<{ shareUrl: string; qrCode: string } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    if (!expanded || !token) return;
+    let current = true;
+    setLoading(true);
+    setShare(null);
+    setFailed(false);
+    apiGet<{ shareUrl: string; qrCode: string }>(`/api/communities/discover/${encodeURIComponent(entityId)}?includeQr=1`, token, { skipCache: true })
+      .then(result => {
+        if (!current) return;
+        if (!result?.shareUrl || !result?.qrCode?.startsWith('data:image/png;base64,')) throw new Error('Sharing unavailable');
+        setShare(result);
+      })
+      .catch(() => { if (current) setFailed(true); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [expanded, entityId, token, attempt]);
+
+  const copyLink = async () => {
+    if (!share) return;
+    try {
+      await navigator.clipboard.writeText(share.shareUrl);
+      toast.success('Link copied');
+    } catch {
+      toast.error('Could not copy link', 'You can select and copy the link below.');
+    }
+  };
+
+  return <div className="border-t border-white/[0.07]">
+    <button type="button" onClick={() => { setExpanded(value => !value); setShare(null); setFailed(false); }} aria-expanded={expanded} className="flex min-h-12 w-full items-center gap-3 px-4 text-left text-sm text-white/85 hover:bg-white/[0.05]">
+      <QrCode size={18} className="shrink-0 text-[#d6a83f]"/><span className="flex-1">Public invite link &amp; QR code</span><ChevronRight size={16} className={cn('text-white/35 transition-transform', expanded && 'rotate-90')}/>
+    </button>
+    {expanded && <div className="space-y-3 px-4 pb-4 text-center">
+      {loading && <p role="status" className="flex items-center justify-center gap-2 py-4 text-xs text-white/50"><Loader2 size={14} className="animate-spin"/>Generating share link</p>}
+      {failed && <div role="alert" className="py-2 text-xs text-white/55">Sharing is unavailable. The community may no longer be public.<button type="button" onClick={() => setAttempt(value => value + 1)} className="mt-2 block w-full text-[#f2c75c]">Try again</button></div>}
+      {!loading && share && <><img src={share.qrCode} alt="Scan to open this public VANTA community" width={192} height={192} className="mx-auto rounded-lg bg-white"/><p className="text-xs text-white/50">People must sign in and choose Join. This link does not bypass membership or privacy settings.</p><p className="select-all break-all text-xs text-[#f2c75c]">{share.shareUrl}</p><button type="button" onClick={() => void copyLink()} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#d6a83f] text-sm font-semibold text-black"><Copy size={15}/>Copy invite link</button></>}
+    </div>}
+  </div>;
+}
+
+const COMMUNITY_REACTIONS = ['❤️', '😂', '🔥', '👏', '👍'] as const;
+type CommunityChatSettings = { conversationId: string; allowedReactions: string[]; welcome: { text: string; membershipId: string } | null };
+
+function MemberWelcomeNotice({ text, membershipId, userId }: { text: string; membershipId: string; userId: string }) {
+  const key = `vanta:welcome:${userId}:${membershipId}`;
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    try { setVisible(localStorage.getItem(key) !== '1'); } catch { setVisible(true); }
+  }, [key]);
+  if (!visible) return null;
+  return <div className="mx-3 mt-2 flex shrink-0 items-start gap-3 rounded-xl border border-[#d6a83f]/25 bg-[#151517] p-3">
+    <MessageCircle size={18} className="mt-0.5 shrink-0 text-[#d6a83f]"/>
+    <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-[#f2c75c]">Welcome from the community</p><p className="mt-1 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-sm text-white/85">{text}</p></div>
+    <button type="button" aria-label="Dismiss welcome message" onClick={() => { try { localStorage.setItem(key, '1'); } catch {} setVisible(false); }} className="grid h-9 w-9 shrink-0 place-items-center text-white/50"><X size={17}/></button>
+  </div>;
+}
+
+type CommunityInsightsData = {
+  members: number;
+  messagesLast7Days: number | null;
+  currentMembersJoinedLast7Days: number | null;
+  asOf: string;
+  auditEnabled: boolean;
+  recentActions: { id: string; label: string; actor: string | null; createdAt: string }[];
+};
+
+function CommunityInsights({ kind, entityId }: { kind: 'group' | 'channel'; entityId: string }) {
+  const { token } = useAuth();
+  const [data, setData] = useState<CommunityInsightsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => {
+    if (!token) return;
+    let current = true;
+    setLoading(true);
+    setFailed(false);
+    setData(null);
+    apiGet<CommunityInsightsData>(`/api/communities/manage/${kind}/${encodeURIComponent(entityId)}/insights`, token, { skipCache: true })
+      .then(result => { if (current) setData(result); })
+      .catch(() => { if (current) setFailed(true); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [kind, entityId, token, refresh]);
+  const formatCount = (value: number | null) => value === null ? 'Unavailable' : value.toLocaleString();
+  return <div className="space-y-4 pb-5">
+    <div className="flex items-center justify-between gap-3"><div><h3 className="text-base font-semibold text-white">Statistics</h3><p className="mt-1 text-xs text-white/50">Current totals and the last 7 days</p></div><button type="button" aria-label="Refresh statistics" disabled={loading} onClick={() => setRefresh(value => value + 1)} className="grid h-11 w-11 place-items-center rounded-xl bg-[#151517] text-[#f2c75c] disabled:opacity-50"><RefreshCw size={18} className={loading ? 'animate-spin' : ''}/></button></div>
+    {loading && <p role="status" className="py-10 text-center text-sm text-white/50">Loading statistics and recent actions…</p>}
+    {failed && <div role="alert" className="rounded-xl bg-[#151517] p-4 text-sm text-white/70">Statistics are unavailable.<button type="button" onClick={() => setRefresh(value => value + 1)} className="mt-3 block min-h-11 w-full rounded-lg border border-[#d6a83f]/30 text-[#f2c75c]">Try again</button></div>}
+    {data && <>
+      <div className="grid grid-cols-2 gap-2">
+        {[{ label: kind === 'group' ? 'Total members' : 'Total subscribers', value: data.members }, { label: kind === 'group' ? 'Messages · 7 days' : 'Posts · 7 days', value: data.messagesLast7Days }, { label: 'Current members joined · 7 days', value: data.currentMembersJoinedLast7Days }].map(metric => <div key={metric.label} className="min-w-0 rounded-xl border border-white/[0.08] bg-[#151517] p-4"><p className="break-words text-2xl font-semibold tabular-nums text-[#f2c75c]">{formatCount(metric.value)}</p><p className="mt-1 text-xs text-white/55">{metric.label}</p></div>)}
+      </div>
+      <p className="text-xs text-white/45">Updated {new Date(data.asOf).toLocaleString()}. Join counts exclude people who have since left.</p>
+      <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#151517]">
+        <div className="border-b border-white/[0.08] p-4"><h3 className="text-sm font-semibold text-[#f2c75c]">Recent actions</h3><p className="mt-1 text-xs text-white/50">Up to 50 recorded management actions in the last 30 days.</p></div>
+        {!data.auditEnabled ? <p className="p-4 text-sm text-white/50">Audit logging is disabled.</p> : !data.recentActions.length ? <p className="p-4 text-sm text-white/50">No recorded actions in this period.</p> : <div className="divide-y divide-white/[0.07]">{data.recentActions.map(action => <div key={action.id} className="flex gap-3 p-4"><Shield size={16} className="mt-0.5 shrink-0 text-[#d6a83f]"/><div className="min-w-0 flex-1"><p className="text-sm text-white/85">{action.label}</p><p className="mt-1 break-words text-xs text-white/50">{action.actor ? `@${action.actor} · ` : ''}{new Date(action.createdAt).toLocaleString()}</p></div></div>)}</div>}
+      </div>
+    </>}
+  </div>;
+}
 
 interface Conversation {
   id: string;
@@ -360,6 +476,9 @@ export default function MessagesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showMobileList, setShowMobileList] = useState(true);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createStep, setCreateStep] = useState<'details' | 'settings' | 'people'>('details');
+  const createBackRef = useRef<() => void>(() => undefined);
+  const [photoCrop, setPhotoCrop] = useState<{ kind: 'create' | 'edit'; file: File; entityId?: string; conversationId?: string } | null>(null);
   const [creatorFollowers, setCreatorFollowers] = useState<any[]>([]);
   const [followersLoading, setFollowersLoading] = useState(false);
   const [autoDeleteSeconds, setAutoDeleteSeconds] = useState(0);
@@ -401,6 +520,7 @@ export default function MessagesPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesViewportRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
+  const mentions = useMentionSuggestions({ value: messageInput, onChange: setMessageInput, token, inputRef: messageInputRef });
   const previousLastMessageIdRef = useRef<string | null>(null);
 // Separates the one-time "open at latest unread / bottom" anchor from the
 // live "only auto-scroll when already near the bottom" behaviour.
@@ -474,6 +594,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const pendingMediaRef = useRef<Record<string, { file: File; fileType: 'IMAGE' | 'VIDEO' | 'FILE'; fileName: string; previewUrl: string }[]>>({});
   const [trimVideoFile, setTrimVideoFile] = useState<File | null>(null);
   const [editEntityOpen, setEditEntityOpen] = useState(false);
+  const [communityChatSettings, setCommunityChatSettings] = useState<CommunityChatSettings | null>(null);
+  const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
+  const [permissionDraft, setPermissionDraft] = useState<Record<string, unknown>>({});
   const [editEntityId, setEditEntityId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
@@ -515,6 +638,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const [directMenuOpen, setDirectMenuOpen] = useState(false);
   const [blockConfirmOpen, setBlockConfirmOpen] = useState(false);
   const [memberBrowserOpen, setMemberBrowserOpen] = useState(false);
+  const [entityProfileTab, setEntityProfileTab] = useState<'people' | 'media' | 'files' | 'links'>('people');
+  const [entitySettingsTab, setEntitySettingsTab] = useState<'info' | 'people' | 'permissions' | 'engagement' | 'ownership' | 'insights'>('info');
+  const [managementMemberFilter, setManagementMemberFilter] = useState<'all' | 'admins'>('all');
   const [memberBrowserQuery, setMemberBrowserQuery] = useState('');
   const [isLoadingEntityInfo, setIsLoadingEntityInfo] = useState(false);
   // Unified Call button: opens the Voice/Video call-type menu. The menu closes
@@ -674,7 +800,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   // as the visible Chat headers: settings -> info -> conversation -> list.
   useEffect(() => {
     const view = searchParams.get('view');
-    if (view !== 'info' && view !== 'settings') setDetailsOpen(false);
+    if (view !== 'info' && view !== 'settings' && view !== 'media') setDetailsOpen(false);
     if (view !== 'settings') setEditEntityOpen(false);
     if (view !== 'media') setMediaViewer(null);
     // Back navigation closes transient chat overlays.
@@ -696,6 +822,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const openConversationInfo = useCallback(async () => {
     const requestId = ++entityInfoRequestRef.current;
     setDetailsOpen(true);
+    setEntityProfileTab('people');
     setMemberBrowserOpen(false);
     setMemberBrowserQuery('');
     pushChatView('info');
@@ -808,8 +935,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   const fetchMessages = useCallback(async (conversationId: string) => {
     if (!token) return;
     try {
-      const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50`, token);
+      const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50`, token, { skipCache: true });
       if (activeConversationRef.current !== conversationId) return;
+      setCommunityChatSettings({ conversationId, allowedReactions: Array.isArray(data?.allowedReactions) ? data.allowedReactions.filter((reaction: unknown) => COMMUNITY_REACTIONS.some(item => item === reaction)) : [...COMMUNITY_REACTIONS], welcome: data?.welcome || null });
       const msgList = Array.isArray(data) ? data : data?.messages ?? data?.data ?? [];
       setMessages(msgList.map((msg: any) => normalizeMessageRecord(msg, user?.id)).filter((msg: Message) => !msg.deletedAt));
       setMessageCursor(data?.nextCursor ?? null);
@@ -1204,6 +1332,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setFirstUnreadId(null);
     setPendingNewMessage(false);
     setActiveConversation(id);
+    setCommunityChatSettings(null);
+    setReactionPickerMessageId(null);
+    setMessages([]);
+    setMessageCursor(null);
+    setManagedEntity(null);
     setShowMobileList(false);
     setDetailsOpen(false);
     setEditEntityOpen(false);
@@ -1246,6 +1379,43 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setDirectMenuOpen(false);
     router.replace('/chat', { scroll: false });
   }, [router]);
+
+  // Hardware Back must dismiss the visible chat sheet/subscreen rather than
+  // navigating the underlying WebView history while it remains on screen.
+  useEffect(() => {
+    const onNativeBack = (event: Event) => {
+      if (event.defaultPrevented) return;
+      const handled = (close: () => void) => { event.preventDefault(); close(); };
+      if (showAttachmentSheet) return handled(() => setShowAttachmentSheet(false));
+      if (composerEmojiOpen) return handled(() => setComposerEmojiOpen(false));
+      if (callMenuOpen) return handled(() => setCallMenuOpen(false));
+      if (directMenuOpen) return handled(() => setDirectMenuOpen(false));
+      if (messageSearchOpen) return handled(() => setMessageSearchOpen(false));
+      if (contactPickerOpen) return handled(() => setContactPickerOpen(false));
+      if (deleteConfirmMessage) return handled(() => setDeleteConfirmMessage(null));
+      if (deleteSelectedConfirmOpen) return handled(() => setDeleteSelectedConfirmOpen(false));
+      if (leaveDialog) return handled(() => setLeaveDialog(false));
+      if (photoCrop) return handled(() => setPhotoCrop(null));
+      if (createModalOpen) return handled(() => createBackRef.current());
+      if (pollDraft) return handled(() => setPollDraft(null));
+      if (selectedMessageIds.size > 0) return handled(() => closeMessageSelection());
+      if (memberBrowserOpen && !mediaViewer && !editEntityOpen) return handled(() => setMemberBrowserOpen(false));
+      if (mediaViewer || detailsOpen || editEntityOpen || searchParams.get('view')) {
+        return handled(() => closeChatSubview(() => {
+          setMediaViewer(null); setDetailsOpen(false); setEditEntityOpen(false);
+        }));
+      }
+      if (activeConversation) return handled(handleCloseConversation);
+    };
+    window.addEventListener('vanta-native-back', onNativeBack, true);
+    return () => window.removeEventListener('vanta-native-back', onNativeBack, true);
+    // closeMessageSelection is intentionally called via the latest render;
+    // the effect re-registers when transient chat state changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAttachmentSheet, composerEmojiOpen, callMenuOpen, directMenuOpen,
+      messageSearchOpen, contactPickerOpen, deleteConfirmMessage, deleteSelectedConfirmOpen,
+      leaveDialog, createModalOpen, createStep, createType, photoCrop, pollDraft, selectedMessageIds.size, mediaViewer,
+      detailsOpen, editEntityOpen, memberBrowserOpen, activeConversation, searchParams, closeChatSubview, handleCloseConversation]);
 
   const handleLeaveActiveConversation = async () => {
     if (!token || !activeConv || activeConv.type === 'direct') return;
@@ -1354,31 +1524,52 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
   };
 
-  const sendLocationMessage = () => {
-    if (!navigator.geolocation) {
-      showToast?.({ type: 'error', title: 'Location unavailable', message: 'This device or browser cannot share a location. You can type an address in chat instead.' });
-      return;
-    }
+  const sendLocationMessage = async () => {
     if (typeof window !== 'undefined' && window.isSecureContext === false) {
-      showToast?.({ type: 'error', title: 'Location unavailable', message: 'Location sharing requires a secure connection. You can type an address in chat instead.' });
+      showToast?.({ type: 'error', title: 'Location unavailable', message: 'Location sharing requires a secure connection.' });
       return;
     }
     showToast?.({ type: 'info', title: 'Getting location', message: 'Sharing your current location...' });
+
+    // The signed APK can prompt for Android location permission even after
+    // WebView's site-level geolocation permission was previously denied.
+    // This request happens only after the user taps Share Location.
+    const nativeRequest = requestNativeLocation(30000);
+    if (nativeRequest) {
+      try {
+        const coords = await nativeRequest;
+        void sendSpecialMessage('LOCATION', { lat: coords.lat, lng: coords.lng }, 'Location');
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'Location unavailable';
+        const message = detail === 'permission-denied'
+          ? 'Allow Location in Android Settings → Apps → VANTA → Permissions, then retry.'
+          : detail === 'location-disabled'
+            ? 'Turn on Location in your phone settings and retry.'
+            : detail === 'location-unavailable'
+              ? 'Location is allowed but no position was found. Enable Google Location Accuracy and Wi-Fi or mobile data, then try again outdoors.'
+              : detail;
+        showToast?.({ type: 'error', title: 'Location unavailable', message });
+      }
+      return;
+    }
+
+    if (!navigator.geolocation) {
+      showToast?.({ type: 'error', title: 'Location unavailable', message: 'This device or browser cannot share a location.' });
+      return;
+    }
     navigator.geolocation.getCurrentPosition(
       position => void sendSpecialMessage('LOCATION', { lat: position.coords.latitude, lng: position.coords.longitude }, 'Location'),
       error => {
         const androidApp = navigator.userAgent.includes('VANTAAndroid');
         const message = error.code === error.PERMISSION_DENIED
           ? androidApp
-            ? 'Allow Location for VANTA in Android Settings → Apps → VANTA → Permissions. Then retry sharing your location.'
-            : 'Location permission was denied. Allow location access in your browser settings, or type an address in chat.'
+            ? 'Allow Location for VANTA in Android Settings → Apps → VANTA → Permissions. If it is already allowed, install the latest production APK and restart VANTA.'
+            : 'Location permission was denied. Allow location access in your browser settings.'
           : error.code === error.TIMEOUT
             ? 'Location lookup timed out. Turn on device Location and try again.'
             : 'Could not read your location. Turn on device Location and check VANTA location access.';
         showToast?.({ type: 'error', title: 'Location unavailable', message });
       },
-      // Coarse/network location works even when Android users choose
-      // "approximate" permission. Do not require a slow GPS fix to share.
       { enableHighAccuracy: false, timeout: 20000, maximumAge: 30000 }
     );
   };
@@ -2069,6 +2260,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
 
   const resetCreateModal = (options?: { discardImage?: boolean }) => {
+    if (!options && (isCreatingEntity || isUploadingAvatar)) return;
     const discardImage = options?.discardImage ?? true;
     const pendingFileId = createAvatarFileIdRef.current;
 
@@ -2083,6 +2275,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
 
     setCreateModalOpen(false);
+    setCreateStep('details');
+    setPhotoCrop(null);
     setCreateType(null);
     setAutoDeleteSeconds(0);
     setCreatorFollowers([]);
@@ -2100,9 +2294,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
   const handleOpenCreateModal = (type: 'group' | 'channel') => {
     setCreateType(type);
+    setCreateStep('details');
     setCreateModalOpen(true);
     setAutoDeleteSeconds(0);
-    if (type === 'group' && token) {
+    if (token) {
       setFollowersLoading(true);
       apiGet<any>('/api/profiles/me/followers?limit=100', token)
         .then(result => { const items = result?.items ?? result?.data?.items ?? []; setCreatorFollowers(items); setMemberSearchResults(items.filter((item: any) => item.id !== user?.id)); })
@@ -2142,6 +2337,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
    */
   const handleCreateImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file || !token || !createType) return;
 
     const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp', 'image/tiff', 'image/heic', 'image/heif'];
@@ -2160,6 +2356,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
 
     setCreateAvatarError(null);
+    setPhotoCrop({ kind: 'create', file: uploadFile });
+  };
+
+  const uploadCroppedCreateAvatar = async (uploadFile: File) => {
+    if (!token || !createType || !createModalOpen) return;
     setIsUploadingAvatar(true);
     try {
       const formData = new FormData();
@@ -2172,6 +2373,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       );
       const url = uploadResult.url;
       const fileId = uploadResult.id ?? uploadResult.file?.id ?? null;
+      const previousFileId = createAvatarFileIdRef.current;
+      if (previousFileId && previousFileId !== fileId) void apiDelete<any>(`/api/upload/files/${previousFileId}`, token).catch(() => undefined);
       setCreateAvatar(url);
       createAvatarFileIdRef.current = fileId;
       setCreateAvatarFileId(fileId);
@@ -2183,18 +2386,19 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     }
   };
 
-  /** Remove the temporary create image — both from the UI and the server. */
-  const removeCreateAvatar = async () => {
-    const fileId = createAvatarFileIdRef.current;
-    createAvatarFileIdRef.current = null;
-    setCreateAvatarFileId(null);
-    setCreateAvatar(null);
-    setCreateAvatarError(null);
-    if (fileId && token) {
-      apiDelete<any>(`/api/upload/files/${fileId}`, token).catch(() => undefined);
-    }
+  const previousCreateStep = () => {
+    if (isCreatingEntity || isUploadingAvatar) return;
+    if (createStep === 'people') setCreateStep(createType === 'channel' ? 'settings' : 'details');
+    else if (createStep === 'settings') setCreateStep('details');
+    else resetCreateModal();
   };
-
+  createBackRef.current = previousCreateStep;
+  const advanceCreateStep = () => {
+    if (!createName.trim()) { setCreateValidationError('Please enter a name.'); return; }
+    if (createStep === 'details') setCreateStep(createType === 'channel' ? 'settings' : 'people');
+    else if (createStep === 'settings') setCreateStep('people');
+    else void handleCreateEntity();
+  };
   const handleCreateEntity = async () => {
     if (!token || !createType) return;
     if (!createName.trim()) {
@@ -2239,6 +2443,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         avatar: created.avatar ?? createAvatar ?? undefined,
         unread: 0,
         online: false,
+        entityId,
+        currentRole: 'OWNER',
+        description: created.description ?? createDescription.trim(),
+        memberCount: created._count?.members ?? created.members?.length,
       };
 
       setConversations(prev => [newConversation, ...prev]);
@@ -2299,6 +2507,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   });
 
   const activeConv = conversations.find(c => c.id === activeConversation);
+  const activeCommunitySettings = communityChatSettings?.conversationId === activeConversation ? communityChatSettings : null;
+  const visibleReactions = activeConv?.type === 'direct' ? [...COMMUNITY_REACTIONS] : activeCommunitySettings?.allowedReactions ?? [];
   const canPublish = activeConv?.type !== 'channel' || ['OWNER', 'ADMIN', 'MODERATOR'].includes(activeConv.currentRole || '');
 
   // Private 1-to-1 voice/video calling (WebRTC + Socket.IO signaling). The call
@@ -2338,6 +2548,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       && (isManagedOwner || managedEntity?.permissions?.manageSubscribers !== false);
   const canRemoveEntityMembers = activeConv?.type === 'group' ? isGroupPrivileged : canManageEntityMembers;
   const canManageEntityPermissions = activeConv?.type === 'group' ? isGroupPrivileged : activeConv?.type === 'channel' && isManagedOwner;
+  const canViewEntityInsights = Boolean(activeConv && activeConv.type !== 'direct' && (isManagedOwner || ['OWNER', 'ADMIN'].includes(activeConv.currentRole || '')));
   const managedPermissions = activeConv?.type === 'channel'
     ? [
         ['postMessages', 'Post messages'],
@@ -2369,7 +2580,33 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         pinMessages: 'Members can pin messages.',
         changeGroupInfo: 'Members can edit the name and description.',
       };
-  const sharedAttachments = messages.flatMap(message => (message.attachments || []).map(attachment => ({ ...attachment, messageId: message.id })));
+  // Only show content already loaded for this conversation; never imply that
+  // this is a server-side archive or expose attachments from another chat.
+  const profileMessages = detailsOpen && activeConv?.type !== 'direct'
+    ? messages.filter(message => !message.deletedAt && !message.pending && (!message.conversationId || message.conversationId === activeConv?.id))
+    : [];
+  const sharedAttachments = profileMessages.flatMap(message => (message.attachments || []).map(attachment => ({ ...attachment, messageId: message.id }))).filter(attachment => Boolean(attachment.url));
+  const profileMedia = sharedAttachments.filter(attachment => ['IMAGE', 'VIDEO'].includes(attachment.fileType));
+  const profileFiles = sharedAttachments.filter(attachment => !['IMAGE', 'VIDEO'].includes(attachment.fileType));
+  const profileLinks = Array.from(new Set(profileMessages.flatMap(message => visibleMessageText(message).match(/https?:\/\/[^\s<>"']+/gi) || [])))
+    .flatMap(link => {
+      try {
+        const url = new URL(link.replace(/[.,!?;:)\]]+$/, ''));
+        return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? [{ href: url.href, host: url.hostname }] : [];
+      } catch { return []; }
+    });
+  const profileIsOwner = isManagedOwner || activeConv?.currentRole === 'OWNER';
+  const profilePeople = activeConv?.type === 'channel'
+    ? (managedEntity?.members || []).filter((member: any) => ['OWNER', 'ADMIN', 'MODERATOR'].includes(member.role))
+    : (managedEntity?.members || activeConv?.participants || []);
+  const profileMemberCount = managedEntity?._count?.members ?? activeConv?.memberCount ?? (activeConv?.type === 'group' ? activeConv?.participants?.length : undefined);
+  const closeProfileToChat = () => closeChatSubview(() => setDetailsOpen(false));
+  const openProfileSearch = () => {
+    setMessageSearchQuery('');
+    setMessageSearchResults([]);
+    closeProfileToChat();
+    setMessageSearchOpen(true);
+  };
 
   const toggleMemberSelection = (member: any) => {
     setSelectedMembers(prev =>
@@ -2379,7 +2616,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     );
   };
 
-  const openEntityEditor = async () => {
+  const openEntityEditor = async (initialTab: 'info' | 'people' | 'permissions' | 'engagement' | 'ownership' | 'insights' = 'info') => {
     if (!token || !activeConv || !canEditEntity || activeConv.type === 'direct') return;
     const conversationId = activeConv.id;
     const requestId = ++entityInfoRequestRef.current;
@@ -2394,8 +2631,12 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       setEditVisibility(entity.visibility || 'PUBLIC');
       setEditHandle(entity.handle || '');
       setManagedEntity(entity);
+      setPermissionDraft(entity.permissions || {});
       setManagementSearch('');
       setManagementResults([]);
+      setManagementMemberFilter('all');
+      setOwnershipConfirm(null);
+      setEntitySettingsTab(initialTab === 'info' && !canEditEntityInfo ? 'people' : initialTab);
       setEditEntityOpen(true);
       pushChatView('settings');
     } catch (err: any) {
@@ -2407,11 +2648,18 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file || !token || !activeConv || !editEntityId || !canEditEntityInfo) return;
+    if (!file.type.startsWith('image/') || file.size > 5 * 1024 * 1024) { showToast?.({ type: 'error', title: 'Choose an image up to 5MB' }); return; }
+    setPhotoCrop({ kind: 'edit', file, entityId: editEntityId, conversationId: activeConv.id });
+  };
+
+  const uploadCroppedEntityAvatar = async (file: File, target: NonNullable<typeof photoCrop>) => {
+    if (!token || !activeConv || !editEntityId || !canEditEntityInfo || !editEntityOpen || target.entityId !== editEntityId || target.conversationId !== activeConv.id) return;
+    const conversationId = activeConv.id;
     setIsUploadingAvatar(true);
     try {
       const form = new FormData(); form.append('avatar', file);
       const uploaded = await apiUpload<any>(`/api/upload/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}/avatar`, form, token);
-      setEditAvatar(uploaded.url ?? uploaded.data?.url);
+      if (activeConversationRef.current === conversationId) setEditAvatar(uploaded.url ?? uploaded.data?.url);
     } catch (err: any) { showToast?.({ type: 'error', title: 'Photo upload failed', message: errorMessage(err, { action: 'upload the photo', context: 'photo', fallback: 'Please choose another image.' }) }); }
     finally { setIsUploadingAvatar(false); }
   };
@@ -2423,11 +2671,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     entitySaveInFlightRef.current = true;
     setIsSavingEntity(true);
     try {
-      const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { name: editName.trim(), description: editDescription.trim(), avatar: editAvatar, ...((activeConv.type === 'group' && isGroupPrivileged) || (activeConv.type === 'channel' && isManagedOwner) ? { permissions: managedEntity?.permissions || {} } : {}), ...(activeConv.type === 'channel' ? { visibility: editVisibility, handle: editHandle.trim().replace(/^@/, '') } : {}) }, token);
+      const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { name: editName.trim(), description: editDescription.trim(), avatar: editAvatar, ...(activeConv.type === 'channel' ? { visibility: editVisibility, handle: editHandle.trim().replace(/^@/, '') } : {}) }, token);
       if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
       setConversations(previous => previous.map(item => item.id === conversationId ? { ...item, name: updated.name || editName.trim(), description: updated.description ?? editDescription.trim(), avatar: updated.avatar ?? editAvatar ?? undefined } : item));
       setManagedEntity(updated);
-      setEditEntityOpen(false);
+      closeChatSubview(() => setEditEntityOpen(false));
       showToast?.({ type: 'success', title: `${activeConv.type === 'group' ? 'Group' : 'Channel'} updated`, message: 'Changes are visible throughout Chat.' });
     } catch (err: any) {
       if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Changes not saved', message: errorMessage(err, { action: 'save the changes', context: activeConv?.type === 'channel' ? 'channel' : 'group', fallback: 'Please try again.' }) });
@@ -2502,9 +2750,28 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     finally { setManagementBusy(null); }
   };
 
+  const defaultPermission = (key: string) => key === 'reactionsEnabled' || key.startsWith('reaction_') || (activeConv?.type === 'channel' ? ['deleteMessages', 'manageChannelInfo', 'manageSubscribers'].includes(key) : ['sendMessages', 'sendMedia', 'sendLinks'].includes(key));
   const toggleManagedPermission = (key: string) => {
     if (!canManageEntityPermissions || !managedPermissions.some(([permission]) => permission === key)) return;
-    setManagedEntity((previous: any) => { const current = previous?.permissions?.[key] ?? (activeConv?.type === 'channel' ? ['deleteMessages', 'manageChannelInfo', 'manageSubscribers'].includes(key) : ['sendMessages', 'sendMedia', 'sendLinks'].includes(key)); return { ...previous, permissions: { ...(previous?.permissions || {}), [key]: !current } }; });
+    setPermissionDraft(previous => ({ ...previous, [key]: !(previous[key] ?? defaultPermission(key)) }));
+  };
+  const saveCommunityPermissions = async () => {
+    if (!token || !activeConv || activeConv.type === 'direct' || !editEntityId || !canManageEntityPermissions || entitySaveInFlightRef.current) return;
+    const conversationId = activeConv.id;
+    const requestId = entityInfoRequestRef.current;
+    entitySaveInFlightRef.current = true;
+    setIsSavingEntity(true);
+    try {
+      const updated = await apiPut<any>(`/api/${activeConv.type === 'group' ? 'groups' : 'channels'}/${editEntityId}`, { permissions: permissionDraft }, token);
+      if (entityInfoRequestRef.current !== requestId || activeConversationRef.current !== conversationId) return;
+      setManagedEntity(updated);
+      setPermissionDraft(updated.permissions || {});
+      const permissions = updated.permissions || {};
+      setCommunityChatSettings(previous => ({ conversationId, allowedReactions: permissions.reactionsEnabled === false ? [] : COMMUNITY_REACTIONS.filter((_, index) => permissions[`reaction_${index}`] !== false), welcome: previous?.conversationId === conversationId ? previous.welcome : null }));
+      showToast?.({ type: 'success', title: 'Community settings saved', message: 'Your changes are active.' });
+    } catch (err: any) {
+      if (entityInfoRequestRef.current === requestId && activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Settings not saved', message: err?.message || 'Please try again.' });
+    } finally { entitySaveInFlightRef.current = false; setIsSavingEntity(false); }
   };
 
   const confirmOwnershipTransfer = async () => {
@@ -2577,12 +2844,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         {/* Header */}
         <div className="flex h-14 min-h-14 shrink-0 items-center justify-between border-b border-white/[0.08] px-4">
           <div className="flex items-center gap-3">
-            <div className="w-7 h-7 rounded-lg bg-white/[0.045] flex items-center justify-center">
-              <MessageCircle size={17} strokeWidth={2} className="text-white/75" />
-            </div>
-            <h1 className="text-base font-semibold tracking-tight text-white">Chats</h1>
+            <h1 className="text-base font-semibold tracking-tight text-[var(--vanta-gold-bright)]">Chats</h1>
           </div>
-          <button type="button" onClick={() => router.push('/notifications')} aria-label="Open notifications" className="relative grid h-10 w-10 shrink-0 place-items-center rounded-lg text-white/65 transition hover:bg-white/[.06] hover:text-white">
+          <button type="button" onClick={() => router.push('/notifications')} aria-label="Open notifications" className="relative grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#dfbd55] transition hover:bg-white/[.06] hover:text-[#f2c75c]">
             <Bell size={18} />
             {notificationUnread > 0 && <span className="absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#d6a83f] px-1 text-[9px] font-bold leading-none text-black">{notificationUnread > 99 ? '99+' : notificationUnread}</span>}
           </button>
@@ -2806,6 +3070,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               </div>
             </header>
 
+            {activeConv.type !== 'direct' && activeCommunitySettings?.welcome && user?.id && <MemberWelcomeNotice key={activeCommunitySettings.welcome.membershipId} {...activeCommunitySettings.welcome} userId={user.id}/>}
             {messageSearchOpen && <div className="border-b border-white/[0.08] bg-[#101010] px-4 py-2"><form onSubmit={event => { event.preventDefault(); void searchWithinChat(); }} className="flex items-center gap-2"><Search size={14} className="shrink-0 text-white/35" /><input autoFocus value={messageSearchQuery} onChange={event => setMessageSearchQuery(event.target.value)} placeholder="Search this chat" className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/30" /><button type="submit" disabled={!messageSearchQuery.trim() || searchingMessages} className="text-[11px] font-medium text-white disabled:text-white/25">Search</button><button type="button" onClick={() => { setMessageSearchOpen(false); setMessageSearchQuery(''); setMessageSearchResults([]); }} aria-label="Close chat search" className="text-white/40"><X size={14}/></button></form></div>}
 
             {(searchingMessages || messageSearchResults.length > 0) && <div className="border-b border-white/[0.08] bg-[#101010] px-4 py-2"><div className="flex items-center justify-between"><span className="text-[10px] text-white/40">{searchingMessages ? 'Searching chat...' : `${messageSearchResults.length} result${messageSearchResults.length === 1 ? '' : 's'}`}</span><button onClick={() => setMessageSearchResults([])} className="text-white/40" aria-label="Close search results"><X size={13}/></button></div>{messageSearchResults.slice(0, 5).map(result => <button key={result.id} onClick={() => document.getElementById(`message-${result.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })} className="mt-1 block w-full truncate rounded bg-white/[0.03] px-2 py-1 text-left text-[10px] text-white/60">@{result.sender.username}: {result.text}</button>)}</div>}
@@ -3035,7 +3300,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                       <div className={cn('flex items-center gap-1 mt-0.5', msg.isOwn ? 'justify-end mr-1' : 'justify-start ml-1')}>
                         {msg.pinnedAt && <Pin size={9} className="text-white/40" />}
                       </div>
-                      {msg.reactions && msg.reactions.length > 0 && <div className={cn('mt-1 flex flex-wrap gap-1', msg.isOwn && 'justify-end')}>{Array.from(new Set(msg.reactions.map(item => item.reaction))).map(reaction => <button key={reaction} onClick={() => reactToMessage(msg, reaction)} className="rounded-full border border-white/10 bg-[#161616] px-2 py-0.5 text-xs">{reaction} {msg.reactions?.filter(item => item.reaction === reaction).length}</button>)}</div>}
+                      {!msg.pending && !msg.deletedAt && visibleReactions.length > 0 && selectedMessageIds.size === 0 && <div className={cn('flex flex-wrap items-center gap-1', msg.isOwn && 'justify-end')}>
+                        <button type="button" aria-label="Add reaction" aria-expanded={reactionPickerMessageId === msg.id} onClick={() => setReactionPickerMessageId(previous => previous === msg.id ? null : msg.id)} className="flex h-8 w-8 items-center justify-center rounded-full text-white/40 hover:text-[#f2c75c]"><Smile size={15}/></button>
+                        {reactionPickerMessageId === msg.id && visibleReactions.map(reaction => <button key={reaction} type="button" aria-label={`React with ${reaction}`} onClick={() => { setReactionPickerMessageId(null); void reactToMessage(msg, reaction); }} className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.06] text-lg hover:bg-[#d6a83f]/15">{reaction}</button>)}
+                      </div>}
+                      {msg.reactions && msg.reactions.length > 0 && <div className={cn('mt-1 flex flex-wrap gap-1', msg.isOwn && 'justify-end')}>{Array.from(new Set(msg.reactions.map(item => item.reaction))).map(reaction => <button key={reaction} onClick={() => reactToMessage(msg, reaction)} disabled={!visibleReactions.includes(reaction as typeof COMMUNITY_REACTIONS[number]) && !msg.reactions?.some(item => item.reaction === reaction && item.userId === user?.id)} className="rounded-full border border-white/10 bg-[#161616] px-2 py-0.5 text-xs disabled:opacity-60">{reaction} {msg.reactions?.filter(item => item.reaction === reaction).length}</button>)}</div>}
                     </div>
                     </div>
                   </div>
@@ -3281,12 +3550,17 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white/65 hover:text-white"><Smile size={23}/></button>
                 )}
                 <div className="flex-1 relative">
-                  <textarea
+                  <div className="absolute bottom-full left-0 right-0 mb-2 z-[95]"><MentionSuggestions mention={mentions} className="rounded-2xl" /></div>
+                  <MentionTextarea
+                    surfaceClassName="rounded-2xl bg-[#27313d] focus-within:bg-[#354252]"
                     ref={messageInputRef}
                     rows={1}
                     value={messageInput}
+                    onClick={e => mentions.syncCaret(e.currentTarget)}
+                    onKeyUp={e => mentions.syncCaret(e.currentTarget)}
                     onChange={e => {
                       setMessageInput(e.target.value);
+                      mentions.syncCaret(e.currentTarget);
                       // Auto-expand vertically up to a sensible max height, then
                       // scroll inside the input. Keeps the composer compact.
                       const el = e.currentTarget;
@@ -3315,6 +3589,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                     className="min-h-10 max-h-[100px] w-full resize-none overflow-y-auto rounded-2xl border-0 bg-[#27313d] px-3.5 py-2.5 text-[16px] leading-5 text-white outline-none placeholder:text-white/40 focus:bg-[#354252]"
                     enterKeyHint="enter"
                     onKeyDown={e => {
+                      if (mentions.onKeyDown(e)) return;
                       // Keep Enter as a newline on phones; the visible Send button
                       // is the only send action on mobile keyboards.
                       const isMobile = window.matchMedia('(max-width: 767px)').matches;
@@ -3434,25 +3709,68 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       )}
 
       {activeConv && detailsOpen && <motion.aside initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 320 }} className="vanta-conversation-info fixed inset-0 z-50 h-[var(--chat-viewport-height,100dvh)] w-full overflow-y-auto overscroll-contain border-l border-white/[0.08] bg-[#1F2630] md:left-0 md:right-0 md:w-full">
-        {memberBrowserOpen && activeConv.type !== 'direct' ? <section role="dialog" aria-modal="true" aria-label={activeConv.type === 'group' ? 'Group members' : 'Channel administrators'} className="fixed inset-0 z-[60] flex h-[var(--chat-viewport-height,100dvh)] flex-col bg-[#0d0d0f]"><header className="flex min-h-16 items-center gap-3 border-b border-white/[0.08] px-3 pt-[max(0px,env(safe-area-inset-top))]"><button type="button" onClick={() => setMemberBrowserOpen(false)} className="btn-icon h-10 w-10 shrink-0" aria-label="Back to information"><ArrowLeft size={18}/></button><div className="min-w-0 flex-1"><h2 className="text-sm font-semibold text-white">{activeConv.type === 'group' ? 'Members' : 'Administrators'}</h2><p className="mt-0.5 text-[10px] text-white/35">{activeConv.type === 'group' ? managedEntity?._count?.members ?? activeConv.memberCount ?? activeConv.participants?.length ?? 0 : managedEntity?.members?.filter((member: any) => ['OWNER','ADMIN','MODERATOR'].includes(member.role)).length ?? 0} {activeConv.type === 'group' ? 'people in this group' : 'channel administrators'}</p></div></header><div className="border-b border-white/[0.07] p-3"><div className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-[#151517] px-3"><Search size={15} className="shrink-0 text-white/35"/><input autoFocus type="search" value={memberBrowserQuery} onChange={event => setMemberBrowserQuery(event.target.value)} placeholder={activeConv.type === 'group' ? 'Find a member' : 'Find an administrator'} className="h-11 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/30"/></div></div><div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(20px,env(safe-area-inset-bottom))]"><div className="divide-y divide-white/[0.06]">{(managedEntity?.members || activeConv.participants || []).filter((member: any) => activeConv.type !== 'channel' || ['OWNER','ADMIN','MODERATOR'].includes(member.role)).filter((member: any) => { const person = member.user || member; const query = memberBrowserQuery.trim().toLowerCase(); return !query || `${person.fullName || ''} ${person.username || ''} ${member.role || ''}`.toLowerCase().includes(query); }).map((member: any) => { const person = member.user || member; const role = member.role || member.membershipRole; return <div key={member.userId || person.id} className="flex items-center gap-3 py-3"><Avatar src={person.avatar} alt={person.username || person.fullName || 'Member'} size="sm"/><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-white/85">{person.fullName || person.username || 'Member'}</p><p className="mt-0.5 truncate text-[11px] text-white/35">{person.username ? `@${person.username}` : ''}</p></div>{role && role !== 'MEMBER' && <span className="rounded-full bg-[#d6a83f]/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-[#d6a83f]">{role.toLowerCase()}</span>}</div>; })}{(managedEntity?.members || activeConv.participants || []).filter((member: any) => activeConv.type !== 'channel' || ['OWNER','ADMIN','MODERATOR'].includes(member.role)).filter((member: any) => { const person = member.user || member; const query = memberBrowserQuery.trim().toLowerCase(); return !query || `${person.fullName || ''} ${person.username || ''} ${member.role || ''}`.toLowerCase().includes(query); }).length === 0 && <p className="py-10 text-center text-xs text-white/35">{memberBrowserQuery ? 'No matching people found.' : 'Member details are unavailable.'}</p>}</div></div></section> : <><div className="sticky top-0 z-10 grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-white/[0.08] bg-[#1F2630]/95 px-3 pt-[max(0px,env(safe-area-inset-top))] backdrop-blur-xl"><button onClick={() => closeChatSubview(() => setDetailsOpen(false))} className="btn-icon h-10 w-10 shrink-0" aria-label={`Close ${activeConv.type === 'group' ? 'group' : activeConv.type === 'channel' ? 'channel' : 'conversation'} information`}><ArrowLeft size={18}/></button><div className="min-w-0 text-center"><h2 className="truncate text-sm font-semibold text-white">{activeConv.type === 'group' ? 'Group info' : activeConv.type === 'channel' ? 'Channel info' : 'Conversation info'}</h2></div>{activeConv.type !== 'direct' && canEditEntity ? <button onClick={() => void openEntityEditor()} className="btn-icon h-10 w-10 shrink-0 text-[#f2c75c]" aria-label={`Manage ${activeConv.type === 'group' ? 'group' : 'channel'}`} title={`Edit ${activeConv.type === 'group' ? 'group' : 'channel'}`}><Pencil size={16}/></button> : <span className="h-10 w-10 shrink-0" aria-hidden="true"/>}</div>
-        <div className="vanta-info-hero border-b border-white/[0.08] px-5 py-7 text-center"><div className="mx-auto w-fit"><Avatar src={activeConv.avatar} alt={activeConv.name} size="xl" /></div><h3 className="mt-3 text-base font-semibold text-white">{activeConv.name}</h3><p className="mt-1 text-xs text-white/40">{activeConv.type === 'direct' ? `@${activeConv.username || 'user'}` : activeConv.type === 'channel' ? `#${managedEntity?.handle || activeConv.handle || activeConv.name.toLowerCase().replace(/\s+/g, '-')}` : `${managedEntity?._count?.members ?? activeConv.memberCount ?? activeConv.participants?.length ?? 1} members`}</p>
-        {activeConv.type === 'channel' && <p className="mt-1 text-[11px] text-white/35">{managedEntity?._count?.members ?? activeConv.memberCount ?? 0} subscribers</p>}
-        {activeConv.type !== 'direct' && <div className="mt-4 w-full min-w-0 text-left"><div className="overflow-hidden rounded-xl border border-white/[0.07] bg-[#101012]"><div className="flex items-center justify-between border-b border-white/[0.05] px-3 py-2"><span className="text-[9px] font-semibold uppercase tracking-[.14em] text-white/35">About</span>{canEditEntity ? <button type="button" onClick={() => void openEntityEditor()} className="inline-flex items-center gap-1 pb-[2px] text-[9px] font-semibold uppercase tracking-[.1em] text-[#d6a83f] hover:text-[#f2c75c]"><Pencil size={10}/>Edit</button> : <span className="h-3" aria-hidden="true" />}</div><p className="whitespace-pre-wrap break-words px-3 py-3 text-xs font-normal leading-[1.6] text-white/55">{managedEntity?.description?.trim() || activeConv.description?.trim() ? (managedEntity?.description || activeConv.description)?.trim() : <span className="text-white/25">No description yet. Add an about text to help people know what this {activeConv.type === 'group' ? 'group' : 'channel'} is about.</span>}</p></div></div>}
-        {activeConv.type === 'channel' && <div className="mt-4 flex items-center justify-center gap-2"><span className={cn('rounded-full px-2.5 py-1 text-[10px] font-semibold', managedEntity?.visibility === 'PRIVATE' ? 'bg-white/[0.06] text-white/55' : 'bg-[#d6a83f]/10 text-[#f2c75c]')}>{managedEntity?.visibility === 'PRIVATE' ? 'Private channel' : 'Public channel'}</span>{(managedEntity?.handle || activeConv.handle) && <span className="rounded-full bg-white/[0.05] px-2.5 py-1 text-[10px] text-white/50">@{managedEntity?.handle || activeConv.handle}</span>}</div>}
-        {activeConv.type !== 'direct' && isLoadingEntityInfo && <p className="mt-3 flex items-center justify-center gap-2 text-[10px] text-white/30"><Loader2 size={12} className="animate-spin"/>Loading members and channel details</p>}
-        </div>
+        {memberBrowserOpen && activeConv.type !== 'direct' ? <section role="dialog" aria-modal="true" aria-label={activeConv.type === 'group' ? 'Group members' : 'Channel administrators'} className="fixed inset-0 z-[60] flex h-[var(--chat-viewport-height,100dvh)] flex-col bg-[#0d0d0f]"><header className="flex min-h-16 items-center gap-3 border-b border-white/[0.08] px-3 pt-[max(0px,env(safe-area-inset-top))]"><button type="button" onClick={() => setMemberBrowserOpen(false)} className="btn-icon h-10 w-10 shrink-0" aria-label="Back to information"><ArrowLeft size={18}/></button><div className="min-w-0 flex-1"><h2 className="text-sm font-semibold text-white">{activeConv.type === 'group' ? 'Members' : 'Administrators'}</h2><p className="mt-0.5 text-[10px] text-white/35">{activeConv.type === 'group' ? managedEntity?._count?.members ?? activeConv.memberCount ?? activeConv.participants?.length ?? 0 : managedEntity?.members?.filter((member: any) => ['OWNER','ADMIN','MODERATOR'].includes(member.role)).length ?? 0} {activeConv.type === 'group' ? 'people in this group' : 'channel administrators'}</p></div></header><div className="border-b border-white/[0.07] p-3"><div className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-[#151517] px-3"><Search size={15} className="shrink-0 text-white/35"/><input autoFocus type="search" value={memberBrowserQuery} onChange={event => setMemberBrowserQuery(event.target.value)} placeholder={activeConv.type === 'group' ? 'Find a member' : 'Find an administrator'} className="h-11 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/30"/></div></div><div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(20px,env(safe-area-inset-bottom))]"><div className="divide-y divide-white/[0.06]">{(managedEntity?.members || activeConv.participants || []).filter((member: any) => activeConv.type !== 'channel' || ['OWNER','ADMIN','MODERATOR'].includes(member.role)).filter((member: any) => { const person = member.user || member; const query = memberBrowserQuery.trim().toLowerCase(); return !query || `${person.fullName || ''} ${person.username || ''} ${member.role || ''}`.toLowerCase().includes(query); }).map((member: any) => { const person = member.user || member; const role = member.role || member.membershipRole; return <div key={member.userId || person.id} className="flex items-center gap-3 py-3"><Avatar src={person.avatar} alt={person.username || person.fullName || 'Member'} size="sm"/><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-white/85">{person.fullName || person.username || 'Member'}</p><p className="mt-0.5 truncate text-[11px] text-white/35">{person.username ? `@${person.username}` : ''}</p></div>{role && role !== 'MEMBER' && <span className="rounded-full bg-[#d6a83f]/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-[#d6a83f]">{role.toLowerCase()}</span>}</div>; })}{(managedEntity?.members || activeConv.participants || []).filter((member: any) => activeConv.type !== 'channel' || ['OWNER','ADMIN','MODERATOR'].includes(member.role)).filter((member: any) => { const person = member.user || member; const query = memberBrowserQuery.trim().toLowerCase(); return !query || `${person.fullName || ''} ${person.username || ''} ${member.role || ''}`.toLowerCase().includes(query); }).length === 0 && <p className="py-10 text-center text-xs text-white/35">{memberBrowserQuery ? 'No matching people found.' : 'Member details are unavailable.'}</p>}</div></div></section> : <><div className="vanta-community-compact-header sticky top-0 z-10 grid min-h-12 grid-cols-[auto_minmax(0,1fr)_auto] items-center border-b border-white/[0.08] bg-[#1F2630]/95 px-3 pt-[max(0px,env(safe-area-inset-top))] backdrop-blur-xl"><button onClick={() => closeChatSubview(() => setDetailsOpen(false))} className="btn-icon h-10 w-10 shrink-0" aria-label={`Close ${activeConv.type === 'group' ? 'group' : activeConv.type === 'channel' ? 'channel' : 'conversation'} information`}><ArrowLeft size={18}/></button><div className="min-w-0 text-center"><h2 className="truncate text-sm font-semibold text-white">{activeConv.type === 'group' ? 'Group info' : activeConv.type === 'channel' ? 'Channel info' : 'Conversation info'}</h2></div>{activeConv.type !== 'direct' && canEditEntity ? <button onClick={() => void openEntityEditor()} className="btn-icon h-10 w-10 shrink-0 text-[#f2c75c]" aria-label={`Manage ${activeConv.type === 'group' ? 'group' : 'channel'}`} title={`Edit ${activeConv.type === 'group' ? 'group' : 'channel'}`}><Pencil size={16}/></button> : <span className="h-10 w-10 shrink-0" aria-hidden="true"/>}</div>
+        {activeConv.type === 'direct' ? <>
+          <div className="vanta-info-hero border-b border-white/[0.08] px-5 py-7 text-center">
+            <div className="mx-auto w-fit"><Avatar src={activeConv.avatar} alt={activeConv.name} size="xl"/></div>
+            <h3 className="mt-3 text-base font-semibold text-white">{activeConv.name}</h3>
+            <p className="mt-1 text-xs text-white/40">@{activeConv.username || 'user'}</p>
+          </div>
         <div className="border-b border-white/[0.08] p-3">
-          <button onClick={searchWithinChat} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-white/60 hover:bg-white/[0.04] hover:text-white"><Search size={14}/>Search chat<ChevronRight size={13} className="ml-auto"/></button>
+          <button onClick={openProfileSearch} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-white/60 hover:bg-white/[0.04] hover:text-white"><Search size={14}/>Search chat<ChevronRight size={13} className="ml-auto"/></button>
           <button onClick={toggleMute} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-white/60 hover:bg-white/[0.04] hover:text-white"><BellOff size={14}/>{activeConv.muted ? 'Unmute notifications' : 'Mute notifications'}<ChevronRight size={13} className="ml-auto"/></button>
-          {activeConv.type === 'direct' && activeConv.username && <a href={`/profile/${activeConv.username}`} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-white/60 hover:bg-white/[0.04] hover:text-white"><Info size={14}/>View profile<ChevronRight size={13} className="ml-auto"/></a>}
-          {activeConv.type === 'direct' && <div className="mt-2 border-t border-white/[0.06] pt-2">
+          {activeConv.username && <a href={`/profile/${activeConv.username}`} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-white/60 hover:bg-white/[0.04] hover:text-white"><Info size={14}/>View profile<ChevronRight size={13} className="ml-auto"/></a>}
+          {<div className="mt-2 border-t border-white/[0.06] pt-2">
             {activeConv.partnerId && <button type="button" onClick={() => void blockActiveUser()} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-red-300/85 transition hover:bg-red-500/[0.07] hover:text-red-200"><Ban size={14}/>Block account<ChevronRight size={13} className="ml-auto"/></button>}
             <button type="button" onClick={() => void reportActiveConversation()} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-red-300/85 transition hover:bg-red-500/[0.07] hover:text-red-200"><Flag size={14}/>Report account<ChevronRight size={13} className="ml-auto"/></button>
           </div>}
         </div>
-          {activeConv.type !== 'direct' && (<><div className="mb-4 grid grid-cols-2 gap-2"><button type="button" onClick={() => { setMemberBrowserQuery(''); setMemberBrowserOpen(true); }} className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.025] px-3 py-2.5 text-left hover:bg-white/[0.05]"><Users size={14} className="text-[#d6a83f]"/><span className="min-w-0"><span className="block text-[11px] font-semibold text-white/80">{activeConv.type === 'group' ? 'Browse members' : 'Browse admins'}</span><span className="block truncate text-[9px] text-white/35">View the full list</span></span></button><button type="button" onClick={() => void openEntityEditor()} disabled={!canEditEntity} className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.025] px-3 py-2.5 text-left hover:bg-white/[0.05] disabled:opacity-40"><Pencil size={14} className="text-[#d6a83f]"/><span className="min-w-0"><span className="block text-[11px] font-semibold text-white/80">Edit {activeConv.type}</span><span className="block truncate text-[9px] text-white/35">Info and settings</span></span></button></div><section className="mt-4 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#101012]"><div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3"><div><h3 className="text-[10px] font-semibold uppercase tracking-[.14em] text-white/45">{activeConv.type === 'group' ? 'Members' : 'Administrators'}</h3><p className="mt-1 text-[10px] text-white/30">{activeConv.type === 'group' ? 'People in this group' : 'People who manage this channel'}</p></div><button type="button" onClick={() => { setMemberBrowserQuery(''); setMemberBrowserOpen(true); }} className="rounded-full border border-white/[0.08] px-2.5 py-1.5 text-[10px] font-medium text-[#f2c75c] transition hover:border-[#d6a83f]/40 hover:bg-[#d6a83f]/[0.08]">See all <span className="ml-1 text-white/50">{activeConv.type === 'group' ? managedEntity?._count?.members ?? activeConv.memberCount ?? 0 : managedEntity?.members?.filter((member: any) => ['OWNER','ADMIN','MODERATOR'].includes(member.role)).length ?? 0}</span></button></div>
-          {activeConv.type === 'group' ? <div className="divide-y divide-white/[0.05] px-4">{(managedEntity?.members || activeConv.participants || []).slice(0, 8).map((member: any) => {const person = member.user || member; const role = member.role || member.membershipRole; return <div key={member.userId || person.id} className="flex items-center gap-3 py-2.5"><Avatar src={person.avatar} alt={person.username || person.fullName || 'Member'} size="xs"/><div className="min-w-0 flex-1"><p className="truncate text-xs text-white/80">{person.fullName || person.username || 'Member'}</p><p className="truncate text-[10px] text-white/35">{person.username ? `@${person.username}` : ''}</p></div>{role && role !== 'MEMBER' && <span className="text-[9px] uppercase tracking-wide text-[#d6a83f]">{role.toLowerCase()}</span>}</div>})}{!managedEntity?.members?.length && !activeConv.participants?.length && <p className="py-4 text-center text-[10px] text-white/30">Member details are unavailable.</p>}</div> : <div className="divide-y divide-white/[0.05] px-4">{(managedEntity?.members || []).filter((member: any) => ['OWNER','ADMIN','MODERATOR'].includes(member.role)).slice(0, 8).map((member: any) => <div key={member.userId} className="flex items-center gap-3 py-2.5"><Avatar src={member.user?.avatar} alt={member.user?.username || 'Administrator'} size="xs"/><div className="min-w-0 flex-1"><p className="truncate text-xs text-white/80">{member.user?.fullName || member.user?.username}</p><p className="truncate text-[10px] text-white/35">@{member.user?.username}</p></div><span className="text-[9px] uppercase tracking-wide text-[#d6a83f]">{member.role.toLowerCase()}</span></div>)}{!managedEntity?.members?.some((member: any) => ['OWNER','ADMIN','MODERATOR'].includes(member.role)) && <p className="py-4 text-center text-[10px] text-white/30">Administrator details are unavailable.</p>}</div>}
-          </section></>)}
+
+        </> : <div className="mx-auto w-full max-w-2xl space-y-3 px-4 pb-[max(24px,env(safe-area-inset-bottom))] pt-3">
+          <div className="flex flex-col items-center px-3 text-center">
+            <Avatar src={managedEntity?.avatar || activeConv.avatar} alt={activeConv.name} size="xl" wrapperClassName="!h-24 !w-24" className="!h-24 !w-24"/>
+            <h3 className="mt-3 break-words text-xl font-semibold text-white">{managedEntity?.name || activeConv.name}</h3>
+            <p className="mt-1 text-sm text-white/50">{profileMemberCount === undefined ? (activeConv.type === 'group' ? 'Group' : 'Channel') : <>{profileMemberCount.toLocaleString()} {activeConv.type === 'group' ? 'members' : 'subscribers'}</>}</p>
+            {activeConv.type === 'channel' && (managedEntity?.handle || activeConv.handle) && <p className="mt-1 text-xs text-[#f2c75c]">@{managedEntity?.handle || activeConv.handle}</p>}
+          </div>
+
+          <div className={cn('grid gap-2', profileIsOwner ? 'grid-cols-3' : 'grid-cols-4')} aria-label="Conversation actions">
+            <button type="button" onClick={closeProfileToChat} className="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl bg-[#151517] px-1 py-2 text-xs text-[#f2c75c] hover:bg-white/[0.08]"><MessageCircle size={21}/><span>{activeConv.type === 'group' ? 'Message' : 'View posts'}</span></button>
+            <button type="button" onClick={() => void toggleMute()} aria-pressed={Boolean(activeConv.muted)} className="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl bg-[#151517] px-1 py-2 text-xs text-[#f2c75c] hover:bg-white/[0.08]">{activeConv.muted ? <Bell size={21}/> : <BellOff size={21}/>}<span>{activeConv.muted ? 'Unmute' : 'Mute'}</span></button>
+            <button type="button" onClick={openProfileSearch} className="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl bg-[#151517] px-1 py-2 text-xs text-[#f2c75c] hover:bg-white/[0.08]"><Search size={21}/><span>Search</span></button>
+            {!profileIsOwner && <button type="button" onClick={() => setLeaveDialog(true)} className="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl bg-[#151517] px-1 py-2 text-xs text-red-300 hover:bg-red-500/[0.08]"><UserMinus size={21}/><span>Leave</span></button>}
+          </div>
+
+          <div className="vanta-community-card px-4 py-3">
+              <h4 className="text-xs font-semibold text-[#f2c75c]">Info</h4>
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-white/85">{(managedEntity?.description || activeConv.description || '').trim() || 'No description yet.'}</p>
+              {managedEntity?.visibility && <p className="mt-2 flex items-center gap-1.5 text-xs text-white/50">{managedEntity.visibility === 'PRIVATE' ? <Lock size={13}/> : <Globe2 size={13}/>} {managedEntity.visibility === 'PRIVATE' ? 'Private' : 'Public'} {activeConv.type}</p>}
+          </div>
+          <div className="vanta-community-card overflow-hidden">
+            {managedEntity?.visibility === 'PUBLIC' && managedEntity?.id && <PublicCommunityShare key={managedEntity.id} entityId={managedEntity.id}/>}
+            <button type="button" onClick={() => { setMemberBrowserQuery(''); setMemberBrowserOpen(true); }} className="flex min-h-12 w-full items-center gap-3 border-t border-white/[0.07] px-4 text-left text-sm text-white/85 hover:bg-white/[0.05]"><Users size={18} className="text-[#d6a83f]"/><span className="flex-1">{activeConv.type === 'group' ? 'Members' : 'Administrators'}</span><span className="text-xs text-white/50">{activeConv.type === 'group' ? profileMemberCount : managedEntity ? profilePeople.length : ''}</span><ChevronRight size={16} className="text-white/35"/></button>
+            {canManageEntityMembers && <button type="button" onClick={() => void openEntityEditor('people')} className="flex min-h-12 w-full items-center gap-3 border-t border-white/[0.07] px-4 text-left text-sm text-white/85 hover:bg-white/[0.05]"><UserPlus size={18} className="text-[#d6a83f]"/><span className="flex-1">{activeConv.type === 'group' ? 'Manage members' : 'Manage subscribers'}</span><ChevronRight size={16} className="text-white/35"/></button>}
+          </div>
+
+          <div className="vanta-community-card overflow-hidden">
+            <div className="flex border-b border-white/[0.08]" role="group" aria-label="Profile content">
+              {(['people', 'media', 'files', 'links'] as const).map(tab => <button key={tab} type="button" aria-pressed={entityProfileTab === tab} onClick={() => setEntityProfileTab(tab)} className={cn('min-h-12 min-w-0 flex-1 border-b-2 px-1 text-xs font-medium transition', entityProfileTab === tab ? 'border-[#d6a83f] text-[#f2c75c]' : 'border-transparent text-white/50 hover:text-white')}>{tab === 'people' ? (activeConv.type === 'group' ? 'Members' : 'Admins') : tab === 'media' ? 'Media' : tab === 'files' ? 'Files' : 'Links'}</button>)}
+            </div>
+            {entityProfileTab === 'people' ? <div className="space-y-2 p-2">
+              {isLoadingEntityInfo ? <p className="flex items-center justify-center gap-2 py-7 text-xs text-white/50"><Loader2 size={14} className="animate-spin"/>Loading details</p> : <>
+                {profilePeople.slice(0, 8).map((member: any) => { const person = member.user || member; const role = member.role || member.membershipRole; return <div key={member.userId || person.id} className="vanta-community-person-card flex items-center gap-3 p-3"><Avatar src={person.avatar} alt={person.fullName || person.username || 'Member'} size="sm"/><div className="min-w-0 flex-1"><p className="truncate text-sm text-white/85">{person.fullName || person.username || 'Member'}</p>{person.username && <p className="truncate text-xs text-white/45">@{person.username}</p>}</div>{role && role !== 'MEMBER' && <span className="shrink-0 text-xs capitalize text-[#d6a83f]">{role.toLowerCase()}</span>}</div>; })}
+                {!profilePeople.length && <p className="py-7 text-center text-xs text-white/45">People details are unavailable.</p>}
+                {profilePeople.length > 0 && <button type="button" onClick={() => { setMemberBrowserQuery(''); setMemberBrowserOpen(true); }} className="min-h-12 w-full text-sm font-medium text-[#f2c75c]">View all {activeConv.type === 'group' ? 'members' : 'administrators'}</button>}
+              </>}
+            </div> : <div className="p-3">
+              <p className="mb-3 text-xs text-white/45">{messageCursor ? "Showing shared content from loaded messages. Load earlier messages to see more." : "Shared content from available conversation history."}</p>
+              {entityProfileTab === 'media' && (profileMedia.length ? <div className="grid grid-cols-3 gap-1.5">{profileMedia.map((attachment, index) => <button key={`${attachment.messageId}-${attachment.id || index}`} type="button" onClick={() => openMediaViewer(attachment)} aria-label={`Open ${attachment.fileName || attachment.fileType.toLowerCase()}`} className="relative aspect-square overflow-hidden rounded-md bg-black">{attachment.fileType === 'IMAGE' ? <img loading="lazy" src={attachment.url} alt={attachment.fileName || 'Shared image'} className="h-full w-full object-cover"/> : <div className="flex h-full flex-col items-center justify-center gap-2 px-1 text-[#f2c75c]"><Play size={24}/><span className="w-full truncate text-center text-[10px]">{attachment.fileName || 'Video'}</span></div>}</button>)}</div> : <p className="py-7 text-center text-xs text-white/45">No media in loaded messages.</p>)}
+              {entityProfileTab === 'files' && (profileFiles.length ? <div className="divide-y divide-white/[0.06]">{profileFiles.map((attachment, index) => <a key={`${attachment.messageId}-${attachment.id || index}`} href={attachment.url} target="_blank" rel="noopener noreferrer" className="flex min-h-12 items-center gap-3 py-2 text-sm text-white/85"><FileText size={18} className="shrink-0 text-[#d6a83f]"/><span className="min-w-0 flex-1 truncate">{attachment.fileName || 'Shared file'}</span><ChevronRight size={15} className="shrink-0 text-white/35"/></a>)}</div> : <p className="py-7 text-center text-xs text-white/45">No files in loaded messages.</p>)}
+              {entityProfileTab === 'links' && (profileLinks.length ? <div className="divide-y divide-white/[0.06]">{profileLinks.map((link, index) => <a key={`${link.href}-${index}`} href={link.href} target="_blank" rel="noopener noreferrer" className="flex min-h-12 items-center gap-3 py-2 text-sm text-[#f2c75c]"><Globe2 size={18} className="shrink-0"/><span className="min-w-0 flex-1 truncate">{link.host}</span><ChevronRight size={15} className="shrink-0 text-white/35"/></a>)}</div> : <p className="py-7 text-center text-xs text-white/45">No links in loaded messages.</p>)}
+              {messageCursor && <button type="button" onClick={() => void loadOlderMessages()} disabled={loadingOlder} className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#d6a83f]/25 text-sm font-medium text-[#f2c75c] disabled:opacity-50">{loadingOlder && <Loader2 size={15} className="animate-spin"/>}{loadingOlder ? 'Loading earlier messages…' : 'Load earlier messages'}</button>}
+            </div>}
+          </div>
+        </div>}
         </>}
       </motion.aside>}
 
@@ -3494,28 +3812,39 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         {editEntityOpen && activeConv && activeConv.type !== 'direct' && (<>
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => closeChatSubview(() => setEditEntityOpen(false))} className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm" aria-label="Close management" />
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] pointer-events-none"><motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 30, stiffness: 320 }} className="vanta-entity-settings pointer-events-auto ml-auto h-[var(--chat-viewport-height,100dvh)] w-full max-w-none overflow-y-auto overscroll-contain border-0 bg-[#1F2630] pb-[max(16px,env(safe-area-inset-bottom))]">
-          <header className="sticky top-0 z-10 flex min-h-16 items-center justify-between gap-3 border-b border-white/[0.08] bg-[#1F2630]/95 px-4 backdrop-blur-xl"><button onClick={() => closeChatSubview(() => setEditEntityOpen(false))} className="btn-icon h-9 w-9 shrink-0" aria-label="Close management"><ArrowLeft size={18}/></button><div className="min-w-0 text-center"><h2 className="text-sm font-semibold text-[#f5f5f5]">{activeConv.type === 'group' ? 'Group settings' : 'Channel settings'}</h2><p className="text-[9px] uppercase tracking-[.16em] text-[#d6a83f]">{isManagedOwner ? 'Owner controls' : 'Administrator controls'}</p></div><button onClick={saveEntityChanges} disabled={isSavingEntity || isUploadingAvatar || !editName.trim() || !canEditEntityInfo} className="btn-gold-ghost h-9 px-4 text-xs disabled:opacity-40 font-semibold">{isSavingEntity ? <Loader2 size={15} className="animate-spin"/> : 'Save'}</button></header>
-          <div className="px-3.5">
+          <header className="vanta-community-compact-header sticky top-0 z-10 flex min-h-12 items-center justify-between gap-3 border-b border-white/[0.08] bg-[#1F2630]/95 px-4 pt-[max(0px,env(safe-area-inset-top))] backdrop-blur-xl"><button onClick={() => closeChatSubview(() => setEditEntityOpen(false))} className="btn-icon h-9 w-9 shrink-0" aria-label="Close management"><ArrowLeft size={18}/></button><div className="min-w-0 text-center"><h2 className="text-sm font-semibold text-[#f5f5f5]">{activeConv.type === 'group' ? 'Group settings' : 'Channel settings'}</h2><p className="text-[9px] uppercase tracking-[.16em] text-[#d6a83f]">{isManagedOwner ? 'Owner controls' : 'Administrator controls'}</p></div>{entitySettingsTab === 'info' && canEditEntityInfo ? <button onClick={saveEntityChanges} disabled={isSavingEntity || isUploadingAvatar || !editName.trim()} className="btn-gold-ghost h-9 px-4 text-xs disabled:opacity-40 font-semibold">{isSavingEntity ? <Loader2 size={15} className="animate-spin"/> : 'Save'}</button> : <span className="w-12 shrink-0" aria-hidden="true"/>}</header>
+          <div className="mx-auto w-full max-w-2xl px-3.5">
+            <nav className="vanta-community-settings-nav sticky z-[5] grid grid-cols-2 gap-2 bg-[#1F2630] py-2 sm:grid-cols-3" aria-label="Management sections">
+              {([{ id: 'info', label: 'Information', icon: Info, visible: canEditEntityInfo }, { id: 'people', label: activeConv.type === 'group' ? 'Members' : 'Subscribers', icon: Users, visible: canManageEntityMembers }, { id: 'permissions', label: 'Permissions', icon: Shield, visible: canManageEntityPermissions }, { id: 'engagement', label: 'Reactions & welcome', icon: Smile, visible: canManageEntityPermissions }, { id: 'ownership', label: 'Ownership', icon: Crown, visible: isManagedOwner }, { id: 'insights', label: 'Statistics', icon: BarChart3, visible: canViewEntityInsights }] as const).filter(item => item.visible).map(item => <button key={item.id} type="button" aria-pressed={entitySettingsTab === item.id} onClick={() => { setEntitySettingsTab(item.id); setOwnershipConfirm(null); }} className={cn('flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border px-2 text-xs font-semibold', entitySettingsTab === item.id ? 'border-[#d6a83f]/45 bg-[#d6a83f]/10 text-[#f2c75c]' : 'border-white/[0.08] bg-[#151517] text-white/65')}><item.icon size={15}/>{item.label}</button>)}
+            </nav>
+            <div hidden={entitySettingsTab !== 'info' || !canEditEntityInfo}>
             <section className="flex flex-col items-center border-b border-white/[0.06] px-4 pb-5 pt-6"><div className="relative"><button onClick={() => editAvatarInputRef.current?.click()} disabled={!canEditEntityInfo || isUploadingAvatar} className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border border-[#d6a83f]/25 bg-[#151517]" aria-label="Change photo">{editAvatar ? <Avatar src={editAvatar} alt={`${activeConv.name} photo`} size="xl" className="!h-full !w-full"/> : <Camera size={20} className="text-white/35"/>}{isUploadingAvatar && <span className="absolute inset-0 grid place-items-center bg-black/70"><Loader2 size={16} className="animate-spin"/></span>}<span className="absolute inset-x-0 bottom-0 grid h-7 place-items-center bg-black/60"><Camera size={13} className="text-white/85"/></span></button></div><input ref={editAvatarInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden" onChange={uploadEntityAvatar}/><h3 className="mt-3 text-lg font-semibold text-[#f5f5f5]">{editName || activeConv.name}</h3><p className="mt-0.5 text-xs text-[#c8c8cc]/55">{managedEntity?._count?.members ?? managedEntity?.members?.length ?? 0} {activeConv.type === 'channel' ? 'subscribers' : 'members'}</p><div className="mt-3 flex gap-2">{editAvatar && <button onClick={() => setEditAvatar(null)} disabled={!canEditEntityInfo} className="btn-ghost h-8 rounded-full border border-white/[0.1] px-4 text-[11px] text-red-300 hover:text-red-200 disabled:opacity-40">Remove</button>}</div></section>
 
             {/* Identity */}
-            <section className="mt-3 rounded-xl border border-white/[0.08] bg-[#151517]"><div className="border-b border-white/[0.06] px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-white/30 flex items-center gap-2">{activeConv.type === 'channel' ? <Megaphone size={13} className="text-[#d6a83f]"/> : <Users size={13} className="text-[#d6a83f]"/>}{activeConv.type === 'channel' ? 'Channel information' : 'Group information'}</div>
-              <div className="divide-y divide-white/[0.06]">
-                <label className="flex items-center gap-3 px-4 py-3"><Pencil size={16} className="shrink-0 text-white/35"/><div className="min-w-0 flex-1"><span className="block text-[10px] uppercase tracking-[.12em] text-white/35">Name</span><input value={editName} maxLength={60} disabled={!canEditEntityInfo} onChange={event => setEditName(event.target.value)} className="mt-1.5 w-full rounded-lg bg-transparent text-sm text-[#f5f5f5] outline-none" placeholder="Give it a name"/></div></label>
-                <label className="flex items-start gap-3 px-4 py-3"><FileText size={16} className="mt-2.5 shrink-0 text-white/35"/><div className="min-w-0 flex-1"><span className="block text-[10px] uppercase tracking-[.12em] text-white/35">Description</span><textarea value={editDescription} maxLength={500} disabled={!canEditEntityInfo} onChange={event => setEditDescription(event.target.value)} rows={4} placeholder={`What is this ${activeConv.type === 'group' ? 'group' : 'channel'} about?`} className="mt-2 w-full resize-none rounded-xl border border-white/[0.08] bg-[#101012] px-3 py-2.5 text-sm leading-relaxed text-[#f5f5f5] outline-none placeholder:text-white/25 focus:border-[#d6a83f]/40" /><span className="mt-1.5 text-right text-[10px] tabular-nums text-white/25">{editDescription.length}/500</span></div></label>
-                {activeConv.type === 'channel' && <label className="flex items-center gap-3 px-4 py-3"><AtSign size={16} className="shrink-0 text-white/35"/><div className="min-w-0 flex-1"><span className="block text-[10px] uppercase tracking-[.12em] text-white/35">Handle</span><div className="mt-1.5 flex items-center text-sm text-[#f5f5f5]"><span className="text-white/30 pr-1">@</span><input value={editHandle} disabled={!canEditEntityInfo} onChange={event => setEditHandle(event.target.value.replace(/[^a-zA-Z0-9_]/g, ''))} className="min-w-0 flex-1 bg-transparent outline-none" placeholder="channel_handle"/></div></div></label>}
-                {activeConv.type === 'channel' && <div className="px-4 py-4"><div className="flex items-start gap-3"><div className="mt-0.5 shrink-0">{editVisibility === 'PUBLIC' ? <Globe2 size={17} className="text-[#d6a83f]"/> : <Lock size={17} className="text-[#d6a83f]"/>}</div><div className="min-w-0 flex-1"><p className="text-sm text-[#f5f5f5]">Who can access this channel?</p><p className="mt-1 text-[10px] leading-relaxed text-white/35">{editVisibility === 'PUBLIC' ? 'Anyone on VANTA can see it in discovery, join it, and read posts. Only you and your team can post.' : 'Only people you add can find or join it. It is hidden from discovery and joins require an invite.'}</p></div><button onClick={() => setEditVisibility(value => value === 'PUBLIC' ? 'PRIVATE' : 'PUBLIC')} disabled={!canEditEntityInfo} className={cn('relative h-6 w-11 shrink-0 rounded-full border transition', editVisibility === 'PUBLIC' ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')} aria-label="Toggle channel access" aria-checked={editVisibility === 'PUBLIC'} role="switch"><span className={cn('absolute top-0.5 h-4.5 w-4.5 rounded-full transition-all', editVisibility === 'PUBLIC' ? 'left-[22px] bg-[#f2c75c]' : 'left-0.5 bg-[#c8c8cc]')}/></button></div><div className="mt-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5"><p className="text-[10px] leading-relaxed text-white/35">{editVisibility === 'PUBLIC' ? 'Making it private later hides it from new people but existing members keep access.' : 'Making it public later lets anyone join and read posts.'}</p></div></div>}
+            <section className="vanta-community-card mt-3"><div className="border-b border-white/[0.06] px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-white/30 flex items-center gap-2">{activeConv.type === 'channel' ? <Megaphone size={13} className="text-[#d6a83f]"/> : <Users size={13} className="text-[#d6a83f]"/>}{activeConv.type === 'channel' ? 'Channel information' : 'Group information'}</div>
+              <div className="space-y-2 p-2">
+                <label className="vanta-community-field-card flex items-center gap-3 px-3 py-3"><Pencil size={16} className="shrink-0 text-white/35"/><div className="min-w-0 flex-1"><span className="block text-[10px] uppercase tracking-[.12em] text-white/35">Name</span><input value={editName} maxLength={60} disabled={!canEditEntityInfo} onChange={event => setEditName(event.target.value)} className="mt-1.5 w-full rounded-lg bg-transparent text-sm text-[#f5f5f5] outline-none" placeholder="Give it a name"/></div></label>
+                <label className="vanta-community-field-card flex items-start gap-3 px-3 py-3"><FileText size={16} className="mt-2.5 shrink-0 text-white/35"/><div className="min-w-0 flex-1"><span className="block text-[10px] uppercase tracking-[.12em] text-white/35">Description</span><textarea value={editDescription} maxLength={500} disabled={!canEditEntityInfo} onChange={event => setEditDescription(event.target.value)} rows={4} placeholder={`What is this ${activeConv.type === 'group' ? 'group' : 'channel'} about?`} className="mt-2 w-full resize-none rounded-xl border border-white/[0.08] bg-[#101012] px-3 py-2.5 text-sm leading-relaxed text-[#f5f5f5] outline-none placeholder:text-white/25 focus:border-[#d6a83f]/40" /><span className="mt-1.5 text-right text-[10px] tabular-nums text-white/25">{editDescription.length}/500</span></div></label>
+                {activeConv.type === 'channel' && <label className="vanta-community-field-card flex items-center gap-3 px-3 py-3"><AtSign size={16} className="shrink-0 text-white/35"/><div className="min-w-0 flex-1"><span className="block text-[10px] uppercase tracking-[.12em] text-white/35">Handle</span><div className="mt-1.5 flex items-center text-sm text-[#f5f5f5]"><span className="text-white/30 pr-1">@</span><input value={editHandle} disabled={!canEditEntityInfo} onChange={event => setEditHandle(event.target.value.replace(/[^a-zA-Z0-9_]/g, ''))} className="min-w-0 flex-1 bg-transparent outline-none" placeholder="channel_handle"/></div></div></label>}
+                {activeConv.type === 'channel' && <div className="vanta-community-field-card p-3"><div className="flex items-start gap-3"><div className="mt-0.5 shrink-0">{editVisibility === 'PUBLIC' ? <Globe2 size={17} className="text-[#d6a83f]"/> : <Lock size={17} className="text-[#d6a83f]"/>}</div><div className="min-w-0 flex-1"><p className="text-sm text-[#f5f5f5]">Who can access this channel?</p><p className="mt-1 text-[10px] leading-relaxed text-white/35">{editVisibility === 'PUBLIC' ? 'Anyone on VANTA can see it in discovery, join it, and read posts. Only you and your team can post.' : 'Only people you add can access it. It is hidden from discovery.'}</p></div><button onClick={() => setEditVisibility(value => value === 'PUBLIC' ? 'PRIVATE' : 'PUBLIC')} disabled={!canEditEntityInfo} className={cn('relative h-6 w-11 shrink-0 rounded-full border transition', editVisibility === 'PUBLIC' ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')} aria-label="Toggle channel access" aria-checked={editVisibility === 'PUBLIC'} role="switch"><span className={cn('absolute top-0.5 h-4.5 w-4.5 rounded-full transition-all', editVisibility === 'PUBLIC' ? 'left-[22px] bg-[#f2c75c]' : 'left-0.5 bg-[#c8c8cc]')}/></button></div><div className="mt-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2.5"><p className="text-[10px] leading-relaxed text-white/35">{editVisibility === 'PUBLIC' ? 'Making it private later hides it from new people but existing members keep access.' : 'Making it public later lets anyone join and read posts.'}</p></div></div>}
               </div>
             </section>
 
             
 
-            <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#151517]"><div className="flex items-center justify-between border-b border-white/[0.06] px-4 pb-3 pt-3"><div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[.16em] text-white/30">{activeConv.type === 'channel' ? <Globe2 size={13} className="text-[#d6a83f]"/> : <Users size={13} className="text-[#d6a83f]"/>}{activeConv.type === 'channel' ? 'Audience' : 'Members'}</div><span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-white/[0.06] px-1.5 text-[10px] tabular-nums text-white/50">{managedEntity?.members?.length || 0}</span></div>
+            </div>
+            <div hidden={entitySettingsTab !== 'people' || !canManageEntityMembers}>
+            <section className="vanta-community-card mt-3 p-2"><div className="flex items-center justify-between border-b border-white/[0.06] px-4 pb-3 pt-3"><div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[.16em] text-white/30">{activeConv.type === 'channel' ? <Globe2 size={13} className="text-[#d6a83f]"/> : <Users size={13} className="text-[#d6a83f]"/>}{activeConv.type === 'channel' ? 'Audience' : 'Members'}</div><span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-white/[0.06] px-1.5 text-[10px] tabular-nums text-white/50">{managedEntity?._count?.members ?? managedEntity?.members?.length ?? 0}</span></div>
+              <div className="flex gap-2 px-3 py-3" aria-label="Filter people">
+                {(['all', 'admins'] as const).map(filter => <button key={filter} type="button" aria-pressed={managementMemberFilter === filter} onClick={() => setManagementMemberFilter(filter)} className={cn('min-h-10 rounded-lg px-4 text-xs font-medium', managementMemberFilter === filter ? 'bg-[#d6a83f]/15 text-[#f2c75c]' : 'bg-white/[0.04] text-white/60')}>{filter === 'all' ? 'Everyone' : 'Administrators'}</button>)}
+              </div>
               {canManageEntityMembers && <><div className="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-[#101012] px-3 py-2.5"><Search size={14} className="text-white/30"/><input value={managementSearch} onChange={event => void searchManagementUsers(event.target.value)} placeholder="Search people to add" className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/25"/>{managementBusy === 'members' && <Loader2 size={13} className="animate-spin text-[#d6a83f]"/>}</div>
               {managementResults.length > 0 && <div className="border-y border-white/[0.06] bg-[#101012]">{managementResults.slice(0, 8).map(person => <button key={person.id} onClick={() => void addManagedMember(person)} className="flex w-full items-center gap-3 border-b border-white/[0.05] px-3 py-2.5 text-left last:border-0"><Avatar src={person.avatar} alt={person.username || person.fullName} size="sm"/><div className="min-w-0 flex-1"><p className="truncate text-xs text-white">{person.fullName || person.username}</p><p className="truncate text-[10px] text-white/35">@{person.username}</p></div><span className="inline-flex items-center gap-1 rounded-full bg-[#d6a83f]/10 px-2 py-0.5 text-[10px] text-[#f2c75c]"><UserPlus size={12}/>Add</span></button>)}</div>}
-              </>}<div className="mt-3 divide-y divide-white/[0.06] border-y border-white/[0.08]">{(managedEntity?.members || []).map((member: any) => { const owner = member.userId === managedEntity.ownerId; const elevated = owner || ['ADMIN', 'MODERATOR'].includes(member.role); return <div key={member.userId} className="flex items-center gap-3 px-3 py-3"><Avatar src={member.user?.avatar} alt={member.user?.username || 'Member'} size="sm"/><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-[#f5f5f5]">{member.user?.fullName || member.user?.username}</p><div className="mt-0.5 flex items-center gap-1.5"><span className="truncate text-[10px] text-white/35">@{member.user?.username}</span>{elevated && <span className="inline-flex items-center gap-1 rounded-full bg-[#d6a83f]/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-[#d6a83f]">{owner ? <Crown size={9}/> : <Shield size={9}/>} {owner ? 'Owner' : member.role === 'MODERATOR' ? 'Moderator' : 'Admin'}</span>}</div></div>{!owner && member.userId !== user?.id && <div className="flex items-center gap-1.5">{isManagedOwner && <button disabled={managementBusy === member.userId} onClick={() => void changeManagedRole(member, elevated ? 'MEMBER' : 'ADMIN')} className="btn-ghost h-8 px-2.5 text-[11px] text-[#d6a83f] hover:text-[#f2c75c]" aria-label={elevated ? 'Remove administrator rights' : 'Promote to administrator'}>{managementBusy === member.userId ? <Loader2 size={13} className="animate-spin"/> : elevated ? 'Demote' : 'Promote'}</button>}{canRemoveEntityMembers && (!elevated || isManagedOwner) && <button onClick={() => removeManagedMember(member)} className="btn-ghost h-8 px-2.5 text-[11px] text-red-300 hover:text-red-200" aria-label="Remove member"><UserMinus size={13}/>Remove</button>}</div>}</div>})}</div>
+              </>}<div className="mt-3 space-y-2">{(managedEntity?.members || []).filter((member: any) => managementMemberFilter === 'all' || member.userId === managedEntity?.ownerId || ['OWNER', 'ADMIN', 'MODERATOR'].includes(member.role)).map((member: any) => { const owner = member.userId === managedEntity?.ownerId; const elevated = owner || ['ADMIN', 'MODERATOR'].includes(member.role); return <div key={member.userId} className="vanta-community-person-card flex items-center gap-3 px-3 py-3"><Avatar src={member.user?.avatar} alt={member.user?.username || 'Member'} size="sm"/><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-[#f5f5f5]">{member.user?.fullName || member.user?.username}</p><div className="mt-0.5 flex items-center gap-1.5"><span className="truncate text-[10px] text-white/35">@{member.user?.username}</span>{elevated && <span className="inline-flex items-center gap-1 rounded-full bg-[#d6a83f]/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-[#d6a83f]">{owner ? <Crown size={9}/> : <Shield size={9}/>} {owner ? 'Owner' : member.role === 'MODERATOR' ? 'Moderator' : 'Admin'}</span>}</div></div>{!owner && member.userId !== user?.id && <div className="flex items-center gap-1.5">{isManagedOwner && <button disabled={managementBusy === member.userId} onClick={() => void changeManagedRole(member, elevated ? 'MEMBER' : 'ADMIN')} className="btn-ghost h-8 px-2.5 text-[11px] text-[#d6a83f] hover:text-[#f2c75c]" aria-label={elevated ? 'Remove administrator rights' : 'Promote to administrator'}>{managementBusy === member.userId ? <Loader2 size={13} className="animate-spin"/> : elevated ? 'Demote' : 'Promote'}</button>}{canRemoveEntityMembers && (!elevated || isManagedOwner) && <button onClick={() => removeManagedMember(member)} className="btn-ghost h-8 px-2.5 text-[11px] text-red-300 hover:text-red-200" aria-label="Remove member"><UserMinus size={13}/>Remove</button>}</div>}</div>})}</div>
             </section>
 
+            </div>
+            <div hidden={entitySettingsTab !== 'ownership' || !isManagedOwner}>
             {isManagedOwner && (
               <section className="mt-4 rounded-2xl border border-[#d6a83f]/25 bg-[#d6a83f]/[0.04]">
                 <div className="flex items-center gap-2 border-b border-[#d6a83f]/15 px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-[#d6a83f]"><Crown size={13}/>Transfer ownership</div>
@@ -3553,8 +3882,36 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               </section>
             )}
 
-            <section className="mt-4 rounded-2xl border border-white/[0.08] bg-[#151517]"><div className="flex items-center gap-2 border-b border-white/[0.06] px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-white/30"><Shield size={13} className="text-[#d6a83f]"/>Permissions</div><div className="border-b border-white/[0.06] px-3 py-3"><p className="text-xs font-medium text-white/70">Who can do the following?</p><p className="mt-1 text-[10px] leading-relaxed text-white/35">{activeConv.type === 'group' ? 'Allow members to use selected group actions. Admins and the owner retain their management powers.' : 'Control member publishing and the actions channel administrators may perform.'} Permission checks are enforced on the server.</p></div><div className="divide-y divide-white/[0.06]">{managedPermissions.map(([key, label]) => { const enabled = managedEntity?.permissions?.[key] ?? (activeConv.type === 'channel' ? ['deleteMessages', 'manageChannelInfo', 'manageSubscribers'].includes(key) : ['sendMessages', 'sendMedia', 'sendLinks'].includes(key)); return <div key={key} className="flex items-start justify-between gap-3 px-4 py-3.5"><div className="min-w-0 flex-1"><p className="text-xs font-medium text-[#c8c8cc]">{label}</p><p className="mt-0.5 text-[10px] leading-relaxed text-white/30">{permissionHints[key]}</p></div><button onClick={() => toggleManagedPermission(key)} disabled={!canManageEntityPermissions} className={cn('relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition disabled:cursor-not-allowed disabled:opacity-40', enabled ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')} aria-label={`Toggle ${label}`} aria-checked={enabled} role="switch"><span className={cn('absolute top-0.5 h-4.5 w-4.5 rounded-full transition-all', enabled ? 'left-[22px] bg-[#f2c75c]' : 'left-0.5 bg-[#c8c8cc]')}/></button></div>})}</div><p className="mt-3 px-4 pb-3 text-[10px] leading-relaxed text-white/25">{canManageEntityPermissions ? 'Changes take effect when you save and are enforced by VANTA on the server.' : 'Only the channel owner can change permission grants.'}</p></section>
-
+            </div>
+            {entitySettingsTab === 'permissions' && canManageEntityPermissions && <div className="space-y-3 pb-4">
+              <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#18212b]">
+                <div className="px-4 pb-2 pt-4 text-xs font-semibold text-[#f2c75c]">{activeConv.type === 'group' ? 'What can members of this group do?' : 'Channel publishing and administration'}</div>
+                <div className="divide-y divide-white/[0.06]">
+                  {managedPermissions.map(([key, label]) => {
+                    const enabled = Boolean(permissionDraft[key] ?? defaultPermission(key));
+                    return <button key={key} type="button" role="switch" aria-checked={enabled} aria-label={label} disabled={isSavingEntity} onClick={() => toggleManagedPermission(key)} className="flex min-h-14 w-full items-center justify-between gap-3 px-4 py-2.5 text-left disabled:opacity-50">
+                      <div className="min-w-0 flex-1"><p className="text-sm font-medium text-white/90">{label}</p><p className="mt-0.5 text-xs leading-snug text-white/45">{permissionHints[key]}</p></div>
+                      <span aria-hidden="true" className={cn('relative h-6 w-11 shrink-0 rounded-full transition-colors', enabled ? 'bg-[#d6a83f]' : 'bg-white/15')}><span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform', enabled ? 'translate-x-[22px]' : 'translate-x-0.5')}/></span>
+                    </button>;
+                  })}
+                </div>
+              </div>
+              <p className="px-1 text-xs leading-relaxed text-white/45">{activeConv.type === 'group' ? 'These permissions apply to ordinary members. Owners and administrators retain management access.' : 'Only the channel owner can change these permissions.'} Changes are enforced on the server.</p>
+              <button type="button" onClick={() => void saveCommunityPermissions()} disabled={isSavingEntity} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#d6a83f] text-sm font-semibold text-black disabled:opacity-50">{isSavingEntity && <Loader2 size={16} className="animate-spin"/>}Save permissions</button>
+            </div>}
+            {entitySettingsTab === 'engagement' && canManageEntityPermissions && <div className="space-y-4 pb-4">
+              <div className="rounded-xl border border-white/[0.08] bg-[#151517] p-4">
+                <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-[#f2c75c]">Reactions</h3><p className="mt-1 text-xs text-white/50">Choose which reactions members can add.</p></div><button type="button" role="switch" aria-label="Enable reactions" aria-checked={permissionDraft.reactionsEnabled !== false} onClick={() => setPermissionDraft(previous => ({ ...previous, reactionsEnabled: previous.reactionsEnabled === false }))} className={cn('relative h-7 w-12 shrink-0 rounded-full border', permissionDraft.reactionsEnabled !== false ? 'border-[#d6a83f]/60 bg-[#d6a83f]/25' : 'border-white/15 bg-[#202023]')}><span className={cn('absolute top-1 h-5 w-5 rounded-full transition-all', permissionDraft.reactionsEnabled !== false ? 'left-6 bg-[#f2c75c]' : 'left-1 bg-white/50')}/></button></div>
+                {permissionDraft.reactionsEnabled !== false && <div className="mt-4 grid grid-cols-5 gap-2">{COMMUNITY_REACTIONS.map((reaction, index) => <button key={reaction} type="button" aria-label={`Allow ${reaction} reaction`} aria-pressed={permissionDraft[`reaction_${index}`] !== false} onClick={() => setPermissionDraft(previous => ({ ...previous, [`reaction_${index}`]: previous[`reaction_${index}`] === false }))} className={cn('min-h-12 rounded-lg border text-xl', permissionDraft[`reaction_${index}`] !== false ? 'border-[#d6a83f]/45 bg-[#d6a83f]/10' : 'border-white/10 opacity-40')}>{reaction}</button>)}</div>}
+              </div>
+              <div className="rounded-xl border border-white/[0.08] bg-[#151517] p-4">
+                <h3 className="text-sm font-semibold text-[#f2c75c]">Welcome message</h3><p className="mt-1 text-xs leading-relaxed text-white/50">New members see this personal greeting when they open the chat. Leave it empty to turn it off.</p>
+                <textarea aria-label="Welcome message" value={typeof permissionDraft.welcomeMessage === 'string' ? permissionDraft.welcomeMessage : ''} onChange={event => setPermissionDraft(previous => ({ ...previous, welcomeMessage: event.target.value }))} maxLength={500} rows={4} placeholder="Welcome! Please read our community rules." className="mt-3 w-full resize-none rounded-lg border border-white/10 bg-[#101012] px-3 py-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-[#d6a83f]"/>
+                <p className="mt-1 text-right text-xs text-white/40">{typeof permissionDraft.welcomeMessage === 'string' ? permissionDraft.welcomeMessage.length : 0}/500</p>
+              </div>
+              <button type="button" onClick={() => void saveCommunityPermissions()} disabled={isSavingEntity} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#d6a83f] text-sm font-semibold text-black disabled:opacity-50">{isSavingEntity && <Loader2 size={16} className="animate-spin"/>}Save reaction and welcome settings</button>
+            </div>}
+            {entitySettingsTab === 'insights' && canViewEntityInsights && editEntityId && <CommunityInsights key={editEntityId} kind={activeConv.type} entityId={editEntityId}/>}
             {/* Danger zone — irreversible actions kept apart (not shown to the owner: they cannot leave and must delete the group instead) */}
             {!isManagedOwner && <section className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/[0.04]"><div className="flex items-center gap-2 border-b border-red-500/15 px-4 pb-3 pt-3 text-[10px] font-semibold uppercase tracking-[.16em] text-red-400"><Ban size={13}/>Danger zone</div><div className="flex items-start gap-3 px-4 py-3.5"><div className="min-w-0 flex-1"><p className="text-sm text-white/80">Leave this {activeConv.type === 'group' ? 'group' : 'channel'}</p><p className="text-[10px] text-white/40">You will lose access to this conversation and its messages.</p></div><button onClick={() => setLeaveDialog(true)} className="btn-destructive h-9 px-3 text-xs">Leave {activeConv.type === 'group' ? 'Group' : 'Channel'}</button></div></section>}
           </div>
@@ -3570,20 +3927,20 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
               className="vanta-entity-create fixed inset-0 z-[61] flex h-[100dvh] min-h-0 w-screen max-w-none flex-col overflow-hidden bg-[#1F2630] text-white"
             >
               <header className="flex shrink-0 items-center gap-3 border-b border-white/[0.07] bg-[#1F2630] px-4 pb-3 pt-[max(14px,env(safe-area-inset-top))] sm:px-7">
-                <button type="button" onClick={() => resetCreateModal()} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white/65 transition hover:bg-white/[0.07] hover:text-white" aria-label="Go back"><ArrowLeft size={19} /></button>
+                <button type="button" onClick={previousCreateStep} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-white/65 transition hover:bg-white/[0.07] hover:text-white" aria-label="Go back"><ArrowLeft size={19} /></button>
                 
                 <div className="min-w-0 flex-1">
                   
-                  <h2 id="entity-create-title" className="truncate text-base font-semibold tracking-tight">{createType === 'group' ? 'New Group' : 'New Channel'}</h2><p className="mt-0.5 text-[11px] text-white/40">{createType === 'group' ? 'Bring your people together' : 'Share updates with your audience'}</p>
+                  <h2 id="entity-create-title" className="truncate text-base font-semibold tracking-tight">{createStep === 'settings' ? 'Channel settings' : createStep === 'people' ? (createType === 'group' ? 'Add members' : 'Add subscribers') : createType === 'group' ? 'New Group' : 'New Channel'}</h2><p className="mt-0.5 text-[11px] text-white/40">{createStep === 'details' ? 'Name and photo' : createStep === 'settings' ? 'Choose channel access' : 'Select people to add'}</p>
                 </div>
                 <span className="h-9 w-9 shrink-0" aria-hidden="true" />
               </header>
               <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-7 sm:py-6 [-webkit-overflow-scrolling:touch]">
                 <div className="mx-auto grid w-full max-w-none gap-5 pb-6">
-                  <section className="grid justify-items-center gap-2 px-2 py-1">
+                  <div hidden={createStep !== 'details'} className="space-y-4"><div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-xl border border-white/[0.07] bg-[#18212b] p-3"><section className="grid justify-items-center gap-2">
                     <div className="relative">
                       <button type="button" onClick={() => avatarInputRef.current?.click()} disabled={isUploadingAvatar}
-                        className="relative grid h-24 w-24 place-items-center overflow-hidden rounded-full border border-[#d6a83f]/25 bg-[#303b49] text-white/80 transition hover:bg-[#394656] disabled:opacity-60"
+                        className="relative grid h-16 w-16 place-items-center overflow-hidden rounded-full border border-[#d6a83f]/25 bg-[#303b49] text-white/80 transition hover:bg-[#394656] disabled:opacity-60"
                         aria-label={createAvatar ? "Change image" : "Choose image"}>
                         {isUploadingAvatar ? <Loader2 size={24} className="animate-spin" /> : createAvatar ? <Avatar src={createAvatar} alt="Image preview" size="xl" className="!h-full !w-full" /> : <Camera size={28} />}
                       </button>
@@ -3591,13 +3948,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                         <Pencil size={14} />
                       </span>
                     </div>
-                    <p className="text-xs text-white/40">{createAvatar ? "Tap photo to change" : "Add photo (optional)"}</p>
-                    {createAvatar && !isUploadingAvatar && <button type="button" onClick={() => void removeCreateAvatar()} className="text-xs font-medium text-red-300 hover:text-red-200">Remove photo</button>}
-                    {createAvatarFileId && !isUploadingAvatar && <p className="text-[10px] text-emerald-300">Photo uploaded</p>}
+                    <p className="text-[10px] text-white/40">{createAvatar ? "Change" : "Add photo"}</p>
                     <input ref={avatarInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" className="hidden" onChange={handleCreateImageUpload} />
                     {createAvatarError && <p className="text-xs text-red-300">{createAvatarError}</p>}
                   </section>
-                  <section className="grid gap-4 rounded-2xl border border-white/[0.07] bg-[#18212b] p-4 sm:p-5">
+                  <section className="grid min-w-0 gap-3">
                     <div>
                       <label className="mb-2 block text-xs font-semibold text-white/65">{createType === 'group' ? 'Group name' : 'Channel name'}</label>
                       <input value={createName} onChange={e => { setCreateName(e.target.value); if (createValidationError) setCreateValidationError(null); }} placeholder={createType === 'group' ? 'Give your group a name' : 'Give your channel a name'} maxLength={60} autoComplete="off" className={cn('h-12 w-full rounded-xl border bg-[#202b37] px-4 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#d6a83f]/60', createValidationError ? 'border-red-400/60' : 'border-white/[0.07]')} />
@@ -3612,8 +3967,10 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                       </div>
                     )}
                   </section>
+                  </div>
                   {createType === 'group' && <section className="rounded-2xl border border-white/[0.07] bg-[#18212b] p-4"><div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-white">Auto-Delete Messages</h3></div><select aria-label="Auto delete messages" value={autoDeleteSeconds === 0 ? '0' : [86400,604800,2592000].includes(autoDeleteSeconds) ? String(autoDeleteSeconds) : 'custom'} onChange={e => setAutoDeleteSeconds(e.target.value === 'custom' ? 172800 : Number(e.target.value))} className="rounded-xl border border-white/[0.08] bg-[#202b37] px-3 py-2.5 text-sm text-[#e6bd58]"><option value="0">Off</option><option value="86400">1 day</option><option value="604800">1 week</option><option value="2592000">1 month</option><option value="custom">Custom time</option></select></div>{![0,86400,604800,2592000].includes(autoDeleteSeconds) && <div className="mt-3 flex items-center gap-2"><input aria-label="Custom auto delete days" type="number" min="1" max="365" value={customDeleteDays} onChange={e => {setCustomDeleteDays(e.target.value);setAutoDeleteSeconds(Math.max(1,Math.min(365,Number(e.target.value)||1))*86400);}} className="h-10 w-24 rounded-lg border border-white/[0.08] bg-[#202b37] px-3 text-sm text-white"/><span className="text-xs text-white/45">days</span></div>}</section>}
-                  {createType === 'channel' && (
+                  </div>
+                  {createStep === 'settings' && createType === 'channel' && (
                     <section className="grid gap-4 rounded-2xl border border-white/[0.07] bg-[#18212b] p-4 sm:grid-cols-2 sm:p-5">
                       <div>
                         <label className="mb-2 block text-xs font-semibold text-white/65">Channel handle</label>
@@ -3622,15 +3979,15 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                       </div>
                       <div>
                         <label className="mb-2 block text-xs font-semibold text-white/65">Who can access it?</label>
-                        <div className="grid grid-cols-2 gap-2">{(['PUBLIC', 'PRIVATE'] as const).map(vis => <button key={vis} type="button" onClick={() => setCreateVisibility(vis)} className={cn('min-h-12 rounded-xl px-3 text-left transition', createVisibility === vis ? 'bg-[#d6a83f]/15 text-[#f2c75c] ring-1 ring-[#d6a83f]/45' : 'bg-[#202b37] text-white/60 hover:bg-[#293746]')}><span className="block text-xs font-semibold">{vis === 'PUBLIC' ? 'Public' : 'Private'}</span><span className="mt-0.5 block text-[10px] opacity-65">{vis === 'PUBLIC' ? 'Discoverable' : 'Invite only'}</span></button>)}</div>
+                        <div className="grid grid-cols-2 gap-2">{(['PUBLIC', 'PRIVATE'] as const).map(vis => <button key={vis} type="button" onClick={() => setCreateVisibility(vis)} className={cn('min-h-12 rounded-xl px-3 text-left transition', createVisibility === vis ? 'bg-[#d6a83f]/15 text-[#f2c75c] ring-1 ring-[#d6a83f]/45' : 'bg-[#202b37] text-white/60 hover:bg-[#293746]')}><span className="block text-xs font-semibold">{vis === 'PUBLIC' ? 'Public' : 'Private'}</span><span className="mt-0.5 block text-[10px] opacity-65">{vis === 'PUBLIC' ? 'Discoverable' : 'Added members only'}</span></button>)}</div>
                       </div>
                     </section>
                   )}
-                  {createType === 'group' && (<section className="grid gap-3 rounded-2xl border border-white/[0.07] bg-[#18212b] p-4">
-                    <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-white">Members</h3><span className="text-xs tabular-nums text-[#e6bd58]">{selectedMembers.filter((member) => member.id !== user?.id).length} selected</span></div>
+                  {createStep === 'people' && (<section className="grid gap-3 rounded-2xl border border-white/[0.07] bg-[#18212b] p-4">
+                    <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-white">{createType === 'group' ? 'Members' : 'Subscribers'}</h3><span className="text-xs tabular-nums text-[#e6bd58]">{selectedMembers.filter((member) => member.id !== user?.id).length} selected</span></div>
                     {selectedMembers.length > 0 && <div className="flex flex-wrap gap-2">{selectedMembers.map(member => <button key={member.id} type="button" onClick={() => toggleMemberSelection(member)} className="flex items-center gap-2 rounded-full bg-[#26313e] py-1.5 pl-1.5 pr-3 text-xs text-white/80 transition hover:bg-[#303d4b]"><Avatar src={member.avatar} alt={member.username || member.fullName} size="xs" /><span>{member.id === user?.id ? 'You' : member.username || member.fullName}</span>{member.id !== user?.id && <X size={12} className="text-white/40" />}</button>)}</div>}
-                    <div className="relative"><Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-white/35" /><input value={memberSearch} onChange={e => handleSearchMembers(e.target.value)} placeholder="Search VANTA members" className="h-11 w-full rounded-xl border border-white/[0.07] bg-[#202b37] pl-10 pr-4 text-sm text-white outline-none placeholder:text-white/30 focus:border-[#d6a83f]/60" /></div>
-                    {createType === 'group' && <div className="max-h-56 space-y-1 overflow-y-auto overscroll-contain">{followersLoading ? <p className="px-3 py-5 text-center text-xs text-white/40">Loading your followers…</p> : memberSearchResults.map((item: any) => <button key={item.id} type="button" onClick={() => toggleMemberSelection(item)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.05]"><Avatar src={item.avatar} alt={item.username || item.fullName} size="sm" /><span className="min-w-0 flex-1"><span className="block truncate text-sm text-white">{item.fullName || item.username}</span><span className="mt-0.5 block truncate text-[10px] text-white/40">@{item.username}</span></span><UserPlus size={15} className="text-[#d6a83f]" /></button>)}{!followersLoading && memberSearchResults.length === 0 && <p className="px-3 py-5 text-center text-xs text-white/40">{memberSearch ? 'No matching followers found.' : 'No followers available to add.'}</p>}</div>}
+                    <div className="relative"><Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-white/35" /><input value={memberSearch} onChange={e => handleSearchMembers(e.target.value)} placeholder={createType === 'group' ? "Search followers" : "Search subscribers"} className="h-11 w-full rounded-xl border border-white/[0.07] bg-[#202b37] pl-10 pr-4 text-sm text-white outline-none placeholder:text-white/30 focus:border-[#d6a83f]/60" /></div>
+                    {<div className="max-h-[55dvh] space-y-1 overflow-y-auto overscroll-contain">{followersLoading ? <p className="px-3 py-5 text-center text-xs text-white/40">Loading your followers…</p> : memberSearchResults.map((item: any) => <button key={item.id} type="button" onClick={() => toggleMemberSelection(item)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-white/[0.05]"><Avatar src={item.avatar} alt={item.username || item.fullName} size="sm" /><span className="min-w-0 flex-1"><span className="block truncate text-sm text-white">{item.fullName || item.username}</span><span className="mt-0.5 block truncate text-[10px] text-white/40">@{item.username}</span></span><UserPlus size={15} className="text-[#d6a83f]" /></button>)}{!followersLoading && memberSearchResults.length === 0 && <p className="px-3 py-5 text-center text-xs text-white/40">{memberSearch ? 'No matching followers found.' : 'No followers available to add.'}</p>}</div>}
                   </section>)}
                 </div>
               </div>
@@ -3638,8 +3995,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
                 <p className="hidden text-[11px] text-white/35 sm:block">You can edit these details later.</p>
                 <div className="ml-auto flex items-center gap-2">
                   <button type="button" onClick={() => resetCreateModal()} className="h-11 rounded-xl px-4 text-sm font-medium text-white/60 transition hover:bg-white/[0.06] hover:text-white">Cancel</button>
-                  <button type="button" onClick={() => void handleCreateEntity()} disabled={isCreatingEntity || isUploadingAvatar || !createName.trim()} className="inline-flex h-11 min-w-36 items-center justify-center gap-2 rounded-xl bg-[#d6a83f] px-5 text-sm font-semibold text-[#17130a] transition hover:bg-[#e4b94f] disabled:cursor-not-allowed disabled:opacity-50">
-                    {isCreatingEntity ? <><Loader2 size={15} className="animate-spin" /> Creating…</> : <>{createType === 'group' ? <Users size={15} /> : <Megaphone size={15} />} Create {createType}</>}
+                  <button type="button" onClick={advanceCreateStep} disabled={isCreatingEntity || isUploadingAvatar || !createName.trim()} className="inline-flex h-11 min-w-36 items-center justify-center gap-2 rounded-xl bg-[#d6a83f] px-5 text-sm font-semibold text-[#17130a] transition hover:bg-[#e4b94f] disabled:cursor-not-allowed disabled:opacity-50">
+                    {isCreatingEntity ? <><Loader2 size={15} className="animate-spin" /> Creating…</> : <>{createStep === 'people' ? <>{createType === 'group' ? <Users size={15} /> : <Megaphone size={15} />} Create {createType}</> : <>Next <ChevronRight size={15}/></>}</>}
                   </button>
                 </div>
               </footer>
@@ -3647,6 +4004,8 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
           </>
         )}
       </AnimatePresence>
+
+      {photoCrop && <ImageCropEditor file={photoCrop.file} circular onCancel={() => setPhotoCrop(null)} onApply={file => { const target = photoCrop; setPhotoCrop(null); if (target.kind === 'create') void uploadCroppedCreateAvatar(file); else void uploadCroppedEntityAvatar(file, target); }}/>}
 
       {/* Shared VANTA video trimmer — same UI everywhere (Reel, Post, Story, Chat) */}
       <VideoTrimModal
@@ -3663,7 +4022,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
       {/* Floating create button — only on the Chats index/list page. Never
           rendered inside an open private/group/channel conversation. `showMobileList`
           flips to false the moment a conversation is selected on every breakpoint. */}
-      {showMobileList && (
+      {showMobileList && !createModalOpen && !photoCrop && (
         <MessageFab
           search={newChatSearch}
           results={newChatResults}

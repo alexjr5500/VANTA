@@ -126,11 +126,11 @@ export default function MessageFab({
             aria-labelledby="message-fab-title"
             className="fixed inset-0 z-[81] flex h-[100dvh] min-h-0 w-screen max-w-none flex-col overflow-hidden bg-[#1F2630] text-white shadow-2xl"
           >
-            <header className="flex shrink-0 items-center gap-3 px-5 pb-4 pt-[max(18px,env(safe-area-inset-top))]">
+            <header className="vanta-community-compact-header flex shrink-0 items-center gap-2 px-4">
               <button type="button" onClick={close} aria-label="Go back" className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-white/80 transition hover:bg-white/[0.06]">
                 <ArrowLeft size={21} />
               </button>
-              <h2 id="message-fab-title" className="text-lg font-semibold tracking-tight text-white">{contactMode ? "New Contact" : "New Message"}</h2>
+              <h2 id="message-fab-title" className="text-base font-semibold tracking-tight text-white">{contactMode ? "New Contact" : "New Message"}</h2>
             </header>
             <div className="shrink-0 px-4 pb-3">
               <label htmlFor="message-fab-search" className="sr-only">Search username</label>

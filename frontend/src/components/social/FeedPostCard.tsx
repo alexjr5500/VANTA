@@ -1,7 +1,9 @@
 'use client';
 
+import BookmarkIcon from '@/components/ui/BookmarkIcon';
+
 import { motion } from 'framer-motion';
-import { BarChart2, Bookmark, Gift, Heart, MessageCircle, MoreHorizontal, Repeat2, Share } from 'lucide-react';
+import { BarChart2, Gift, Heart, MessageCircle, MoreHorizontal, Repeat2, Share } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import Avatar from '@/components/ui/Avatar';
@@ -124,6 +126,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
   useEffect(() => setHost(window.location.host), []);
   const quoted = extractQuoteRef(rawCaption, host);
   const captionText = quoted ? quoted.rest : rawCaption;
+  const hasPreviewLink = /(?:https?:\/\/|www\.)/i.test(captionText);
   const captionRef = useRef<HTMLParagraphElement>(null);
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [likePulse, setLikePulse] = useState(0);
@@ -233,7 +236,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
           <button type="button" onClick={() => onMore(item)} aria-label="More post options" className="shrink-0 flex h-8 w-8 items-center justify-center rounded-lg text-[#666] transition hover:bg-white/[.05] hover:text-white"><MoreHorizontal size={17}/></button>
         </div>
         {item.location && <p className="truncate text-[10px] text-[#666]">{item.location}</p>}
-        {captionText && <><p ref={captionRef} style={captionExpanded ? undefined : { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 5, overflow: 'hidden' }} className="whitespace-pre-wrap break-words text-[14px] leading-[1.4] text-[#dedede]">{renderTextWithLinks(captionText, 'linkify', { mentions: true, hashtags: true })}</p>{captionOverflows && <button type="button" onClick={() => setCaptionExpanded(value => !value)} aria-expanded={captionExpanded} className="-mt-0.5 self-start text-[13px] font-medium text-[#c9a227] transition hover:text-[#e0bb4f]">{captionExpanded ? 'Show less' : 'Show more'}</button>}</>}
+        {captionText && <><p ref={captionRef} style={captionExpanded || hasPreviewLink ? undefined : { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 5, overflow: 'hidden' }} className="whitespace-pre-wrap break-words text-[14px] leading-[1.4] text-[#dedede]">{renderTextWithLinks(captionText, 'linkify', { mentions: true, hashtags: true })}</p>{captionOverflows && !hasPreviewLink && <button type="button" onClick={() => setCaptionExpanded(value => !value)} aria-expanded={captionExpanded} className="-mt-0.5 self-start text-[13px] font-medium text-[#c9a227] transition hover:text-[#e0bb4f]">{captionExpanded ? 'Show less' : 'Show more'}</button>}</>}
         {quoted && <QuoteEmbed quote={quoted.ref} />}
         {item.hashtags && <p className="text-[11px] text-[#c9a227]">{Array.isArray(item.hashtags) ? item.hashtags.map((tag: string) => `#${tag}`).join(' ') : item.hashtags}</p>}
         {/* Media sits INSIDE the content column so it aligns with the caption,
@@ -261,7 +264,7 @@ export default function FeedPostCard({ item, currentUserId, onLike, onSave, onCo
             {!isOwn ? <button type="button" onClick={() => onGift(item)} aria-label="Send gift" className={cn(actionClass, 'transition-colors hover:text-[#c9a227]', item.isGifted && 'text-[#f2c75c]')}><Gift size={17} className={item.isGifted ? 'fill-current' : ''}/><span>{formatCount(item.tips ?? item.tipCount ?? item.giftsReceived ?? 0)}</span></button> : <span className={cn(actionClass, 'pointer-events-none', item.isGifted && 'text-[#f2c75c]')} aria-label="Tips"><Gift size={17} className={item.isGifted ? 'fill-current' : ''}/><span>{formatCount(item.tips ?? item.tipCount ?? item.giftsReceived ?? 0)}</span></span>}
             <span className={cn(actionClass, 'pointer-events-none')} aria-label="Views"><BarChart2 size={17}/><span>{formatCount(shownViews)}</span></span>
           </div>
-          <button type="button" onClick={() => onSave(item)} aria-label={item.saved ? 'Remove saved post' : 'Save post'} aria-pressed={item.saved} className={cn(actionClass, item.saved && 'text-white')}><Bookmark size={17} className={item.saved ? 'fill-current' : ''}/><span className="sr-only">{item.saved ? 'Saved' : 'Save'}</span></button>
+          <button type="button" onClick={() => onSave(item)} aria-label={item.saved ? 'Remove saved post' : 'Save post'} aria-pressed={item.saved} className={cn(actionClass, item.saved && 'text-[#dfbd55] hover:text-[#dfbd55]')}><BookmarkIcon size={17} saved={Boolean(item.saved)} /><span className="sr-only">{item.saved ? 'Saved' : 'Save'}</span></button>
           {repostContext && onShareLink && <button type="button" onClick={() => onShareLink(item)} aria-label="Share" className={actionClass}><Share size={17}/></button>}
         </footer>
       </div>

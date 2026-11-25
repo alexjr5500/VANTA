@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { prisma } from "../prisma";
+import { assertReplyAllowed } from "../security/replyAudience";
 import { uploadService } from "../services";
 import { contentViewService } from "../services/content-view.service";
 import { buildReelFeed } from "../services/reel-feed.service";
@@ -390,6 +391,10 @@ export const commentOnReel = async (req: AuthRequest, res: Response): Promise<vo
     const reelId = req.params.id;
     const reel = await prisma.video.findUnique({ where: { id: reelId, moderationRemovedAt: null } });
     if (!reel) { res.status(404).json({ error: "Reel not found" }); return; }
+    const actor = await prisma.user.findUnique({ where: { id: userId }, select: { username: true, verified: true, status: true } });
+    if (!actor || actor.status !== "ACTIVE") { res.status(403).json({ error: "Commenting is unavailable for this account" }); return; }
+    await assertReplyAllowed({ authorId: reel.creatorId, content: reel.description || reel.title, replyAudience: reel.replyAudience },
+      { id: userId, username: actor.username, verified: actor.verified });
 
     const comment = await prisma.videoComment.create({
       data: {

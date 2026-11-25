@@ -1293,6 +1293,20 @@
     cursor: pointer;
   }
 
+  /* Both user mentions and hashtags are VANTA gold everywhere — post, reply,
+     story, live and chat text. External URLs retain their ordinary link color. */
+  .vanta-inline-tag {
+    color: var(--vanta-gold-bright) !important;
+    text-decoration: none;
+  }
+
+  /* Show native placeholders even while real textarea glyphs are transparent
+     and the non-interactive gold-token mirror provides their visible text. */
+  .vanta-highlighted-input::placeholder {
+    -webkit-text-fill-color: var(--text-muted);
+    opacity: 1;
+  }
+
   /* ═══ Gift Animation Container ═══ */
   .gift-animation {
     @apply fixed inset-0 pointer-events-none z-[var(--z-toast)];
@@ -3547,4 +3561,110 @@ html.vanta-native-android .vanta-entity-create footer {
   .vanta-direct-header > div:last-child .btn-icon { width: 31px; }
   .vanta-direct-input-row { gap: 4px; }
   .vanta-direct-input-row > button { width: 32px !important; }
+}
+
+/* Keep published mentions and hashtags gold even when a generic anchor style wins. */
+a.vanta-inline-tag, a.vanta-inline-tag:visited, a.vanta-inline-tag:hover, a.vanta-inline-tag:active {
+  color: #dfbd55 !important;
+  -webkit-text-fill-color: #dfbd55 !important;
+  text-decoration: none;
+}
+html.vanta-native-android .vanta-reply-toolbar { padding-bottom: 0 !important; }
+
+/* Compact clickable URL preview fallback for all shared text surfaces. */
+a.vanta-link-preview {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 6px 10px;
+  color: #dfbd55;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+a.vanta-link-preview:hover { text-decoration: underline; }
+
+/* Rich previews are inline phrasing elements, so they remain valid inside
+   paragraphs in posts, chats and comments. The entire card is one link. */
+a.vanta-link-preview:has(.vanta-link-rich) {
+  display: inline-flex;
+  width: min(100%, 350px);
+  padding: 0;
+  overflow: hidden;
+  margin-block: 4px;
+  vertical-align: top;
+  white-space: normal;
+  text-decoration: none;
+  text-align: left;
+  color: var(--text-primary);
+}
+.vanta-link-rich { display: flex; width: 100%; min-width: 0; flex-direction: column; }
+.vanta-link-thumbnail { display: block; width: 100%; height: 132px; object-fit: cover; background: var(--background); }
+.vanta-link-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding: 10px 12px; }
+.vanta-link-title, .vanta-link-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.vanta-link-title { color: var(--text-primary); font-weight: 650; font-size: 14px; line-height: 1.3; }
+.vanta-link-description { color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
+.vanta-link-domain { color: #dfbd55; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+
+span.vanta-inline-tag { color: #dfbd55 !important; -webkit-text-fill-color: #dfbd55 !important; }
+
+/* Community follow-up: restore fully enclosed cards on the annotated screens.
+   Scoped classes override the old flat-section rules without changing DM UI. */
+.vanta-community-compact-header {
+  --community-safe-top: env(safe-area-inset-top, 0px);
+  box-sizing: border-box;
+  height: calc(48px + var(--community-safe-top)) !important;
+  min-height: calc(48px + var(--community-safe-top)) !important;
+  padding-top: var(--community-safe-top) !important;
+  padding-bottom: 0 !important;
+}
+.vanta-community-settings-nav { top: calc(48px + env(safe-area-inset-top, 0px)); }
+html.vanta-native-android .vanta-community-compact-header { --community-safe-top: 0px; }
+html.vanta-native-android .vanta-community-settings-nav { top: 48px; }
+.vanta-conversation-info .vanta-community-card,
+.vanta-entity-settings .vanta-community-card {
+  background: #18212b !important;
+  border: 1px solid rgba(255,255,255,.13) !important;
+  border-radius: 14px !important;
+  box-shadow: none !important;
+}
+.vanta-entity-settings section.vanta-community-card { padding: 0 0 8px; margin-top: 12px; }
+.vanta-entity-settings .vanta-community-field-card,
+.vanta-community-person-card {
+  background: #202b37;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 11px;
+}
+.vanta-community-field-card :is(input:not([type=file]),textarea) { border: 0 !important; background: transparent !important; }
+.vanta-community-field-card:focus-within { border-color: rgba(214,168,63,.65); }
+html.vanta-native-android .vanta-photo-crop { height: var(--chat-viewport-height,100dvh); }
+
+/* Comment sheets use the usable visual viewport, not the scrolling/transformed route. */
+.vanta-reel-comments { bottom: var(--vanta-kb, 0px); height: min(calc(var(--vanta-vh, 100dvh) * .58), 560px); }
+.vanta-reel-comments:has(textarea:focus), .vanta-reel-comments:has(input:focus) { height: min(calc(var(--vanta-vh, 100dvh) * .88), 560px); }
+.vanta-comment-composer { padding-bottom: max(6px, var(--vanta-native-safe-bottom, env(safe-area-inset-bottom, 0px))); }
+html.vanta-native-android .vanta-comment-composer { padding-bottom: 4px; }
+
+/* Wallet-only accessibility: preserve a visible keyboard focus indicator
+   without changing the rest of VANTA's navigation or media surfaces. */
+.vanta-wallet-ui :is(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--vanta-gold-bright) !important;
+  outline-offset: 2px;
+}
+.vanta-wallet-ui :is(input, textarea, select):focus-visible {
+  outline-offset: 0;
+}
+.vanta-wallet-ui button[disabled] {
+  cursor: not-allowed;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vanta-wallet-ui *, .vanta-wallet-ui *::before, .vanta-wallet-ui *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

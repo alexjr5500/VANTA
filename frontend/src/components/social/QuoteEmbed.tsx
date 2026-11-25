@@ -8,9 +8,9 @@ import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import type { QuoteRef } from '@/lib/quotePost';
+import { previewExcerpt } from '@/lib/linkify';
 
 type Loaded = Record<string, any> | null;
-const cache = new Map<string, Loaded>();
 
 const authorOf = (item: Record<string, any>) => item.author || item.user || item.creator || {};
 const mediaOf = (item: Record<string, any>) => {
@@ -24,15 +24,15 @@ export default function QuoteEmbed({ quote, className = '' }: { quote: QuoteRef;
   const router = useRouter();
   const { token } = useAuth();
   const key = `${quote.kind}:${quote.id}`;
-  const [data, setData] = useState<Loaded | undefined>(cache.has(key) ? cache.get(key) : undefined);
+  const [result, setResult] = useState<{ key: string; token: string | null; data: Loaded }>();
+  const data = result?.key === key && result.token === token ? result.data : undefined;
 
   useEffect(() => {
-    if (cache.has(key)) { setData(cache.get(key)); return; }
     let active = true;
     const path = quote.kind === 'reel' ? `/api/reels/${encodeURIComponent(quote.id)}` : `/api/feed/${encodeURIComponent(quote.id)}`;
-    void apiGet<Record<string, any>>(path, token || undefined)
-      .then(res => { const v = res?.id ? res : null; cache.set(key, v); if (active) setData(v); })
-      .catch(() => { if (active) setData(null); });
+    void apiGet<Record<string, any>>(path, token || undefined, { skipCache: true })
+      .then(res => { const v = res?.id ? res : null; if (active) setResult({ key, token, data: v }); })
+      .catch(() => { if (active) setResult({ key, token, data: null }); });
     return () => { active = false; };
   }, [key, quote.id, quote.kind, token]);
 
@@ -54,7 +54,7 @@ export default function QuoteEmbed({ quote, className = '' }: { quote: QuoteRef;
         {author.verified && author.verificationType && <VerificationBadge type={author.verificationType} size="sm" />}
         {author.username && <span className="truncate text-[12px] text-[#777]">@{author.username}</span>}
       </div>
-      {text && <p className="line-clamp-4 whitespace-pre-wrap break-words px-3 pt-1 text-[13px] leading-[1.35] text-[#dedede]">{text}</p>}
+      {text && <p className="line-clamp-4 whitespace-pre-wrap break-words px-3 pt-1 text-[13px] leading-[1.35] text-[#dedede]">{previewExcerpt(text)}</p>}
       {media && (isVideoUrl(media)
         ? <video src={media} muted playsInline preload="metadata" className="mt-2 max-h-64 w-full bg-black object-cover" />
         // eslint-disable-next-line @next/next/no-img-element

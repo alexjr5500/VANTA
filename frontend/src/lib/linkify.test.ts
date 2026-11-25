@@ -1,13 +1,16 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest';
-import { safeUrlHref, renderTextWithLinks } from './linkify';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('@/components/social/LinkPreviewContent', () => ({ default: () => null }));
+import { safeUrlHref, renderTextWithLinks, linkPreviewLabel } from './linkify';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function stripReact(reactNodes: any[]): string {
   return reactNodes.map((node) => {
     if (typeof node === 'string') return node;
     if (node && typeof node === 'object') {
-      const text = node.props?.children ?? '';
+      const child = node.props?.children ?? '';
+      const text = typeof child === 'object' && !Array.isArray(child) ? [child] : child;
       const tag = node.type === 'a' ? 'A' : '';
       const href = node.type === 'a' ? `[${node.props.href}]` : '';
       if (typeof text === 'string') return `${tag}${href}${text}`;
@@ -32,7 +35,8 @@ describe('renderTextWithLinks', () => {
   it('renders a bare URL as a link', () => {
     const nodes = renderTextWithLinks('https://t.me/alphidrop');
     expect(stripReact(nodes)).toContain('A');
-    expect(stripReact(nodes)).toContain('https://t.me/alphidrop');
+    expect(stripReact(nodes)).toContain('A[https://t.me/alphidrop]↗ t.me');
+    expect(nodes[0]).toMatchObject({ props: { className: 'vanta-link-preview', title: 'https://t.me/alphidrop', children: { props: { href: 'https://t.me/alphidrop' } } } });
   });
 
   it('renders http/https/www as links', () => {
@@ -44,7 +48,7 @@ describe('renderTextWithLinks', () => {
   it('keeps surrounding text normal and linkifies embedded URLs', () => {
     const output = stripReact(renderTextWithLinks('Check this out https://t.me/alphidrop guys'));
     expect(output).toContain('Check this out ');
-    expect(output).toContain('A[https://t.me/alphidrop]https://t.me/alphidrop');
+    expect(output).toContain('A[https://t.me/alphidrop]↗ t.me');
     expect(output).toContain(' guys');
   });
 
@@ -91,7 +95,7 @@ describe('renderTextWithLinks — @username mentions', () => {
   it('links URLs and mentions together without corrupting either', () => {
     const output = stripReact(renderTextWithLinks('@alex check https://t.me/alphidrop now', 'linkify', { mentions: true }));
     expect(output).toContain('A[/profile/alex]@alex');
-    expect(output).toContain('A[https://t.me/alphidrop]https://t.me/alphidrop');
+    expect(output).toContain('A[https://t.me/alphidrop]↗ t.me');
     expect(output).toContain(' now');
   });
 
@@ -103,5 +107,22 @@ describe('renderTextWithLinks — @username mentions', () => {
   it('links mentions and hashtags together in chat text', () => {
     const output = stripReact(renderTextWithLinks('@alex check #VANTA', 'linkify', { mentions: true, hashtags: true }));
     expect(output).toBe('A[/profile/alex]@alex check A[/discover?q=%23VANTA]#VANTA');
+  });
+});
+
+describe('VANTA shared link appearance', () => {
+  it('keeps mentions and hashtags gold after publishing without the blue URL class', () => {
+    const nodes = renderTextWithLinks('@alex #VANTA', 'linkify', { mentions: true, hashtags: true });
+    const anchors = nodes.filter(node => typeof node === 'object' && node !== null && 'type' in node && node.type === 'a');
+    expect(anchors).toHaveLength(2);
+    for (const anchor of anchors) expect(anchor).toMatchObject({ props: { className: 'vanta-inline-tag', style: { color: '#dfbd55' } } });
+  });
+  it('supports a hostname-only mode for sensitive text surfaces', () => {
+    expect(renderTextWithLinks('https://example.com', undefined, { richPreviews: false })[0]).toMatchObject({ props: { children: '↗ example.com' } });
+  });
+  it('uses a hostname rather than exposing a raw URL or query', () => {
+    expect(linkPreviewLabel('https://example.com/private?value=secret')).toBe('example.com');
+    expect(linkPreviewLabel('not a URL')).toBe('Open link');
+    expect(stripReact(renderTextWithLinks('https://example.com/private'))).toBe('A[https://example.com/private]↗ example.com');
   });
 });

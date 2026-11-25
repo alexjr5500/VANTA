@@ -26,6 +26,9 @@ import { apiGet } from '@/lib/apiClient';
 import { useToast } from '@/components/ui/Toast';
 import { SettingsGroup, SettingsLink } from '@/components/settings/SettingsUI';
 import Avatar from '@/components/ui/Avatar';
+import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
+import { useI18n } from '@/lib/i18n/context';
+import { localeNames } from '@/lib/i18n/config';
 
 interface ProfileData {
   username: string;
@@ -42,6 +45,8 @@ interface PrivacyData {
 
 export default function SettingsPage() {
   const { token, logout } = useAuth();
+  const tr = useLocalizedUiText();
+  const { locale } = useI18n();
   const toast = useToast();
 
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -79,7 +84,7 @@ export default function SettingsPage() {
 
   const accentLabel = privacy.accent === 'gold' ? 'Gold' : 'Monochrome';
   const densityLabel = privacy.density === 'compact' ? 'Compact' : 'Comfortable';
-  const languageLabel = privacy.language || 'English';
+  const languageLabel = localeNames[locale] || locale;
 
   return (
     <div className="space-y-3 pb-[calc(5rem+env(safe-area-inset-bottom))]">
@@ -111,14 +116,14 @@ export default function SettingsPage() {
               />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-base font-semibold text-white">
-                  {profile?.fullName || profile?.username || 'Your account'}
+                  {profile?.fullName || profile?.username || tr('Your account')}
                 </span>
                 <span className="mt-0.5 block truncate text-sm text-white/40">
                   @{profile?.username || 'username'}
                 </span>
               </span>
               <span className="shrink-0 rounded-full bg-[var(--settings-accent-soft)] px-3 py-1 text-[10px] font-semibold text-[var(--settings-accent-text)]">
-                View profile
+                {tr('View profile')}
               </span>
               <ChevronRight
                 className="shrink-0 text-white/20 group-hover:text-white/50"
@@ -276,7 +281,7 @@ export default function SettingsPage() {
               className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-[var(--surface)] text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white"
             >
               <LogOut size={15} aria-hidden="true" />
-              Log out
+              {tr('Log out')}
             </button>
           </div>
         </div>

@@ -36,6 +36,7 @@ import appealRoutes from './routes/appeal.routes';
 import monetizationRoutes from './routes/monetization.routes';
 import storyRoutes from './routes/story.routes';
 import feedRoutes from './routes/feed.routes';
+import linkPreviewRoutes from './routes/link-preview.routes';
 import searchRoutes from './routes/search.routes';
 import uploadRoutes from './routes/upload.routes';
 import privateMediaRoutes from './routes/private-media.routes';
@@ -494,6 +495,7 @@ app.use('/api/appeals', appealRoutes);
 app.use('/api/monetization', monetizationRoutes);
 app.use('/api/stories', storyRoutes);
 app.use('/api/feed', feedRoutes);
+app.use('/api/link-preview', linkPreviewRoutes);
 app.use('/api/search', rateLimiter.search, searchRoutes);
 app.use('/api/upload', rateLimiter.upload, uploadRoutes);
 app.use('/api/reels', reelRoutes);
@@ -769,6 +771,21 @@ async function startServer() {
     } catch (sweepError) {
       console.warn('[OAuthState] Startup sweep skipped:', sweepError);
     }
+
+    // Status media is ephemeral. Read-time expiration remains authoritative;
+    // a recurring bounded cleanup deletes the underlying storage assets.
+    const expireStatuses = async (): Promise<void> => {
+      try {
+        const { sweepExpiredStatuses } = await import('./services/status-expiry.service');
+        const result = await sweepExpiredStatuses();
+        if (result.stories || result.files || result.failed) console.log('[StatusExpiry]', result);
+      } catch (error) {
+        console.warn('[StatusExpiry] Sweep failed; will retry:', error);
+      }
+    };
+    void expireStatuses();
+    const statusExpiryTimer = setInterval(expireStatuses, 60_000);
+    statusExpiryTimer.unref();
 
     // Gold Verified Follower Rewards: expire due campaigns (refund unused
     // reservation to the creator's available balance). Runs at startup and on

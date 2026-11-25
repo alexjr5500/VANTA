@@ -42,17 +42,43 @@
 .edit-feedback.error { border-color: rgba(255,90,90,.2); background: rgba(255,90,90,.07); color: #ff8d8d; }
 .edit-feedback.success { border-color: rgba(115,205,162,.2); background: rgba(115,205,162,.07); color: #9cdbbd; }
 .edit-feedback.progress { color: #f5f5f5; }
-.edit-profile-form footer { display: flex; justify-content: flex-end; gap: 9px; padding: 16px; border-top: 1px solid rgba(255,255,255,.08); }
-.edit-profile-form footer button { display: flex; min-height: 42px; align-items: center; justify-content: center; gap: 7px; padding: 0 16px; border: 1px solid rgba(255,255,255,.11); border-radius: 20px; font-size: 12px; font-weight: 650; }
-.edit-profile-form footer .save { min-width: 135px; border-color: rgba(214,168,63,.72); background: #f2c75c; color: #050505; }
-.edit-profile-form footer .save:hover:not(:disabled) { background: #d6a83f; }
 .edit-profile-form button:disabled { opacity: .42; cursor: not-allowed; }
-.edit-profile-page :is(button,a,input,textarea):focus-visible { outline: 2px solid #f2c75c; outline-offset: 3px; }
+.edit-profile-page :is(button,a):focus-visible { outline: 2px solid #f2c75c; outline-offset: 3px; }
 .edit-profile-loading { display: grid; gap: 13px; padding: 10vh 12px 0; }
 .edit-profile-loading i { height: 100px; border-radius: 8px; background: linear-gradient(100deg,#101010,#1c1c1c,#101010); background-size: 200%; animation: edit-shimmer 1.2s infinite; }
 .edit-profile-loading i:first-child { height: 220px; }
 .spin { animation: edit-spin .8s linear infinite; }
 @keyframes edit-spin { to { transform: rotate(360deg); } }
 @keyframes edit-shimmer { to { background-position: -200%; } }
-@media (min-width:640px) { .edit-profile-page { padding-top: 0; } .edit-profile-header { padding-inline: 12px; } .edit-cover { height: 210px; } .edit-fields { padding-inline: 18px; } .media-copy { padding-inline: 18px; } .edit-profile-form footer { padding-inline: 18px; } }
+@media (min-width:640px) { .edit-profile-page { padding-top: 0; } .edit-profile-header { padding-inline: 12px; } .edit-cover { height: 210px; } .edit-fields { padding-inline: 18px; } .media-copy { padding-inline: 18px; } }
 @media (prefers-reduced-motion:reduce) { .edit-profile-page * { animation: none !important; transition: none !important; } }
+
+/* Match the compact cover/avatar and inline identity editor while preserving
+   the app's theme variables and the VANTA gold action accent. */
+.edit-media { padding-bottom: 12px; }
+.edit-cover { height: auto; aspect-ratio: 3 / 1; min-height: 0; }
+.edit-cover.has-photo:after { background: rgba(0,0,0,.08); }
+.edit-cover > button { width: 44px; height: 44px; background: rgba(0,0,0,.54); color: #f2c75c; }
+.edit-avatar { width: 86px; height: 86px; margin-top: -38px; }
+.edit-avatar button { inset: auto -3px -3px auto; width: 34px; height: 34px; border: 2px solid var(--background); background: #d6a83f; color: #17130a; opacity: 1; }
+.edit-avatar button:hover { background: #f2c75c; }
+.media-copy { padding-top: 8px; }
+.media-copy b { color: #f2c75c; }
+.media-copy span { font-size: 11px; color: var(--text-secondary, #a2a2a2); }
+.edit-fields { padding-inline: 16px; }
+.edit-field { gap: 4px; padding: 10px 0 8px; }
+.edit-field > span { color: #f2c75c; font-size: 11px; font-weight: 600; }
+.edit-field input, .edit-field textarea { min-height: 38px; font-size: 15px; }
+.edit-field textarea { min-height: 72px; }
+/* Inline text entry: no rectangular gold outline, even for native date
+   controls or keyboard focus. A subtle underline and caret indicate focus. */
+.edit-field:focus-within { border-bottom-color: rgba(255,255,255,.32); }
+.edit-profile-page .edit-field :is(input,textarea,select):is(:focus,:focus-visible) {
+  outline: none !important;
+  box-shadow: none !important;
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+}
+.edit-profile-page .edit-field .username-input:focus-within { outline: none; box-shadow: none; }
+.edit-field :is(input,textarea) { caret-color: var(--text-primary, #fff); }

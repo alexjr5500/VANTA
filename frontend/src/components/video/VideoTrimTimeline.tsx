@@ -14,6 +14,8 @@ export interface VideoTrimTimelineProps {
   onRangeChange: (start: number, end: number) => void;
   onSeek: (time: number) => void;
   className?: string;
+  compact?: boolean;
+  statusStyle?: boolean;
 }
 
 type DragMode = 'start' | 'end' | 'seek' | null;
@@ -101,6 +103,8 @@ export default function VideoTrimTimeline({
   onRangeChange,
   onSeek,
   className,
+  compact = false,
+  statusStyle = false,
 }: VideoTrimTimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragMode>(null);
@@ -236,7 +240,7 @@ if (safeDuration <= 0) {
         ref={trackRef}
         role="group"
         aria-label="Video timeline trimmer"
-        className="relative h-[68px] w-full cursor-crosshair touch-none overflow-hidden rounded-xl border border-white/[0.08] bg-[#111113]"
+        className={cn("relative w-full cursor-crosshair touch-none overflow-hidden rounded-md border border-white/[0.08] bg-[#111113]", statusStyle ? "h-11 rounded-none border-0" : compact ? "h-10" : "h-[68px]")}
         onPointerDown={handleTrackPointerDown}
         onPointerMove={handleTrackPointerMove}
         onPointerUp={endDrag}
@@ -248,12 +252,12 @@ if (safeDuration <= 0) {
             alt=""
             aria-hidden="true"
             draggable={false}
-            className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-70"
+            className={cn("pointer-events-none absolute inset-0 h-full w-full", statusStyle ? "object-fill" : "object-cover opacity-70")}
           />
         ) : (
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#202023]/70 via-[#151517] to-[#202023]/70" />
         )}
-        <div className="pointer-events-none absolute inset-0 bg-[#050505]/25" />
+        {!statusStyle && <div className="pointer-events-none absolute inset-0 bg-[#050505]/25" />}
 
         {/* Unselected regions */}
         <div
@@ -267,22 +271,22 @@ if (safeDuration <= 0) {
 
         {/* Selected range */}
         <div
-          className="pointer-events-none absolute inset-y-0 border-x border-[#dfbd55]/70 bg-[#c9a227]/20"
+          className={cn("pointer-events-none absolute inset-y-0", statusStyle ? "border-2 border-white" : "border-x border-[#dfbd55]/70 bg-[#c9a227]/20")}
           style={{ left: `${startPct}%`, width: `${Math.max(0, endPct - startPct)}%` }}
         />
 
         {/* Duration chip */}
-        <span className="pointer-events-none absolute left-1/2 top-1 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/60 px-2 py-0.5 text-[9px] font-bold tabular-nums tracking-wider text-[#dfbd55] backdrop-blur">
+        {!statusStyle && <span className="pointer-events-none absolute left-1/2 top-1 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/60 px-2 py-0.5 text-[9px] font-bold tabular-nums tracking-wider text-[#dfbd55] backdrop-blur">
           {formatVideoTime(end - start)}
-        </span>
+        </span>}
 
         {/* Playhead */}
-        <div
+        {!statusStyle && <div
           className="pointer-events-none absolute inset-y-0 w-[2px] -translate-x-1/2 bg-white/90"
           style={{ left: `${currentPct}%` }}
         >
           <span className="absolute -left-[3px] top-0 h-[5px] w-[8px] rounded-b-sm bg-white/90" />
-        </div>
+        </div>}
 
         {/* Start handle */}
         <button
@@ -305,8 +309,8 @@ if (safeDuration <= 0) {
           )}
           style={{ left: `${startPct}%` }}
         >
-          <span className="pointer-events-none h-full w-[5px] rounded-full bg-[#dfbd55] shadow-[0_0_10px_rgba(214,168,63,0.55)]" />
-          <span className="pointer-events-none absolute top-[-3px] h-[13px] w-[13px] rounded-full border-2 border-[#dfbd55] bg-[#0d0d0f] shadow-[0_0_8px_rgba(214,168,63,0.6)]" />
+          <span className={cn("pointer-events-none h-full w-[5px] rounded-full", statusStyle ? "bg-white" : "bg-[#dfbd55] shadow-[0_0_10px_rgba(214,168,63,0.55)]")} />
+          <span className={cn("pointer-events-none absolute h-3 w-3 rounded-full", statusStyle ? "top-1/2 -translate-y-1/2 bg-white" : "top-[-3px] border-2 border-[#dfbd55] bg-[#0d0d0f] shadow-[0_0_8px_rgba(214,168,63,0.6)]")} />
         </button>
 
         {/* End handle */}
@@ -330,12 +334,12 @@ if (safeDuration <= 0) {
           )}
           style={{ left: `${endPct}%` }}
         >
-          <span className="pointer-events-none h-full w-[5px] rounded-full bg-[#dfbd55] shadow-[0_0_10px_rgba(214,168,63,0.55)]" />
-          <span className="pointer-events-none absolute bottom-[-3px] h-[13px] w-[13px] rounded-full border-2 border-[#dfbd55] bg-[#0d0d0f] shadow-[0_0_8px_rgba(214,168,63,0.6)]" />
+          <span className={cn("pointer-events-none h-full w-[5px] rounded-full", statusStyle ? "bg-white" : "bg-[#dfbd55] shadow-[0_0_10px_rgba(214,168,63,0.55)]")} />
+          <span className={cn("pointer-events-none absolute h-3 w-3 rounded-full", statusStyle ? "top-1/2 -translate-y-1/2 bg-white" : "bottom-[-3px] border-2 border-[#dfbd55] bg-[#0d0d0f] shadow-[0_0_8px_rgba(214,168,63,0.6)]")} />
         </button>
       </div>
 {/* Precision controls */}
-      <div className="mt-2 flex items-start justify-between gap-2">
+      {statusStyle ? null : compact ? <div className="mt-1 flex items-center justify-between text-[10px] tabular-nums text-white/60"><span>{formatVideoTime(start)} – {formatVideoTime(end)}</span><span className="text-[#dfbd55]">{formatVideoTime(end - start)} selected</span></div> : <div className="mt-2 flex items-start justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <NudgeButton
             direction="minus"
@@ -381,7 +385,7 @@ if (safeDuration <= 0) {
             onClick={() => onRangeChange(start, clampTime(end + 1, start + VIDEO_MIN_GAP_SECONDS, safeDuration))}
           />
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

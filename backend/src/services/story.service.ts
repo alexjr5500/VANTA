@@ -178,6 +178,12 @@ export class StoryService {
     if (!file || file.deletedAt || file.userId !== userId) {
       throw new Error("Uploaded story media was not found or is not owned by you");
     }
+    if (file.recordType && (file.recordType !== "Story" || (file.recordId && file.recordId !== storyId))) throw new Error("Media already belongs to another record.");
+    if (!["IMAGE", "VIDEO"].includes(file.fileType)) throw new Error("Status media must be an image or video.");
+    if (file.fileType === "VIDEO") {
+      const { uploadService } = await import("./upload.service");
+      await uploadService.assertStatusMediaDuration(file);
+    }
     if (!file.url) {
       throw new Error("Uploaded story media has no storage URL — cannot publish.");
     }
@@ -194,6 +200,7 @@ export class StoryService {
         if (draft.mediaUrl !== file.url) throw new Error("Story already published with different media.");
         return draft;
       }
+      if (draft.expiresAt && draft.expiresAt.getTime() <= Date.now()) throw new Error("Status draft expired. Create a new Status.");
       await this.assertCanCreateStory(tx, userId, isVerified);
       return tx.story.update({
         where: { id: storyId },
@@ -201,6 +208,8 @@ export class StoryService {
           mediaUrl: file.url,
           mediaType: file.fileType === "VIDEO" ? "VIDEO" : "IMAGE",
           publishStatus: "PUBLISHED",
+          createdAt: new Date(),
+          expiresAt: new Date(Date.now() + STORY_TTL_MS),
           caption: typeof draft.caption === "string" ? draft.caption : undefined,
         },
         include: {
@@ -263,7 +272,8 @@ export class StoryService {
           resharedFromId: original.id,
           resharedFromUserId: original.userId,
           resharedFromUsername: original.user?.username || null,
-          expiresAt: new Date(Date.now() + STORY_TTL_MS),
+          // Resharing does not extend the original file retention window.
+          expiresAt: original.expiresAt,
         },
         include: {
           user: { select: { id: true, username: true, avatar: true } },
@@ -457,7 +467,7 @@ export class StoryService {
 
   async getStoryById(storyId: string, viewerId?: string) {
     const story = await prisma.story.findUnique({
-      where: { id: storyId, publishStatus: "PUBLISHED", moderationRemovedAt: null },
+      where: { id: storyId, publishStatus: "PUBLISHED", moderationRemovedAt: null, expiresAt: { gt: new Date() } },
       include: {
         user: { select: { id: true, username: true, avatar: true } },
       },

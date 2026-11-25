@@ -2,6 +2,7 @@ import { prisma } from "../prisma";
 import { notificationService } from "./notification.service";
 import { BADGE_USER_SELECT, enrichPublicUser } from "./public-verification";
 import { createPrivateMediaUrl } from "./private-media.service";
+import { COMMUNITY_REACTIONS, allowedCommunityReactions, memberWelcome } from "./community-settings";
 
 const userSelect = {
   id: true, username: true, fullName: true, avatar: true, verified: true,
@@ -412,7 +413,15 @@ export class ChatService {
       where: { category: 'message', recordType: 'Message', recordId: { in: messageIds }, deletedAt: null },
       select: { id: true, url: true },
     }) : [];
-    return { messages: page.reverse().map((message: any) => protectMessageMedia(message, privateFiles, userId)), nextCursor };
+    const isCommunity = conversation.type === "GROUP" || conversation.type === "CHANNEL";
+    return {
+      messages: page.reverse().map((message: any) => protectMessageMedia(message, privateFiles, userId)),
+      nextCursor,
+      ...(isCommunity ? {
+        allowedReactions: allowedCommunityReactions(conversation.permissions),
+        welcome: memberWelcome(conversation.permissions, conversation.participants.find((p: any) => p.userId === userId)),
+      } : {}),
+    };
   }
 
   async sendMessage(conversationId: string, senderId: string, content: string, type = "TEXT", attachments: AttachmentInput[] = [], replyToId?: string, storyReply?: { storyId?: string; mediaUrl?: string; caption?: string; author?: string }) {
@@ -627,11 +636,12 @@ export class ChatService {
   }
 
   async reactToMessage(messageId: string, userId: string, reaction: string) {
-    const allowed = new Set(["❤️", "😂", "🔥", "👏", "👍"]);
+    const allowed = new Set<string>(COMMUNITY_REACTIONS);
     if (!allowed.has(reaction)) throw new Error("Unsupported reaction");
-    const message = await prisma.message.findUnique({ where: { id: messageId, moderationRemovedAt: null }, select: { conversationId: true } });
+    const message = await prisma.message.findUnique({ where: { id: messageId, moderationRemovedAt: null, deletedAt: null }, select: { conversationId: true, conversation: { select: { type: true, permissions: true } } } });
     if (!message || !(await this.isParticipant(message.conversationId, userId))) throw new Error("Message not found or unauthorized");
     const existing = await prisma.messageReaction.findUnique({ where: { messageId_userId: { messageId, userId } } });
+    if (existing?.reaction !== reaction && ["GROUP", "CHANNEL"].includes(message.conversation?.type || "") && !allowedCommunityReactions(message.conversation.permissions).includes(reaction)) throw new Error("This reaction is disabled by community settings");
     if (existing?.reaction === reaction) await prisma.messageReaction.delete({ where: { id: existing.id } });
     else await prisma.messageReaction.upsert({ where: { messageId_userId: { messageId, userId } }, update: { reaction }, create: { messageId, userId, reaction } });
     return protectPersistedMessage(await prisma.message.findUnique({ where: { id: messageId, moderationRemovedAt: null }, include: { sender: { select: userSelect }, reads: true, attachments: true, reactions: { include: { user: { select: { id: true, username: true } } } }, replyTo: { include: { sender: { select: { id: true, username: true } }, attachments: true } } } }), userId);

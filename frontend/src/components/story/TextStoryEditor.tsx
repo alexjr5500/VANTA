@@ -9,6 +9,8 @@ import { publishTextStory } from '@/lib/storyApi';
 import { notifyStoryFeedChanged } from '@/lib/storyEvents';
 import { STATUS_MAX_CHARS, STATUS_MAX_LINES, normalizeStatusEditorValue, statusCounts } from '@/lib/statusLimits';
 import { DEFAULT_TEXT_STYLE, STORY_BACKGROUNDS, STORY_FONTS, backgroundById, fontById } from '@/components/story/storyPresets';
+import { MentionSuggestions, useMentionSuggestions } from '@/components/social/MentionSuggestions';
+import { MentionTextarea } from '@/components/social/MentionTextarea';
 
 export interface TextStoryEditorProps {
   onBack?: () => void;
@@ -42,6 +44,7 @@ export default function TextStoryEditor({ onBack, onClose, onPublished, onPhoto,
     setText(normalizeStatusEditorValue(value));
     setError('');
   };
+  const mentions = useMentionSuggestions({ value: text, onChange: changeText, token, inputRef: textareaRef });
 
   const cycleFont = () => {
     const current = STORY_FONTS.findIndex((entry) => entry.id === fontId);
@@ -125,10 +128,15 @@ export default function TextStoryEditor({ onBack, onClose, onPublished, onPhoto,
       )}
 
       <main className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-5">
-        <textarea
+        <MentionTextarea
           ref={textareaRef}
+          surfaceClassName="w-full max-w-[620px] flex-none"
+          mirrorTextColor={selectedBackground.ink}
           value={text}
-          onChange={(event) => changeText(event.target.value)}
+          onChange={(event) => { changeText(event.target.value); mentions.syncCaret(event.currentTarget); }}
+          onClick={event => mentions.syncCaret(event.currentTarget)}
+          onKeyUp={event => mentions.syncCaret(event.currentTarget)}
+          onKeyDown={event => { mentions.onKeyDown(event); }}
           placeholder="Type a status"
           aria-label="Write text Status"
           rows={3}
@@ -136,6 +144,7 @@ export default function TextStoryEditor({ onBack, onClose, onPublished, onPhoto,
           className="max-h-full min-h-[132px] w-full max-w-[620px] resize-none overflow-y-auto border-0 bg-transparent text-center text-[clamp(28px,7vw,46px)] font-light leading-snug outline-none placeholder:opacity-30 placeholder:text-current"
           style={{ color: selectedBackground.ink, fontFamily: selectedFont.css, letterSpacing: `${selectedFont.letterSpacing}em`, lineHeight: selectedFont.lineHeight }}
         />
+        <MentionSuggestions mention={mentions} className="mt-2 max-w-[620px] rounded-xl" />
         {(text.length > 0 || error) && (
           <div className="mt-4 flex w-full max-w-[440px] flex-col items-center gap-2">
             <span className="text-xs tabular-nums opacity-65" style={{ color: selectedBackground.ink }}>

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
+import { notificationDestination } from '@/lib/notificationDestination';
 import {
   MessageCircle,
   Video,
@@ -41,28 +42,12 @@ import IncomingCallBanner from '@/components/messages/IncomingCallBanner';
 import ChatCallOverlay from '@/components/messages/ChatCallOverlay';
 import GlobalGiftAnimations from '@/components/gifts/GlobalGiftAnimations';
 import { useToast } from '@/components/ui/Toast';
-
-const notificationDestination = (notification: any) => {
-  let data: any = notification?.data;
-  if (typeof data === 'string') {
-    try { data = JSON.parse(data); } catch { data = {}; }
-  }
-  data ||= {};
-  if (data.streamId) return `/live/${data.streamId}`;
-  if (data.postId) return `/home?post=${data.postId}${data.commentId ? `&comment=${data.commentId}` : ''}`;
-  if (data.conversationId || data.groupId || data.channelId) return '/chat';
-  const type = typeof notification?.type === 'string' ? notification.type.toLowerCase() : '';
-  if (data.transactionId || type === 'wallet' || type.startsWith('wallet_')) return '/balance/transactions';
-  if (data.followerUsername) return `/profile/${data.followerUsername}`;
-  return '/notifications';
-};
+import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 
 // Secondary destinations live in one compact mobile sheet. The permanent
 // navigation below stays focused on the five primary product actions.
 const mainNavItems = [
   { href: '/live', icon: Video, label: 'Live' },
-  { href: '/chat', icon: MessageCircle, label: 'Chat' },
-  { href: '/notifications', icon: Bell, label: 'Notifications' },
   { href: '/balance', icon: WalletCards, label: 'Balance' },
   { href: '/bookmarks', icon: Bookmark, label: 'Bookmarks' },
   { href: '/creator', icon: Sparkles, label: 'Creator Studio' },
@@ -92,6 +77,7 @@ const MobileMenu = memo(function MobileMenu({
 }) {
   const { unreadCount: notificationUnread } = useNotifications();
   const { chatUnreadCount: chatUnread } = useChatUnread();
+  const tr = useLocalizedUiText();
   const navBadgeFor = (href: string) => {
     if (href === '/chat') return chatUnread;
     if (href === '/notifications') return notificationUnread;
@@ -170,14 +156,14 @@ const MobileMenu = memo(function MobileMenu({
                       )}
                     >
                       <span className="relative">
-                        <Icon size={17} className="text-gray-400" />
+                        <Icon size={17} className="text-[var(--vanta-gold-bright)]" />
                         {navBadgeFor(item.href) > 0 && (
                           <span className="absolute -right-2 -top-2 grid h-4 min-w-[16px] place-items-center rounded-full bg-[#c9a227] px-1 text-[9px] font-bold leading-none text-black ring-2 ring-[#0d0d0f]">
                             {navBadgeFor(item.href) > 99 ? '99+' : navBadgeFor(item.href)}
                           </span>
                         )}
                       </span>
-                      <span className="text-sm">{item.label}</span>
+                      <span className="text-sm">{tr(item.label)}</span>
                     </Link>
                   );
                 })}
@@ -193,7 +179,7 @@ const MobileMenu = memo(function MobileMenu({
                 aria-label="Logout"
               >
                 <LogOut size={16} />
-                Logout
+                {tr('Logout')}
               </button>
             </div>
           </motion.aside>
@@ -209,6 +195,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const tr = useLocalizedUiText();
   const { unreadCount: notificationUnread } = useNotifications();
   const { chatUnreadCount: chatUnread } = useChatUnread();
   const { chatCalls } = useCalls();
@@ -217,6 +204,46 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isFloatingCreateOpen, setIsFloatingCreateOpen] = useState(false);
   const [bottomNavHidden, setBottomNavHidden] = useState(false);
+
+  // Let the frontmost visible overlay consume Android Back before WebView
+  // history changes. Chat's capture-phase handler gets the first chance to
+  // dismiss a nested conversation sheet, so respect defaultPrevented here.
+  useEffect(() => {
+    const handleNativeBack = (event: Event) => {
+      if (event.defaultPrevented) return;
+      const overlays = Array.from(document.querySelectorAll<HTMLElement>(
+        '[role="dialog"], [aria-modal="true"], [data-vanta-overlay], dialog[open], [role="menu"], [role="listbox"]'
+      )).filter(el => {
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return !el.closest('[aria-hidden="true"]') && style.display !== 'none' &&
+          style.visibility !== 'hidden' && style.pointerEvents !== 'none' &&
+          rect.width > 0 && rect.height > 0;
+      });
+      const top = overlays.at(-1);
+      if (top) {
+        event.preventDefault();
+        const close = top.querySelector<HTMLButtonElement>(
+          '[data-vanta-back-close], button[aria-label^="Close"], button[aria-label^="Cancel"], ' +
+          'button[aria-label^="Back"], button[aria-label="Go back"], button[title="Close"]'
+        );
+        if (close && !close.disabled) close.click();
+        else top.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        return;
+      }
+      if (createHubOpen) { event.preventDefault(); closeCreateHub(); return; }
+      if (activeFlow) { event.preventDefault(); closeAll(); return; }
+      if (mobileMenuOpen) { event.preventDefault(); setMobileMenuOpen(false); return; }
+      if (isFloatingCreateOpen) {
+        // A page-owned composer is still visible; never navigate the page
+        // behind it. Let the owner handle its existing Escape close action.
+        event.preventDefault();
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      }
+    };
+    window.addEventListener('vanta-native-back', handleNativeBack);
+    return () => window.removeEventListener('vanta-native-back', handleNativeBack);
+  }, [activeFlow, createHubOpen, mobileMenuOpen, isFloatingCreateOpen, closeCreateHub, closeAll]);
 
   // The bottom navigation is shared by the whole app, so observe scrolls at
   // the document capture phase. This catches the shell scroller and page-owned
@@ -350,6 +377,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // bottom navigation only on the Chat inbox/list surface.
   const isChatConversation = isChatPage && Boolean(searchParams.get('conversation'));
   const isPostDetailPage = Boolean(pathname && /^\/post\/[^/]+/.test(pathname));
+  const isPostReplyPage = Boolean(pathname && /^\/post\/[^/]+\/reply$/.test(pathname));
   const isReelsPage = pathname?.startsWith('/reels');
   const isHomePage = pathname === '/home';
   const isEditProfilePage = pathname === '/profile/editprofile';
@@ -409,7 +437,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     pathname === '/community-guidelines';
 
   const isProfilePage = pathname === '/profile' || pathname?.startsWith('/profile/');
-  const isImmersiveSurface = isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isProfilePage;
+  const isImmersiveSurface = isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isProfilePage || isPostReplyPage;
   const isScrollPage = !isImmersiveSurface;
 
   const handleLogout = useCallback(() => {
@@ -436,10 +464,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           {notificationToast && !isChatPage && (
             <motion.button
               initial={{ opacity: 0, y: -16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -12 }}
-              onClick={() => { router.push(notificationDestination(notificationToast)); dismissLatestNotification(); }}
+              onClick={() => { router.push(notificationDestination(notificationToast) ?? '/notifications'); dismissLatestNotification(); }}
               className="fixed right-4 top-4 z-[100] w-[min(360px,calc(100vw-2rem))] rounded-xl border border-white/10 bg-[#1F2630]/95 p-4 text-left shadow-2xl backdrop-blur-xl"
             >
-              <span className="flex items-start gap-3"><Bell className="mt-0.5 text-[#b8b8b8]" size={18} /><span><strong className="block text-sm text-white">{notificationToast.title || 'New notification'}</strong><span className="mt-1 block text-xs text-white/60">{notificationToast.message}</span></span><X onClick={(event) => { event.stopPropagation(); dismissLatestNotification(); }} className="ml-auto text-white/40" size={15} /></span>
+              <span className="flex items-start gap-3"><Bell className="mt-0.5 text-[#dfbd55]" size={18} /><span><strong className="block text-sm text-white">{notificationToast.title || 'New notification'}</strong><span className="mt-1 block text-xs text-white/60">{notificationToast.message}</span></span><X onClick={(event) => { event.stopPropagation(); dismissLatestNotification(); }} className="ml-auto text-white/40" size={15} /></span>
             </motion.button>
           )}
         </AnimatePresence>
@@ -480,6 +508,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               // (the feed owns the viewport; a single-Reel page owns its own
               // page-level inset and does not receive a shared one).
               isReelsPage && 'px-0 py-0',
+              isPostReplyPage && 'px-0 py-0',
               // Home / Discover / Stories are full-bleed immersive surfaces.
               (isHomePage || isDiscoverPage || isStoryPage) && 'px-0 py-0',
               // Live viewer + studio are full-bleed playback surfaces.
@@ -498,7 +527,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             )}>
             <motion.div
               key={isClient ? pathname : 'initial'}
-              className={cn(isSettingsRoute && 'vanta-settings-shell', (isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isChatPage || isProfilePage) && 'h-full min-h-0')}
+              className={cn(isSettingsRoute && 'vanta-settings-shell', (isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isChatPage || isProfilePage || isPostReplyPage) && 'h-full min-h-0')}
               initial={{ opacity: 0, ...(isConsolePage ? {} : { y: 10 }) }}
               animate={{ opacity: 1, ...(isConsolePage ? {} : { y: 0 }) }}
               transition={{ duration: 0.2, ease: 'easeOut' }}
@@ -596,7 +625,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                         </span>
                       )}
                     </span>
-                    <span>{item.label}</span>
+                    <span>{tr(item.label)}</span>
                   </Link>
                 );
               })}

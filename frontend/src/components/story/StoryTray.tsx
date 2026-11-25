@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import StoryCard from '@/components/story/StoryCard';
+import StatusUploadProgress from '@/components/story/StatusUploadProgress';
 import {
   fetchStoryGroups,
   type StoryGroup,
@@ -46,7 +46,6 @@ export default function StoryTray({
   const router = useRouter();
   const [groups, setGroups] = useState<StoryGroup[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
   const [statusCollapsed, setStatusCollapsed] = useState(false);
   const mountedRef = useRef(true);
 
@@ -56,7 +55,6 @@ export default function StoryTray({
       return;
     }
     setLoading(true);
-    setError(false);
     try {
       const storyGroups = await fetchStoryGroups(token);
       if (!mountedRef.current) return;
@@ -64,7 +62,6 @@ export default function StoryTray({
       onStoriesChange?.(storyGroups);
     } catch {
       if (!mountedRef.current) return;
-      setError(true);
       // Retain the last successfully loaded stories during transient failures.
     } finally {
       if (mountedRef.current) setLoading(false);
@@ -117,26 +114,15 @@ export default function StoryTray({
       className={cn(
         // Keep the Home top strip fully opaque. On installed web apps, extend
         // that same slate surface through the iOS safe-area/status-bar inset.
+        // Native Android already reserves the status bar in the WebView host.
         'sticky top-0 z-30 border-b border-white/[0.07] bg-[var(--header-surface)] transition-[padding] duration-300',
         compact
-          ? (statusCollapsed ? 'pt-[env(safe-area-inset-top)] pb-0.5' : 'pt-[env(safe-area-inset-top)] pb-1.5')
+          ? (statusCollapsed ? 'pt-[env(safe-area-inset-top)] pb-0.5 [html.vanta-native-android_&]:pt-0.5' : 'pt-[max(4px,env(safe-area-inset-top))] pb-1 [html.vanta-native-android_&]:pt-1')
           : 'px-0 py-2',
         className
       )}
     >
-      {error && (
-        <div role="alert" className="flex items-center gap-3 px-3 py-2">
-          <p className="text-xs leading-5 text-[#666]">Couldn&apos;t load Stories.</p>
-          <button
-            type="button"
-            aria-label="Retry loading Stories"
-            onClick={() => void load()}
-            className="ml-auto flex items-center gap-1.5 rounded-lg border border-white/[0.08] px-3 py-2 text-xs text-[#b8b8b8] transition hover:bg-white/[0.05]"
-          >
-            <RefreshCw size={13} /> Retry
-          </button>
-        </div>
-      )}
+
       <div className={cn('flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide', compact ? (statusCollapsed ? 'px-1 gap-1' : 'px-1 gap-1.5') : 'px-2')}>
           {/* Own Status card — always present */}
           {<StoryCard
@@ -164,7 +150,7 @@ export default function StoryTray({
           {loading ? (
             SKELETON.map(index => (
               <div key={index} className={cn("flex shrink-0 flex-col items-center transition-all duration-300", statusCollapsed ? "w-14 gap-0.5" : "w-[74px] gap-1.5")}>
-                <span className={cn('block animate-pulse rounded-full bg-white/[0.05]', statusCollapsed ? 'h-11 w-11' : compact ? 'h-[52px] w-[52px]' : 'h-[66px] w-[66px]')} />
+                <span className={cn('block animate-pulse rounded-full bg-white/[0.05]', statusCollapsed ? 'h-11 w-11' : compact ? 'h-[55px] w-[55px]' : 'h-[66px] w-[66px]')} />
                 <span className="h-2.5 w-12 animate-pulse rounded bg-white/[0.04]" />
               </div>
             ))
@@ -188,6 +174,7 @@ export default function StoryTray({
           )}
 
         </div>
+    <StatusUploadProgress />
     </section>
   );
 }

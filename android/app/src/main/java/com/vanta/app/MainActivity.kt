@@ -8,6 +8,9 @@ import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.ClipData
 import android.content.Intent
+import android.content.Context
+import android.location.Location
+import android.location.LocationManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -35,7 +38,12 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.google.firebase.messaging.FirebaseMessaging
+import com.google.android.gms.location.CurrentLocationRequest
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import java.util.UUID
+import org.json.JSONObject
 
 /**
  * Hosted VANTA WebView shell with a native, unified Camera / Photos / Files picker.
@@ -55,6 +63,8 @@ class MainActivity : Activity() {
     private var acceptedFileTypes: Array<String> = emptyArray()
     private var pendingGeolocationCallback: android.webkit.GeolocationPermissions.Callback? = null
     private var pendingGeolocationOrigin: String? = null
+    private val nativeLocationNonce = UUID.randomUUID().toString()
+    private var pendingNativeLocationId: String? = null
     // Overlapping getUserMedia calls (camera and mic) arrive as separate
     // PermissionRequests. They are queued and resolved together; none is denied
     // just because another arrived while the Android prompt was showing.
@@ -184,6 +194,7 @@ class MainActivity : Activity() {
             addJavascriptInterface(VantaNativeShareBridge(), "VantaNative")
             addJavascriptInterface(VantaNativeGalleryBridge(), "VantaNativeGallery")
             addJavascriptInterface(VantaNativeVideoSaveBridge(), "VantaNativeVideo")
+            addJavascriptInterface(VantaNativeLocationBridge(), "VantaNativeLocation")
             settings.domStorageEnabled = true
             // Calls, livestreams, and camera previews attach MediaStreams after
             // the user's call / Go Live action. Do not require a second playback
@@ -208,6 +219,7 @@ class MainActivity : Activity() {
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                     galleryPageTrusted = false
+                    pendingNativeLocationId = null
                     super.onPageStarted(view, url, favicon)
                 }
 
@@ -234,6 +246,13 @@ class MainActivity : Activity() {
                     applySystemBottomInset()
                     publishNativeShareNonce(view, url)
                     publishNativeGalleryNonce(view, url)
+                    if (isTrustedPage(url)) {
+                        view.evaluateJavascript(
+                            "window.__VANTA_NATIVE_LOCATION_NONCE__ = '$nativeLocationNonce';" +
+                                "window.dispatchEvent(new Event('vanta-native-location-ready'));",
+                            null
+                        )
+                    }
                     publishNativeFcmToken()
                 }
 
@@ -385,6 +404,9 @@ class MainActivity : Activity() {
                 pendingGeolocationCallback?.invoke(pendingGeolocationOrigin, granted, false)
                 pendingGeolocationCallback = null
                 pendingGeolocationOrigin = null
+                if (pendingNativeLocationId != null) {
+                    if (granted) requestNativeLocationFix() else finishNativeLocation(null, "permission-denied")
+                }
             }
             STATUS_GALLERY_PERMISSION_REQUEST -> {
                 notifyNativeGalleryChanged()
@@ -407,6 +429,127 @@ class MainActivity : Activity() {
                 processPendingWebPermissions()
             }
         }
+    }
+
+    /**
+     * Deliberately restricted to a trusted first-party top-level page. Native
+     * location is obtained only after the chat user taps Share Location.
+     * The nonce is published to that trusted top page, never to third-party
+     * iframes that also see the exposed JavaScript interface.
+     */
+    private inner class VantaNativeLocationBridge {
+        @JavascriptInterface
+        fun requestCurrentLocation(nonce: String?, requestId: String?) {
+            if (nonce != nativeLocationNonce || requestId.isNullOrBlank() ||
+                requestId.length > 80 || !requestId.matches(Regex("[a-zA-Z0-9_-]+"))) return
+            runOnUiThread {
+                if (!::webView.isInitialized || !isTrustedPage(webView.url)) return@runOnUiThread
+                pendingNativeLocationId = requestId
+                val hasAccess = hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION) ||
+                    hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                if (hasAccess) requestNativeLocationFix()
+                else requestPermissions(
+                    arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION),
+                    LOCATION_PERMISSION_REQUEST
+                )
+            }
+        }
+    }
+
+    private fun requestNativeLocationFix() {
+        val requestId = pendingNativeLocationId ?: return
+        val fine = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (!fine && !hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            finishNativeLocation(null, "permission-denied")
+            return
+        }
+        // Fused location can use Wi-Fi and cell towers when GPS has no fix
+        // indoors. A recent cached fix is permitted only up to 60 seconds old.
+        // Never request a location until the user taps Share Location.
+        try {
+            val request = CurrentLocationRequest.Builder()
+                .setPriority(if (fine) Priority.PRIORITY_HIGH_ACCURACY else Priority.PRIORITY_BALANCED_POWER_ACCURACY)
+                .setMaxUpdateAgeMillis(60_000L)
+                .setDurationMillis(10_000L)
+                .build()
+            LocationServices.getFusedLocationProviderClient(this)
+                .getCurrentLocation(request, CancellationTokenSource().token)
+                .addOnSuccessListener { location ->
+                    if (pendingNativeLocationId != requestId) return@addOnSuccessListener
+                    if (location != null) finishNativeLocation(location, null)
+                    else requestAndroidLocationFix(requestId)
+                }
+                .addOnFailureListener {
+                    if (pendingNativeLocationId == requestId) requestAndroidLocationFix(requestId)
+                }
+        } catch (_: Exception) {
+            requestAndroidLocationFix(requestId)
+        }
+    }
+
+    private fun requestAndroidLocationFix(requestId: String) {
+        if (pendingNativeLocationId != requestId) return
+        val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val providers = mutableListOf(LocationManager.NETWORK_PROVIDER)
+        if (hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
+            providers.add(LocationManager.GPS_PROVIDER)
+        }
+        val provider = providers.firstOrNull { locationManager.isProviderEnabled(it) }
+        if (provider == null) {
+            finishNativeLocation(null, "location-disabled")
+            return
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                locationManager.getCurrentLocation(provider, null, mainExecutor) { location ->
+                    if (pendingNativeLocationId != requestId) return@getCurrentLocation
+                    // Approximate/network location usually responds first. If
+                    // there is no network fix, use GPS only when precise
+                    // permission was granted and GPS is enabled.
+                    if (location == null && provider != LocationManager.GPS_PROVIDER &&
+                        hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) &&
+                        locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                        try {
+                            locationManager.getCurrentLocation(LocationManager.GPS_PROVIDER, null, mainExecutor) { gps ->
+                                if (pendingNativeLocationId == requestId) {
+                                    finishNativeLocation(gps, if (gps == null) "location-unavailable" else null)
+                                }
+                            }
+                        } catch (_: Exception) {
+                            finishNativeLocation(null, "location-unavailable")
+                        }
+                    } else {
+                        finishNativeLocation(location, if (location == null) "location-unavailable" else null)
+                    }
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                locationManager.requestSingleUpdate(provider, object : android.location.LocationListener {
+                    override fun onLocationChanged(location: Location) {
+                        if (pendingNativeLocationId == requestId) finishNativeLocation(location, null)
+                    }
+                }, null)
+            }
+        } catch (_: SecurityException) {
+            finishNativeLocation(null, "permission-denied")
+        } catch (_: Exception) {
+            finishNativeLocation(null, "location-unavailable")
+        }
+    }
+
+    private fun finishNativeLocation(location: Location?, error: String?) {
+        val requestId = pendingNativeLocationId ?: return
+        pendingNativeLocationId = null
+        if (!::webView.isInitialized || !isTrustedPage(webView.url)) return
+        val payload = JSONObject().put("requestId", requestId)
+        if (location != null) {
+            payload.put("lat", location.latitude).put("lng", location.longitude).put("accuracy", location.accuracy)
+        } else {
+            payload.put("error", error ?: "location-unavailable")
+        }
+        webView.evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('vanta-native-location-result', {detail: $payload}));", null
+        )
     }
 
     private fun hasPermission(permission: String) =
@@ -906,10 +1049,20 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated by Android; retained for compatibility.")
     override fun onBackPressed() {
-        if (::webView.isInitialized && webView.canGoBack()) {
-            webView.goBack()
-        } else {
+        if (!::webView.isInitialized || !isTrustedPage(webView.url)) {
             super.onBackPressed()
+            return
+        }
+        // Next.js overlays generally do not create a WebView history entry.
+        // Ask the active page to close its topmost sheet/dialog first so Android
+        // Back never silently navigates the page behind the visible overlay.
+        webView.evaluateJavascript(
+            "(function(){var event=new Event('vanta-native-back',{cancelable:true});" +
+                "window.dispatchEvent(event);return event.defaultPrevented;})()"
+        ) { handled ->
+            if (handled == "true") return@evaluateJavascript
+            if (::webView.isInitialized && webView.canGoBack()) webView.goBack()
+            else super.onBackPressed()
         }
     }
 
@@ -918,6 +1071,7 @@ class MainActivity : Activity() {
         pendingFileCallback = null
         pendingGeolocationCallback?.invoke(pendingGeolocationOrigin, false, false)
         pendingGeolocationCallback = null
+        pendingNativeLocationId = null
         denyAllPendingWebPermissions()
         if (isFinishing) {
             pendingCameraUri?.let { runCatching { contentResolver.delete(it, null, null) } }

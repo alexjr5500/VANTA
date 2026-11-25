@@ -1,12 +1,14 @@
 'use client';
 
+import BookmarkIcon from '@/components/ui/BookmarkIcon';
+
 import DeleteConfirmDialog from '@/components/ui/DeleteConfirmDialog';
 
 import { use, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bookmark, Eye, Heart, Loader2, MessageCircle, MoreHorizontal, RefreshCw, Share2 } from 'lucide-react';
+import { Eye, Heart, Loader2, MessageCircle, MoreHorizontal, RefreshCw, Share2 } from 'lucide-react';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import type { VerificationType } from '@/types/verification';
@@ -21,6 +23,8 @@ import { useToast } from '@/components/ui/Toast';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
 import { renderTextWithLinks } from '@/lib/linkify';
+import QuoteEmbed from '@/components/social/QuoteEmbed';
+import { extractQuoteRef } from '@/lib/quotePost';
 
 type Post = {
   id: string; content: string; mediaUrl?: string | null; attachments?: PostAttachment[]; createdAt: string;
@@ -141,6 +145,14 @@ export default function PostDetailPage({ params }: { params: Promise<{ id: strin
     conversationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  // After submitting a reply in the focused composer, open the discussion
+  // itself instead of dropping the user back at the top of the post.
+  useEffect(() => {
+    if (!post?.id || typeof window === 'undefined' || window.location.hash !== '#comments') return;
+    const frame = window.requestAnimationFrame(() => conversationRef.current?.scrollIntoView({ block: 'start' }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [post?.id]);
+
   const confirmDelete = async () => {
     if (!token || !post || deleting) return;
     setDeleting(true);
@@ -176,6 +188,8 @@ export default function PostDetailPage({ params }: { params: Promise<{ id: strin
     </main>;
   }
 
+  const quote = post.content && typeof window !== 'undefined' ? extractQuoteRef(post.content, window.location.host) : null;
+  const visibleText = quote ? quote.rest : post.content;
   const attachments = Array.isArray(post.attachments) ? post.attachments.map((attachment: any) => ({ ...attachment, url: mediaSrc(attachment?.url || attachment?.src || '') })).filter((attachment) => Boolean(attachment.url)) : [];
   const media = mediaSrc(post.mediaUrl) || attachments[0]?.url;
   const isOwn = post.author.id === user?.id;
@@ -231,11 +245,12 @@ export default function PostDetailPage({ params }: { params: Promise<{ id: strin
                 </div>
               </div>
             </header>
-            {post.content && (
+            {(visibleText || quote) && (
               <div className="px-3.5 pb-2 pt-2">
                 <p className="whitespace-pre-wrap break-words text-[14px] leading-[1.4] tracking-normal text-[#f0f0f0]">
-                  {renderTextWithLinks(post.content, 'linkify', { mentions: true, hashtags: true })}
+                  {renderTextWithLinks(visibleText, 'linkify', { mentions: true, hashtags: true })}
                 </p>
+                {quote && <QuoteEmbed quote={quote.ref} className="mt-2" />}
               </div>
             )}
 
@@ -295,11 +310,11 @@ export default function PostDetailPage({ params }: { params: Promise<{ id: strin
                 <button
                   type="button"
                   onClick={() => void toggleSave()}
-                  className={toolClass(savedState ? '!text-[#d2ad35]' : 'text-white/55')}
+                  className={toolClass(savedState ? '!text-[#dfbd55]' : 'text-white/55')}
                   aria-label={savedState ? 'Remove from saved' : 'Save post'}
                   aria-pressed={savedState}
                 >
-                  <Bookmark size={18} className={savedState ? 'fill-current' : ''} />
+                  <BookmarkIcon size={18} saved={savedState} />
                   <span className="sr-only">{savedState ? 'Saved' : 'Save'}</span>
                 </button>
               </footer>
@@ -309,6 +324,7 @@ export default function PostDetailPage({ params }: { params: Promise<{ id: strin
         </section>
 
         <aside
+          id="comments"
           ref={conversationRef}
           aria-label="Post comments"
           className="min-w-0 scroll-mt-12 bg-[var(--background)]"

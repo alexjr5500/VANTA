@@ -6,6 +6,7 @@ import { dbPerformanceTracker } from "./monitoring.service";
 import { emitSocialEvent } from "./social-events.service";
 import { notificationService } from "./notification.service";
 import { canReceiveMention } from "../security/privacyPermissions";
+import { assertReplyAllowed, type ReplyAudience } from "../security/replyAudience";
 import { BADGE_USER_SELECT, enrichPublicUser, enrichItemAuthors } from "./public-verification";
 
 const AUTHOR_SELECT = {
@@ -564,6 +565,7 @@ export class FeedService {
       // by prisma.video and formatted separately in formatVideo().
       type: 'post',
       content: post.content,
+      replyAudience: post.replyAudience ?? "EVERYONE",
       media: post.mediaUrl,
       // Full ordered media set for multi-attachment posts. Single-media posts
       // still expose exactly one entry, so old clients see no behaviour change.
@@ -717,9 +719,9 @@ export class FeedService {
     return !cursor && limit === 30 ? cacheService.getOrSet(CACHE_KEYS.EXPLORE, load, CACHE_TTL.MEDIUM) : load();
   }
 
-  async createPost(authorId: string, content: string, mediaUrl?: string) {
+  async createPost(authorId: string, content: string, mediaUrl?: string, replyAudience: ReplyAudience = "EVERYONE") {
     const post = await prisma.post.create({
-      data: { authorId, content, mediaUrl },
+      data: { authorId, content, mediaUrl, replyAudience },
       include: WITH_AUTHOR,
     });
     
@@ -783,14 +785,15 @@ export class FeedService {
     if (mediaFileIds.length > 4) throw new Error("You can attach up to 4 images or videos to a comment.");
 
     const [post, actor, recent, parent] = await Promise.all([
-      prisma.post.findUnique({ where: { id: postId, moderationRemovedAt: null }, select: { authorId: true } }),
-      prisma.user.findUnique({ where: { id: userId }, select: { username: true, status: true } }),
+      prisma.post.findUnique({ where: { id: postId, moderationRemovedAt: null }, select: { authorId: true, content: true, replyAudience: true } }),
+      prisma.user.findUnique({ where: { id: userId }, select: { username: true, verified: true, status: true } }),
       prisma.postComment.findFirst({ where: { userId, postId, moderationRemovedAt: null }, orderBy: { createdAt: "desc" }, select: { content: true, createdAt: true } }),
       parentId ? prisma.postComment.findFirst({ where: { id: parentId, postId, moderationRemovedAt: null }, select: { id: true, userId: true } }) : Promise.resolve(null),
     ]);
     if (!post) throw new Error("Post not found");
     if (!actor || actor.status !== "ACTIVE") throw new Error("Commenting is unavailable for this account");
     if (parentId && !parent) throw new Error("Parent comment not found");
+    await assertReplyAllowed(post, { id: userId, username: actor.username, verified: actor.verified });
     if (cleanContent && recent && Date.now() - recent.createdAt.getTime() < COMMENT_FLOOD_WINDOW_MS && normalizeComment(recent.content).toLowerCase() === cleanContent.toLowerCase()) {
       throw new Error("Duplicate comment detected. Please wait before posting it again");
     }

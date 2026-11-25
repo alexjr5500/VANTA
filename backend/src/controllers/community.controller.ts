@@ -2,6 +2,17 @@ import { Request, Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { prisma } from "../prisma";
 import { communityService } from "../services";
+import { requireAppOrigin } from "../utils/app-origin";
+
+// Generate the QR locally with VANTA's installed QR library. The origin is
+// configured on the server, never taken from the request's Host or URL input.
+async function publicCommunityShare(id: string, requested: boolean) {
+  if (!requested) return {};
+  const shareUrl = new URL(`/communities/${encodeURIComponent(id)}`, requireAppOrigin()).href;
+  const qrCode = await require("qrcode").toDataURL(shareUrl, { width: 320, margin: 4, errorCorrectionLevel: "M" });
+  return { shareUrl, qrCode };
+}
+
 
 const parseLimit = (value: unknown, defaultLimit = 20) => {
   const parsed = typeof value === "string" ? parseInt(value, 10) : NaN;
@@ -255,6 +266,7 @@ export const getDiscoverCommunityById = async (req: AuthRequest, res: Response):
         ? Boolean(await prisma.groupMember.findUnique({ where: { groupId_userId: { groupId: group.id, userId } }, select: { id: true } }))
         : false;
       res.status(200).json({
+        ...await publicCommunityShare(group.id, req.query.includeQr === "1"),
         id: group.id,
         kind: "group",
         name: group.name,
@@ -294,6 +306,7 @@ export const getDiscoverCommunityById = async (req: AuthRequest, res: Response):
         ? Boolean(await prisma.channelMember.findUnique({ where: { channelId_userId: { channelId: channel.id, userId } }, select: { id: true } }))
         : false;
       res.status(200).json({
+        ...await publicCommunityShare(channel.id, req.query.includeQr === "1"),
         id: channel.id,
         kind: "channel",
         name: channel.name,
