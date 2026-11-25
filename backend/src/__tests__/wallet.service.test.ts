@@ -21,9 +21,11 @@ jest.mock('../prisma', () => ({
       findMany: jest.fn(),
       findUnique: jest.fn(),
       aggregate: jest.fn(),
+      groupBy: jest.fn(),
       count: jest.fn(),
     },
     withdrawal: {
+      aggregate: jest.fn(),
       create: jest.fn(),
       findMany: jest.fn(),
       findUnique: jest.fn(),
@@ -103,7 +105,16 @@ describe('WalletService', () => {
       (prisma.walletPIN.findUnique as jest.Mock).mockResolvedValue(null);
       (prisma.walletTransaction.aggregate as jest.Mock).mockResolvedValue({ _sum: { amount: 0 } });
 
+      (prisma.walletTransaction.groupBy as jest.Mock).mockResolvedValue([
+        {currency: 'VANTA', _count: {_all: 1}, _sum: {amount: 10}},
+        {currency: 'USD', _count: {_all: 1}, _sum: {amount: 2}},
+      ]);
+      (prisma.withdrawal.aggregate as jest.Mock).mockResolvedValueOnce({_count: {_all: 1}, _sum: {amount: 20, netAmount: 18}}).mockResolvedValueOnce({_count: {_all: 2}, _sum: {netAmount: 42}});
       const result = await walletService.getWallet('user1');
+      expect(result.availableCoins).toBe(100);
+      expect(result.pendingTransactions).toEqual([{currency:'VANTA',count:1,amount:10},{currency:'USD',count:1,amount:2}]);
+      expect(result.pendingWithdrawals).toEqual({count:1,grossUsd:20,netUsd:18});
+      expect(result.completedWithdrawals).toEqual({count:2,netUsd:42});
       expect(result.coinBalance).toBe(100);
       expect(result.hasPin).toBe(false);
       // VANTA Coins are valued at 100 coins per USD; earningsBalance is already USD.
@@ -181,6 +192,31 @@ describe('WalletService', () => {
       (prisma.walletTransaction.count as jest.Mock).mockResolvedValue(1);
       const result = await walletService.getTransactionHistory('user1');
       expect(result.transactions).toHaveLength(1);
+    });
+  });
+
+  describe('Balance 2.0 activity and history', () => {
+    test('groups real completed coin activity without counting reservations or unknown claims', async () => {
+      const row = (type: string, amount: number, metadata: string | null = null, fee = 0) => ({ type, amount, metadata, fee, currency: 'VANTA', createdAt: new Date() });
+      (prisma.walletTransaction.findMany as jest.Mock).mockResolvedValue([
+        row(TX_TYPES.PURCHASE,100),
+        row(TX_TYPES.TRANSFER_SENT,21,null,1),
+        row(TX_TYPES.GIFT_RECEIVED,7,JSON.stringify({autoConverted:true})),
+        row(TX_TYPES.FOLLOWER_REWARD_RESERVE,50),
+        row(TX_TYPES.FOLLOWER_REWARD_CLAIM,5,JSON.stringify({side:'creator'})),
+        row(TX_TYPES.FOLLOWER_REWARD_CLAIM,3,null),
+      ]);
+      const result = await walletService.getCoinActivity('user1',7);
+      expect(result.buckets).toHaveLength(7);
+      expect(result.buckets[6]).toMatchObject({ incoming:107,outgoing:26,purchases:100,giftsReceived:7,transferFees:1,net:81 });
+      expect(result.excluded).toBe(1);
+      expect(prisma.walletTransaction.findMany).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({userId:'user1',currency:'VANTA',status:'COMPLETED'})}));
+    });
+    test('history filters are scoped to authenticated owner and applied before pagination', async () => {
+      (prisma.walletTransaction.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.walletTransaction.count as jest.Mock).mockResolvedValue(0);
+      await walletService.getTransactionHistory('user1',{search:'@alice',type:'transfers',direction:'outgoing',status:'COMPLETED',limit:10,offset:20});
+      expect(prisma.walletTransaction.findMany).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({userId:'user1',status:'COMPLETED',type:{in:['TRANSFER_SENT','TRANSFER_RECEIVED']},AND:expect.any(Array)}),take:10,skip:20}));
     });
   });
 

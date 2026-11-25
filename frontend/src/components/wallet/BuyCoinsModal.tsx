@@ -1,5 +1,7 @@
 'use client';
 
+import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
+
 import React from 'react';
 import { useWalletDialog } from './useWalletDialog';
 import { X, Clock3, ShieldAlert } from 'lucide-react';
@@ -26,7 +28,7 @@ export default function BuyCoinsModal({ open, onClose }: BuyCoinsModalProps) {
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <span className="text-sm font-semibold text-[var(--text-primary)]">VANTA Coins</span>
+          <span className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]"><VantaCoinIcon size={24} decorative />VANTA Coins</span>
           <button type="button" onClick={onClose} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-[var(--text-secondary)] hover:bg-white/10 hover:text-white">
             <X size={18} />
           </button>

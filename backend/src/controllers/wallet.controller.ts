@@ -3,6 +3,7 @@ import { prisma } from '../prisma';
 import { walletService } from '../services';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { getParamString } from '../utils/params';
+import { requireAppOrigin } from '../utils/app-origin';
 import { VANTA_COIN_PACKAGES, VANTA_COINS_PER_USD } from '../config/wallet.config';
 import {
   getCoinPaymentMode,
@@ -177,20 +178,47 @@ export const updateTransferLimit = async (req: AuthRequest, res: Response): Prom
 // TRANSACTION HISTORY
 // ============================================================================
 
+function historyFilters(query: Request['query']) {
+  const str = (value: unknown) => typeof value === 'string' ? value.trim() : undefined;
+  const date = (value: unknown) => {
+    const text = str(value);
+    if (!text) return undefined;
+    const parsed = new Date(text);
+    if (!Number.isFinite(parsed.getTime())) throw new Error('Invalid transaction date.');
+    return parsed;
+  };
+  const startDate = date(query.startDate), endDate = date(query.endDate);
+  if (startDate && endDate && startDate > endDate) throw new Error('Invalid date range.');
+  const direction = str(query.direction);
+  if (direction && direction !== 'incoming' && direction !== 'outgoing') throw new Error('Invalid direction.');
+  const status = str(query.status);
+  if (status && !['COMPLETED','PENDING','FAILED','REVERSED'].includes(status)) throw new Error('Invalid transaction status.');
+  const search = str(query.search);
+  if (search && search.length > 120) throw new Error('Search is too long.');
+  return { type: str(query.type), status, startDate, endDate, search, direction: direction as 'incoming' | 'outgoing' | undefined };
+}
+
+export const getCoinActivity = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+    const days = Number(req.query.days ?? 7);
+    if (days !== 7 && days !== 30 && days !== 90) { res.status(400).json({ error: 'Choose 7, 30 or 90 days.' }); return; }
+    const result = await walletService.getCoinActivity(userId, days);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json(result);
+  } catch (error) {
+    res.status(503).json({ error: 'Activity unavailable for this period. Try a shorter period or refresh.' });
+  }
+};
+
 export const getTransactionHistory = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user?.userId;
     if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
-    const { type, status, startDate, endDate, search, limit, offset } = req.query;
-    const result = await walletService.getTransactionHistory(userId, {
-      type: type as string,
-      status: status as string,
-      startDate: startDate ? new Date(startDate as string) : undefined,
-      endDate: endDate ? new Date(endDate as string) : undefined,
-      search: search as string,
-      limit: limit ? parseInt(limit as string) : 50,
-      offset: offset ? parseInt(offset as string) : 0,
-    });
+    const limit = Number(req.query.limit ?? 50), offset = Number(req.query.offset ?? 0);
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0) { res.status(400).json({ error: 'Invalid pagination.' }); return; }
+    const result = await walletService.getTransactionHistory(userId, { ...historyFilters(req.query), limit, offset });
     res.status(200).json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
@@ -333,15 +361,7 @@ export const exportTransactions = async (req: AuthRequest, res: Response): Promi
   try {
     const userId = req.user?.userId;
     if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
-    const { type, status, startDate, endDate } = req.query;
-    const result = await walletService.getTransactionHistory(userId, {
-      type: type as string,
-      status: status as string,
-      startDate: startDate ? new Date(startDate as string) : undefined,
-      endDate: endDate ? new Date(endDate as string) : undefined,
-      limit: 10000,
-      offset: 0,
-    });
+    const result = await walletService.getTransactionHistory(userId, { ...historyFilters(req.query), limit: 10000, offset: 0 });
 
     // Build CSV
     const headers = ['Date', 'Type', 'Currency', 'Description', 'Amount', 'Fee', 'Balance', 'Status', 'Reference'];
@@ -659,5 +679,38 @@ export const searchWalletUsers = async (req: AuthRequest, res: Response): Promis
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });
+  }
+};
+
+
+/** Authenticated, recipient-only share link. Contains no wallet credentials. */
+export const getReceiveLink = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true } });
+    if (!user) { res.status(404).json({ error: 'Recipient unavailable' }); return; }
+    const link = new URL('/balance', requireAppOrigin());
+    link.searchParams.set('recipient', user.id);
+    const qrCode = await require('qrcode').toDataURL(link.href, { width: 320, margin: 4, errorCorrectionLevel: 'M' });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ username: user.username, link: link.href, qrCode });
+  } catch {
+    res.status(503).json({ error: 'Receiving link is temporarily unavailable.' });
+  }
+};
+
+export const resolveReceiveRecipient = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const id = typeof req.query.id === 'string' ? req.query.id : '';
+    if (!id || id.length > 128 || !/^[A-Za-z0-9_-]+$/.test(id) || id === req.user?.userId) {
+      res.status(400).json({ error: 'Invalid recipient' }); return;
+    }
+    const user = await prisma.user.findFirst({ where: { id, status: 'ACTIVE' }, select: { id: true, username: true, fullName: true, avatar: true, verified: true } });
+    if (!user) { res.status(404).json({ error: 'Recipient unavailable' }); return; }
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ user });
+  } catch {
+    res.status(503).json({ error: 'Unable to verify recipient.' });
   }
 };
