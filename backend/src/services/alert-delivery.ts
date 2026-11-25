@@ -36,6 +36,7 @@ export class AlertDelivery {
   private queue: Event[] = [];
   private running?: Promise<void>;
   private closed = false;
+  private readonly shutdown = new AbortController();
   private instanceId = randomUUID();
   constructor(private config: Config | null, private fetcher: typeof fetch = fetch,
     private pause: (ms: number) => Promise<unknown> = sleep) {}
@@ -52,19 +53,30 @@ export class AlertDelivery {
     this.queue.push({ schemaVersion: 1, code: input.code, severity: input.severity,
       transition: input.transition, eventId: randomUUID(), timestamp: new Date().toISOString(),
       environment: this.config.environment, service: this.config.service, instanceId: this.instanceId });
-    if (!this.running) this.running = this.pump().finally(() => { this.running = undefined; });
+    this.kick();
   };
+
+  private kick(): void {
+    if (this.running || !this.queue.length || this.shutdown.signal.aborted) return;
+    this.running = this.pump().catch(() => {
+      console.warn('[AlertDelivery] Delivery loop failed');
+    }).finally(() => {
+      this.running = undefined;
+      // An enqueue can arrive between the loop's last check and this finalizer.
+      this.kick();
+    });
+  }
 
   private async pump(): Promise<void> {
     const config = this.config!;
-    while (this.queue.length) {
+    while (this.queue.length && !this.shutdown.signal.aborted) {
       const event = this.queue.shift()!;
       let delivered = false;
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < 3 && !this.shutdown.signal.aborted; attempt++) {
         let retry = true;
         try {
           const response = await this.fetcher(config.url, {
-            method: 'POST', redirect: 'error', signal: AbortSignal.timeout(3000),
+            method: 'POST', redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(3000), this.shutdown.signal]),
             headers: { 'content-type': 'application/json', authorization: 'Bearer ' + config.token,
               'idempotency-key': event.eventId },
             body: JSON.stringify(event),
@@ -73,7 +85,7 @@ export class AlertDelivery {
           if (response.ok) { delivered = true; break; }
           retry = response.status === 429 || response.status >= 500;
         } catch { /* network failure: bounded retry */ }
-        if (!retry || attempt === 2) break;
+        if (!retry || attempt === 2 || this.shutdown.signal.aborted) break;
         await this.pause(250 * 2 ** attempt);
       }
       if (!delivered) console.warn('[AlertDelivery] Event delivery failed');
@@ -81,11 +93,26 @@ export class AlertDelivery {
   }
 
   async flush(): Promise<void> {
+    this.kick();
     while (this.running) await this.running;
   }
 
-  async close(): Promise<void> {
+  /** Bound optional alert delivery independently of the application's drain. */
+  async close(timeoutMs = 3000): Promise<void> {
     this.closed = true;
-    await this.flush();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const drained = await Promise.race([
+        this.flush().then(() => true),
+        new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); }),
+      ]);
+      if (!drained) {
+        this.shutdown.abort();
+        this.queue.length = 0;
+        console.warn('[AlertDelivery] Shutdown deadline; pending alerts discarded');
+      }
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 }

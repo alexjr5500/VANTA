@@ -97,3 +97,5 @@ the production release gate.
 6. Review production logs, alerting, and rollback procedure.
 7. Obtain explicit approval before starting the production worker or enabling
    the production producer flag.
+
+Shutdown claim boundary: a successful claim already in flight at stop is processed and acknowledged normally; no subsequent claim is issued. This avoids unnecessarily exhausting attempts on a graceful stop. Process termination can still interrupt handlers, so lease recovery and idempotency remain necessary; provider shutdown deadlines require real staging verification.

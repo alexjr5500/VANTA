@@ -33,11 +33,12 @@ async function main(): Promise<void> {
     delivery.enqueue({ code: 'queue_monitor_unavailable', severity: 'critical', transition: 'degraded' });
     process.exitCode = 2;
   } finally {
-    await delivery.close();
+    const alerts = delivery.close(3000);
     await prisma.$disconnect().catch(() => {
       console.error('[DurableQueueMonitor] Database disconnect failed');
       process.exitCode = 2;
     });
+    await alerts;
   }
 }
 

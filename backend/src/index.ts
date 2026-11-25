@@ -968,9 +968,10 @@ if (process.env.VANTA_GRACEFUL_SHUTDOWN_ENABLED === 'true') {
       // for already accepted HTTP responses before the close callback returns.
       await Promise.all([sweeps, new Promise<void>(resolve => { void io.close(() => resolve()); })]);
       realtimeAdapter.close();
-      await alertDelivery.close();
-      await cacheService.closeRedisConnection();
-      await prisma.$disconnect();
+      // Alert delivery is best effort and must not delay core resource cleanup.
+      const alerts = alertDelivery.close(2000);
+      const results = await Promise.allSettled([alerts, cacheService.closeRedisConnection(), prisma.$disconnect()]);
+      if (results.some(result => result.status === 'rejected')) throw new Error('Shutdown resource cleanup failed');
     }, 25000).then(clean => {
       console.info('[Shutdown] Finished:', clean ? 'drained' : 'deadline or cleanup failure');
       process.exit(clean ? 0 : 1);

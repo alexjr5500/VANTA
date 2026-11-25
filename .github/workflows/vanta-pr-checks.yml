@@ -205,6 +205,7 @@ jobs:
           src/__tests__/storage-diagnostics.test.ts
           src/__tests__/durable-media-handlers.test.ts
           src/__tests__/durable-queue.repository.test.ts
+          src/__tests__/durable-worker-shutdown.test.ts
           src/__tests__/durable-queue.health.test.ts
           src/__tests__/durable-queue.alerts.test.ts
           src/__tests__/durable-queue.worker.test.ts

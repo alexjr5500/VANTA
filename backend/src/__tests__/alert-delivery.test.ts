@@ -45,6 +45,34 @@ describe('bounded alert delivery', () => {
     await delivery.close();
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+  it('bounds shutdown even if a receiver stalls and discards queued alerts', async () => {
+    let signal: AbortSignal | undefined;
+    const fetcher = jest.fn((_url: string, options: RequestInit) => {
+      signal = options.signal as AbortSignal;
+      return new Promise<Response>(resolve => {
+        signal!.addEventListener('abort', () => resolve(new Response(null, { status: 503 })), { once: true });
+      });
+    });
+    const delivery = new AlertDelivery(alertConfig(env), fetcher as typeof fetch);
+    delivery.enqueue(event);
+    delivery.enqueue(event);
+    await delivery.close(10);
+    expect(signal?.aborted).toBe(true);
+    await delivery.flush();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    delivery.enqueue(event);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it('does not lose events enqueued during delivery completion', async () => {
+    const fetcher = jest.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const delivery = new AlertDelivery(alertConfig(env), fetcher as typeof fetch);
+    delivery.enqueue(event);
+    // Queue a microtask while the first pump settles.
+    await Promise.resolve();
+    delivery.enqueue(event);
+    await delivery.close();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
   it('caps repeated temporary failures', async () => {
     const fetcher = jest.fn().mockRejectedValue(Error('private URL'));
     const delivery = new AlertDelivery(alertConfig(env), fetcher as typeof fetch, async () => {});

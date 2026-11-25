@@ -80,8 +80,10 @@ export class DurableQueueWorker {
         console.error('[DurableQueueWorker] Claim failed:', error);
       }
 
-      if (this.stopping) break;
+      // A claim already in flight can succeed after stop() is called.
+      // Finish that leased job instead of wasting its attempt on shutdown.
       if (!job) {
+        if (this.stopping) break;
         await sleep(this.pollIntervalMs);
         continue;
       }
