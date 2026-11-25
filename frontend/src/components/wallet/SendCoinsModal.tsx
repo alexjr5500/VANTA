@@ -12,6 +12,8 @@ import VerificationBadge from '@/components/ui/VerificationBadge';
 import type { VerificationType } from '@/types/verification';
 import { calculateTransferFee, maxTransferableCoins } from '@/lib/wallet';
 import { useWalletDialog } from './useWalletDialog';
+import { parseReceivingLink, receivingOrigins } from '@/lib/walletReceivingLink';
+import ReceivingScanner from './ReceivingScanner';
 
 interface UserResult {
   id: string;
@@ -36,6 +38,10 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
   const { token, user } = useAuth();
   const [step, setStep] = useState<'recipient' | 'amount' | 'review' | 'otp' | 'processing' | 'success'>('recipient');
   const [searchQuery, setSearchQuery] = useState('');
+  const [paymentLink, setPaymentLink] = useState('');
+  const [showScanner, setShowScanner] = useState(false);
+  const [linkRecipientId, setLinkRecipientId] = useState<string | null>(null);
+  const [resolvingLink, setResolvingLink] = useState(false);
   const [searchResults, setSearchResults] = useState<UserResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserResult | null>(null);
@@ -67,6 +73,7 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
     if (open) {
       setStep('recipient');
       setSearchQuery('');
+      setPaymentLink(''); setShowScanner(false); setLinkRecipientId(initialRecipientId || null); setResolvingLink(false);
       setSearchResults([]);
       setSelectedUser(null);
       setAmount(0);
@@ -88,20 +95,20 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
 
   // Receiving links identify an exact account; never select a fuzzy username match.
   useEffect(() => {
-    if (!open || !token || !initialRecipientId) return;
+    if (!open || !token || !linkRecipientId || step !== 'recipient') return;
     let current = true;
-    setSearching(true);
-    apiGet<{ user: UserResult }>(`/api/wallets/receive-recipient?id=${encodeURIComponent(initialRecipientId)}`, token, { skipCache: true })
+    setResolvingLink(true);
+    apiGet<{ user: UserResult }>(`/api/wallets/receive-recipient?id=${encodeURIComponent(linkRecipientId)}`, token, { skipCache: true })
       .then(result => {
         if (!current) return;
-        if (!result.user || result.user.id !== initialRecipientId || result.user.id === user?.id) throw new Error('Invalid recipient');
+        if (!result.user || result.user.id !== linkRecipientId || result.user.id === user?.id) throw new Error('Invalid recipient');
         setSelectedUser(result.user);
         setStep('amount');
       })
       .catch(() => { if (current) setError('Could not verify the receiving link. Search for a recipient instead.'); })
-      .finally(() => { if (current) setSearching(false); });
+      .finally(() => { if (current) { setResolvingLink(false); setLinkRecipientId(null); } });
     return () => { current = false; };
-  }, [open, token, initialRecipientId, user?.id]);
+  }, [open, token, linkRecipientId, user?.id, step]);
 
   // Normalize @username searches and ignore stale responses from earlier queries.
   const recipientQuery = searchQuery.trim().replace(/^@+/, '');
@@ -127,7 +134,16 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
     return () => { current = false; if (searchTimer.current) clearTimeout(searchTimer.current); };
   }, [recipientQuery, step, open, token, searchRetry]);
 
+  const usePaymentLink = (value: string) => {
+    const id = parseReceivingLink(value, receivingOrigins());
+    setShowScanner(false); setError('');
+    if (!id || id === user?.id) { setError('Use a valid VANTA receiving link belonging to another account.'); return; }
+    setSearchQuery(''); setPaymentLink(value); setLinkRecipientId(id);
+  };
+
   const handleSelectUser = (u: UserResult) => {
+    if (resolvingLink || u.id === user?.id) return;
+    setShowScanner(false); setError('');
     setSelectedUser(u);
     setStep('amount');
   };
@@ -322,6 +338,13 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
                     </div>
                   </div>
 
+                  <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                    <label htmlFor="wallet-payment-link" className="text-sm font-semibold">Receiving link</label>
+                    <input id="wallet-payment-link" type="url" value={paymentLink} onChange={e=>setPaymentLink(e.target.value)} maxLength={2048} placeholder="Paste a VANTA receiving link" className="min-h-11 w-full rounded-lg bg-[var(--surface-secondary)] px-3 text-sm"/>
+                    <div className="grid grid-cols-2 gap-2"><button type="button" disabled={!paymentLink.trim() || resolvingLink} onClick={()=>usePaymentLink(paymentLink)} className="min-h-11 rounded-lg bg-[var(--vanta-gold)] text-sm font-semibold text-black disabled:opacity-50">Verify link</button><button type="button" onClick={()=>setShowScanner(v=>!v)} disabled={resolvingLink} className="min-h-11 rounded-lg border border-[var(--border)] text-sm">Scan QR</button></div>
+                    {resolvingLink && <p role="status" className="text-xs">Verifying recipient…</p>}
+                    {showScanner && <ReceivingScanner onScan={usePaymentLink} onCancel={()=>setShowScanner(false)}/>}
+                  </div>
                   {recipientQuery.length < 2 && <p className="text-sm text-[var(--text-secondary)]">Enter at least two characters to search.</p>}
                   {searching && (
                     <div role="status" aria-label="Searching users" className="flex items-center justify-center py-8">
@@ -338,7 +361,7 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ delay: i * 0.03 }}
                           onClick={() => handleSelectUser(u)}
-                          disabled={u.id === user?.id}
+                          disabled={resolvingLink || u.id === user?.id}
                           className={cn(
                             'w-full flex items-center gap-3 p-3.5 rounded-2xl border transition-all text-left',
                             u.id === user?.id
