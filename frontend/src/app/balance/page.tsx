@@ -5,7 +5,7 @@ import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { API_BASE_URL } from '@/lib/api';
-import { apiGet, apiPost } from '@/lib/apiClient';
+import { apiGet } from '@/lib/apiClient';
 import {
   Plus, ArrowUpRight, ArrowDownLeft, Gift, Loader2,
   History, Search, Shield, Ban, X,
@@ -168,7 +168,7 @@ export default function BalancePage() {
   }, [router]);
 
   const fetchWallet = useCallback(async () => {
-    if (!token) { setLoading(false); return; }
+    if (!token) { requestVersion.current++; setWallet(null); setTransactions([]); setGifts([]); setWithdrawals([]); setLoading(false); return; }
     const version = ++requestVersion.current;
     loadMoreLock.current = false;
     setLoadingMore(false);
@@ -312,7 +312,8 @@ export default function BalancePage() {
   }, [transactions, filter, searchQuery]);
 
   const recentTx = [...transactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5);
-  const recentGifts = [...gifts].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5);
+  const sortedGifts = [...gifts].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const recentGifts = sortedGifts.slice(0, 5);
 
   if (loading) return <div role="status" aria-label="Loading balance"><BalanceSkeleton /></div>;
 
@@ -339,7 +340,7 @@ export default function BalancePage() {
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="mx-auto min-h-[calc(100dvh-5rem)] w-full min-w-0 space-y-2.5 pb-[calc(5rem+env(safe-area-inset-bottom))]"
+      className="vanta-wallet-ui mx-auto min-h-[calc(100dvh-5rem)] w-full min-w-0 space-y-2.5 pb-[calc(5rem+env(safe-area-inset-bottom))]"
     >
       {/* Header — Discover-style full-bleed sticky bar that stays fixed at the top
           while the balance and transaction content scroll beneath it. */}
@@ -414,14 +415,14 @@ export default function BalancePage() {
               disabled={isFrozen}
               className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <ArrowUpRight size={16} />
+              <ArrowUpRight size={16} className="text-[var(--vanta-gold-bright)]" />
                Send
             </button>
             <button
               onClick={() => router.push('/gifts')}
               className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Gift size={16} />
+              <Gift size={16} className="text-[var(--vanta-gold-bright)]" />
               Gift
             </button>
             {isCreator && earningsBalance > 0 && (
@@ -429,7 +430,7 @@ export default function BalancePage() {
                 onClick={() => setShowWithdrawModal(true)} disabled={isFrozen}
                 className="col-span-3 flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <ArrowUpFromLine size={16} />
+                <ArrowUpFromLine size={16} className="text-[var(--vanta-gold-bright)]" />
                 Withdraw {hideBalance ? '••••' : `${earningsBalance.toFixed(2)}`}
               </button>
             )}
@@ -704,7 +705,7 @@ export default function BalancePage() {
           </div>
 
           {exportError && <p role="alert" className="text-sm text-red-300">{exportError}</p>}
-          <p role="status" className="text-xs text-[var(--text-secondary)]">{filteredTx.length} matching · {transactions.length} of {transactionTotal} transactions loaded. Search and filters apply to loaded records.</p>
+          <p role="status" className="text-xs text-[var(--text-secondary)]">{filteredTx.length} matching · {transactions.length} of {transactionTotal} transactions loaded. Search and filters apply to loaded records. CSV exports up to 10,000 recent records.</p>
           {/* Transaction List */}
           {filteredTx.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center rounded-3xl bg-white/[0.02] border border-white/[0.04]">
@@ -799,7 +800,7 @@ export default function BalancePage() {
             </button>
           </div>
 
-          {gifts.length === 0 ? (
+          {historyErrors.includes('Gifts') ? <p className="py-4 text-sm text-[var(--text-secondary)]">Gift history could not load. Use Retry above.</p> : gifts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center rounded-3xl bg-white/[0.02] border border-white/[0.04]">
               <Gift size={32} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
               <h3 className="text-[var(--text-primary)] font-medium text-base mb-1">No gift activity yet</h3>
@@ -809,7 +810,7 @@ export default function BalancePage() {
             </div>
           ) : (
             <div className="space-y-1">
-              {gifts.map((gift: any, i: number) => {
+              {sortedGifts.map((gift: any, i: number) => {
                 const isIncoming = gift.isIncoming;
                 const counterparty = isIncoming ? gift.sender : gift.receiver;
                 const displayName = counterparty?.fullName || counterparty?.username || 'Unknown';
@@ -930,7 +931,7 @@ export default function BalancePage() {
             )}
           </div>
 
-          {withdrawals.length === 0 ? (
+          {historyErrors.includes('Withdrawals') ? <p className="py-4 text-sm text-[var(--text-secondary)]">Withdrawal history could not load. Use Retry above.</p> : withdrawals.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center rounded-3xl bg-white/[0.02] border border-white/[0.04]">
               <ArrowUpFromLine size={32} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
               <h3 className="text-[var(--text-primary)] font-medium text-base mb-1">No withdrawals yet</h3>
@@ -1024,6 +1025,7 @@ export default function BalancePage() {
                 <p className="text-[11px] text-[var(--text-secondary)] truncate">
                   {usdtWalletAddress ? `${usdtWalletAddress.slice(0, 6)}…${usdtWalletAddress.slice(-4)}` : 'Connect a USDT (BEP-20) wallet for withdrawals.'}
                 </p>
+                <button type="button" onClick={() => router.push('/settings/payments')} className="mt-2 min-h-11 text-sm font-semibold text-[var(--vanta-gold-bright)]">Manage payout address</button>
               </div>
 
               <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
