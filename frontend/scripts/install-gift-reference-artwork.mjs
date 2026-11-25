@@ -2,12 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
-import { createRequire } from 'node:module';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const require = createRequire(import.meta.url);
-const { initialGiftCatalog } = require('../../backend/prisma/gift-catalog.data.js');
-const expected = new Set(initialGiftCatalog.map(g => g.slug));
+// Read the frontend-local manifest so Vercel builds do not depend on files outside the app root.
+const manifest = fs.readFileSync(path.join(root, 'src/components/gifts/giftArtworkAssets.ts'), 'utf8');
+const slugList = manifest.match(/REFERENCE_GIFT_SLUGS\s*=\s*(\[[^\]]+\])\s*as const/);
+if (!slugList) throw Error('Reference gift manifest not found');
+const expected = new Set(JSON.parse(slugList[1]));
 const archive = path.join(root, 'assets', 'vanta-gift-reference-artwork.zip');
 const output = path.join(root, 'public', 'gifts', 'reference');
 if (expected.size !== 70 || !fs.existsSync(archive)) {
