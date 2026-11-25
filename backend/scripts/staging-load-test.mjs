@@ -22,8 +22,10 @@ export function readConfig(env) {
   }
   const path = env.VANTA_LOAD_TEST_PATH ?? '/health/ready';
   if (!endpoints.has(path)) throw Error('Endpoint not approved for read-only benchmark');
+  const minInstances = integer(env.VANTA_LOAD_TEST_MIN_INSTANCES, 0, 0, 10);
+  if (minInstances && path !== '/health/ready') throw Error('Replica sampling requires readiness endpoint');
   return {
-    origin: origin.origin, path,
+    origin: origin.origin, path, minInstances,
     requests: integer(env.VANTA_LOAD_TEST_REQUESTS, 100, 1, 300),
     concurrency: integer(env.VANTA_LOAD_TEST_CONCURRENCY, 2, 1, 10),
     timeoutMs: integer(env.VANTA_LOAD_TEST_TIMEOUT_MS, 3000, 100, 5000),
@@ -66,7 +68,9 @@ async function probe(config, fetcher) {
     const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     const expected = config.path === '/health/live' ? data?.status === 'alive'
       : config.path === '/health/ready' ? data?.status === 'ready' : data?.version === 'v1';
-    return { ok: expected, status: expected ? 200 : 'invalid_body', ms: performance.now() - started };
+    const marker = response.headers.get('x-vanta-probe-instance');
+    const instanceId = marker && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(marker) ? marker.toLowerCase() : null;
+    return { ok: expected, status: expected ? 200 : 'invalid_body', ms: performance.now() - started, instanceId };
   } catch {
     return { ok: false, status: 'network_or_invalid_response' };
   }
@@ -80,13 +84,18 @@ export async function runBenchmark(config, fetcher = fetch) {
   let errors = 0;
   const durations = [];
   const outcomes = {};
+  const instances = new Map();
+  let missingInstance = 0;
   const worker = async () => {
     while (issued < config.requests && errors < 3) {
       issued++;
       const result = await probe(config, fetcher);
       outcomes[result.status] = (outcomes[result.status] ?? 0) + 1;
-      if (result.ok) durations.push(result.ms);
-      else errors++;
+      if (result.ok) {
+        durations.push(result.ms);
+        if (result.instanceId) instances.set(result.instanceId, (instances.get(result.instanceId) ?? 0) + 1);
+        else missingInstance++;
+      } else errors++;
       // Limit issue rate per worker even when endpoints are extremely fast.
       await sleep(100);
     }
@@ -94,8 +103,11 @@ export async function runBenchmark(config, fetcher = fetch) {
   await Promise.all(Array.from({ length: Math.min(config.concurrency, config.requests) }, worker));
   const elapsedSeconds = (performance.now() - started) / 1000;
   const p95 = percentile(durations, 95);
+  const replicaCheck = !config.minInstances || (missingInstance === 0 && instances.size >= config.minInstances);
   return {
-    passed: issued === config.requests && errors === 0 && p95 !== null && p95 <= config.p95BudgetMs,
+    passed: issued === config.requests && errors === 0 && p95 !== null && p95 <= config.p95BudgetMs && replicaCheck,
+    observedInstances: instances.size, instanceRequestCounts: [...instances.values()].sort((a,b) => b-a),
+    missingInstance, replicaCheck, minInstances: config.minInstances ?? 0,
     attempted: issued, successful: durations.length, errors, outcomes,
     stoppedEarly: issued < config.requests,
     p50Ms: percentile(durations, 50), p95Ms: p95, p99Ms: percentile(durations, 99),
