@@ -101,7 +101,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 30 }}
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed inset-x-0 top-[max(12px,env(safe-area-inset-top))] bottom-[max(12px,env(safe-area-inset-bottom))] z-[101] mx-auto flex min-h-0 w-[calc(100%-1.5rem)] max-w-[456px] flex-col overflow-hidden rounded-3xl border border-white/[0.08] bg-[#101010]/95 shadow-2xl backdrop-blur-2xl"
+            className="fixed inset-x-0 top-[max(12px,env(safe-area-inset-top))] bottom-[max(12px,env(safe-area-inset-bottom))] z-[101] mx-auto flex min-h-0 w-[calc(100%-1.5rem)] max-w-[456px] flex-col overflow-hidden rounded-3xl border border-white/[0.08] bg-[var(--background-secondary)] shadow-2xl backdrop-blur-2xl"
             role="dialog"
             aria-modal="true"
             aria-label="Withdraw earnings"
@@ -110,11 +110,11 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-white/[0.06] border border-white/[0.08] flex items-center justify-center">
-                  <ArrowUpFromLine size={16} className="text-[#F5F5F5]" />
+                  <ArrowUpFromLine size={16} className="text-[var(--text-primary)]" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-[#F5F5F5]">Withdraw Earnings</h2>
-                  <p className="text-[10px] text-[#8A8A8A]">
+                  <h2 className="text-lg font-bold text-[var(--text-primary)]">Withdraw Earnings</h2>
+                  <p className="text-[10px] text-[var(--text-secondary)]">
                     {step === 'form' && 'Enter withdrawal details'}
                     {step === 'review' && 'Review and confirm'}
                     {step === 'processing' && 'Processing withdrawal'}
@@ -122,7 +122,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                   </p>
                 </div>
               </div>
-              <button onClick={() => step !== 'processing' && onClose()} className="rounded-xl p-2 text-[#8A8A8A] hover:text-white hover:bg-white/[0.05] transition" aria-label="Close">
+              <button onClick={() => step !== 'processing' && onClose()} className="rounded-xl p-2 text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.05] transition" aria-label="Close">
                 <X size={18} />
               </button>
             </div>
@@ -131,8 +131,8 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
             <div className="flex-1 overflow-y-auto scrollbar-hide p-6">
               {/* Balance */}
               <div className="mb-5 rounded-2xl bg-white/[0.03] border border-white/[0.06] px-4 py-3 flex items-center justify-between">
-                <span className="text-xs text-[#8A8A8A]">Available balance</span>
-                <span className="text-sm font-bold text-[#F5F5F5]">${balance.toFixed(2)}</span>
+                <span className="text-xs text-[var(--text-secondary)]">Available balance</span>
+                <span className="text-sm font-bold text-[var(--text-primary)]">${balance.toFixed(2)}</span>
               </div>
 
               {error && (
@@ -146,16 +146,16 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
               {step === 'form' && (
                 <div className="space-y-4">
                   <div>
-                    <label className="text-xs font-medium text-[#8A8A8A] mb-1.5 block">Withdrawal Amount (USD)</label>
+                    <label className="text-xs font-medium text-[var(--text-secondary)] mb-1.5 block">Withdrawal Amount (USD)</label>
                     <div className="relative">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-[#8A8A8A]">$</span>
+                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-[var(--text-secondary)]">$</span>
                       <input
                         type="number"
                         value={amount || ''}
                         onChange={e => setAmount(Math.min(Math.max(0, parseFloat(e.target.value) || 0), balance))}
                         placeholder="0.00"
                         autoFocus
-                        className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] pl-9 pr-4 py-3.5 text-xl font-bold text-[#F5F5F5] placeholder-[#8A8A8A] outline-none focus:border-white/[0.15] transition-all"
+                        className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] pl-9 pr-4 py-3.5 text-xl font-bold text-[var(--text-primary)] placeholder-[#8A8A8A] outline-none focus:border-[var(--vanta-gold)] transition-all"
                       />
                     </div>
                     <div className="flex items-center gap-2 mt-2">
@@ -165,7 +165,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                           onClick={() => setAmount(p)}
                           className={cn(
                             'px-3 py-1.5 rounded-lg text-xs font-medium transition-all border',
-                            amount === p ? 'border-white/[0.15] bg-white/[0.08] text-white' : 'border-white/[0.06] text-[#8A8A8A] hover:text-white'
+                            amount === p ? 'border-white/[0.15] bg-white/[0.08] text-white' : 'border-white/[0.06] text-[var(--text-secondary)] hover:text-white'
                           )}
                         >
                           ${p}
@@ -174,7 +174,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                       {balance > 500 && (
                         <button
                           onClick={() => setAmount(balance)}
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all border border-white/[0.06] text-[#8A8A8A] hover:text-white"
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all border border-white/[0.06] text-[var(--text-secondary)] hover:text-white"
                         >
                           Max
                         </button>
@@ -183,13 +183,13 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-[#8A8A8A] mb-1.5 block">USDT (BEP-20) Wallet Address</label>
+                    <label className="text-xs font-medium text-[var(--text-secondary)] mb-1.5 block">USDT (BEP-20) Wallet Address</label>
                     <input
                       type="text"
                       value={address}
                       onChange={e => setAddress(e.target.value)}
                       placeholder="0x..."
-                      className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] px-4 py-3 text-sm text-[#F5F5F5] placeholder-[#8A8A8A] font-mono outline-none focus:border-white/[0.15] transition-all"
+                      className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] px-4 py-3 text-sm text-[var(--text-primary)] placeholder-[#8A8A8A] font-mono outline-none focus:border-[var(--vanta-gold)] transition-all"
                     />
                   </div>
 
@@ -197,16 +197,16 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                   {amount > 0 && (
                     <div className="rounded-2xl bg-white/[0.02] border border-white/[0.04] p-4 space-y-2">
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-[#8A8A8A]">Withdrawal amount</span>
-                        <span className="text-[#F5F5F5] font-medium">${amount.toFixed(2)}</span>
+                        <span className="text-[var(--text-secondary)]">Withdrawal amount</span>
+                        <span className="text-[var(--text-primary)] font-medium">${amount.toFixed(2)}</span>
                       </div>
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-[#8A8A8A]">Platform fee (10%)</span>
-                        <span className="text-[#8A8A8A]">${fee.toFixed(2)}</span>
+                        <span className="text-[var(--text-secondary)]">Platform fee (10%)</span>
+                        <span className="text-[var(--text-secondary)]">${fee.toFixed(2)}</span>
                       </div>
                       <div className="flex items-center justify-between text-xs border-t border-white/[0.06] pt-2">
-                        <span className="text-[#8A8A8A] font-semibold">Net payout</span>
-                        <span className="text-[#F5F5F5] font-bold">${netAmount.toFixed(2)}</span>
+                        <span className="text-[var(--text-secondary)] font-semibold">Net payout</span>
+                        <span className="text-[var(--text-primary)] font-bold">${netAmount.toFixed(2)}</span>
                       </div>
                     </div>
                   )}
@@ -214,7 +214,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                   <button
                     onClick={handleNext}
                     disabled={amount <= 0}
-                    className="w-full py-3 rounded-2xl bg-[#F5F5F5] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    className="w-full py-3 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
                     Continue
                   </button>
@@ -226,59 +226,59 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                 <div className="space-y-4">
                   <div className="text-center">
                     <div className="w-14 h-14 rounded-2xl bg-white/[0.06] border border-white/[0.08] flex items-center justify-center mx-auto mb-3">
-                      <Check size={22} className="text-[#F5F5F5]" />
+                      <Check size={22} className="text-[var(--text-primary)]" />
                     </div>
-                    <h3 className="text-base font-bold text-[#F5F5F5] mb-1">Confirm withdrawal</h3>
-                    <p className="text-xs text-[#8A8A8A]">
+                    <h3 className="text-base font-bold text-[var(--text-primary)] mb-1">Confirm withdrawal</h3>
+                    <p className="text-xs text-[var(--text-secondary)]">
                       You will receive ${netAmount.toFixed(2)} USDT
                     </p>
                   </div>
 
                   <div className="rounded-2xl bg-white/[0.02] border border-white/[0.06] p-4 space-y-2.5">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-[#8A8A8A]">Amount</span>
-                      <span className="font-medium text-[#F5F5F5]">${amount.toFixed(2)}</span>
+                      <span className="text-[var(--text-secondary)]">Amount</span>
+                      <span className="font-medium text-[var(--text-primary)]">${amount.toFixed(2)}</span>
                     </div>
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-[#8A8A8A]">Platform fee (10%)</span>
-                      <span className="text-[#8A8A8A]">${fee.toFixed(2)}</span>
+                      <span className="text-[var(--text-secondary)]">Platform fee (10%)</span>
+                      <span className="text-[var(--text-secondary)]">${fee.toFixed(2)}</span>
                     </div>
                     <div className="flex items-center justify-between border-t border-white/[0.06] pt-2.5 text-xs">
-                      <span className="font-semibold text-[#8A8A8A]">Net payout</span>
-                      <span className="font-bold text-[#F5F5F5]">${netAmount.toFixed(2)}</span>
+                      <span className="font-semibold text-[var(--text-secondary)]">Net payout</span>
+                      <span className="font-bold text-[var(--text-primary)]">${netAmount.toFixed(2)}</span>
                     </div>
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-[#8A8A8A]">Method</span>
-                      <span className="font-medium text-[#F5F5F5]">USDT (BEP-20)</span>
+                      <span className="text-[var(--text-secondary)]">Method</span>
+                      <span className="font-medium text-[var(--text-primary)]">USDT (BEP-20)</span>
                     </div>
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-[#8A8A8A]">Wallet</span>
-                      <span className="font-medium text-[#F5F5F5] font-mono text-[10px] truncate max-w-[180px]">{address}</span>
+                      <span className="text-[var(--text-secondary)]">Wallet</span>
+                      <span className="font-medium text-[var(--text-primary)] font-mono text-[10px] truncate max-w-[180px]">{address}</span>
                     </div>
                   </div>
 
                   <div className="space-y-1.5">
-                    <label htmlFor="withdraw-wallet-pin" className="block text-xs font-medium text-[#8A8A8A]">Wallet PIN</label>
+                    <label htmlFor="withdraw-wallet-pin" className="block text-xs font-medium text-[var(--text-secondary)]">Wallet PIN</label>
                     <input id="withdraw-wallet-pin" type="password" inputMode="numeric" autoComplete="off" maxLength={6}
                       value={pinCode} onChange={e => setPinCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                       placeholder="Enter your 4-6 digit PIN" aria-label="Wallet PIN"
-                      className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm tracking-[0.3em] text-[#F5F5F5] placeholder:tracking-normal placeholder:text-[#8A8A8A] outline-none focus:border-white/[0.15]" />
+                      className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm tracking-[0.3em] text-[var(--text-primary)] placeholder:tracking-normal placeholder:text-[var(--text-secondary)] outline-none focus:border-[var(--vanta-gold)]" />
                   </div>
 
                   {twoFactorEnabled && (
                     <div className="space-y-1.5">
-                      <label htmlFor="withdraw-authenticator-code" className="block text-xs font-medium text-[#8A8A8A]">Authenticator 2FA code</label>
+                      <label htmlFor="withdraw-authenticator-code" className="block text-xs font-medium text-[var(--text-secondary)]">Authenticator 2FA code</label>
                       <input id="withdraw-authenticator-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={8}
                         value={twoFactorCode} onChange={e => setTwoFactorCode(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8))}
                         placeholder="6-digit app code or backup code"
-                        className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm tracking-widest text-[#F5F5F5] placeholder:tracking-normal placeholder:text-[#8A8A8A] outline-none focus:border-white/[0.15]" />
+                        className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm tracking-widest text-[var(--text-primary)] placeholder:tracking-normal placeholder:text-[var(--text-secondary)] outline-none focus:border-[var(--vanta-gold)]" />
                     </div>
                   )}
 
                   <button
                     onClick={handleWithdraw}
                     disabled={sending}
-                    className="w-full py-3 rounded-2xl bg-[#F5F5F5] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    className="w-full py-3 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
                     {sending ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Confirm & Withdraw'}
                   </button>
@@ -293,13 +293,13 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                     transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
                     className="w-16 h-16 rounded-2xl bg-white/[0.06] border border-white/[0.08] flex items-center justify-center mb-4"
                   >
-                    <Loader2 size={28} className="text-[#F5F5F5]" />
+                    <Loader2 size={28} className="text-[var(--text-primary)]" />
                   </motion.div>
-                  <h3 className="text-lg font-bold text-[#F5F5F5] mb-2">Processing Withdrawal</h3>
-                  <p className="text-sm text-[#8A8A8A] max-w-xs">
+                  <h3 className="text-lg font-bold text-[var(--text-primary)] mb-2">Processing Withdrawal</h3>
+                  <p className="text-sm text-[var(--text-secondary)] max-w-xs">
                     Your withdrawal request is being processed securely...
                   </p>
-                  <div className="mt-6 flex items-center gap-2 text-xs text-[#8A8A8A]">
+                  <div className="mt-6 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
                     <Shield size={12} />
                     Atomic & secure transaction
                   </div>
@@ -327,7 +327,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.3 }}
-                    className="text-xl font-bold text-[#F5F5F5] mb-2"
+                    className="text-xl font-bold text-[var(--text-primary)] mb-2"
                   >
                     Withdrawal Requested!
                   </motion.h3>
@@ -335,7 +335,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.4 }}
-                    className="text-sm text-[#8A8A8A] max-w-xs"
+                    className="text-sm text-[var(--text-secondary)] max-w-xs"
                   >
                     ${netAmount.toFixed(2)} USDT will be sent to your wallet after review.
                   </motion.p>
