@@ -18,7 +18,7 @@ export default function BuyCoinsModal({ open, onClose }: BuyCoinsModalProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="coin-maintenance-title"
-        className="w-full max-w-md rounded-2xl border border-white/10 bg-[#101820] p-6 text-center shadow-2xl"
+        className="w-full max-w-md rounded-2xl border border-white/10 bg-[var(--surface)] p-6 text-center shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
