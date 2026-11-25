@@ -120,7 +120,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 30 }}
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="vanta-wallet-ui fixed inset-x-0 top-[max(12px,env(safe-area-inset-top))] bottom-[max(12px,env(safe-area-inset-bottom))] z-[101] mx-auto flex min-h-0 w-[calc(100%-1.5rem)] max-w-[456px] flex-col overflow-hidden rounded-3xl border border-white/[0.08] bg-[var(--background-secondary)] shadow-2xl backdrop-blur-2xl"
+            className="vanta-wallet-ui fixed inset-x-0 top-[max(12px,env(safe-area-inset-top))] bottom-[max(12px,env(safe-area-inset-bottom))] z-[101] mx-auto flex min-h-0 w-[calc(100%-1.5rem)] max-w-[456px] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background-secondary)]"
             role="dialog"
             aria-modal="true"
             aria-label="Withdraw earnings"
@@ -130,7 +130,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-4 sm:px-6 border-b border-white/[0.06] shrink-0">
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-white/[0.06] border border-white/[0.08] flex items-center justify-center">
+                <div className="shrink-0">
                   <ArrowUpFromLine size={16} className="text-[var(--text-primary)]" />
                 </div>
                 <div>
@@ -143,7 +143,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                   </p>
                 </div>
               </div>
-              <button onClick={() => !sending && step !== 'processing' && step !== 'success' && onClose()} className="rounded-xl p-2 text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.05] transition" aria-label="Close" disabled={sending || step === 'processing' || step === 'success'}>
+              <button onClick={() => !sending && step !== 'processing' && step !== 'success' && onClose()} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition" aria-label="Close" disabled={sending || step === 'processing' || step === 'success'}>
                 <X size={18} />
               </button>
             </div>
@@ -151,7 +151,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
             {/* Body */}
             <div className="flex-1 overflow-y-auto scrollbar-hide p-4 sm:p-6">
               {/* Balance */}
-              <div className="mb-5 rounded-2xl bg-white/[0.03] border border-white/[0.06] px-4 py-3 flex items-center justify-between">
+              <div className="mb-5 border-b border-[var(--border)] pb-3 flex items-center justify-between gap-3">
                 <span className="text-xs text-[var(--text-secondary)]">Available balance</span>
                 <span className="text-sm font-bold text-[var(--text-primary)]">{hideBalance ? '••••••' : '$' + balance.toFixed(2)}</span>
               </div>
@@ -176,7 +176,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                         value={amount || ''}
                         onChange={e => setAmount(Math.min(Math.max(0, parseFloat(e.target.value) || 0), balance))}
                         placeholder="0.00"
-                                                className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] pl-9 pr-4 py-3.5 text-xl font-bold text-[var(--text-primary)] placeholder-[#8A8A8A] outline-none focus:border-[var(--vanta-gold)] transition-all"
+                                                className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface-secondary)] pl-9 pr-4 py-3.5 text-xl font-bold text-[var(--text-primary)] placeholder-[#8A8A8A] outline-none focus:border-[var(--vanta-gold)] transition-all"
                       />
                     </div>
                     <div className="flex flex-wrap items-center gap-2 mt-2">
@@ -186,7 +186,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                           onClick={() => setAmount(p)}
                           className={cn(
                             'min-h-11 px-3 py-2 rounded-lg text-xs font-medium transition-all border',
-                            amount === p ? 'border-[var(--active-border)] bg-[var(--active-soft)] text-[var(--vanta-gold-bright)]' : 'border-white/[0.06] text-[var(--text-secondary)] hover:text-white'
+                            amount === p ? 'border-[var(--active-border)] bg-[var(--active-soft)] text-[var(--vanta-gold-bright)]' : 'border-white/[0.06] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                           )}
                         >
                           ${p}
@@ -195,7 +195,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                       {balance > 500 && (
                         <button
                           onClick={() => setAmount(balance)}
-                          className="min-h-11 px-3 py-2 rounded-lg text-xs font-medium transition-all border border-white/[0.06] text-[var(--text-secondary)] hover:text-white"
+                          className="min-h-11 px-3 py-2 rounded-lg text-xs font-medium transition-all border border-white/[0.06] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                         >
                           Max
                         </button>
@@ -211,14 +211,14 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                       value={address}
                       onChange={e => setAddress(e.target.value)}
                       placeholder="0x..."
-                      className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] px-4 py-3 text-sm text-[var(--text-primary)] placeholder-[#8A8A8A] font-mono outline-none focus:border-[var(--vanta-gold)] transition-all"
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface-secondary)] px-4 py-3 text-sm text-[var(--text-primary)] placeholder-[#8A8A8A] font-mono outline-none focus:border-[var(--vanta-gold)] transition-all"
                     />
                   </div>
 
                   <p className="text-xs leading-5 text-[var(--text-secondary)]">Minimum withdrawal: $10. Only use a USDT address on BNB Smart Chain (BEP-20). Verify the full destination address before confirming.</p>
                   {/* Fee breakdown */}
                   {amount > 0 && (
-                    <div className="rounded-2xl bg-white/[0.02] border border-white/[0.04] p-4 space-y-2">
+                    <div className="border-y border-[var(--border)] py-3 space-y-2">
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-[var(--text-secondary)]">Withdrawal amount</span>
                         <span className="text-[var(--text-primary)] font-medium">${amount.toFixed(2)}</span>
@@ -237,7 +237,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                   <button
                     onClick={handleNext}
                     disabled={amount <= 0}
-                    className="w-full py-3 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    className="min-h-11 w-full py-3 rounded-lg bg-[var(--vanta-gold)] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
                     Continue
                   </button>
@@ -258,7 +258,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                     </p>
                   </div>
 
-                  <div className="rounded-2xl bg-white/[0.02] border border-white/[0.06] p-4 space-y-2.5">
+                  <div className="border-y border-[var(--border)] py-3 space-y-2.5">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-[var(--text-secondary)]">Amount</span>
                       <span className="font-medium text-[var(--text-primary)]">${amount.toFixed(2)}</span>
@@ -286,7 +286,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                     <input id="withdraw-wallet-pin" type="password" inputMode="numeric" autoComplete="off" maxLength={6}
                       value={pinCode} onChange={e => setPinCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                       placeholder="Enter your 4-6 digit PIN" aria-label="Wallet PIN"
-                      className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm tracking-[0.3em] text-[var(--text-primary)] placeholder:tracking-normal placeholder:text-[var(--text-secondary)] outline-none focus:border-[var(--vanta-gold)]" />
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface-secondary)] px-4 py-3 text-sm tracking-[0.3em] text-[var(--text-primary)] placeholder:tracking-normal placeholder:text-[var(--text-secondary)] outline-none focus:border-[var(--vanta-gold)]" />
                   </div>
 
                   {twoFactorEnabled === null && <p role="status" className="text-sm text-[var(--text-secondary)]">Checking account security…</p>}
@@ -296,7 +296,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                       <input id="withdraw-authenticator-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={8}
                         value={twoFactorCode} onChange={e => setTwoFactorCode(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8))}
                         placeholder="6-digit app code or backup code"
-                        className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm tracking-widest text-[var(--text-primary)] placeholder:tracking-normal placeholder:text-[var(--text-secondary)] outline-none focus:border-[var(--vanta-gold)]" />
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface-secondary)] px-4 py-3 text-sm tracking-widest text-[var(--text-primary)] placeholder:tracking-normal placeholder:text-[var(--text-secondary)] outline-none focus:border-[var(--vanta-gold)]" />
                     </div>
                   )}
 
@@ -304,7 +304,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                   <button
                     onClick={handleWithdraw}
                     disabled={sending || uncertain || twoFactorEnabled === null || (twoFactorEnabled && !twoFactorCode.trim())}
-                    className="w-full py-3 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    className="min-h-11 w-full py-3 rounded-lg bg-[var(--vanta-gold)] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
                     {sending ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Confirm withdrawal request'}
                   </button>
@@ -355,7 +355,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                     transition={{ delay: 0.3 }}
                     className="text-xl font-bold text-[var(--text-primary)] mb-2"
                   >
-                    Withdrawal Requested!
+                    Withdrawal requested
                   </motion.h3>
                   <motion.p
                     initial={{ opacity: 0, y: 10 }}
@@ -365,7 +365,7 @@ export default function WithdrawModal({ open, balance, hideBalance = false, wall
                   >
                     Your request for USDT {(receipt?.netAmount ?? netAmount).toFixed(2)} was recorded. Settlement is subject to review and verification.
                   </motion.p>
-                {receipt && <div className="mt-4 w-full space-y-2 rounded-xl bg-[var(--surface)] p-3 text-sm"><p>Reference: <span className="break-all font-mono text-xs">{receipt.id}</span></p><p>Status: {receipt.status}</p><button type="button" onClick={()=>downloadWalletReceipt('withdrawal',receipt)} className="min-h-11 w-full rounded-lg border border-[var(--border)] text-[var(--vanta-gold-bright)]">Download withdrawal record</button></div>}
+                {receipt && <div className="mt-4 w-full space-y-2 border-y border-[var(--border)] py-3 text-left text-sm"><p>Reference: <span className="break-all font-mono text-xs">{receipt.id}</span></p><p>Status: {receipt.status}</p><button type="button" onClick={()=>downloadWalletReceipt('withdrawal',receipt)} className="min-h-11 w-full rounded-lg border border-[var(--border)] text-[var(--vanta-gold-bright)]">Download withdrawal record</button></div>}
                 <button type="button" onClick={() => { onClose(); onSuccess(); }} className="mt-5 min-h-11 w-full rounded-xl bg-[var(--vanta-gold)] px-4 font-semibold text-black">Done</button>
                 </div>
               )}
