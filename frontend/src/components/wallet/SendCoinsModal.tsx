@@ -53,7 +53,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
   const [searchRetry, setSearchRetry] = useState(0);
   const [notice, setNotice] = useState('');
   const submitLock = useRef(false);
-  const dialogRef = useWalletDialog<HTMLDivElement>(open, onClose, sending || resending || step === 'processing' || step === 'success');
+  const dialogRef = useWalletDialog<HTMLDivElement>(open, onClose, sending || resending || step === 'processing' || step === 'success', step);
   const maxAmount = maxTransferableCoins(balance);
   const fee = calculateTransferFee(amount);
   const totalDeduction = amount + fee;
@@ -235,7 +235,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 30 }}
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed inset-x-0 top-[max(12px,env(safe-area-inset-top))] bottom-[max(12px,env(safe-area-inset-bottom))] z-[101] mx-auto flex min-h-0 w-[calc(100%-1.5rem)] max-w-[456px] flex-col overflow-hidden rounded-3xl border border-white/[0.08] bg-[var(--background-secondary)] shadow-2xl backdrop-blur-2xl"
+            className="vanta-wallet-ui fixed inset-x-0 top-[max(12px,env(safe-area-inset-top))] bottom-[max(12px,env(safe-area-inset-bottom))] z-[101] mx-auto flex min-h-0 w-[calc(100%-1.5rem)] max-w-[456px] flex-col overflow-hidden rounded-3xl border border-white/[0.08] bg-[var(--background-secondary)] shadow-2xl backdrop-blur-2xl"
             role="dialog"
             aria-modal="true"
             aria-label="Send VANTA"
@@ -379,7 +379,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                         value={amount || ''}
                         onChange={e => setAmount(Math.min(Math.max(0, parseInt(e.target.value) || 0), balance))}
                         placeholder="0"
-                                                className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] px-4 py-3.5 text-xl font-bold text-white placeholder-gray-600 outline-none focus:border-[var(--vanta-gold)] transition-all"
+                                                className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] pl-4 pr-12 py-3.5 text-xl font-bold text-white placeholder-gray-600 outline-none focus:border-[var(--vanta-gold)] transition-all"
                       />
                       <VantaCoinIcon size={20} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--vanta-gold-bright)]" />
                     </div>
@@ -531,7 +531,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                         className="w-full rounded-2xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-center text-sm tracking-widest text-white placeholder:tracking-normal placeholder:text-[var(--text-secondary)] outline-none focus:border-[var(--vanta-gold)]" />
                     </div>
                   )}
-                  <button onClick={handleVerifyOtp} disabled={sending || otpCode.length !== 6 || !challengeId || (requiresTwoFactor && !twoFactorCode)} className="w-full rounded-2xl bg-[var(--vanta-gold)] py-3.5 text-sm font-bold text-black transition disabled:cursor-not-allowed disabled:opacity-45">{sending ? <Loader2 size={15} className="mx-auto animate-spin" /> : 'Verify and Continue'}</button>
+                  <button onClick={handleVerifyOtp} disabled={sending || resending || otpCode.length !== 6 || !challengeId || (requiresTwoFactor && !twoFactorCode)} className="w-full rounded-2xl bg-[var(--vanta-gold)] py-3.5 text-sm font-bold text-black transition disabled:cursor-not-allowed disabled:opacity-45">{sending ? <Loader2 size={15} className="mx-auto animate-spin" /> : 'Verify and Continue'}</button>
                   <button type="button" onClick={handleResendOtp} disabled={resending || sending} className="w-full py-2 text-xs font-semibold text-[var(--text-secondary)] transition hover:text-white disabled:opacity-40">{resending ? 'Sending new code…' : 'Resend verification code'}</button>
                 </div>
               )}
