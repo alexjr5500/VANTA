@@ -60,6 +60,39 @@ describe('read-only Cloudinary HLS staging acceptance', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  test('samples the declared first segment byte range after EXTINF', async () => {
+    const fetcher = mockFetch({
+      [variant]: playlist('#EXTM3U\n#EXTINF:3.0,\n#EXT-X-BYTERANGE:4@128\nsegment-00001.ts\n#EXT-X-ENDLIST\n'),
+      [segment]: new Response(Uint8Array.from([0x47, 0x40, 0, 0x10]), {
+        status: 206, headers: { 'Content-Type': 'video/mp2t', 'Content-Range': 'bytes 128-131/1024' },
+      }),
+    });
+    await expect(verifyPublicCloudinaryHls(master, 'test-cloud', fetcher))
+      .resolves.toEqual({ variantsChecked: 1, segmentsChecked: 1 });
+    expect(fetcher).toHaveBeenLastCalledWith(segment, expect.objectContaining({ headers: { Range: 'bytes=128-131' } }));
+  });
+
+  test('rejects missing initial byte offset or a CDN ignoring the byte range', async () => {
+    const implicit = mockFetch({
+      [variant]: playlist('#EXTM3U\n#EXTINF:3.0,\n#EXT-X-BYTERANGE:4\nsegment-00001.ts\n#EXT-X-ENDLIST\n'),
+    });
+    await expect(verifyPublicCloudinaryHls(master, 'test-cloud', implicit)).rejects.toThrow('byte range');
+    expect(implicit).toHaveBeenCalledTimes(2);
+    const ignored = mockFetch({
+      [variant]: playlist('#EXTM3U\n#EXTINF:3.0,\n#EXT-X-BYTERANGE:4@128\nsegment-00001.ts\n#EXT-X-ENDLIST\n'),
+      [segment]: new Response(Uint8Array.from([0x47, 0, 0, 0]), { status: 200 }),
+    });
+    await expect(verifyPublicCloudinaryHls(master, 'test-cloud', ignored)).rejects.toThrow('not honored');
+  });
+
+  test('rejects external segment URI even after intervening metadata', async () => {
+    const fetcher = mockFetch({
+      [variant]: playlist('#EXTM3U\n#EXTINF:3.0,\n#EXT-X-BYTERANGE:4@0\nhttps://evil.example/segment.ts\n#EXT-X-ENDLIST\n'),
+    });
+    await expect(verifyPublicCloudinaryHls(master, 'test-cloud', fetcher)).rejects.toThrow('expected public Cloudinary account');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   test('rejects incomplete HLS variants and missing segments', async () => {
     const noEnd = mockFetch({ [variant]: playlist('#EXTM3U\n#EXTINF:3.0,\nsegment-00001.ts\n') });
     await expect(verifyPublicCloudinaryHls(master, 'test-cloud', noEnd))
