@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Loader2, Check, AlertCircle, ArrowUpFromLine, Shield, Wallet } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { apiGet, apiPost } from '@/lib/apiClient';
+import { useWalletDialog } from './useWalletDialog';
 
 interface WithdrawModalProps {
   open: boolean;
@@ -23,23 +24,30 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
   const [pinCode, setPinCode] = useState('');
-  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState<boolean | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState('');
 
+  const submitLock = useRef(false);
+  const dialogRef = useWalletDialog<HTMLDivElement>(open, onClose, sending || step === 'processing' || step === 'success');
   const fee = amount > 0 ? Math.round(amount * 0.10 * 100) / 100 : 0;
   const netAmount = amount > 0 ? Math.round((amount - fee) * 100) / 100 : 0;
 
   useEffect(() => {
     if (!open || !token) return;
-    apiGet<{ enabled: boolean }>('/api/auth/2fa/status', token)
-      .then(status => setTwoFactorEnabled(status?.enabled === true))
-      .catch(() => setTwoFactorEnabled(true));
+    let current = true;
+    setTwoFactorEnabled(null);
+    apiGet<{ enabled: boolean }>('/api/auth/2fa/status', token, { skipCache: true })
+      .then(status => { if (current) setTwoFactorEnabled(typeof status?.enabled === 'boolean' ? status.enabled : true); })
+      .catch(() => { if (current) setTwoFactorEnabled(true); });
+    return () => { current = false; };
   }, [open, token]);
 
   // Reset state when opened
   useEffect(() => {
     if (open) {
       setStep('form');
+      setSending(false);
+      submitLock.current = false;
       setAmount(0);
       setAddress(walletAddress || '');
       setError('');
@@ -49,17 +57,19 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
   }, [open, walletAddress]);
 
   const handleNext = () => {
-    if (amount <= 0) { setError('Enter an amount'); return; }
+    if (!Number.isFinite(amount) || amount <= 0) { setError('Enter a valid amount'); return; }
     if (amount < 10) { setError('Minimum withdrawal amount is $10.00'); return; }
     if (amount > balance) { setError(`Insufficient balance. You have $${balance.toFixed(2)} available.`); return; }
-    if (!address || address.trim().length < 20) { setError('Enter a valid USDT (BEP-20) wallet address'); return; }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address.trim())) { setError('Enter a valid USDT (BEP-20) wallet address'); return; }
     setError('');
     setStep('review');
   };
 
   const handleWithdraw = async () => {
-    if (!token) return;
+    if (!token || sending || submitLock.current || twoFactorEnabled === null) return;
     if (!/^\d{4,6}$/.test(pinCode)) { setError('Enter your 4-6 digit wallet PIN.'); return; }
+    if (twoFactorEnabled && !twoFactorCode.trim()) { setError('Enter your authenticator or backup code.'); return; }
+    submitLock.current = true;
     setSending(true);
     setError('');
     setStep('processing');
@@ -71,16 +81,14 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
         pinCode,
         twoFactorCode: twoFactorEnabled ? twoFactorCode : undefined,
       }, token);
+      setPinCode('');
+      setTwoFactorCode('');
       setStep('success');
-      setTimeout(() => {
-        onSuccess();
-        onClose();
-      }, 2000);
     } catch (err: any) {
       setError(err.message || 'Withdrawal failed. Please try again.');
       setStep('review');
       setSending(false);
-    }
+    } finally { submitLock.current = false; }
   };
 
   if (!open) return null;
@@ -94,7 +102,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-md"
-            onClick={() => step !== 'processing' && onClose()}
+            onClick={() => !sending && step !== 'processing' && step !== 'success' && onClose()}
           />
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 30 }}
@@ -105,9 +113,11 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
             role="dialog"
             aria-modal="true"
             aria-label="Withdraw earnings"
+            ref={dialogRef}
+            tabIndex={-1}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] shrink-0">
+            <div className="flex items-center justify-between px-4 py-4 sm:px-6 border-b border-white/[0.06] shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-white/[0.06] border border-white/[0.08] flex items-center justify-center">
                   <ArrowUpFromLine size={16} className="text-[var(--text-primary)]" />
@@ -122,13 +132,13 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                   </p>
                 </div>
               </div>
-              <button onClick={() => step !== 'processing' && onClose()} className="rounded-xl p-2 text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.05] transition" aria-label="Close">
+              <button onClick={() => !sending && step !== 'processing' && step !== 'success' && onClose()} className="rounded-xl p-2 text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.05] transition" aria-label="Close" disabled={sending || step === 'processing' || step === 'success'}>
                 <X size={18} />
               </button>
             </div>
 
             {/* Body */}
-            <div className="flex-1 overflow-y-auto scrollbar-hide p-6">
+            <div className="flex-1 overflow-y-auto scrollbar-hide p-4 sm:p-6">
               {/* Balance */}
               <div className="mb-5 rounded-2xl bg-white/[0.03] border border-white/[0.06] px-4 py-3 flex items-center justify-between">
                 <span className="text-xs text-[var(--text-secondary)]">Available balance</span>
@@ -136,7 +146,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
               </div>
 
               {error && (
-                <div className="mb-4 flex items-center gap-2 text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
+                <div role="alert" className="mb-4 flex items-center gap-2 text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
                   <AlertCircle size={14} className="shrink-0" />
                   {error}
                 </div>
@@ -146,26 +156,26 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
               {step === 'form' && (
                 <div className="space-y-4">
                   <div>
-                    <label className="text-xs font-medium text-[var(--text-secondary)] mb-1.5 block">Withdrawal Amount (USD)</label>
+                    <label htmlFor="wallet-withdraw-amount" className="text-sm font-medium text-[var(--text-secondary)] mb-1.5 block">Withdrawal Amount (USD)</label>
                     <div className="relative">
                       <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg font-bold text-[var(--text-secondary)]">$</span>
                       <input
-                        type="number"
+                        id="wallet-withdraw-amount"
+                        type="number" inputMode="decimal" min={10} step="0.01"
                         value={amount || ''}
                         onChange={e => setAmount(Math.min(Math.max(0, parseFloat(e.target.value) || 0), balance))}
                         placeholder="0.00"
-                        autoFocus
-                        className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] pl-9 pr-4 py-3.5 text-xl font-bold text-[var(--text-primary)] placeholder-[#8A8A8A] outline-none focus:border-[var(--vanta-gold)] transition-all"
+                                                className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] pl-9 pr-4 py-3.5 text-xl font-bold text-[var(--text-primary)] placeholder-[#8A8A8A] outline-none focus:border-[var(--vanta-gold)] transition-all"
                       />
                     </div>
-                    <div className="flex items-center gap-2 mt-2">
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
                       {[25, 50, 100, 250, 500].filter(v => v <= balance).map(p => (
                         <button
                           key={p}
                           onClick={() => setAmount(p)}
                           className={cn(
-                            'px-3 py-1.5 rounded-lg text-xs font-medium transition-all border',
-                            amount === p ? 'border-white/[0.15] bg-white/[0.08] text-white' : 'border-white/[0.06] text-[var(--text-secondary)] hover:text-white'
+                            'min-h-11 px-3 py-2 rounded-lg text-xs font-medium transition-all border',
+                            amount === p ? 'border-[var(--active-border)] bg-[var(--active-soft)] text-[var(--vanta-gold-bright)]' : 'border-white/[0.06] text-[var(--text-secondary)] hover:text-white'
                           )}
                         >
                           ${p}
@@ -174,7 +184,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                       {balance > 500 && (
                         <button
                           onClick={() => setAmount(balance)}
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all border border-white/[0.06] text-[var(--text-secondary)] hover:text-white"
+                          className="min-h-11 px-3 py-2 rounded-lg text-xs font-medium transition-all border border-white/[0.06] text-[var(--text-secondary)] hover:text-white"
                         >
                           Max
                         </button>
@@ -183,9 +193,10 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-[var(--text-secondary)] mb-1.5 block">USDT (BEP-20) Wallet Address</label>
+                    <label htmlFor="wallet-withdraw-address" className="text-sm font-medium text-[var(--text-secondary)] mb-1.5 block">USDT (BEP-20) Wallet Address</label>
                     <input
-                      type="text"
+                      id="wallet-withdraw-address"
+                      type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false}
                       value={address}
                       onChange={e => setAddress(e.target.value)}
                       placeholder="0x..."
@@ -193,6 +204,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                     />
                   </div>
 
+                  <p className="text-xs leading-5 text-[var(--text-secondary)]">Minimum withdrawal: $10. Only use a USDT address on BNB Smart Chain (BEP-20). Verify the full destination address before confirming.</p>
                   {/* Fee breakdown */}
                   {amount > 0 && (
                     <div className="rounded-2xl bg-white/[0.02] border border-white/[0.04] p-4 space-y-2">
@@ -224,6 +236,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
               {/* Step 2: Review */}
               {step === 'review' && (
                 <div className="space-y-4">
+                  <button type="button" onClick={() => { setStep('form'); setError(''); setPinCode(''); setTwoFactorCode(''); }} className="min-h-11 text-sm font-semibold text-[var(--vanta-gold-bright)]">Edit withdrawal</button>
                   <div className="text-center">
                     <div className="w-14 h-14 rounded-2xl bg-white/[0.06] border border-white/[0.08] flex items-center justify-center mx-auto mb-3">
                       <Check size={22} className="text-[var(--text-primary)]" />
@@ -253,7 +266,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                     </div>
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-[var(--text-secondary)]">Wallet</span>
-                      <span className="font-medium text-[var(--text-primary)] font-mono text-[10px] truncate max-w-[180px]">{address}</span>
+                      <span className="font-medium text-[var(--text-primary)] font-mono text-xs break-all max-w-[65%] text-right">{address}</span>
                     </div>
                   </div>
 
@@ -265,6 +278,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                       className="w-full rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm tracking-[0.3em] text-[var(--text-primary)] placeholder:tracking-normal placeholder:text-[var(--text-secondary)] outline-none focus:border-[var(--vanta-gold)]" />
                   </div>
 
+                  {twoFactorEnabled === null && <p role="status" className="text-sm text-[var(--text-secondary)]">Checking account security…</p>}
                   {twoFactorEnabled && (
                     <div className="space-y-1.5">
                       <label htmlFor="withdraw-authenticator-code" className="block text-xs font-medium text-[var(--text-secondary)]">Authenticator 2FA code</label>
@@ -277,7 +291,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
 
                   <button
                     onClick={handleWithdraw}
-                    disabled={sending}
+                    disabled={sending || twoFactorEnabled === null || (twoFactorEnabled && !twoFactorCode.trim())}
                     className="w-full py-3 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
                     {sending ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Confirm & Withdraw'}
@@ -339,6 +353,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                   >
                     ${netAmount.toFixed(2)} USDT will be sent to your wallet after review.
                   </motion.p>
+                <button type="button" onClick={() => { onClose(); onSuccess(); }} className="mt-5 min-h-11 w-full rounded-xl bg-[var(--vanta-gold)] px-4 font-semibold text-black">Done</button>
                 </div>
               )}
             </div>
