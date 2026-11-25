@@ -3668,3 +3668,10 @@ html.vanta-native-android .vanta-comment-composer { padding-bottom: 4px; }
     scroll-behavior: auto !important;
   }
 }
+
+/* Reference gifts were supplied on near-black backings. Screen blending on
+   dark themed catalog cards lets those backings recede into VANTA surfaces
+   without modifying the approved WebPs or affecting celebration videos. */
+html:not(.light) .gift-reference-theme-blend {
+  mix-blend-mode: screen;
+}
