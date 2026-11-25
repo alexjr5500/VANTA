@@ -73,3 +73,23 @@ export function maxTransferableCoins(balance: number): number {
   }
   return low;
 }
+
+/** Fail closed on malformed wallet data. Older backends expose lockedCoins
+ * but not availableCoins; never substitute the raw total for spendable coins. */
+export function resolveWalletSpendable(wallet: { coinBalance?: unknown; lockedCoins?: unknown; availableCoins?: unknown } | null | undefined): number | null {
+  const total = wallet?.coinBalance;
+  const locked = wallet?.lockedCoins;
+  if (typeof total !== 'number' || !Number.isSafeInteger(total) || total < 0 ||
+      typeof locked !== 'number' || !Number.isSafeInteger(locked) || locked < 0) return null;
+  const calculated = Math.max(0, total - locked);
+  if (wallet?.availableCoins !== undefined && wallet.availableCoins !== calculated) return null;
+  return calculated;
+}
+
+export type WalletTransferLimits = { dailyLimit: number; singleTxLimit: number; dailyRemaining: number };
+export function transferDeductionBudget(spendable: number, limits?: WalletTransferLimits | null): number {
+  if (!Number.isSafeInteger(spendable) || spendable < 0) return 0;
+  if (!limits) return 0;
+  if (![limits.dailyLimit, limits.singleTxLimit, limits.dailyRemaining].every(n => Number.isSafeInteger(n) && n >= 0)) return 0;
+  return Math.min(spendable, limits.dailyLimit, limits.singleTxLimit, limits.dailyRemaining);
+}
