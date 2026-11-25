@@ -156,7 +156,7 @@ export default function ReelUploader({ open, selectedFile, onChooseAnother, onCl
     try {
       const reelDescription = caption.trim() || undefined;
       // Preserve the existing required server title field without forcing a second user input.
-      const reelTitle = reelDescription ? Array.from(reelDescription).slice(0, 120).join('') : 'Reel';
+      const reelTitle = reelDescription ? reelDescription.slice(0, 120).replace(/[\uD800-\uDBFF]$/, '') : 'Reel';
       const draft = await createReelDraft(token, { title: reelTitle, description: reelDescription });
       startUpload({
         kind: 'reel',
