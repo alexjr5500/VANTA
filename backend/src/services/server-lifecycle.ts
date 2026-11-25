@@ -1,4 +1,5 @@
 import type { RequestHandler } from 'express';
+import { randomUUID } from 'node:crypto';
 
 export type TrafficState = 'starting' | 'serving' | 'draining';
 type ProbeResult = { status: 'ready' | 'not_ready'; reason?: 'starting' | 'draining' | 'database' | 'redis' };
@@ -8,30 +9,33 @@ export class ServerReadiness {
   private state: TrafficState = 'starting';
   private pending?: Promise<boolean>;
   private cached?: { ok: boolean; expires: number };
+  private readonly instanceId?: string;
   constructor(
     private readonly databaseCheck: () => Promise<unknown>,
     private readonly redisCheck: () => boolean = () => true,
     private readonly timeoutMs = 1500,
     private readonly cacheMs = 1000,
-  ) {}
+    exposeInstanceId = false,
+  ) { if (exposeInstanceId) this.instanceId = randomUUID(); }
   get draining(): boolean { return this.state === 'draining'; }
   markServing(): void { if (!this.draining) this.state = 'serving'; }
   beginDrain(): void { this.state = 'draining'; }
   private databaseReady(): Promise<boolean> {
     if (this.cached && this.cached.expires > Date.now()) return Promise.resolve(this.cached.ok);
     if (!this.pending) {
-      this.pending = Promise.resolve().then(this.databaseCheck).then(() => true, () => false)
-        .then(ok => {
+      // Share one deadline and completion handler across callers, even after timeout.
+      const work = Promise.resolve().then(this.databaseCheck).then(() => true, () => false);
+      this.pending = new Promise<boolean>(resolve => {
+        const timer = setTimeout(() => resolve(false), this.timeoutMs);
+        void work.then(ok => {
+          clearTimeout(timer);
           this.cached = { ok, expires: Date.now() + this.cacheMs };
           this.pending = undefined;
-          return ok;
+          resolve(ok);
         });
+      });
     }
-    const pending = this.pending;
-    return new Promise<boolean>(resolve => {
-      const timer = setTimeout(() => resolve(false), this.timeoutMs);
-      void pending.then(ok => { clearTimeout(timer); resolve(ok); });
-    });
+    return this.pending;
   }
   async readiness(): Promise<ProbeResult> {
     if (this.state !== 'serving') return { status: 'not_ready', reason: this.state };
@@ -50,6 +54,7 @@ export class ServerReadiness {
   };
   readonly readyHandler: RequestHandler = async (_req, res) => {
     const result = await this.readiness();
+    if (this.instanceId) res.set('X-Vanta-Probe-Instance', this.instanceId);
     res.set('Cache-Control', 'no-store').status(result.status === 'ready' ? 200 : 503).json(result);
   };
   readonly drainMiddleware: RequestHandler = (_req, res, next) => {

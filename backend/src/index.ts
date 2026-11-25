@@ -79,6 +79,8 @@ const realtimeAdapter = new RealtimeRedisAdapter(realtimeConfig);
 const traffic = new ServerReadiness(
   () => prisma.$queryRaw`SELECT 1`,
   () => realtimeAdapter.ready && (process.env.VANTA_READINESS_REQUIRE_REDIS !== 'true' || cacheService.isRedisAvailable),
+  1500, 1000,
+  process.env.VANTA_STAGING_INSTANCE_PROBE === 'yes' && process.env.RAILWAY_ENVIRONMENT_NAME === 'staging',
 );
 const backgroundDrain = new BackgroundDrain();
 const maintenance = new DistributedMaintenance(maintenanceConnectionUrl(process.env));

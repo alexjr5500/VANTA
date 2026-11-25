@@ -34,6 +34,7 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 ## 6.10 — Capacity
 - [ ] Baseline and load-test reels playback/upload, feeds, chat, notification delivery and DB.
 - [x] Add bounded staging-only read-only HTTP smoke benchmark harness with safety regression tests; actual staging traffic, replica distribution and representative authenticated workload tests remain pending.
+- [x] Add optional staging readiness instance markers, shared database probe deadline and two-server loopback traffic/drain tests; actual Railway load balancer remains unverified.
 - [ ] Set latency/error budgets, concurrency caps and backpressure limits.
 - [x] Implement lightweight liveness/readiness, bounded single-flight database probes and opt-in graceful shutdown; staging routing and active Socket.IO session tests remain required.
 - [x] Add opt-in per-process connection pool bounds, connection budget calculation and read-only replica readiness probe; actual replica provisioning, lag baselines and routing remain gated.

@@ -208,6 +208,7 @@ jobs:
           src/__tests__/cache.local.test.ts
           src/__tests__/database-pool-readiness.test.ts
           src/__tests__/server-lifecycle.test.ts
+          src/__tests__/multi-replica-http.integration.test.ts
           src/__tests__/realtime-presence.test.ts
           src/__tests__/http-telemetry.test.ts
           src/__tests__/dependency-telemetry.test.ts

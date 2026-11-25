@@ -28,7 +28,9 @@ describe('server traffic readiness', () => {
     const results = await Promise.all(Array.from({ length: 12 }, () => state.readiness()));
     expect(results.every(r => r.status === 'not_ready')).toBe(true);
     expect(probe).toHaveBeenCalledTimes(1);
+    expect(await state.readiness()).toEqual({ status: 'not_ready', reason: 'database' });
     finish();
+    await new Promise<void>(resolve => setImmediate(resolve));
     await expect(state.readiness()).resolves.toEqual({ status: 'ready' });
     expect(probe).toHaveBeenCalledTimes(1);
   });
