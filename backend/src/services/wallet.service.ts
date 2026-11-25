@@ -2003,6 +2003,41 @@ export class WalletService {
   // TRANSACTION HISTORY
   // ============================================================
 
+  /** Completed VANTA ledger activity, excluding USD earnings and reservations.
+   * Never infer historical balances from a partial page of transactions. */
+  async getCoinActivity(userId: string, days: 7 | 30 | 90) {
+    const today = startOfUTCDay(new Date());
+    const start = new Date(today.getTime() - (days - 1) * 86400000);
+    const end = new Date(today.getTime() + 86400000);
+    const rows = await prisma.walletTransaction.findMany({
+      where: { userId, currency: "VANTA", status: "COMPLETED", createdAt: { gte: start, lt: end } },
+      select: { type: true, amount: true, fee: true, currency: true, metadata: true, createdAt: true, balanceBefore: true, balance: true },
+      take: 20001,
+    });
+    if (rows.length > 20000) throw new Error("Activity volume exceeds the current report limit. Choose a shorter period.");
+    const buckets = Array.from({ length: days }, (_, i) => ({
+      date: new Date(start.getTime() + i * 86400000).toISOString().slice(0, 10),
+      incoming: 0, outgoing: 0, purchases: 0, giftsSent: 0, giftsReceived: 0, transferFees: 0, net: 0,
+    }));
+    let excluded = 0;
+    for (const row of rows) {
+      if (row.type === TX_TYPES.FOLLOWER_REWARD_RESERVE || row.type === TX_TYPES.FOLLOWER_REWARD_RELEASE || row.type === TX_TYPES.FOLLOWER_REWARD_REFUND) continue;
+      const delta = resolveWalletTransactionDelta(row);
+      if (delta === null || !Number.isFinite(delta)) { excluded++; continue; }
+      const day = Math.floor((row.createdAt.getTime() - start.getTime()) / 86400000);
+      const bucket = buckets[day];
+      if (!bucket) continue;
+      if (delta > 0) bucket.incoming += delta;
+      else bucket.outgoing += Math.abs(delta);
+      bucket.net += delta;
+      if (row.type === TX_TYPES.PURCHASE || row.type === TX_TYPES.DEPOSIT) bucket.purchases += Math.abs(delta);
+      if (row.type === TX_TYPES.GIFT_SENT) bucket.giftsSent += Math.abs(delta);
+      if (row.type === TX_TYPES.GIFT_RECEIVED) bucket.giftsReceived += Math.abs(delta);
+      if (row.type === TX_TYPES.TRANSFER_SENT) bucket.transferFees += Math.max(0, row.fee || 0);
+    }
+    return { currency: "VANTA", days, buckets, excluded, asOf: new Date().toISOString() };
+  }
+
   async getTransactionHistory(
     userId: string,
     options: {
@@ -2011,6 +2046,7 @@ export class WalletService {
       startDate?: Date;
       endDate?: Date;
       search?: string;
+      direction?: 'incoming' | 'outgoing';
       limit?: number;
       offset?: number;
     } = {}
@@ -2043,17 +2079,29 @@ export class WalletService {
       if (options.startDate) where.createdAt.gte = options.startDate;
       if (options.endDate) where.createdAt.lte = options.endDate;
     }
+    const conditions: any[] = [];
     if (options.search) {
-      where.OR = [
-        { description: { contains: options.search } },
-        { type: { contains: options.search } },
-      ];
+      const term = options.search.trim().replace(/^@/, '');
+      if (term) conditions.push({ OR: [
+        { description: { contains: term, mode: "insensitive" } },
+        { type: { contains: term.replace(/\s+/g, "_"), mode: "insensitive" } },
+        { reference: { contains: term, mode: "insensitive" } },
+        { id: { equals: term } },
+      ] });
     }
+    if (options.direction) {
+      const types = options.direction === "incoming" ? Array.from(INCOMING_TYPES).filter(type => type !== FOLLOWER_REWARD_CLAIM_TYPE) : Array.from(OUTGOING_TYPES);
+      conditions.push({ OR: [
+        { type: { in: types } },
+        { type: FOLLOWER_REWARD_CLAIM_TYPE, metadata: { contains: options.direction === "incoming" ? '"side":"claimant"' : '"side":"creator"' } },
+      ] });
+    }
+    if (conditions.length) where.AND = conditions;
 
     const [transactions, total] = await Promise.all([
       prisma.walletTransaction.findMany({
         where,
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: options.limit || 50,
         skip: options.offset || 0,
       }),
