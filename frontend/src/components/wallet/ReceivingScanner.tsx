@@ -45,8 +45,10 @@ export default function ReceivingScanner({onScan, onCancel}: {onScan:(value:stri
         void tick();
       }catch{if(live){stop();setCamera(false);setError('Camera unavailable or permission denied. Paste the receiving link instead.');}}
     }
+    const onVisibility = () => { if (document.hidden) { stop(); setCamera(false); } };
+    document.addEventListener('visibilitychange',onVisibility);
     void start();
-    return stop;
+    return () => { document.removeEventListener('visibilitychange',onVisibility); stop(); };
   },[camera]);
   async function scanImage(file:File){
     setError('');
