@@ -2844,10 +2844,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         {/* Header */}
         <div className="flex h-14 min-h-14 shrink-0 items-center justify-between border-b border-white/[0.08] px-4">
           <div className="flex items-center gap-3">
-            <div className="w-7 h-7 rounded-lg bg-white/[0.045] flex items-center justify-center">
-              <MessageCircle size={17} strokeWidth={2} className="text-white/75" />
-            </div>
-            <h1 className="text-base font-semibold tracking-tight text-white">Chats</h1>
+            <h1 className="text-base font-semibold tracking-tight text-[var(--vanta-gold-bright)]">Chats</h1>
           </div>
           <button type="button" onClick={() => router.push('/notifications')} aria-label="Open notifications" className="relative grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#dfbd55] transition hover:bg-white/[.06] hover:text-[#f2c75c]">
             <Bell size={18} />
