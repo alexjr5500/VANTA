@@ -60,7 +60,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { ConnectionState } from 'livekit-client';
+import { ConnectionState, Track } from 'livekit-client';
 import { useAuth } from '@/context/AuthContext';
 import { apiGet, apiPost, apiPut, apiUpload } from '@/lib/apiClient';
 import { captureLivePreviewFrame } from '@/lib/livePreviewFrame';
@@ -913,8 +913,9 @@ export default function GoLivePage() {
   useEffect(() => {
     const sid = streamData?.id;
     if (phase !== 'LIVE' || !sid || !token || !lk.isCameraOn || !roomVideo || previewAttempted.current === sid) return;
-    const track = roomVideo.getVideoTracks()[0];
-    if (!track) return;
+    const publication = lk.localParticipant?.getTrackPublication(Track.Source.Camera);
+    const track = publication?.track?.mediaStreamTrack;
+    if (!track || publication?.isMuted) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempts = 0;
@@ -938,7 +939,7 @@ export default function GoLivePage() {
     };
     timer = setTimeout(() => void capture(), 700);
     return () => { controller.abort(); if (timer) clearTimeout(timer); };
-  }, [phase, streamData?.id, token, lk.isCameraOn, roomVideo]);
+  }, [phase, streamData?.id, token, lk.isCameraOn, lk.localParticipant, roomVideo]);
 
   // ---------------------------------------------------------------------------
   // Guest stage tick — remote track subscriptions/participant changes must
