@@ -233,10 +233,10 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
               )}
 
               {step === 'select' ? (
-                <div className="flex w-full flex-col items-start text-left">
+                <div className="mx-auto flex w-full max-w-xl flex-col items-start text-left">
                   <div className="mt-6 flex items-center gap-3">
                     <Clapperboard className="text-[#dfbd55]" size={22} />
-                    <div><h3 className="text-base font-semibold text-white">Choose a video</h3><p className="mt-0.5 text-sm text-white/45">Select a clip to preview before posting.</p></div>
+                    <div><h3 className="text-base font-semibold text-white">Choose a video</h3><p className="mt-0.5 text-sm text-[var(--text-secondary)]">Select a clip to preview before posting.</p></div>
                   </div>
 
                   {loadError && <div className="form-error mt-4 w-full text-left">{loadError}</div>}
@@ -254,7 +254,7 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
                       void handleFiles(event.dataTransfer?.files);
                     }}
                     className={cn(
-                      'group mt-5 flex w-full cursor-pointer flex-col items-center rounded-xl border border-dashed px-5 py-8 transition',
+                      'group mt-5 hidden w-full cursor-pointer flex-col items-center rounded-xl border border-dashed px-5 py-8 transition sm:flex',
                       dragActive ? 'border-[#c9a227]/70 bg-[#c9a227]/10' : 'border-white/[0.12] bg-white/[0.02]'
                     )}
                   >
@@ -263,7 +263,7 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
                       className={cn('transition', dragActive ? 'text-[#dfbd55]' : 'text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]')}
                     />
                     <span className="mt-3 text-sm font-medium text-[var(--text-secondary)]">Drop a video here or tap to choose</span>
-                    <span className="mt-1 text-[11px] text-white/35">MP4, WebM, MOV or M4V · up to 100MB · 10 minutes</span>
+                    <span className="mt-1 text-[11px] text-[var(--text-muted)]">MP4, WebM, MOV or M4V · up to 100MB · 10 minutes</span>
                   </label>
 
                   <input
