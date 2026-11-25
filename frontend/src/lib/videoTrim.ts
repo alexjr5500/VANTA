@@ -1,3 +1,4 @@
+import { repairRecordedWebmDuration } from './recordedWebmDuration';
 /**
  * Shared VANTA video trimming engine.
  *
@@ -426,6 +427,8 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
     let raf = 0;
     let drawRaf = 0;
     let completionTimer = 0;
+    let recordingStarted = 0;
+    let recordingEnded = 0;
 
     const stopTracks = () => {
       sourceStream.getTracks().forEach((track) => track.stop());
@@ -476,7 +479,9 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
         return;
       }
       const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'video/webm' });
-      resolve(blob);
+      if (silentPlayback && recordingStarted > 0) {
+        void repairRecordedWebmDuration(blob, (recordingEnded || performance.now()) - recordingStarted).then(resolve, reject);
+      } else resolve(blob);
     };
 
     const onError = () => fail(new Error('Recording failed while trimming the selected segment.'));
@@ -517,6 +522,7 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
         if (silentPlayback && !audioContext) video.volume = 0;
         video.muted = false;
         if (audioContext?.state === 'suspended') await audioContext.resume();
+        recordingStarted = performance.now();
         recorder.start(250);
 
         const tick = () => {
@@ -525,7 +531,7 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
           const current = video.currentTime;
           if (current >= end) {
             video.pause();
-            if (recorder.state === 'recording') recorder.stop();
+            if (recorder.state === 'recording') { recordingEnded = performance.now(); recorder.stop(); }
             return;
           }
           const percent = clampTime(((current - start) / (end - start)) * 100, 0, 100);
