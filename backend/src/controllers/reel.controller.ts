@@ -83,8 +83,8 @@ export const finalizeReel = async (req: AuthRequest, res: Response): Promise<voi
     const fileId = typeof req.body?.fileId === "string" ? req.body.fileId : undefined;
     if (!fileId) { res.status(400).json({ error: "fileId is required" }); return; }
     const file = await prisma.uploadedFile.findUnique({ where: { id: fileId } });
-    if (!file || file.deletedAt || file.userId !== userId || file.fileType !== "VIDEO") {
-      res.status(403).json({ error: "Uploaded Reel media was not found, is not owned by you, or is not a video" });
+    if (!file || file.deletedAt || file.userId !== userId || file.fileType !== "VIDEO" || file.category !== "reel") {
+      res.status(403).json({ error: "Uploaded Reel media must be an available Reel video owned by you" });
       return;
     }
     if (!file.url) { res.status(400).json({ error: "Uploaded Reel media has no storage URL" }); return; }
@@ -102,6 +102,9 @@ export const finalizeReel = async (req: AuthRequest, res: Response): Promise<voi
           id: file.id,
           userId,
           fileType: "VIDEO",
+          category: "reel",
+          path: file.path,
+          url: file.url,
           deletedAt: null,
           OR: [
             { recordId: null },
