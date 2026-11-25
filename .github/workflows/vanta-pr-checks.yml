@@ -233,3 +233,10 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
           VANTA_CI_REDIS_URL: redis://127.0.0.1:6379
         run: npm --prefix backend run test -- --runInBand src/__tests__/cache.redis.integration.test.ts
+      - name: Verify shared cache behavior across independent clients
+        env:
+          VANTA_REDIS_CACHE_ENABLED: "true"
+          VANTA_REDIS_CACHE_SHARED_ONLY: "true"
+          REDIS_URL: redis://127.0.0.1:6379
+          VANTA_CI_REDIS_URL: redis://127.0.0.1:6379
+        run: npm --prefix backend run test -- --runInBand src/__tests__/cache.shared.redis.integration.test.ts

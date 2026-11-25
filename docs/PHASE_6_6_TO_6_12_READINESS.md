@@ -34,6 +34,8 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 - [x] Implement lightweight liveness/readiness, bounded single-flight database probes and opt-in graceful shutdown; staging routing and active Socket.IO session tests remain required.
 - [x] Add opt-in per-process connection pool bounds, connection budget calculation and read-only replica readiness probe; actual replica provisioning, lag baselines and routing remain gated.
 - [ ] Verify mobile bandwidth and video rendition switching.
+- [x] Add opt-in shared-only Redis cache mode and cross-client regression tests; live staging and distributed tag invalidation/call-site review remain required.
+- [ ] Performance optimization and competitive benchmarking (Phase 6.13); see `docs/PERFORMANCE_BENCHMARKING.md`.
 
 ## 6.11 — Security and recovery
 - [ ] Review upload access, path traversal, MIME verification, ffmpeg command execution and resource exhaustion.
@@ -50,3 +52,10 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 - Redis fell back to in-memory caching; root cause unverified.
 - Startup diagnostics reported 2 missing files out of 114 uploaded-file rows.
 - Phase 6.5 durable push retries are opt-in and not activated.
+
+## 6.13 — Performance optimization and competitive benchmarking
+- [ ] Record baseline p50/p95/p99 API latency, errors, throughput and cost under controlled load.
+- [ ] Optimize hot database queries/indexes, frontend rendering, startup, media payloads, pagination and redundant requests.
+- [ ] Measure real Android production builds on low-end devices and constrained Nigerian mobile networks (cold/warm start, scroll, Reels startup, chat, upload resume, data use).
+- [ ] Compare equivalent flows against competing apps on the same device/network; record methodology, versions, sample size and variance. Never claim superiority without comparable measurements.
+- [ ] Verify performance and reliability budgets in staging before release; repeat against a controlled post-release baseline only after approval.
