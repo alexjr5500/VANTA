@@ -84,6 +84,12 @@ describe('apiClient retry policy', () => {
     await expect(cachedRequest).resolves.toEqual({ source: 'shared' });
   });
 
+  it('does not replay a non-idempotent withdrawal after a gateway failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(503, {error:'Gateway unavailable'}));
+    vi.stubGlobal('fetch',fetchMock);
+    await expect(apiPost('/api/wallets/withdraw',{amount:10},undefined,undefined,{noRetry:true})).rejects.toMatchObject({statusCode:503});
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   // Gateway/time-out style 5xx are transient and remain retryable.
   it('retries a transient 503 and succeeds on the next attempt', async () => {
     const fetchMock = vi
