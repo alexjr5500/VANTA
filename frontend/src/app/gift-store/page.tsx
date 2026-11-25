@@ -162,7 +162,7 @@ export default function GiftStorePage() {
   }
 
   return (
-    <div className="min-h-[calc(100dvh-5rem)] w-full min-w-0 pb-[calc(5rem+env(safe-area-inset-bottom))]">
+    <div className="min-h-[calc(100dvh-5rem)] w-full min-w-0 bg-[#08090b] pb-[calc(5rem+env(safe-area-inset-bottom))] text-white">
       {sendingGift && !recipient && (
         <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 p-0 backdrop-blur-md  " onClick={() => setSendingGift(null)}>
           <section role="dialog" aria-modal="true" aria-label="Choose a gift recipient" className="w-full max-w-[480px] rounded-t-xl border border-white/10 bg-[#0D0D0F]/98 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 shadow-2xl" onClick={event => event.stopPropagation()}>
@@ -206,7 +206,8 @@ export default function GiftStorePage() {
             )}
           </div>
         </header>
-        <div className="mt-3 w-full min-w-0 space-y-3">
+        <div className="mt-3 w-full min-w-0 space-y-4">
+          <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-[var(--vanta-gold-bright)]">Virtual gifts</h2><p className="mt-1 text-xs text-white/60">Support your favorite creators.</p></div><button type="button" onClick={() => setShowPurchase(true)} className="min-h-11 shrink-0 rounded-lg border border-[#b89446]/35 px-3 text-xs font-medium text-[var(--vanta-gold-bright)]">Buy coins</button></div>
         {/* Search and Categories */}
         <div className="flex flex-col gap-2">
           {/* Search */}
@@ -240,10 +241,12 @@ export default function GiftStorePage() {
                 <button
                   key={cat.id}
                   onClick={() => setActiveCategory(cat.id)}
-                  className={`flex flex-shrink-0 items-center gap-2 rounded-full px-3 py-2 text-xs font-medium transition whitespace-nowrap ${
+                  type="button"
+                  aria-pressed={isActive}
+                  className={`flex min-h-11 flex-shrink-0 items-center gap-1.5 border-b-2 px-2 py-2 text-xs font-medium whitespace-nowrap ${
                     isActive
-                      ? 'bg-[var(--vanta-gold)] text-black'
-                      : 'bg-white/[0.045] text-white/55 hover:text-white'
+                      ? 'border-[var(--vanta-gold)] text-[var(--vanta-gold-bright)]'
+                      : 'border-transparent text-white/60 hover:text-white'
                   }`}
                 >
                   <Icon size={14} />
@@ -273,19 +276,17 @@ export default function GiftStorePage() {
               </div>
             )}
 
-            {/* Gift grid — artwork is the hero. No frames, borders or card
-                backgrounds; ~4 per row, adapting to the mobile shell width. */}
-            <div className="grid w-full min-w-0 grid-cols-4 gap-2 sm:grid-cols-5 sm:gap-2.5 md:grid-cols-7 lg:grid-cols-8 xl:grid-cols-10">
+            {/* Reference-led collectible cards; backend prices stay authoritative. */}
+            <div className="grid w-full min-w-0 grid-cols-3 gap-2 min-[380px]:grid-cols-4 sm:grid-cols-5 sm:gap-2.5 md:grid-cols-7 lg:grid-cols-8 xl:grid-cols-10">
               {filteredGifts.map((gift) => (
                 <button
                   key={gift.id}
-                  onClick={() => setSendingGift(gift)}
+                  onClick={() => { setRecipient(null); setRecipientQuery(''); setSendingGift(gift); }}
                   aria-label={`Send ${gift.name} for ${gift.price.toLocaleString()} coins`}
-                  className="group relative flex min-w-0 flex-col items-center gap-1.5 overflow-hidden rounded-lg px-1 pb-2 pt-1 text-center transition-colors hover:bg-white/[.04] active:scale-[.98]"
+                  className="group relative flex min-w-0 flex-col items-center gap-1.5 overflow-hidden rounded-lg border border-[#32343a] bg-[#0b0c0f] px-1 pb-2 pt-1 text-center transition-colors hover:border-[var(--vanta-gold)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vanta-gold-bright)]"
                 >
-                  <div className="relative flex aspect-square w-full max-h-[112px] items-center justify-center">
-                    <div className="absolute inset-3 rounded-full opacity-25 blur-2xl transition-opacity group-active:opacity-40" style={{ backgroundColor: gift.glowColor || 'transparent' }} />
-                    <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={gift.thumbnailUrl || gift.image} size={88} animate={false} quality={giftVisualQuality(gift)} />
+                  <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden">
+                    <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={gift.thumbnailUrl || gift.image} size={112} responsive animate={false} quality={giftVisualQuality(gift)} />
                     {(gift.isLegendary || gift.isLimited) && (
                       <span
                         title={gift.isLegendary ? 'Exclusive' : 'Limited'}
@@ -296,9 +297,9 @@ export default function GiftStorePage() {
                       </span>
                     )}
                   </div>
-                  <h3 className="w-full truncate text-[10px] font-semibold leading-tight text-white/90 sm:text-[11px]">{gift.name}</h3>
-                  <span className="flex min-w-0 items-center justify-center gap-0.5 text-[11px] font-semibold">
-                    <VantaCoinIcon size={11} className={gift.isLegendary ? 'text-[var(--vanta-gold)]' : 'text-[#c8a24a]'} />
+                  <h3 className="flex min-h-[2.2em] w-full items-center justify-center break-words text-[11px] font-medium leading-tight text-white sm:text-xs">{gift.name}</h3>
+                  <span className="flex min-w-0 flex-wrap items-center justify-center gap-1 text-[11px] font-medium tabular-nums">
+                    <VantaCoinIcon size={13} decorative />
                     <span className="truncate text-white">{gift.price.toLocaleString()}</span>
                   </span>
                 </button>
