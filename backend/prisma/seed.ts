@@ -191,7 +191,7 @@ async function main() {
   for (const gift of allGifts) {
     await prisma.gift.upsert({
       where: { slug: gift.slug },
-      update: { ...gift, sortOrder: allGifts.indexOf(gift) + 1, isActive: true },
+      update: {}, // Preserve disabled and retired catalog records.
       create: { id: `gift_${gift.slug.replace(/-/g, '_')}`, ...gift, sortOrder: allGifts.indexOf(gift) + 1, isActive: true },
     });
   }

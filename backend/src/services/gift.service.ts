@@ -2,7 +2,6 @@ import { prisma } from '../prisma';
 import { walletService } from './wallet.service';
 import { notificationService } from './notification.service';
 import { emitSocialEvent, emitSocialEventToRoom, emitSocialEventToUser } from './social-events.service';
-import { initialGiftCatalog } from '../data/gift-catalog.data';
 import type { GiftTransaction, Wallet } from '@prisma/client';
 import { calculateCreatorEarningsCents, calculateGiftRecipientCoins, creatorEarningsCentsToUsd } from '../config/wallet.config';
 
@@ -130,50 +129,17 @@ function buildGiftRealtimeEvent(
 }
 
 export class GiftService {
-  private catalogSync: Promise<void> | null = null;
-
-  /**
-   * Keep the database-backed catalog aligned with the canonical VANTA
-   * catalog. This is deliberately an upsert (not a frontend fallback), so
-   * transactions, admin tools, history and every picker continue to reference
-   * the same Gift records. It also upgrades older deployments that only have
-   * the original 13 rows without requiring a destructive reseed.
-   */
-  private async ensureCanonicalCatalog() {
-    if (!this.catalogSync) {
-      this.catalogSync = (async () => {
-        const activeCount = await prisma.gift.count({ where: { isActive: true } });
-        if (activeCount >= initialGiftCatalog.length) return;
-        await prisma.$transaction([
-          ...initialGiftCatalog.map((gift, index) => prisma.gift.upsert({
-            where: { slug: gift.slug },
-            create: { id: `gift_${gift.slug.replace(/-/g, '_')}`, ...gift, sortOrder: index + 1, isActive: true },
-            update: { ...gift, sortOrder: index + 1, isActive: true },
-          })),
-          // Retire legacy gifts that are no longer part of the catalog so the
-          // picker shows exactly the curated list.
-          prisma.gift.updateMany({
-            where: { slug: { notIn: initialGiftCatalog.map((gift) => gift.slug) }, isActive: true },
-            data: { isActive: false },
-          }),
-        ]);
-      })().catch(error => {
-        this.catalogSync = null;
-        throw error;
-      });
-    }
-    await this.catalogSync;
-  }
+  // Catalog provisioning is migration-owned. Reading gifts must never reactivate or reseed them.
 
   private announceCatalogChange(action: 'created' | 'updated' | 'deleted', giftId: string) {
     emitSocialEvent('gift:catalog-updated', { action, giftId, updatedAt: new Date().toISOString() });
   }
 
   async listGifts(search?: string, category?: string) {
-    await this.ensureCanonicalCatalog();
     return prisma.gift.findMany({
       where: {
         isActive: true,
+        retiredAt: null,
         ...(search ? { OR: [{ name: { contains: search } }, { slug: { contains: search } }, { description: { contains: search } }] } : {}),
         ...(category && category !== 'all' ? { category } : {}),
       },
@@ -192,7 +158,10 @@ export class GiftService {
   }
 
   async updateGift(giftId: string, input: GiftCatalogInput) {
-    const gift = await prisma.gift.update({ where: { id: giftId }, data: input });
+    const existing = await prisma.gift.findUnique({ where: { id: giftId }, select: { retiredAt: true } });
+    if (!existing) throw new Error('Gift not found');
+    if (existing.retiredAt) throw new Error('Retired gifts are historical records and cannot be modified');
+    const gift = await prisma.gift.update({ where: { id: giftId, retiredAt: null }, data: input });
     this.announceCatalogChange('updated', gift.id);
     return gift;
   }
@@ -204,14 +173,31 @@ export class GiftService {
   }
 
   async deleteGift(giftId: string) {
-    const transactionCount = await prisma.giftTransaction.count({ where: { giftId } });
-    if (transactionCount > 0) {
-      const gift = await this.updateGift(giftId, { isActive: false });
-      return { gift, deleted: false, archived: true };
-    }
-    const gift = await prisma.gift.delete({ where: { id: giftId } });
-    this.announceCatalogChange('deleted', gift.id);
-    return { gift, deleted: true, archived: false };
+    const result = await prisma.$transaction(async (tx) => {
+      const gift = await tx.gift.findUnique({ where: { id: giftId } });
+      if (!gift) throw new Error('Gift not found');
+      // All six relations are checked atomically; restrictive FKs also protect
+      // against concurrent history/reward creation and direct SQL deletion.
+      const removed = await tx.gift.deleteMany({
+        where: {
+          id: giftId,
+          transactions: { none: {} },
+          liveGiftEvents: { none: {} },
+          eventGifts: { none: {} },
+          combos: { none: {} },
+          followerRewardCampaigns: { none: {} },
+          followerRewardClaims: { none: {} },
+        },
+      });
+      if (removed.count === 1) return { gift, deleted: true, archived: false };
+      const archived = await tx.gift.update({
+        where: { id: giftId },
+        data: { isActive: false, retiredAt: gift.retiredAt ?? new Date() },
+      });
+      return { gift: archived, deleted: false, archived: true };
+    });
+    this.announceCatalogChange('deleted', giftId);
+    return result;
   }
 
   async validateWallet(userId: string, amount: number) {
@@ -227,7 +213,7 @@ export class GiftService {
     };
   }
 
-  async sendGift(senderId: string, receiverId: string, giftId: string, streamId?: string, options: { quantity?: number; message?: string; isAnon?: boolean; isSuper?: boolean; requestId?: string; videoId?: string } = {}) {
+  async sendGift(senderId: string, receiverId: string, giftId: string, streamId?: string, options: { quantity?: number; message?: string; isAnon?: boolean; isSuper?: boolean; requestId?: string; videoId?: string; expectedPrice?: number; requireExpectedPrice?: boolean } = {}) {
     const quantity = options.quantity === undefined ? 1 : options.quantity;
     if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 99) {
       throw new Error('quantity must be an integer between 1 and 99');
@@ -268,7 +254,10 @@ export class GiftService {
 
     const gift = await prisma.gift.findUnique({ where: { id: giftId } });
     if (!gift) throw new Error('Gift not found');
-    if (!gift.isActive) throw new Error('This gift is no longer available');
+    if (!gift.isActive || gift.retiredAt) throw new Error('This gift is no longer available');
+    if ((options.requireExpectedPrice || options.expectedPrice !== undefined) && (!Number.isSafeInteger(options.expectedPrice) || options.expectedPrice !== gift.price)) {
+      throw new Error('Gift price has changed. Refresh the gift catalog and confirm the new price.');
+    }
 
     if (senderId === receiverId) {
       throw new Error('Cannot send a gift to yourself');

@@ -80,6 +80,7 @@ jobs:
           src/__tests__/wallet.reconciliation.test.ts
           src/__tests__/monetization.earnings-ledger.test.ts
           src/__tests__/gift.service.test.ts
+          src/__tests__/gift-catalog.test.ts
           src/__tests__/monetization.subscription-security.test.ts
           src/__tests__/security.fail-closed-prerequisites.test.ts
           src/__tests__/security.admin-session-2fa.test.ts
@@ -162,3 +163,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
         run: npm --prefix backend run test -- --runInBand src/__tests__/durable-queue.postgres.integration.test.ts
+      - name: Verify approved gift catalog migration and historical records
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
+        run: node backend/scripts/verify-reference-gift-migration.cjs

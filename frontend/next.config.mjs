@@ -118,4 +118,11 @@ const nextConfig = {
   generateEtags: true,
 };
 
-export default nextConfig;
+// Next is also invoked directly by some hosting build configurations.
+// Install the approved artwork before the production compiler snapshots public/.
+export default async function config(phase) {
+  if (phase === 'phase-production-build') {
+    await import('./scripts/install-gift-reference-artwork.mjs');
+  }
+  return nextConfig;
+}

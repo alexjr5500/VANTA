@@ -71,10 +71,24 @@ describe('GiftService', () => {
       (prisma.gift.findMany as jest.Mock).mockResolvedValue([mockGift]);
       const result = await giftService.listGifts();
       expect(result).toHaveLength(1);
+      expect(prisma.gift.findMany).toHaveBeenCalledWith(expect.objectContaining({where: expect.objectContaining({isActive: true, retiredAt: null})}));
+      expect(prisma.gift.upsert).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 
+  test('refuses admin changes to permanently retired gifts', async () => {
+    (prisma.gift.findUnique as jest.Mock).mockResolvedValue({ retiredAt: new Date() });
+    await expect(giftService.updateGift('old-gift', { isActive: true })).rejects.toThrow('Retired gifts');
+  });
+
   describe('sendGift', () => {
+    test.each([undefined, 5, 20])('rejects missing or stale confirmed unit price %s before wallet mutation', async (expectedPrice) => {
+      (prisma.gift.findUnique as jest.Mock).mockResolvedValue(mockGift);
+      await expect(giftService.sendGift('user1', 'user2', 'gift1', undefined, { expectedPrice, requireExpectedPrice: true })).rejects.toThrow('Gift price has changed');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
     test('should send gift successfully and update balances', async () => {
       (prisma.gift.findUnique as jest.Mock).mockResolvedValue(mockGift);
       (prisma.giftTransaction.create as jest.Mock).mockResolvedValue(mockTransaction);

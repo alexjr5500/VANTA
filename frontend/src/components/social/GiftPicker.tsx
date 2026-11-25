@@ -16,12 +16,10 @@ interface Recipient { id: string; username: string; fullName?: string; avatar?: 
 const number = (value: number) => new Intl.NumberFormat().format(value);
 
 function Visual({ gift, preview = false, size = 68 }: { gift: GiftCatalogItem; preview?: boolean; size?: number }) {
-  const [failed, setFailed] = useState(false);
   const asset = preview ? gift.previewAssetUrl || gift.animationUrl || gift.image || gift.thumbnailUrl : gift.thumbnailUrl || gift.image;
-  if (asset && !failed) return /\.(mp4|webm)(\?|$)/i.test(asset)
-    ? <video src={asset} autoPlay={preview} loop muted playsInline preload={preview ? 'metadata' : 'none'} onError={() => setFailed(true)} className="h-full w-full object-contain" />
-    : <img src={asset} alt="" loading={preview ? 'eager' : 'lazy'} onError={() => setFailed(true)} className="h-full w-full object-contain" />;
-  return <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={asset} size={size} animate={preview} quality={giftVisualQuality(gift)} />;
+  // One renderer for every gift surface: old remote thumbnails must not
+  // bypass the approved catalog artwork or reduced-motion preference.
+  return <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={asset} size={size} responsive={!preview} animate={preview} quality={giftVisualQuality(gift)} />;
 }
 
 export default function GiftPicker({ gifts, balance, recipient, token, streamId, videoId, initialGift, loading = false, loadError, onRetry, onClose, onSent }: { gifts: GiftCatalogItem[]; balance: number; recipient: Recipient; token: string; streamId?: string; videoId?: string; initialGift?: GiftCatalogItem | null; loading?: boolean; loadError?: string; onRetry?: () => void; onClose: () => void; onSent: (_balance: number, _amount: number, _gift: GiftCatalogItem, _quantity?: number) => void }) {
@@ -45,7 +43,7 @@ export default function GiftPicker({ gifts, balance, recipient, token, streamId,
   const send = async () => {
     if (!selected || insufficient || sending || !validRecipient) return; setSending(true);
     const requestId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2)}_${Math.random().toString(36).slice(2)}`;
-    try { const response = await apiPost<any>('/api/monetization/gifts/send', { receiverId: recipient.id, giftId: selected.id, streamId, videoId, quantity, message: message.trim() || undefined, requestId }, token); const result = response.transaction || response; onSent(response.remainingBalance ?? result.remainingBalance ?? balance, response.amount ?? result.amount ?? totalCost, selected, quantity); setSent(true); setTimeout(onClose, 2100); }
+    try { const response = await apiPost<any>('/api/monetization/gifts/send', { receiverId: recipient.id, giftId: selected.id, expectedPrice: selected.price, streamId, videoId, quantity, message: message.trim() || undefined, requestId }, token); const result = response.transaction || response; onSent(response.remainingBalance ?? result.remainingBalance ?? balance, response.amount ?? result.amount ?? totalCost, selected, quantity); setSent(true); setTimeout(onClose, 2100); }
     catch (error: any) { toast.error('Gift not sent', error?.message || 'The transaction could not be completed.'); setSending(false); }
   };
   return <>
@@ -92,19 +90,19 @@ export default function GiftPicker({ gifts, balance, recipient, token, streamId,
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3 pt-3 sm:px-4">
-          <div className="grid grid-cols-5 gap-2 sm:grid-cols-6 sm:gap-2.5">
+          <div className="grid grid-cols-3 gap-2 min-[380px]:grid-cols-4 sm:grid-cols-5 sm:gap-2.5">
             {visible.map(gift => {
               const active = selected?.id === gift.id;
-              return <button key={gift.id} aria-pressed={active} onClick={() => setSelected(gift)} className={`group relative flex min-w-0 flex-col items-center overflow-hidden rounded-xl border px-1 pb-2.5 pt-2 text-center transition-all duration-200 ease-out select-none ${active ? 'border-[#e2bf4d] bg-[#d5b041]/[0.12]' : 'border-transparent bg-white/[0.04] hover:bg-white/[.07] active:scale-[0.97]'}`}>
+              return <button key={gift.id} aria-pressed={active} onClick={() => setSelected(gift)} className={`group relative flex min-w-0 flex-col items-center overflow-hidden rounded-xl border px-1 pb-2.5 pt-2 text-center transition-all duration-200 ease-out select-none ${active ? 'border-[#e2bf4d] bg-[#d5b041]/[0.12]' : 'border-[#32343a] bg-[#0b0c0f] hover:border-[var(--vanta-gold)]'}`}>
                 <span className="relative mb-1 flex h-[74px] w-full items-center justify-center sm:h-[82px]">
                   {active && <span aria-hidden className="pointer-events-none absolute left-1/2 top-1/2 z-0 h-[52px] w-[52px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#c9a227]/20 blur-xl" />}
                   <span className={`relative z-10 flex h-[62px] w-full items-center justify-center sm:h-[70px] `}>
                     <Visual gift={gift} size={80} />
                   </span>
                 </span>
-                <b className="max-w-full truncate text-[10px] font-bold leading-tight text-white sm:text-[11px]">{gift.name}</b>
-                <span className={`mt-1 flex max-w-full items-center justify-center gap-0.5 whitespace-nowrap text-[9px] font-semibold tabular-nums sm:text-[10px] ${active ? 'text-[#f0d36d]' : 'text-white/50'}`}>
-                  <VantaCoinIcon size={10} className={active ? 'text-[var(--vanta-gold-bright)]' : 'text-[#d8d8d8]'} />{number(gift.price)}
+                <b className="flex min-h-[2.2em] w-full items-center justify-center break-words text-[11px] font-medium leading-tight text-white">{gift.name}</b>
+                <span className={`mt-1 flex max-w-full items-center justify-center gap-1 text-[11px] font-medium tabular-nums ${active ? 'text-[#f0d36d]' : 'text-white/50'}`}>
+                  <VantaCoinIcon size={12} decorative />{number(gift.price)}
                 </span>
               </button>;
             })}
