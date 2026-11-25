@@ -12,6 +12,8 @@ export type GiftArtworkProps = {
   assetUrl?: string;
   size?: number;
   responsive?: boolean;
+  /** Blend the original dark image backing into VANTA's dark theme; keep the source asset intact. */
+  blendReferenceBackground?: boolean;
   animate?: boolean;
   className?: string;
   /** 0-5 artistic intensity derived from the existing price/rarity/impact. */
@@ -29,6 +31,7 @@ export default function GiftArtwork({
   assetUrl,
   size = 120,
   responsive = false,
+  blendReferenceBackground = false,
   animate = true,
   className = '',
   quality = 1,
@@ -51,7 +54,7 @@ export default function GiftArtwork({
   };
 
   return (
-    <motion.div {...common} className={`relative shrink-0 ${className}`} style={responsive ? { width: '100%', height: '100%' } : { width: size, height: size }}>
+    <motion.div {...common} className={`relative shrink-0 ${blendReferenceBackground && resolvedAssetUrl === referenceAsset && showAsset ? "gift-reference-theme-blend" : ""} ${className}`} style={responsive ? { width: '100%', height: '100%' } : { width: size, height: size }}>
       {showAsset && resolvedAssetUrl ? (
         isVideo ? (
           <video
