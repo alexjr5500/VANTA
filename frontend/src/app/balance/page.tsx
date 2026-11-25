@@ -7,10 +7,10 @@ import { useAuth } from '@/context/AuthContext';
 import { API_BASE_URL } from '@/lib/api';
 import { apiGet } from '@/lib/apiClient';
 import {
-  Plus, ArrowUpRight, ArrowDownLeft, Gift, Loader2,
+  ArrowUpRight, ArrowDownLeft, Gift, Loader2,
   History, Search, Shield, Ban, X,
   ArrowUpFromLine, Download, ChevronRight,
-  Wallet, TrendingUp, DollarSign, Lock, Eye, EyeOff, ArrowLeft, RefreshCw, Headphones
+  TrendingUp, DollarSign, Eye, EyeOff, ArrowLeft, RefreshCw, Headphones
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
@@ -69,13 +69,6 @@ function getTxIcon(type: string) {
   if (type === 'GIFT_SENT') return <Gift size={15} className="text-[var(--vanta-gold-bright)]" />;
   if (type === 'WITHDRAWAL') return <ArrowUpFromLine size={15} className="text-[var(--vanta-gold-bright)]" />;
   return <ArrowUpRight size={15} className="text-[var(--vanta-gold-bright)]" />;
-}
-
-function getTxColor(type: string) {
-  if (INCOMING_TYPES.has(type)) return 'bg-white/[0.04] border-white/[0.08]';
-  if (type === 'GIFT_SENT') return 'bg-white/[0.04] border-white/[0.08]';
-  if (type === 'WITHDRAWAL') return 'bg-white/[0.04] border-white/[0.08]';
-  return 'bg-white/[0.04] border-white/[0.08]';
 }
 
 function formatDate(dateStr: string) {
@@ -415,51 +408,36 @@ export default function BalancePage() {
       <motion.section
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-2xl border border-[var(--gold-border)] bg-[var(--surface)] px-4 py-4"
+        className="relative rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5"
         aria-label="Spendable wallet balance"
       >
         <div className="relative">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs font-medium text-[var(--text-secondary)]">
-              <VantaCoinIcon size={18} decorative />
-              VANTA Coins
-            </div>
-            <div className="flex gap-2">
-              {isFrozen && (
-                <span className="flex items-center gap-1.5 rounded-full border border-red-400/15 bg-red-400/[.07] px-2.5 py-1 text-[10px] text-red-300">
-                  <Ban size={10} /> Frozen
-                </span>
-              )}
-              {!isFrozen && (
-                <span className="flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[.04] px-2.5 py-1 text-[11px] text-[var(--text-secondary)]">
-                  <i className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Active
-                </span>
-              )}
-            </div>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-[var(--text-secondary)]">Available to spend</p>
+            {isFrozen && <span className="flex items-center gap-1 text-xs font-medium text-red-300"><Ban size={14} aria-hidden="true"/>Frozen</span>}
           </div>
-          <p className="mb-1.5 text-xs font-medium text-[var(--text-secondary)]">Available to spend</p>
-          <motion.div key={spendable} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-            <div className="flex min-w-0 items-center gap-2.5">
-              <VantaCoinIcon size={36} decorative />
-              <h2 className="min-w-0 break-all text-[clamp(1.75rem,8vw,2.6rem)] font-semibold leading-tight tracking-tight text-[var(--vanta-gold-bright)] tabular-nums">
-                {displayCoins(spendable)}
-              </h2>
-            </div>
-            <p className="mt-1.5 text-xs font-medium text-[var(--text-secondary)]">VANTA Coins</p>
-            <p className="mt-2 text-xs text-[var(--text-secondary)]">Platform currency · not a cash withdrawal balance</p>
-            <dl className="mt-4 space-y-2 border-t border-[var(--border)] pt-3 text-sm">
-              <div className="flex items-center justify-between gap-3"><dt>Total coins</dt><dd className="min-w-0 break-all text-right tabular-nums">{displayCoins(coinBalance)} <VantaCoinIcon size={15} decorative /></dd></div>
-              <div className="flex items-center justify-between gap-3"><dt>Locked / reserved coins</dt><dd className="min-w-0 break-all text-right tabular-nums">{displayCoins(wallet.lockedCoins)} <VantaCoinIcon size={15} decorative /></dd></div>
-              <div className="flex items-center justify-between gap-3"><dt>Pending transactions</dt><dd className="tabular-nums">{pendingCount === undefined ? 'Unavailable' : displayCoins(pendingCount)}</dd></div>
-              {pendingRows?.filter(row => row.count > 0).map(row => <div key={row.currency} className="flex items-center justify-between gap-3 text-xs text-[var(--text-secondary)]"><dt>Pending {row.currency} ledger total</dt><dd>{row.currency === 'USD' ? displayUsd(row.amount) : displayCoins(row.amount) + ' ' + row.currency}</dd></div>)}
-              {isCreator && <><div className="flex items-center justify-between gap-3"><dt>Creator earnings</dt><dd>{displayUsd(earningsBalance)}</dd></div><div className="flex items-center justify-between gap-3"><dt>Pending withdrawals (net)</dt><dd>{typeof wallet?.pendingWithdrawals?.netUsd === 'number' ? displayUsd(wallet.pendingWithdrawals.netUsd) : 'Unavailable'}</dd></div></>}
+          <div className="mt-2 flex min-w-0 items-center gap-3">
+            <VantaCoinIcon size={38} decorative />
+            <h2 className="min-w-0 break-all text-[clamp(2rem,9vw,3.25rem)] font-semibold leading-none tracking-tight text-[var(--text-primary)] tabular-nums">{displayCoins(spendable)}</h2>
+          </div>
+          <p className="mt-2 text-xs text-[var(--text-secondary)]">VANTA Coins · platform currency, not cash</p>
+          <dl className="mt-5 grid grid-cols-2 gap-3 border-t border-[var(--border)] pt-4">
+            <div className="min-w-0"><dt className="text-xs text-[var(--text-secondary)]">Total coins</dt><dd className="mt-1 break-all text-sm font-semibold tabular-nums">{displayCoins(coinBalance)}</dd></div>
+            <div className="min-w-0"><dt className="text-xs text-[var(--text-secondary)]">Locked coins</dt><dd className="mt-1 break-all text-sm font-semibold tabular-nums">{displayCoins(wallet.lockedCoins)}</dd></div>
+          </dl>
+          <details className="mt-2 text-sm">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 text-[var(--text-secondary)]"><span>Pending activity <span className="font-semibold text-[var(--text-primary)]">{pendingCount === undefined ? '—' : hideBalance ? hidden : '(' + pendingCount.toLocaleString() + ')'}</span></span><ChevronRight size={16} aria-hidden="true"/></summary>
+            <dl className="space-y-2 pb-3 text-xs">
+              <div className="flex justify-between gap-3"><dt>Pending transactions</dt><dd>{pendingCount === undefined ? 'Unavailable' : displayCoins(pendingCount)}</dd></div>
+              {pendingRows?.filter(row => row.count > 0).map(row => <div key={row.currency} className="flex items-center justify-between gap-3 text-[var(--text-secondary)]"><dt>Pending {row.currency} ledger total</dt><dd className="min-w-0 break-all text-right">{row.currency === 'USD' ? displayUsd(row.amount) : displayCoins(row.amount) + ' ' + row.currency}</dd></div>)}
+              {isCreator && <div className="flex justify-between gap-3"><dt>Pending withdrawals (net)</dt><dd>{typeof wallet?.pendingWithdrawals?.netUsd === 'number' ? displayUsd(wallet.pendingWithdrawals.netUsd) : 'Unavailable'}</dd></div>}
             </dl>
-          </motion.div>
+          </details>
 
           {isFrozen && <p role="status" className="mt-3 rounded-lg border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-300">Your wallet is frozen. Transfers and withdrawals are unavailable.</p>}
           {!isFrozen && !limits && <p className="mt-2 text-xs text-[var(--text-secondary)]">Transfer limits unavailable. Refresh before sending.</p>}
           {/* Quick Actions */}
-          <div className="mt-4 grid w-full grid-cols-2 gap-2 min-[360px]:grid-cols-4">
+          <div className="mt-2 grid w-full grid-cols-2 gap-2 min-[360px]:grid-cols-4">
             <button
               onClick={() => setShowBuyModal(true)}
               className="flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg bg-[var(--vanta-gold)] px-2 py-2.5 text-xs font-bold text-black transition active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
@@ -484,61 +462,27 @@ export default function BalancePage() {
               <Gift size={16} className="text-[var(--vanta-gold-bright)]" />
               Gift
             </button>
-            {isCreator && earningsBalance > 0 && (
-              <button
-                onClick={() => setShowWithdrawModal(true)} disabled={isFrozen}
-                className="col-span-full flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <ArrowUpFromLine size={16} className="text-[var(--vanta-gold-bright)]" />
-                Withdraw {hideBalance ? '••••' : displayUsd(earningsBalance)}
-              </button>
-            )}
           </div>
-
-
-          <div className="mt-3 flex items-center gap-2 border-t border-white/[.06] pt-2.5 text-[11px] text-[var(--text-secondary)]">
-            <Lock size={14} />
-            Protected by VANTA Balance security
-          </div>
+          {isCreator && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] pt-3">
+              <div><p className="text-xs text-[var(--text-secondary)]">Creator earnings</p><p className="mt-1 text-base font-semibold tabular-nums">{displayUsd(earningsBalance)}</p></div>
+              {earningsBalance > 0 && <button type="button" onClick={() => setShowWithdrawModal(true)} disabled={isFrozen} className="min-h-11 rounded-lg border border-[var(--border)] px-3 text-sm font-medium text-[var(--vanta-gold-bright)] disabled:opacity-50">Withdraw</button>}
+            </div>
+          )}
         </div>
       </motion.section>
 
       {recipientLinkError && <p role="alert" className="rounded-xl bg-[var(--surface)] p-3 text-sm text-red-300">{recipientLinkError}</p>}
       {historyErrors.length > 0 && <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-400/20 bg-[var(--surface)] p-3 text-sm text-[var(--text-secondary)]"><span>Could not load: {historyErrors.join(', ')}.</span><button type="button" onClick={fetchWallet} className="min-h-11 font-semibold text-[var(--vanta-gold-bright)]">Retry</button></div>}
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Balance summary">
-        {[
-          { label: 'Purchased', value: formatCoinsCompact(totalCoinsPurchased), icon: <Plus size={16} /> },
-          { label: 'Received', value: formatCoinsCompact(totalCoinsReceived), icon: <ArrowDownLeft size={16} /> },
-          { label: 'Sent', value: formatCoinsCompact(totalCoinsSent), icon: <ArrowUpRight size={16} /> },
-          { label: 'Gifts', value: `${totalGiftsSent + totalGiftsReceived}`, icon: <Gift size={16} /> },
-
-        ].map((stat, i) => (
-          <motion.div
-            key={stat.label}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.08 + i * 0.04 }}
-            className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-3.5"
-          >
-            <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--active-soft)] text-[var(--vanta-gold-bright)]">
-              {stat.icon}
-            </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-1 text-lg font-semibold tabular-nums text-[var(--text-primary)]"><span className="min-w-0 break-all">{hideBalance ? hidden : stat.value}</span>{stat.label !== 'Gifts' && <VantaCoinIcon size={16} decorative />}</p>
-            <p className="mt-0.5 truncate text-[11px] font-medium text-[var(--text-secondary)]">{stat.label}</p>
-          </motion.div>
-        ))}
-      </div>
-
       {/* Tabs */}
-      <div className="flex w-full min-w-0 items-center gap-1 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1 scrollbar-hide">
+      <div className="flex w-full min-w-0 items-center gap-3 overflow-x-auto border-b border-[var(--border)] scrollbar-hide">
         {[
-          { id: 'overview', label: 'Overview', icon: <Wallet size={12} /> },
-          { id: 'transactions', label: 'Transactions', icon: <History size={12} /> },
-          { id: 'gifts', label: 'Gifts', icon: <Gift size={12} /> },
-          ...(isCreator ? [{ id: 'earnings', label: 'Earnings', icon: <TrendingUp size={12} /> }] : []),
-          ...(isCreator ? [{ id: 'withdrawals', label: 'Withdrawals', icon: <ArrowUpFromLine size={12} /> }] : []),
-          { id: 'security', label: 'Security', icon: <Shield size={12} /> },
+          { id: 'overview', label: 'Overview' },
+          { id: 'transactions', label: 'Transactions' },
+          { id: 'gifts', label: 'Gifts' },
+          ...(isCreator ? [{ id: 'earnings', label: 'Earnings' }] : []),
+          ...(isCreator ? [{ id: 'withdrawals', label: 'Withdrawals' }] : []),
+          { id: 'security', label: 'Security' },
         ].map(tab => (
           <button
             key={tab.id}
@@ -546,11 +490,10 @@ export default function BalancePage() {
             aria-pressed={activeTab === tab.id}
             type="button"
             className={cn(
-               'flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold whitespace-nowrap transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vanta-gold-bright)]',
-              activeTab === tab.id ? 'bg-[var(--vanta-gold)] text-black' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+               'flex min-h-11 shrink-0 items-center justify-center border-b-2 px-1 py-2 text-xs font-semibold whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vanta-gold-bright)]',
+              activeTab === tab.id ? 'border-[var(--vanta-gold)] text-[var(--vanta-gold-bright)]' : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             )}
           >
-            <span className="shrink-0">{tab.icon}</span>
             {tab.label}
           </button>
         ))}
@@ -563,13 +506,12 @@ export default function BalancePage() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-3"
         >
-          {token && <WalletActivity token={token} hidden={hideBalance}/>}
+
           {/* Recent Transactions */}
-          <section className="rounded-xl border border-white/[0.07] bg-[var(--surface)] p-3">
+          <section className="border-b border-[var(--border)] px-1 pb-3">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                <History size={16} className="text-[var(--vanta-gold-bright)]" />
-                <h2 className="text-sm font-semibold text-[var(--text-primary)]">Recent activity</h2>
+                <h2 className="text-base font-semibold text-[var(--text-primary)]">Recent activity</h2>
               </div>
               <button
                 onClick={() => changeTab('transactions')}
@@ -598,7 +540,7 @@ export default function BalancePage() {
                       onClick={() => {setReceiptNotice(''); setSelectedTx(tx);}}
                       className="flex min-h-14 w-full items-center gap-3 rounded-lg p-2 text-left transition hover:bg-white/[0.03]"
                     >
-                      <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center border shrink-0', getTxColor(tx.type))}>
+                      <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center border shrink-0', 'bg-[var(--surface-secondary)] border-[var(--border)]')}>
                         {getTxIcon(tx.type)}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -626,8 +568,20 @@ export default function BalancePage() {
             )}
           </section>
 
+          {token && <WalletActivity token={token} hidden={hideBalance}/>}
+          <details className="border-y border-[var(--border)] px-1 py-1 text-sm">
+            <summary className="min-h-11 cursor-pointer py-3 font-medium">Lifetime coin summary</summary>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 pb-4">
+              {[
+                { label: 'Purchased coins', value: formatCoinsCompact(totalCoinsPurchased) },
+                { label: 'Received coins', value: formatCoinsCompact(totalCoinsReceived) },
+                { label: 'Sent coins', value: formatCoinsCompact(totalCoinsSent) },
+                { label: 'Gifts', value: (totalGiftsSent + totalGiftsReceived).toLocaleString() },
+              ].map(stat => <div className="min-w-0" key={stat.label}><dt className="text-xs text-[var(--text-secondary)]">{stat.label}</dt><dd className="mt-1 break-all font-semibold tabular-nums">{hideBalance ? hidden : stat.value}</dd></div>)}
+            </dl>
+          </details>
           {/* Recent Gifts */}
-          <section className="rounded-xl border border-white/[0.07] bg-[var(--surface)] p-3">
+          <section className="border-b border-[var(--border)] px-1 pb-3">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <Gift size={16} className="text-[var(--vanta-gold-bright)]" />
@@ -795,7 +749,7 @@ export default function BalancePage() {
                     onClick={() => {setReceiptNotice(''); setSelectedTx(tx);}}
                     className="w-full flex items-center gap-4 p-4 rounded-lg hover:bg-white/[0.03] transition-colors text-left"
                   >
-                    <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center border shrink-0', getTxColor(tx.type))}>
+                    <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center border shrink-0', 'bg-[var(--surface-secondary)] border-[var(--border)]')}>
                       {getTxIcon(tx.type)}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -1051,14 +1005,14 @@ export default function BalancePage() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          <div className="rounded-3xl border border-white/[0.06] bg-white/[0.02] p-5">
+          <div className="px-1">
             <div className="flex items-center gap-2 mb-4">
               <Shield size={16} className="text-[var(--vanta-gold-bright)]" />
               <h2 className="text-base font-bold text-[var(--text-primary)]">Balance Security</h2>
             </div>
 
-            <div className="grid grid-cols-1 gap-3">
-              <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
+            <div className="divide-y divide-[var(--border)]">
+              <div className="py-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-[var(--text-secondary)]">Wallet PIN</span>
                   <span className={cn('text-xs', hasPin ? 'text-emerald-400' : 'text-amber-400')}>
@@ -1071,7 +1025,7 @@ export default function BalancePage() {
                 <button type="button" onClick={() => router.push('/settings/payments')} className="mt-2 min-h-11 text-sm font-semibold text-[var(--vanta-gold-bright)]">{hasPin ? 'Manage wallet PIN' : 'Set wallet PIN'}</button>
               </div>
 
-              <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
+              <div className="py-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-[var(--text-secondary)]">Two-Factor Auth</span>
                   <span className="text-xs text-[var(--text-secondary)]">{twoFactor === null ? 'Unavailable' : twoFactor ? 'Enabled' : 'Not enabled'}</span>
@@ -1082,7 +1036,7 @@ export default function BalancePage() {
                 <button type="button" onClick={() => router.push('/settings/security')} className="mt-2 min-h-11 text-sm font-semibold text-[var(--vanta-gold-bright)]">Account settings</button>
               </div>
 
-              <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
+              <div className="py-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-[var(--text-secondary)]">USDT Wallet</span>
                   <span className={cn('text-xs', usdtWalletAddress ? 'text-emerald-400' : 'text-[var(--text-secondary)]')}>
@@ -1095,7 +1049,7 @@ export default function BalancePage() {
                 <button type="button" onClick={() => router.push('/settings/payments')} className="mt-2 min-h-11 text-sm font-semibold text-[var(--vanta-gold-bright)]">Manage payout address</button>
               </div>
 
-              <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
+              <div className="py-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-[var(--text-secondary)]">Account Status</span>
                   <span className={cn('text-xs', isFrozen ? 'text-red-400' : 'text-emerald-400')}>
@@ -1111,14 +1065,14 @@ export default function BalancePage() {
         </motion.div>
       )}
 
-      <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4" aria-label="Wallet transfer limits"><h2 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Shield size={16} className="text-[var(--vanta-gold-bright)]"/>Transfer limits</h2>{limits ? <dl className="space-y-2 text-xs"><div className="flex justify-between gap-2"><dt>Daily limit</dt><dd>{displayCoins(limits.dailyLimit)} <VantaCoinIcon size={14} /> </dd></div><div className="flex justify-between gap-2"><dt>Remaining today (UTC)</dt><dd>{displayCoins(limits.dailyRemaining)} <VantaCoinIcon size={14} /> </dd></div><div className="flex justify-between gap-2"><dt>Single transfer limit</dt><dd>{displayCoins(limits.singleTxLimit)} <VantaCoinIcon size={14} /> </dd></div><p className="text-[var(--text-secondary)]">Limits include transfer fees.</p></dl> : <p className="text-xs text-[var(--text-secondary)]">Unavailable. Refresh wallet.</p>}</section>
-      {activeTab === 'overview' && <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4"><div className="flex items-center justify-between gap-2"><h2 className="flex items-center gap-2 text-sm font-semibold"><Shield size={17} className="text-[var(--vanta-gold-bright)]"/>Wallet security</h2><button type="button" onClick={()=>changeTab('security')} className="min-h-11 text-xs text-[var(--vanta-gold-bright)]">Manage <ChevronRight size={14} className="inline"/></button></div><dl className="space-y-2 text-sm"><div className="flex justify-between gap-2"><dt>Wallet PIN</dt><dd>{hasPin?'Set':'Not set'}</dd></div><div className="flex justify-between gap-2"><dt>Two-factor authentication</dt><dd>{twoFactor===null?'Unavailable':twoFactor?'Enabled':'Not enabled'}</dd></div><div className="flex justify-between gap-2"><dt>Account status</dt><dd>{isFrozen?'Frozen':'Active'}</dd></div></dl></section>}
-      <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-2"><h2 className="flex items-center gap-2 text-sm font-semibold"><Headphones size={17} className="text-[var(--vanta-gold-bright)]"/>Wallet help &amp; support</h2>
+      {activeTab === 'security' && <section className="border-b border-[var(--border)] p-4" aria-label="Wallet transfer limits"><h2 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Shield size={16} className="text-[var(--vanta-gold-bright)]"/>Transfer limits</h2>{limits ? <dl className="space-y-2 text-xs"><div className="flex justify-between gap-2"><dt>Daily limit</dt><dd>{displayCoins(limits.dailyLimit)} <VantaCoinIcon size={14} /> </dd></div><div className="flex justify-between gap-2"><dt>Remaining today (UTC)</dt><dd>{displayCoins(limits.dailyRemaining)} <VantaCoinIcon size={14} /> </dd></div><div className="flex justify-between gap-2"><dt>Single transfer limit</dt><dd>{displayCoins(limits.singleTxLimit)} <VantaCoinIcon size={14} /> </dd></div><p className="text-[var(--text-secondary)]">Limits include transfer fees.</p></dl> : <p className="text-xs text-[var(--text-secondary)]">Unavailable. Refresh wallet.</p>}</section>}
+      {activeTab === 'overview' && <button type="button" onClick={()=>changeTab('security')} className="flex min-h-14 w-full items-center gap-3 border-b border-[var(--border)] px-1 text-left text-sm font-medium"><Shield size={19} className="text-[var(--vanta-gold-bright)]" aria-hidden="true"/><span className="flex-1">Wallet security and limits</span><ChevronRight size={16} aria-hidden="true"/></button>}
+      {(activeTab === 'overview' || activeTab === 'security') && <details className="border-b border-[var(--border)] px-1 pb-3 text-sm"><summary className="flex min-h-11 cursor-pointer list-none items-center gap-3 font-medium"><Headphones size={19} className="text-[var(--vanta-gold-bright)]" aria-hidden="true"/><span className="flex-1">Help &amp; support</span><ChevronRight size={16} aria-hidden="true"/></summary>
         <details className="text-sm"><summary className="cursor-pointer py-2">Coins and locked balance</summary><p className="text-xs leading-relaxed text-[var(--text-secondary)]">VANTA Coins are platform currency, not withdrawable cash. Reserved coins cannot be spent until released. Creator earnings are separate.</p></details>
         <details className="text-sm"><summary className="cursor-pointer py-2">Transfers and fees</summary><p className="text-xs leading-relaxed text-[var(--text-secondary)]">Transfers carry a 5% fee rounded up to whole coins. Check the recipient and total debit before confirming. If the result is uncertain, check history before sending again.</p></details>
         <details className="text-sm"><summary className="cursor-pointer py-2">Purchases and withdrawals</summary><p className="text-xs leading-relaxed text-[var(--text-secondary)]">Coin purchases remain under maintenance. Eligible earnings withdrawals are request-only and subject to review and settlement verification.</p></details>
         <div className="flex flex-wrap gap-2"><button type="button" onClick={()=>router.push('/settings/help')} className="min-h-11 rounded-lg border border-[var(--border)] px-3 text-xs">Help Center</button><a href={'mailto:'+VANTA_SUPPORT_EMAIL+'?subject='+encodeURIComponent('VANTA wallet support')} className="flex min-h-11 items-center rounded-lg bg-[var(--vanta-gold)] px-3 text-xs font-semibold text-black">Contact support</a></div>
-      </section>
+      </details>}
       {/* Transaction Details Modal */}
       <AnimatePresence>
         {selectedTx && (

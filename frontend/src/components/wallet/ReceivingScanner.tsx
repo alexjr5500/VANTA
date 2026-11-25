@@ -65,7 +65,7 @@ export default function ReceivingScanner({onScan, onCancel}: {onScan:(value:stri
     }catch{if(mounted.current)setError('Could not read the QR image. Paste the receiving link instead.');}
     finally{bitmap?.close();}
   }
-  return <div className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+  return <div className="space-y-3 border-t border-[var(--border)] pt-3">
     <div className="flex items-center justify-between"><p className="font-semibold text-sm">Scan receiving QR</p><button type="button" onClick={onCancel} className="min-h-11 text-xs text-[var(--vanta-gold-bright)]">Close scanner</button></div>
     {!supported?<p className="text-xs text-[var(--text-secondary)]">QR scanning is not supported by this browser. Use your phone camera or paste the receiving link.</p>:<>
       {camera?<><video ref={video} muted playsInline className="aspect-video w-full rounded-lg bg-black object-contain"/><button type="button" onClick={()=>setCamera(false)} className="min-h-11 text-sm">Stop camera</button></>:<div className="grid grid-cols-2 gap-2"><button type="button" onClick={()=>{setError('');setCamera(true);}} className="min-h-11 rounded-lg bg-[var(--surface-secondary)] text-sm"><Camera size={16} className="inline mr-1"/>Camera</button><label className="flex min-h-11 cursor-pointer items-center justify-center gap-1 rounded-lg bg-[var(--surface-secondary)] text-sm"><ImagePlus size={16}/>QR image<input type="file" accept="image/*" className="sr-only" onChange={e=>{const f=e.target.files?.[0];if(f)void scanImage(f);e.target.value='';}}/></label></div>}
