@@ -10,7 +10,7 @@ import {
   Plus, ArrowUpRight, ArrowDownLeft, Gift, Loader2,
   History, Search, Shield, Ban, X,
   ArrowUpFromLine, Download, ChevronRight,
-  Wallet, Sparkles, TrendingUp, DollarSign, Lock, Eye, EyeOff, ArrowLeft, RefreshCw, Headphones
+  Wallet, TrendingUp, DollarSign, Lock, Eye, EyeOff, ArrowLeft, RefreshCw, Headphones
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
@@ -395,7 +395,7 @@ export default function BalancePage() {
       {/* Header — Discover-style full-bleed sticky bar that stays fixed at the top
           while the balance and transaction content scroll beneath it. */}
       <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[var(--header-surface)] px-4 backdrop-blur-xl">
-        <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-white/[.05] hover:text-white"><ArrowLeft size={20} /></button>
+        <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-white/[.05] hover:text-[var(--text-primary)]"><ArrowLeft size={20} /></button>
         <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[var(--text-primary)]">Balance</h1>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <button type="button" onClick={fetchWallet} aria-label="Refresh wallet" className="grid h-11 w-11 place-items-center rounded-lg text-[var(--vanta-gold-bright)]"><RefreshCw size={18}/></button>
@@ -404,7 +404,7 @@ export default function BalancePage() {
             onClick={() => { setHideBalance(!hideBalance); setSelectedTx(null); }}
             aria-label={hideBalance ? 'Show wallet summaries' : 'Hide wallet summaries'}
             aria-pressed={hideBalance}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] text-[var(--text-secondary)] transition hover:text-white"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] text-[var(--text-secondary)] transition hover:text-[var(--text-primary)]"
           >
             {hideBalance ? <EyeOff size={18} /> : <Eye size={18} />}
           </button>
@@ -421,8 +421,8 @@ export default function BalancePage() {
         <div className="relative">
           <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs font-medium text-[var(--text-secondary)]">
-              <Sparkles size={14} className="text-[var(--vanta-gold-bright)]" />
-          VANTA Coins
+              <VantaCoinIcon size={18} decorative />
+              VANTA Coins
             </div>
             <div className="flex gap-2">
               {isFrozen && (
@@ -448,8 +448,8 @@ export default function BalancePage() {
             <p className="mt-1.5 text-xs font-medium text-[var(--text-secondary)]">VANTA Coins</p>
             <p className="mt-2 text-xs text-[var(--text-secondary)]">Platform currency · not a cash withdrawal balance</p>
             <dl className="mt-4 space-y-2 border-t border-[var(--border)] pt-3 text-sm">
-              <div className="flex items-center justify-between gap-3"><dt>Total coins</dt><dd className="tabular-nums">{displayCoins(coinBalance)} <VantaCoinIcon size={15} decorative /></dd></div>
-              <div className="flex items-center justify-between gap-3"><dt>Locked / reserved coins</dt><dd className="tabular-nums">{displayCoins(wallet.lockedCoins)} <VantaCoinIcon size={15} decorative /></dd></div>
+              <div className="flex items-center justify-between gap-3"><dt>Total coins</dt><dd className="min-w-0 break-all text-right tabular-nums">{displayCoins(coinBalance)} <VantaCoinIcon size={15} decorative /></dd></div>
+              <div className="flex items-center justify-between gap-3"><dt>Locked / reserved coins</dt><dd className="min-w-0 break-all text-right tabular-nums">{displayCoins(wallet.lockedCoins)} <VantaCoinIcon size={15} decorative /></dd></div>
               <div className="flex items-center justify-between gap-3"><dt>Pending transactions</dt><dd className="tabular-nums">{pendingCount === undefined ? 'Unavailable' : displayCoins(pendingCount)}</dd></div>
               {pendingRows?.filter(row => row.count > 0).map(row => <div key={row.currency} className="flex items-center justify-between gap-3 text-xs text-[var(--text-secondary)]"><dt>Pending {row.currency} ledger total</dt><dd>{row.currency === 'USD' ? displayUsd(row.amount) : displayCoins(row.amount) + ' ' + row.currency}</dd></div>)}
               {isCreator && <><div className="flex items-center justify-between gap-3"><dt>Creator earnings</dt><dd>{displayUsd(earningsBalance)}</dd></div><div className="flex items-center justify-between gap-3"><dt>Pending withdrawals (net)</dt><dd>{typeof wallet?.pendingWithdrawals?.netUsd === 'number' ? displayUsd(wallet.pendingWithdrawals.netUsd) : 'Unavailable'}</dd></div></>}
@@ -459,7 +459,7 @@ export default function BalancePage() {
           {isFrozen && <p role="status" className="mt-3 rounded-lg border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-300">Your wallet is frozen. Transfers and withdrawals are unavailable.</p>}
           {!isFrozen && !limits && <p className="mt-2 text-xs text-[var(--text-secondary)]">Transfer limits unavailable. Refresh before sending.</p>}
           {/* Quick Actions */}
-          <div className="mt-4 grid w-full grid-cols-4 gap-1.5">
+          <div className="mt-4 grid w-full grid-cols-2 gap-2 min-[360px]:grid-cols-4">
             <button
               onClick={() => setShowBuyModal(true)}
               className="flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg bg-[var(--vanta-gold)] px-2 py-2.5 text-xs font-bold text-black transition active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
@@ -487,7 +487,7 @@ export default function BalancePage() {
             {isCreator && earningsBalance > 0 && (
               <button
                 onClick={() => setShowWithdrawModal(true)} disabled={isFrozen}
-                className="col-span-4 flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                className="col-span-full flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <ArrowUpFromLine size={16} className="text-[var(--vanta-gold-bright)]" />
                 Withdraw {hideBalance ? '••••' : displayUsd(earningsBalance)}
@@ -524,7 +524,7 @@ export default function BalancePage() {
             <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--active-soft)] text-[var(--vanta-gold-bright)]">
               {stat.icon}
             </div>
-            <p className="truncate text-lg font-semibold tabular-nums text-[var(--text-primary)]">{hideBalance ? hidden : stat.value} {stat.label !== 'Gifts' && <VantaCoinIcon size={14} decorative />}</p>
+            <p className="flex min-w-0 flex-wrap items-center gap-1 text-lg font-semibold tabular-nums text-[var(--text-primary)]"><span className="min-w-0 break-all">{hideBalance ? hidden : stat.value}</span>{stat.label !== 'Gifts' && <VantaCoinIcon size={16} decorative />}</p>
             <p className="mt-0.5 truncate text-[11px] font-medium text-[var(--text-secondary)]">{stat.label}</p>
           </motion.div>
         ))}
@@ -547,7 +547,7 @@ export default function BalancePage() {
             type="button"
             className={cn(
                'flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold whitespace-nowrap transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vanta-gold-bright)]',
-              activeTab === tab.id ? 'bg-[var(--vanta-gold)] text-black' : 'text-[var(--text-secondary)] hover:text-white'
+              activeTab === tab.id ? 'bg-[var(--vanta-gold)] text-black' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             )}
           >
             <span className="shrink-0">{tab.icon}</span>
@@ -573,7 +573,7 @@ export default function BalancePage() {
               </div>
               <button
                 onClick={() => changeTab('transactions')}
-                className="flex items-center gap-1 text-xs text-[var(--text-secondary)] hover:text-white transition"
+                className="flex min-h-11 items-center gap-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition"
               >
                 View all <ChevronRight size={12} />
               </button>
@@ -613,7 +613,7 @@ export default function BalancePage() {
                           <span className="text-[11px] text-[var(--text-secondary)]">{formatTxLabel(tx.type)}</span>
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
+                      <div className="min-w-0 max-w-[48%] shrink-0 break-all text-right">
                         <p className={cn('text-sm font-bold tabular-nums', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                           {sign}{isUsd ? '$' : ''}{formattedAmount} {tx.currency === 'VANTA' && <VantaCoinIcon size={14} />}
                         </p>
@@ -636,7 +636,7 @@ export default function BalancePage() {
               </div>
               <button
                 onClick={() => changeTab('gifts')}
-                className="flex items-center gap-1 text-xs text-[var(--text-secondary)] hover:text-white transition"
+                className="flex min-h-11 items-center gap-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition"
               >
                 View all <ChevronRight size={12} />
               </button>
@@ -667,7 +667,7 @@ export default function BalancePage() {
                           {formatDate(gift.createdAt)} · {formatTime(gift.createdAt)}
                         </p>
                       </div>
-                      <div className="text-right shrink-0">
+                      <div className="min-w-0 max-w-[48%] shrink-0 break-all text-right">
                         <p className={cn('text-sm font-bold', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                           {isIncoming ? '+' : '-'}{(gift.amount ?? 0).toLocaleString()} <VantaCoinIcon size={14} />
                         </p>
@@ -690,7 +690,7 @@ export default function BalancePage() {
                 </div>
                 <button
                   onClick={() => changeTab('earnings')}
-                  className="flex items-center gap-1 text-xs text-[var(--text-secondary)] hover:text-white transition"
+                  className="flex min-h-11 items-center gap-1 text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition"
                 >
                   View all <ChevronRight size={12} />
                 </button>
@@ -747,7 +747,7 @@ export default function BalancePage() {
                     aria-pressed={filter === f.id}
                     className={cn(
                       'min-h-11 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-all',
-                      filter === f.id ? 'bg-[var(--vanta-gold)] text-black' : 'text-[var(--text-secondary)] hover:text-white'
+                      filter === f.id ? 'bg-[var(--vanta-gold)] text-black' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                     )}
                   >
                     {f.label}
@@ -757,7 +757,7 @@ export default function BalancePage() {
               <button
                 onClick={handleExport}
                 disabled={exporting || historyLoading || Boolean(historyError) || transactionTotal === 0 || hideBalance}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-[var(--text-secondary)] hover:text-white disabled:opacity-50 transition-all"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 transition-all"
               >
                 {exporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
                 {exporting ? 'Exporting…' : 'Export CSV'}
@@ -825,7 +825,7 @@ export default function BalancePage() {
                         </span>
                       </div>
                     </div>
-                    <div className="text-right shrink-0">
+                    <div className="min-w-0 max-w-[48%] shrink-0 break-all text-right">
                       <p className={cn('text-sm font-bold tabular-nums', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                         {sign}{isUsd ? '$' : ''}{formattedAmount} {tx.currency === 'VANTA' && <VantaCoinIcon size={14} />}
                       </p>
@@ -857,7 +857,7 @@ export default function BalancePage() {
             </div>
             <button
               onClick={() => router.push('/gifts')}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.05] border border-white/[0.08] text-xs text-[var(--text-secondary)] hover:text-white transition-all"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.05] border border-white/[0.08] text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-all"
             >
               <Gift size={12} />
               Open Gift Store
@@ -906,7 +906,7 @@ export default function BalancePage() {
                         )}
                       </div>
                     </div>
-                    <div className="text-right shrink-0">
+                    <div className="min-w-0 max-w-[48%] shrink-0 break-all text-right">
                       <p className={cn('text-sm font-bold', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                         {isIncoming ? '+' : '-'}{(gift.amount ?? 0).toLocaleString()} <VantaCoinIcon size={14} />
                       </p>
@@ -1026,7 +1026,7 @@ export default function BalancePage() {
                       <span className="text-[11px] text-[var(--text-secondary)]">Net: ${wd.netAmount.toFixed(2)}</span>
                     </div>
                   </div>
-                  <div className="text-right shrink-0">
+                  <div className="min-w-0 max-w-[48%] shrink-0 break-all text-right">
                     <span className={cn(
                       'text-[10px] px-2 py-0.5 rounded-full border',
                       wd.status === 'COMPLETED' && 'text-emerald-400 border-emerald-400/20 bg-emerald-400/[.05]',
@@ -1151,7 +1151,7 @@ export default function BalancePage() {
                     <p className="text-[11px] text-[var(--text-secondary)]">{formatTxLabel(selectedTx.type)}</p>
                   </div>
                 </div>
-                <button onClick={() => setSelectedTx(null)} className="rounded-xl p-2 text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.05] transition" aria-label="Close">
+                <button onClick={() => setSelectedTx(null)} className="rounded-xl p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/[0.05] transition" aria-label="Close">
                   <X size={18} />
                 </button>
               </div>
