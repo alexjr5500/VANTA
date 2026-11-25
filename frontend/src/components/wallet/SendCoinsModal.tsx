@@ -12,6 +12,7 @@ import VerificationBadge from '@/components/ui/VerificationBadge';
 import type { VerificationType } from '@/types/verification';
 import { calculateTransferFee, maxTransferableCoins } from '@/lib/wallet';
 import { useWalletDialog } from './useWalletDialog';
+import { readWalletReceipt, downloadWalletReceipt, type WalletReceipt } from '@/lib/walletReceipt';
 import { parseReceivingLink, receivingOrigins } from '@/lib/walletReceivingLink';
 import ReceivingScanner from './ReceivingScanner';
 
@@ -49,6 +50,7 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
+  const [receipt, setReceipt] = useState<WalletReceipt | null>(null);
   const [challengeId, setChallengeId] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [pinCode, setPinCode] = useState('');
@@ -86,6 +88,7 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
       setTwoFactorCode('');
       setRequestId('');
       setSending(false);
+      setReceipt(null);
       setResending(false);
       setNotice('');
       setSearchFailed(false);
@@ -103,6 +106,7 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
         if (!current) return;
         if (!result.user || result.user.id !== linkRecipientId || result.user.id === user?.id) throw new Error('Invalid recipient');
         setSelectedUser(result.user);
+        setResolvingLink(false); setLinkRecipientId(null);
         setStep('amount');
       })
       .catch(() => { if (current) setError('Could not verify the receiving link. Search for a recipient instead.'); })
@@ -187,6 +191,7 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
         return;
       }
       if (!result?.transfer) throw new Error('The transfer was not confirmed by the server. Please try again.');
+      setReceipt(readWalletReceipt(result.transfer));
       setPinCode('');
       setStep('success');
     } catch (err: any) {
@@ -217,6 +222,7 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
       if (result?.requiresOTP || !result?.transfer) {
         throw new Error('The transfer was not confirmed by the server. Please try again.');
       }
+      setReceipt(readWalletReceipt(result.transfer));
       setPinCode('');
       setOtpCode('');
       setTwoFactorCode('');
@@ -634,8 +640,9 @@ export default function SendCoinsModal({ open, balance, transferBudget = balance
                     transition={{ delay: 0.4 }}
                     className="text-sm text-[var(--text-secondary)] max-w-xs"
                   >
-                    {amount.toLocaleString()} VANTA sent to @{selectedUser.username}
+                    {(receipt?.netAmount ?? amount).toLocaleString()} VANTA sent to @{selectedUser.username}
                   </motion.p>
+                {receipt && <div className="mt-4 w-full space-y-2 rounded-xl bg-[var(--surface)] p-3 text-sm"><p>Reference: <span className="break-all font-mono text-xs">{receipt.id}</span></p><p>Status: {receipt.status}</p><p>Fee: {receipt.fee.toLocaleString()} VANTA</p><button type="button" onClick={()=>downloadWalletReceipt('transfer',receipt,'@'+selectedUser.username)} className="min-h-11 w-full rounded-lg border border-[var(--border)] text-[var(--vanta-gold-bright)]">Download transfer receipt</button></div>}
                 <button type="button" onClick={() => { onClose(); onSuccess(); }} className="mt-5 min-h-11 w-full rounded-xl bg-[var(--vanta-gold)] px-4 font-semibold text-black">Done</button>
                 </div>
               )}
