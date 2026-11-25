@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Play, Volume2, VolumeX } from 'lucide-react';
 import VideoTrimTimeline from '@/components/video/VideoTrimTimeline';
-import { generateFilmstrip, formatVideoTime, formatFileSize } from '@/lib/videoTrim';
+import { generateFilmstrip, formatVideoTime, formatFileSize, estimatedStatusTrimSize } from '@/lib/videoTrim';
 
 export type StatusTrimRange = { start: number; end: number };
 type Props = {
@@ -30,6 +30,8 @@ export default function StatusVideoPreview({ src, duration, size, poster, range,
   }, [src]);
   const start = Math.min(range?.start ?? 0, detected || Infinity);
   const end = Math.min(range?.end ?? detected, detected || Infinity);
+  const trimmed = detected > 0 && (start > 0.01 || end < detected - 0.01);
+  const displaySize = trimmed ? estimatedStatusTrimSize(size, detected, end - start) : size;
   useEffect(() => {
     if (!detected) return;
     let current = true;
@@ -58,7 +60,7 @@ export default function StatusVideoPreview({ src, duration, size, poster, range,
         onSeek={time => { player.current?.pause(); seek(time); }} />
       <div className="mt-2 flex items-center gap-2 text-[14px] text-white">
         <button type="button" aria-label={muted ? 'Unmute video preview' : 'Mute video preview'} aria-pressed={!muted} onClick={() => setMuted(v => !v)} className="grid h-8 w-10 place-items-center rounded-full bg-black/40">{muted ? <VolumeX size={17} /> : <Volume2 size={17} />}</button>
-        <span className="rounded-full bg-black/40 px-3 py-1.5 font-normal tabular-nums">{formatVideoTime(Math.floor(Math.max(0, end-start))).replace(/^0(?=\d:)/, '')} • {formatFileSize(size)}</span>
+        <span className="rounded-full bg-black/40 px-3 py-1.5 font-normal tabular-nums">{formatVideoTime(Math.floor(Math.max(0, end-start))).replace(/^0(?=\d:)/, '')} • {trimmed ? 'Est. ' : ''}{formatFileSize(displaySize)}</span>
       </div>
     </div>
     <div className="relative min-h-[100px] flex-1 overflow-hidden bg-[var(--background)]">
