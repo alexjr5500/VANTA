@@ -63,10 +63,14 @@ import { setSocialEventsIO } from './services/social-events.service';
 import { apiLatencyMiddleware, healthStatus, metricsCollector, cacheService, setupDefaultAlerts } from './services';
 import { uploadStorageDir, getStorageDiagnostics } from './services/upload.service';
 import { ServerReadiness, BackgroundDrain, shutdownWithin } from './services/server-lifecycle';
+import { HttpTelemetry, startHttpTelemetry } from './services/http-telemetry';
 import { realtimeRedisConfig, RealtimeRedisAdapter } from './services/realtime-redis-adapter';
 import { DistributedMaintenance, maintenanceConnectionUrl, type MaintenanceTask } from './services/distributed-maintenance';
 
 const app: Express = express();
+const httpTelemetry = process.env.VANTA_HTTP_TELEMETRY_ENABLED === 'true' ? new HttpTelemetry() : null;
+const stopHttpTelemetry = httpTelemetry ? startHttpTelemetry(httpTelemetry) : () => {};
+if (httpTelemetry) app.use(httpTelemetry.middleware);
 const realtimeConfig = realtimeRedisConfig(process.env);
 const realtimeAdapter = new RealtimeRedisAdapter(realtimeConfig);
 const traffic = new ServerReadiness(
@@ -925,6 +929,7 @@ if (process.env.VANTA_GRACEFUL_SHUTDOWN_ENABLED === 'true') {
   const shutdown = (signal: string): void => {
     if (traffic.draining) return;
     traffic.beginDrain();
+    stopHttpTelemetry();
     console.info('[Shutdown] Draining:', signal);
     cacheService.warmerInstance.stop();
     void shutdownWithin(async () => {
