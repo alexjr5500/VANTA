@@ -64,7 +64,7 @@ export class BackgroundDrain {
   private stopping = false;
   private readonly timers = new Set<ReturnType<typeof setInterval>>();
   private readonly running = new Set<Promise<unknown>>();
-  schedule(task: () => Promise<void>, intervalMs: number): void {
+  schedule(task: () => Promise<void>, intervalMs: number, immediate = true): void {
     if (this.stopping) return;
     let active = false;
     const run = () => {
@@ -77,7 +77,7 @@ export class BackgroundDrain {
         this.running.delete(job);
       });
     };
-    run();
+    if (immediate) run();
     const timer = setInterval(run, intervalMs);
     timer.unref?.();
     this.timers.add(timer);

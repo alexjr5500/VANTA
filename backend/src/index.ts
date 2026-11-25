@@ -64,6 +64,7 @@ import { apiLatencyMiddleware, healthStatus, metricsCollector, cacheService, set
 import { uploadStorageDir, getStorageDiagnostics } from './services/upload.service';
 import { ServerReadiness, BackgroundDrain, shutdownWithin } from './services/server-lifecycle';
 import { realtimeRedisConfig, RealtimeRedisAdapter } from './services/realtime-redis-adapter';
+import { DistributedMaintenance, maintenanceConnectionUrl, type MaintenanceTask } from './services/distributed-maintenance';
 
 const app: Express = express();
 const realtimeConfig = realtimeRedisConfig(process.env);
@@ -73,6 +74,10 @@ const traffic = new ServerReadiness(
   () => realtimeAdapter.ready && (process.env.VANTA_READINESS_REQUIRE_REDIS !== 'true' || cacheService.isRedisAvailable),
 );
 const backgroundDrain = new BackgroundDrain();
+const maintenance = new DistributedMaintenance(maintenanceConnectionUrl(process.env));
+const coordinated = (task: MaintenanceTask, work: () => Promise<void>) => async () => {
+  await maintenance.run(task, work);
+};
 
 // Local HTTPS development (optional). When HTTPS_DEV_CERT and HTTPS_DEV_KEY are
 // set the API + Socket.IO are served over TLS (wss://) so an HTTPS frontend page
@@ -569,7 +574,9 @@ io.use(authenticateSocket);
 
 // Initialize Socket.io handlers
 handleChatSocket(io, realtimeConfig ? { ready: () => realtimeAdapter.ready } : undefined);
-handleLiveSocket(io);
+handleLiveSocket(io, (work, interval) => {
+  backgroundDrain.schedule(coordinated('liveSweep', work), interval, false);
+});
 handleGiftSocket(io);
 setNotificationIO(io);
 setSocialEventsIO(io);
@@ -731,8 +738,10 @@ async function startServer() {
     // Immediately clean up any Live sessions abandoned by a previous process
     // (heartbeat older than 30s), so a host is never blocked by a stale "active".
     try {
-      const { liveService } = await import('./services/live.service');
-      await liveService.sweepStaleLiveStreams();
+      await maintenance.run('liveSweep', async () => {
+        const { liveService } = await import('./services/live.service');
+        await liveService.sweepStaleLiveStreams();
+      });
     } catch (sweepError) {
       console.warn('[LiveSweep] Startup sweep skipped:', sweepError);
     }
@@ -741,11 +750,13 @@ async function startServer() {
     // are already rejected by verifyOAuthState; this just keeps the table
     // bounded across redeploys).
     try {
-      const { sweepExpiredOAuthStates } = await import('./services/oauth.service');
-      const removed = await sweepExpiredOAuthStates();
-      if (removed > 0) {
-        console.log(`[OAuthState] Startup sweep removed ${removed} expired OAuth state record(s).`);
-      }
+      await maintenance.run('oauthSweep', async () => {
+        const { sweepExpiredOAuthStates } = await import('./services/oauth.service');
+        const removed = await sweepExpiredOAuthStates();
+        if (removed > 0) {
+          console.log(`[OAuthState] Startup sweep removed ${removed} expired OAuth state record(s).`);
+        }
+      });
     } catch (sweepError) {
       console.warn('[OAuthState] Startup sweep skipped:', sweepError);
     }
@@ -765,7 +776,7 @@ async function startServer() {
         console.warn('[FollowerRewards] Expiry sweep skipped:', sweepError);
       }
     };
-    backgroundDrain.schedule(expireDueRewards, 15 * 60 * 1000);
+    backgroundDrain.schedule(coordinated('rewardExpiry', expireDueRewards), 15 * 60 * 1000);
 
     // Birthday and VANTA account anniversaries: run at startup and once daily in UTC.
     // Notification reference keys are unique per user/year, so retries and restarts are safe.
@@ -795,7 +806,7 @@ async function startServer() {
         console.warn('[Milestones] Birthday/anniversary sweep skipped:', sweepError);
       }
     };
-    backgroundDrain.schedule(sweepUserMilestones, 24 * 60 * 60 * 1000);
+    backgroundDrain.schedule(coordinated('userMilestones', sweepUserMilestones), 24 * 60 * 60 * 1000);
 
     // Verification badge expiry: flip overdue ACTIVE badges to EXPIRED so
     // persisted state matches the read-time enforcement that already gates
@@ -811,7 +822,7 @@ async function startServer() {
         console.warn('[Verification] Badge expiry sweep skipped:', sweepError);
       }
     };
-    backgroundDrain.schedule(sweepVerificationBadges, 60 * 60 * 1000);
+    backgroundDrain.schedule(coordinated('verificationExpiry', sweepVerificationBadges), 60 * 60 * 1000);
 
     // CEO/Admin initial allocation: grants the canonical CEO account exactly
     // 1,000,000 VANTA Coins ONCE through the real wallet/ledger system. The

@@ -80,7 +80,7 @@ async function getUserIdentity(userId: string) {
     : { id: userId, username: userId.slice(0, 8), displayName: 'User', avatar: null, verified: false };
 }
 
-export const handleLiveSocket = (io: Server) => {
+export const handleLiveSocket = (io: Server, scheduleSweep?: (work: () => Promise<void>, intervalMs: number) => void) => {
   io.use((socket, next) => {
     const token = socket.handshake.auth.token;
     if (!token) return next(new Error('Authentication error'));
@@ -628,7 +628,7 @@ export const handleLiveSocket = (io: Server) => {
   // without a heartbeat for >30s is ended and viewers in the stream room are
   // told the Live is over. `beforeunload`/`pagehide` are explicitly NOT relied
   // on — they are unreliable, but the heartbeat timeout never is.
-  const sweepTimer = setInterval(async () => {
+  const sweep = async (): Promise<void> => {
     try {
       const ended = await liveService.sweepStaleLiveStreams();
       for (const stream of ended) {
@@ -643,6 +643,10 @@ export const handleLiveSocket = (io: Server) => {
     } catch (err) {
       console.error('[LiveSweep] Sweep failed:', err);
     }
-  }, LIVE_SESSION_SWEEP_INTERVAL_MS);
-  sweepTimer.unref?.();
+  };
+  if (scheduleSweep) scheduleSweep(sweep, LIVE_SESSION_SWEEP_INTERVAL_MS);
+  else {
+    const sweepTimer = setInterval(sweep, LIVE_SESSION_SWEEP_INTERVAL_MS);
+    sweepTimer.unref?.();
+  }
 };
