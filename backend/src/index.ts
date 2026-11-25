@@ -568,7 +568,7 @@ const io = new Server(httpServer, {
 io.use(authenticateSocket);
 
 // Initialize Socket.io handlers
-handleChatSocket(io);
+handleChatSocket(io, realtimeConfig ? { ready: () => realtimeAdapter.ready } : undefined);
 handleLiveSocket(io);
 handleGiftSocket(io);
 setNotificationIO(io);
@@ -582,12 +582,12 @@ registerAnalyticsSocketHandlers(io);
 
 // Global socket connection handler
 io.on('connection', (socket) => {
-  handleConnect(socket as any);
+  handleConnect(socket as any, false);
   const userId = socket.data?.userId || (socket as any).userId;
   if (userId) socket.join(`user_${userId}`);
   
   socket.on('disconnect', () => {
-    handleDisconnect(socket as any);
+    handleDisconnect(socket as any, false);
   });
 });
 

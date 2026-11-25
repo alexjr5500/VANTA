@@ -36,6 +36,7 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 - [ ] Verify mobile bandwidth and video rendition switching.
 - [x] Add opt-in shared-only Redis cache mode and cross-client regression tests; live staging and distributed tag invalidation/call-site review remain required.
 - [x] Add opt-in Socket.IO Redis room adapter and two-server integration coverage; distributed presence, authorization state, sticky routing and real client acceptance remain gated.
+- [x] Consolidate socket presence writes and check cluster room membership before offline transitions; crash recovery, partition detection and concurrent cross-server transition reconciliation remain gated.
 - [ ] Performance optimization and competitive benchmarking (Phase 6.13); see `docs/PERFORMANCE_BENCHMARKING.md`.
 
 ## 6.11 — Security and recovery

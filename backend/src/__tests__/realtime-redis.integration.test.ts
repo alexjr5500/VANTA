@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { Server } from 'socket.io';
 import { io as connect, Socket } from 'socket.io-client';
 import { RealtimeRedisAdapter, realtimeRedisConfig } from '../services/realtime-redis-adapter';
+import { observeRoomPresence } from '../services/realtime-presence';
 
 describe('realtime adapter configuration', () => {
   it('keeps the default local adapter and rejects incomplete or unsafe configuration', () => {
@@ -35,7 +36,7 @@ suite('two independent Socket.IO servers over isolated Redis', () => {
     // Test-only identity mapping; real application authorization is unchanged.
     server.use((socket, next) => {
       const identity = socket.handshake.auth.identity;
-      if (identity !== 'alice' && identity !== 'bob') return next(new Error('unauthorized'));
+      if (identity !== 'alice' && identity !== 'bob' && identity !== 'carol') return next(new Error('unauthorized'));
       socket.data.userId = identity;
       next();
     });
@@ -80,5 +81,21 @@ suite('two independent Socket.IO servers over isolated Redis', () => {
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(unwanted).not.toHaveBeenCalled();
     expect(adapters.every(adapter => adapter.ready)).toBe(true);
+  }, 12000);
+  it('keeps a user online when a second server still holds their socket', async () => {
+    const first = await client(0, 'carol');
+    const second = await client(1, 'carol');
+    const leave = async (socket: Socket, server: Server) => {
+      const remote = server.sockets.sockets.get(socket.id!);
+      if (!remote) throw new Error('Missing local test socket');
+      const disconnected = new Promise<void>(resolve => { remote.once('disconnect', () => resolve()); });
+      socket.disconnect();
+      await disconnected;
+    };
+    await leave(first, servers[0]);
+    await expect(observeRoomPresence(servers[0], 'carol', () => adapters[0].ready, () => 0)).resolves.toBe('online');
+    await leave(second, servers[1]);
+    await expect(observeRoomPresence(servers[0], 'carol', () => adapters[0].ready, () => 0)).resolves.toBe('offline');
+    await expect(observeRoomPresence(servers[0], 'carol', () => false, () => 0)).resolves.toBe('unknown');
   }, 12000);
 });
