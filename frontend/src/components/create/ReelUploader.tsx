@@ -9,8 +9,7 @@ import { useToast } from '@/components/ui/Toast';
 import Avatar from '@/components/ui/Avatar';
 import StatusVideoPreview from '@/components/story/StatusVideoPreview';
 import { prepareTrimmedVideo, statusRangeNeedsTrim, type StatusTrimRange } from '@/lib/statusVideoTrim';
-import { formatVideoTime } from '@/lib/videoTrim';
-import { normalizeVideoFileForUpload, probeVideoFileDuration, validateVideoFile, VIDEO_MAX_DURATION_SECONDS } from '@/lib/videoTrim';
+import { formatVideoTime, normalizeVideoFileForUpload, probeVideoFileDuration, validateVideoFile, VIDEO_MAX_DURATION_SECONDS } from '@/lib/videoTrim';
 import { createReelDraft } from '@/lib/reelApi';
 import { startUpload } from '@/lib/uploads/store';
 
@@ -35,7 +34,7 @@ const STEP_TITLES: Record<Step, string> = {
  * a selected range is materialized before creating a draft and uploading.
  *
  * Publishing is NON-BLOCKING: "Post Reel" creates an instant Reel draft, then
- * hands the original file to the background upload manager. The editor closes
+ * hands the selected output file to the background upload manager. The editor closes
  * immediately and the real byte-based transfer continues (with the global
  * upload indicator) while the user navigates anywhere in VANTA. The Reel only
  * becomes visible (PUBLISHED) after its media actually reaches storage.
@@ -145,7 +144,7 @@ export default function ReelUploader({ open, selectedFile, onChooseAnother, onCl
     if (!file || submitting || trimming) return;
     const needsTrim = trimRange && statusRangeNeedsTrim(trimRange, duration || null);
     const exportResult = prepared.current;
-    if (needsTrim && (!exportResult || exportResult.source !== file || exportResult.range.start !== trimRange.start || exportResult.range.end !== trimRange.end)) {
+    if (trimRange && needsTrim && (!exportResult || exportResult.source !== file || exportResult.range.start !== trimRange.start || exportResult.range.end !== trimRange.end)) {
       setStep('preview');
       setFormError('Review and prepare your selected clip before posting.');
       return;
@@ -157,7 +156,7 @@ export default function ReelUploader({ open, selectedFile, onChooseAnother, onCl
     try {
       const reelDescription = caption.trim() || undefined;
       // Preserve the existing required server title field without forcing a second user input.
-      const reelTitle = 'Reel';
+      const reelTitle = reelDescription ? Array.from(reelDescription).slice(0, 120).join('') : 'Reel';
       const draft = await createReelDraft(token, { title: reelTitle, description: reelDescription });
       startUpload({
         kind: 'reel',
@@ -220,7 +219,7 @@ export default function ReelUploader({ open, selectedFile, onChooseAnother, onCl
               <button
                 type="button"
                 onClick={requestClose}
-                disabled={submitting}
+                disabled={submitting || trimming}
                 aria-label="Close"
                 className="grid h-10 w-10 place-items-center rounded-full text-[var(--text-secondary)] transition hover:bg-white/[0.06] hover:text-[var(--text-primary)] active:scale-95 disabled:opacity-40"
               >
@@ -251,7 +250,7 @@ export default function ReelUploader({ open, selectedFile, onChooseAnother, onCl
                 <div className="space-y-4 pt-5"><p role="alert" className="form-error">{loadError}</p><button type="button" onClick={onChooseAnother} className="btn-gold min-h-11 w-full rounded-lg">Choose another video</button></div>
               ) : step === 'preview' ? (
                 <div className="relative flex h-full min-h-0 flex-col pt-1">
-                  {previewUrl && file && <StatusVideoPreview key={previewUrl} src={previewUrl} duration={duration || null} size={file.size} poster={null} range={trimRange} showSize={false} onDuration={setDuration} onRange={setTrimRange} />}
+                  {!trimming && previewUrl && file && <StatusVideoPreview key={previewUrl} src={previewUrl} duration={duration || null} size={file.size} poster={null} range={trimRange} showSize={false} onDuration={setDuration} onRange={setTrimRange} />}
                   {trimming && <div role="status" className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 rounded-lg bg-[var(--overlay)] text-white"><Loader2 size={24} className="animate-spin text-[var(--vanta-gold-bright)]" /><span>Preparing selected clip…</span><button type="button" onClick={() => trimAbort.current?.abort()} className="rounded-lg border border-white/30 px-4 py-2 text-sm">Cancel</button></div>}
                 </div>
               ) : (
