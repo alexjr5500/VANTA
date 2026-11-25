@@ -33,14 +33,14 @@ export default function GiftArtwork({
   className = '',
   quality = 1,
 }: GiftArtworkProps) {
-  const [failedAssetUrl, setFailedAssetUrl] = useState<string | undefined>();
+  const [failedAssets, setFailedAssets] = useState<string[]>([]);
   const reducedMotion = useReducedMotion();
   const motionEnabled = animate && !reducedMotion;
   const id = (slug || name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
   const referenceAsset = giftArtworkAsset(slug, name);
   const suppliedVideo = assetUrl && /\.(mp4|webm)(\?|$)/i.test(assetUrl);
   const preferredAsset = motionEnabled && suppliedVideo ? assetUrl : referenceAsset || assetUrl;
-  const resolvedAssetUrl = preferredAsset === failedAssetUrl ? (referenceAsset !== failedAssetUrl ? referenceAsset : undefined) : preferredAsset;
+  const resolvedAssetUrl = [preferredAsset, referenceAsset].find(url => url && !failedAssets.includes(url));
   const showAsset = Boolean(resolvedAssetUrl);
   const isVideo = Boolean(resolvedAssetUrl && /\.(mp4|webm)(\?|$)/i.test(resolvedAssetUrl));
 
@@ -61,7 +61,7 @@ export default function GiftArtwork({
             muted
             playsInline
             preload={motionEnabled ? 'metadata' : 'none'}
-            onError={() => setFailedAssetUrl(resolvedAssetUrl)}
+            onError={() => setFailedAssets(previous => [...previous, resolvedAssetUrl])}
             className="h-full w-full object-contain"
           />
         ) : (
@@ -69,7 +69,7 @@ export default function GiftArtwork({
             src={resolvedAssetUrl}
             alt={name || 'VANTA gift'}
             loading={motionEnabled ? 'eager' : 'lazy'}
-            onError={() => setFailedAssetUrl(resolvedAssetUrl)}
+            onError={() => setFailedAssets(previous => [...previous, resolvedAssetUrl])}
             className="h-full w-full object-contain"
           />
         )
