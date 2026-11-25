@@ -299,13 +299,41 @@ const probeVideoDuration = async (filePath: string): Promise<number | undefined>
       "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath,
     ], { timeout: 15_000 });
     const duration = Number(stdout.trim());
-    return Number.isFinite(duration) ? duration : undefined;
+    return Number.isFinite(duration) && duration > 0 ? duration : undefined;
   } catch {
     // ffprobe is optional in development. Cloudinary validates/probes cloud video;
     // production local-storage deployments should provide FFPROBE_PATH.
     return undefined;
   }
 };
+
+// MediaRecorder's streaming WebM may lack a container Duration element.
+// Remux without re-encoding, then validate the actual output with ffprobe.
+// Never accept the browser's requested trim range as proof of duration.
+async function remuxStatusWebm(file: Express.Multer.File): Promise<number | undefined> {
+  const temp = path.join(path.dirname(file.path), `.status-remux-${crypto.randomUUID()}.webm`);
+  try {
+    await execFileAsync(process.env.FFMPEG_PATH || "ffmpeg", [
+      "-nostdin", "-v", "error", "-xerror", "-i", file.path,
+      "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-f", "webm", temp,
+    ], { timeout: 20_000, maxBuffer: 256 * 1024 });
+    const duration = await probeVideoDuration(temp);
+    if (duration === undefined) return undefined;
+    assertStatusVideoDuration(duration);
+    const size = fs.statSync(temp).size;
+    if (size <= 0 || size > UPLOAD_LIMITS.VIDEO) return undefined;
+    fs.renameSync(temp, file.path);
+    file.size = size;
+    return duration;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("2 minutes")) throw error;
+    // ffmpeg is optional; if unavailable, the normal trusted storage probe
+    // remains authoritative. Never accept an unverifiable Status video.
+    return undefined;
+  } finally {
+    removeLocalFile(temp);
+  }
+}
 
 const getAllowedExtensions = (mimetype: string): string[] => {
   if (mimetype.startsWith("image/")) {
@@ -524,7 +552,12 @@ export class UploadService {
     const isStatus = category === "story" || recordType === "Story";
     let probedDuration: number | undefined;
     if (fileType === "VIDEO") {
-      const duration = probedDuration = await probeVideoDuration(file.path);
+      let duration = await probeVideoDuration(file.path);
+      if (isStatus && duration === undefined && normalizeMimeType(file.mimetype) === "video/webm") {
+        try { duration = await remuxStatusWebm(file); }
+        catch (error) { removeLocalFile(file.path); throw error; }
+      }
+      probedDuration = duration;
       if (isStatus && (duration !== undefined || !useCloudinary)) {
         try { assertStatusVideoDuration(duration); } catch (error) { removeLocalFile(file.path); throw error; }
       }
