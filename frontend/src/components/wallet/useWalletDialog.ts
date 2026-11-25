@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 const focusable = 'button:not([disabled]), a[href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** Keep keyboard focus inside a wallet dialog and restore it to its opener. */
-export function useWalletDialog<T extends HTMLElement>(open: boolean, onClose: () => void, locked = false) {
+export function useWalletDialog<T extends HTMLElement>(open: boolean, onClose: () => void, locked = false, step?: string) {
   const ref = useRef<T>(null);
   const latest = useRef({ onClose, locked });
   useLayoutEffect(() => { latest.current = { onClose, locked }; }, [onClose, locked]);
@@ -41,5 +41,6 @@ export function useWalletDialog<T extends HTMLElement>(open: boolean, onClose: (
       if (previous?.isConnected) previous.focus({ preventScroll: true });
     };
   }, [open]);
+  useEffect(() => { if (open && step) ref.current?.focus({ preventScroll: true }); }, [open, step]);
   return ref;
 }
