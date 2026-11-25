@@ -102,5 +102,5 @@ export async function repairRecordedWebmDuration(blob: Blob, durationMs: number)
   duration.set([0x44, 0x89, 0x88]);
   new DataView(duration.buffer).setFloat64(3, value);
   const size = sizeBytes(info.end - info.data + duration.length);
-  return new Blob([blob.slice(0, info.sizeOffset), size.buffer, blob.slice(info.data, info.end), duration.buffer, blob.slice(info.end)], { type: blob.type });
+  return new Blob([blob.slice(0, info.sizeOffset), new Uint8Array(size).buffer, blob.slice(info.data, info.end), duration.buffer, blob.slice(info.end)], { type: blob.type });
 }
