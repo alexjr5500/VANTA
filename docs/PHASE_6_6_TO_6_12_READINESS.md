@@ -50,6 +50,7 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 - [ ] Review upload access, path traversal, MIME verification, ffmpeg command execution and resource exhaustion.
 - [ ] Verify wallet/ledger/payment idempotency, authorization, audit logging and secret handling.
 - [ ] Restore DB and uploaded media from backups in staging; document RPO/RTO.
+- [x] Add disposable CI logical backup/restore exercise using active Prisma schema, synthetic linked records, media checksums and constraint checks; provider backup, migration history and real staging restore remain gated.
 
 ## 6.12 — Release gate
 - [ ] Full backend/frontend/Android CI, security scan and staging end-to-end regression.

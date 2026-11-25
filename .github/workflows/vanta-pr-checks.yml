@@ -275,3 +275,18 @@ jobs:
         env:
           VANTA_CI_DISPOSABLE_REPLICATION: "yes"
         run: bash backend/scripts/ci-streaming-replication.sh
+
+  database-backup-restore:
+    name: Disposable VANTA schema backup and media restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm --prefix backend install
+      - name: Exercise isolated database and media recovery
+        env:
+          VANTA_CI_DISPOSABLE_RESTORE: "yes"
+        run: bash backend/scripts/ci-backup-restore.sh
