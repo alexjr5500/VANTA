@@ -3647,3 +3647,24 @@ html.vanta-native-android .vanta-photo-crop { height: var(--chat-viewport-height
 .vanta-reel-comments:has(textarea:focus), .vanta-reel-comments:has(input:focus) { height: min(calc(var(--vanta-vh, 100dvh) * .88), 560px); }
 .vanta-comment-composer { padding-bottom: max(6px, var(--vanta-native-safe-bottom, env(safe-area-inset-bottom, 0px))); }
 html.vanta-native-android .vanta-comment-composer { padding-bottom: 4px; }
+
+/* Wallet-only accessibility: preserve a visible keyboard focus indicator
+   without changing the rest of VANTA's navigation or media surfaces. */
+.vanta-wallet-ui :is(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--vanta-gold-bright) !important;
+  outline-offset: 2px;
+}
+.vanta-wallet-ui :is(input, textarea, select):focus-visible {
+  outline-offset: 0;
+}
+.vanta-wallet-ui button[disabled] {
+  cursor: not-allowed;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vanta-wallet-ui *, .vanta-wallet-ui *::before, .vanta-wallet-ui *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
