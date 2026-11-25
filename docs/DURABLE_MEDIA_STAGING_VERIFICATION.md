@@ -13,6 +13,18 @@ Railway OAuth returns variable names only: the resolved DATABASE_URL, flag value
 
 Before any acceptance migration, configure all missing Cloudinary credentials and HTTP authentication/encryption secrets directly in Railway, using separate staging credentials. Pin both services to the same reviewed SHA, set VANTA_ACCEPTANCE_PREFLIGHT=yes, VANTA_ACCEPTANCE_EXPECTED_SHA to that exact deployed SHA, VANTA_ACCEPTANCE_DATABASE_HOST to the independently confirmed private hostname of Postgres-uh7w, and DATABASE_URL to the dedicated DB reference. Set cloudinary storage mode and keep media producer/handler/delivery and worker startup flags false initially. Run `node backend/scripts/acceptance-preflight.mjs http` on the HTTP service before migration and `node backend/scripts/acceptance-preflight.mjs worker` in the worker's environment before activation. The script validates exact Railway project/environment/service IDs, staging name, commit, database private hostname, credential presence and disabled initial flags. It only prints fixed issue codes. It does not connect to a database, validate credentials, or prove account isolation: verify the host and references independently. Do not use this as a perpetual worker startup command once activation is approved. A passing check is not permission to enable production or a substitute for provider testing.
 
+## Startup diagnosis (2026-11-25)
+
+All required variable names are now present. Multiple HTTP deployments on da153d7 built successfully but failed with the same Railway PRE_DEPLOY_COMMAND classification and no useful command output (only Starting Container). A temporary diagnostic-only deployment also failed without the intended output. Its config was subsequently restored; the empty preDeployCommand visible now is intentional. Do not infer that the preflight, database or Railway itself has been proven at fault.
+
+The dedicated database endpoint is explicitly verified as postgres-uh7w.railway.internal. The preflight now emits synchronous stdout markers and individual fixed issue codes (no values), with exit 10 on rejection. It checks the expected and actual database hosts against the dedicated host, rejects unexpected URL options, and rejects automatic schema provisioning. The new startup command for **only** the isolated HTTP service is:
+
+```sh
+sh backend/scripts/acceptance-start.sh
+```
+
+It emits markers for preflight, guarded migration and backend launch, and uses absolute script-relative working-directory resolution. The migration command rechecks preflight, runs only prisma migrate deploy with a bounded timeout, and prints fixed Prisma error codes and exit metadata rather than raw provider output. Exit 20 means migration failed; 21 means it could not launch; 30 means missing startup artifact or directory. The production migration config is unchanged. Set preDeployCommand empty for this single-replica acceptance service and retain /health/ready. Pin the new reviewed SHA and update VANTA_ACCEPTANCE_EXPECTED_SHA together; do not deploy before CI. If even startup.begin is missing, collect deployment snapshot/start command and Railway runtime execution logs from support instead of weakening the guard or looping redeploys.
+
 ## Preferred isolated staging topology
 
 1. Verify the provisioned **staging-only HTTP test service** is pinned to the *exact PR #282 commit*, rather than changing the current staging backend. Confirm the test service uses a staging-only URL, JWT secrets, uploaded media, Cloudinary account/folder, and PostgreSQL database. Never use production credentials, volumes or database.
