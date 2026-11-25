@@ -97,7 +97,7 @@ export function buildTrimmedVideoFile(blob: Blob, originalName: string): File {
   // MediaRecorder reports codec hints (e.g. "video/webm;codecs=vp9,opus"). Strip
   // them so the uploaded part has a clean, multer-allow-listed base type.
   const mime = normalizeBaseMimeType(blob.type) || 'video/webm';
-  return new File([blob], `${baseName}-trimmed.webm`, { type: mime });
+  return new File([blob], `${baseName}-trimmed.${mime === 'video/mp4' ? 'mp4' : 'webm'}`, { type: mime });
 }
 
 /** Lowercase, parameter/whitespace-free base MIME (e.g. "video/webm;codecs=vp9" → "video/webm"). */
@@ -350,6 +350,8 @@ export interface TrimVideoOptions {
   end: number;
   onProgress?: (percent: number, currentTime: number) => void;
   signal?: AbortSignal;
+  /** Keep the processing video silent while preserving captured audio. */
+  silentPlayback?: boolean;
 }
 
 /**
@@ -359,7 +361,7 @@ export interface TrimVideoOptions {
  * uploading the full original.
  */
 export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
-  const { video, start, end, onProgress, signal } = options;
+  const { video, start, end, onProgress, signal, silentPlayback = false } = options;
 
   const support = getTrimmingSupport();
   if (!support.ok) return Promise.reject(new Error(support.reason || 'Trimming is not supported here.'));
@@ -374,6 +376,8 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
     let sourceStream: MediaStream;
     let canvas: HTMLCanvasElement | null = null;
     let audioContext: AudioContext | null = null;
+    const originalVolume = video.volume;
+    const originalMuted = video.muted;
 
     const htmlVideo = video as HTMLVideoElement & {
       mozCaptureStream?: () => MediaStream;
@@ -394,7 +398,7 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
       const mediaSource = audioContext.createMediaElementSource(video);
       const audioDestination = audioContext.createMediaStreamDestination();
       mediaSource.connect(audioDestination);
-      mediaSource.connect(audioContext.destination);
+      if (!silentPlayback) mediaSource.connect(audioContext.destination);
       sourceStream = new MediaStream([...canvasStream.getVideoTracks(), ...audioDestination.stream.getAudioTracks()]);
     }
 
@@ -420,11 +424,16 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
     let finished = false;
     let canceled = false;
     let raf = 0;
+    let drawRaf = 0;
     let completionTimer = 0;
 
     const stopTracks = () => {
       sourceStream.getTracks().forEach((track) => track.stop());
       if (raf) cancelAnimationFrame(raf);
+      if (drawRaf) cancelAnimationFrame(drawRaf);
+      video.pause();
+      video.volume = originalVolume;
+      video.muted = originalMuted;
       if (audioContext) {
         void audioContext.close().catch(() => undefined);
         audioContext = null;
@@ -457,6 +466,7 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
     };
 
     const onStop = () => {
+      video.pause();
       if (finished && !canceled) return; // already handled by fail()
       finished = true;
       clearTimeout(completionTimer);
@@ -501,8 +511,12 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
         await seekTo(video, start);
         video.pause();
 
-        // Never capture muted audio: unmute so the output keeps its sound.
+        // Keep the captured track audible in the output, not on the device.
+        // Element capture is independent of the playback volume; Web Audio
+        // fallback has no connection to the speakers in silent mode.
+        if (silentPlayback && !audioContext) video.volume = 0;
         video.muted = false;
+        if (audioContext?.state === 'suspended') await audioContext.resume();
         recorder.start(250);
 
         const tick = () => {
@@ -525,7 +539,7 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
             const ctx = canvas.getContext('2d');
             if (ctx) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           }
-          raf = window.requestAnimationFrame(draw);
+          drawRaf = window.requestAnimationFrame(draw);
         };
 
         try {
@@ -534,7 +548,7 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
           fail(new Error('The browser blocked playback needed for trimming. Tap "Continue" again.'));
           return;
         }
-        draw();
+        if (canvas) draw();
         tick();
       } catch (error) {
         fail(error instanceof Error ? error : new Error('Trimming failed unexpectedly.'));
