@@ -8,7 +8,7 @@ import {
   updateTransferLimit,
   getCoinPackages, searchWalletUsers,
   getCoinPurchases,
-  exportTransactions,
+  exportTransactions, getReceiveLink, resolveReceiveRecipient,
 } from '../controllers/wallet.controller';
 import { authenticateJWT } from '../middleware/auth.middleware';
 import { rateLimiter } from '../security/rateLimiter';
@@ -68,6 +68,8 @@ router.get('/purchases', getCoinPurchases);
 
 // User search (Send Coins flow)
 router.get('/users/search', searchWalletUsers);
+router.get('/receive-link', getReceiveLink);
+router.get('/receive-recipient', resolveReceiveRecipient);
 
 
 export default router;
