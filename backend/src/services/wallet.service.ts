@@ -348,14 +348,13 @@ export class WalletService {
     reference?: string;
     metadata?: any;
   }) {
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
+      throw new Error("Amount must be a positive whole number of coins");
+    }
     const wallet = await this.ensureWallet(userId);
 
     if (wallet.isFrozen) {
       throw new Error("Wallet is frozen. Contact support.");
-    }
-
-    if (amount <= 0) {
-      throw new Error("Amount must be positive");
     }
 
     // Reserved coins (Follower Rewards, etc.) are never spendable elsewhere:
@@ -416,103 +415,17 @@ export class WalletService {
   // COIN DEPOSITS (0% Platform Fee)
   // ============================================================
 
+  // Retained for older imports only. The legacy controller already returns 410.
+  // Never credit an unverified deposit, even from an internal caller.
   async processDeposit(
-    userId: string,
-    amount: number,
-    coins: number,
-    paymentMethod: string,
-    providerOrderId: string,
-    ipAddress?: string
-  ) {
-    // Check if wallet is frozen
-    const wallet = await this.ensureWallet(userId);
-    if (wallet.isFrozen) {
-      throw new Error("Wallet is frozen. Contact support.");
-    }
-
-    // Check for duplicate provider order ID
-    const existingOrder = await prisma.purchaseOrder.findUnique({
-      where: { providerOrderId },
-    });
-    if (existingOrder?.status === "COMPLETED") {
-      throw new Error("Duplicate payment detected. This order has already been processed.");
-    }
-
-    // Atomic transaction: create order + update wallet + create transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // Record purchase order
-      const orderData = {
-          userId,
-          coins,
-          amount,
-          currency: "USD",
-          provider: "stripe",
-          status: "COMPLETED",
-          providerOrderId,
-          paymentMethod,
-      };
-      const purchaseOrder = existingOrder
-        ? await tx.purchaseOrder.update({ where: { id: existingOrder.id }, data: { status: "COMPLETED", paymentMethod } })
-        : await tx.purchaseOrder.create({ data: orderData });
-
-      // Update wallet balance - 0% platform fee, user gets full coins
-      const updatedWallet = await tx.wallet.update({
-        where: { userId },
-        data: {
-          coinBalance: { increment: coins },
-          totalCoinsPurchased: { increment: coins },
-        },
-      });
-
-      // Create transaction record - positive amount for incoming
-      await tx.walletTransaction.create({
-        data: {
-          walletId: wallet.id,
-          userId,
-          type: "DEPOSIT",
-          amount: coins,
-          fee: 0,
-          balance: updatedWallet.coinBalance,
-          status: "COMPLETED",
-          description: `Purchased ${coins.toLocaleString()} VANTA Coins for $${amount.toFixed(2)}`,
-          reference: purchaseOrder.id,
-          metadata: JSON.stringify({
-            paymentMethod,
-            providerOrderId,
-            amountUSD: amount,
-          }),
-        },
-      });
-
-      // Log audit
-      await tx.walletAuditLog.create({
-        data: {
-          userId,
-          action: "DEPOSIT",
-          details: JSON.stringify({
-            amount,
-            coins,
-            paymentMethod,
-            providerOrderId,
-            ipAddress,
-          }),
-          ipAddress,
-        },
-      });
-
-      return { purchaseOrder, updatedWallet };
-    });
-
-    // Send notification (outside transaction)
-    await notificationService.createNotification(
-      userId,
-      "WALLET_DEPOSIT",
-      "Deposit Successful",
-      `${coins.toLocaleString()} VANTA Coins have been added to your Balance.`,
-      { coins, amount }
-    );
-
-    return result.updatedWallet;
+    _userId: string,
+    _amount: number,
+    _coins: number,
+    _paymentMethod: string,
+    _providerOrderId: string,
+    _ipAddress?: string
+  ): Promise<never> {
+    throw new Error("Legacy deposits are disabled; verified purchase fulfillment is required.");
   }
 
   // ============================================================
@@ -548,6 +461,9 @@ export class WalletService {
       ipAddress?: string;
     } = { mode: "live" }
   ) {
+    if (options.mode !== "live" && options.mode !== "test") {
+      throw new Error("Unsupported purchase completion mode.");
+    }
     const order = await prisma.purchaseOrder.findFirst({ where: { id: orderId, userId } });
     if (!order) throw new Error("Purchase order not found.");
     if (order.status === COIN_PAYMENT_STATUS.COMPLETED) {
@@ -565,6 +481,17 @@ export class WalletService {
       if (Date.now() - createdAt > COIN_PAYMENT_ORDER_TTL_SECONDS * 1000) {
         throw new Error("This payment session has expired. Please start a new purchase.");
       }
+    }
+
+    if (!Number.isSafeInteger(order.coins) || order.coins <= 0 ||
+        !Number.isFinite(order.amount) || order.amount <= 0) {
+      throw new Error("Invalid purchase order amount.");
+    }
+    if (options.mode === "live" && (order.paymentMode !== "live" ||
+        typeof options.providerOrderId !== "string" ||
+        !/^0x[a-fA-F0-9]{64}$/.test(options.providerOrderId.trim()) ||
+        !options.verification || typeof options.verification !== "object")) {
+      throw new Error("Verified live payment reference is required.");
     }
 
     if (options.mode === "test") {
@@ -586,16 +513,18 @@ export class WalletService {
     // The providerOrderId is the strongest duplicate guard: in live mode it is
     // the blockchain transaction hash, and PurchaseOrder.providerOrderId has a
     // UNIQUE constraint at the database level.
-    const providerReference = options.providerOrderId?.trim() || order.providerReference || "";
+    const providerReference = options.mode === "live" ? options.providerOrderId!.trim().toLowerCase() : "";
     const providerOrderId = options.mode === "test"
       ? `test:${orderId}`
-      : `live:${providerReference || orderId}`;
+      : `live:${providerReference}`;
 
     // Conditional status flip makes the completion idempotent under concurrency:
     // a second request finds 0 rows updated and cannot credit twice.
     const result = await prisma.$transaction(async (tx) => {
       const claimed = await tx.purchaseOrder.updateMany({
-        where: { id: orderId, userId, status: { in: [...COIN_PAYMENT_CREDITABLE_STATUSES] } },
+        where: { id: orderId, userId, coins: order.coins, amount: order.amount,
+          paymentMode: order.paymentMode, paymentMethod: order.paymentMethod,
+          status: { in: [...COIN_PAYMENT_CREDITABLE_STATUSES] } },
         data: {
           status: COIN_PAYMENT_STATUS.COMPLETED,
           providerOrderId,
@@ -613,7 +542,7 @@ export class WalletService {
       }
 
       const updatedWallet = await tx.wallet.update({
-        where: { userId },
+        where: { userId, isFrozen: false },
         data: {
           coinBalance: { increment: order.coins },
           totalCoinsPurchased: { increment: order.coins },
@@ -627,7 +556,7 @@ export class WalletService {
           type: TX_TYPES.PURCHASE,
           amount: order.coins,
           fee: 0,
-          balanceBefore: updatedWallet.coinBalance + order.coins,
+          balanceBefore: updatedWallet.coinBalance - order.coins,
           balance: updatedWallet.coinBalance,
           status: "COMPLETED",
           description: `Purchased ${order.coins.toLocaleString()} VANTA Coins for $${order.amount.toFixed(2)}`,

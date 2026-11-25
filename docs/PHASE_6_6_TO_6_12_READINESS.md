@@ -51,6 +51,7 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 - [ ] Review upload access, path traversal, MIME verification, ffmpeg command execution and resource exhaustion.
 - [x] Restrict local HLS demuxers/protocols, validate all generated and reused VOD playlists, bound playlist reads, reject inherited quality names and temporary cleanup symlink aliases. Real provider egress restrictions, input size/duration quotas, resource isolation and staging acceptance remain gated.
 - [ ] Verify wallet/ledger/payment idempotency, authorization, audit logging and secret handling.
+- [x] Disable legacy deposit service, fix purchase ledger before-balance, require explicit live reference, bind fulfillment claim to order values and reject frozen-wallet credit at mutation. Existing purchase routes stay in maintenance; real financial integration and snapshot reconciliation remain gated.
 - [ ] Restore DB and uploaded media from backups in staging; document RPO/RTO.
 - [x] Add disposable CI logical backup/restore exercise using active Prisma schema, synthetic linked records, media checksums and constraint checks; provider backup, migration history and real staging restore remain gated.
 

@@ -90,6 +90,8 @@ jobs:
           src/__tests__/security.verification-admin-routes.test.ts
           src/__tests__/security.audit-log-hash.test.ts
           src/__tests__/wallet.service.test.ts
+          src/__tests__/wallet.coin-purchase.test.ts
+          src/__tests__/coin-purchase-no-bonus.test.ts
           src/__tests__/admin.finance-currency.test.ts
           src/__tests__/account-status.test.ts
           src/__tests__/call-session.service.test.ts
