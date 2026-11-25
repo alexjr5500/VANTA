@@ -75,6 +75,12 @@ describe('GiftService', () => {
   });
 
   describe('sendGift', () => {
+    test.each([undefined, 5, 20])('rejects missing or stale confirmed unit price %s before wallet mutation', async (expectedPrice) => {
+      (prisma.gift.findUnique as jest.Mock).mockResolvedValue(mockGift);
+      await expect(giftService.sendGift('user1', 'user2', 'gift1', undefined, { expectedPrice, requireExpectedPrice: true })).rejects.toThrow('Gift price has changed');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
     test('should send gift successfully and update balances', async () => {
       (prisma.gift.findUnique as jest.Mock).mockResolvedValue(mockGift);
       (prisma.giftTransaction.create as jest.Mock).mockResolvedValue(mockTransaction);
