@@ -1,6 +1,6 @@
 'use client';
 
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { useState } from 'react';
 import GiftArtworkUnique from './GiftArtworkUnique';
 import { giftArtworkAsset } from './giftArtworkAssets';
@@ -20,7 +20,7 @@ export type GiftArtworkProps = {
 
 /**
  * Shared renderer used by VANTA gift surfaces.
- * Catalog-provided media takes precedence; a failed/missing asset falls back
+ * Approved reference artwork takes precedence over old thumbnails; an actual animated video can be used during celebration. A failed/missing asset falls back
  * to the slug-specific artwork. This component changes presentation only.
  */
 export default function GiftArtwork({
@@ -33,15 +33,20 @@ export default function GiftArtwork({
   className = '',
   quality = 1,
 }: GiftArtworkProps) {
-  const [assetFailed, setAssetFailed] = useState(false);
+  const [failedAssetUrl, setFailedAssetUrl] = useState<string | undefined>();
+  const reducedMotion = useReducedMotion();
+  const motionEnabled = animate && !reducedMotion;
   const id = (slug || name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-  const resolvedAssetUrl = assetUrl || giftArtworkAsset(slug, name);
-  const showAsset = Boolean(resolvedAssetUrl && !assetFailed);
+  const referenceAsset = giftArtworkAsset(slug, name);
+  const suppliedVideo = assetUrl && /\.(mp4|webm)(\?|$)/i.test(assetUrl);
+  const preferredAsset = motionEnabled && suppliedVideo ? assetUrl : referenceAsset || assetUrl;
+  const resolvedAssetUrl = preferredAsset === failedAssetUrl ? (referenceAsset !== failedAssetUrl ? referenceAsset : undefined) : preferredAsset;
+  const showAsset = Boolean(resolvedAssetUrl);
   const isVideo = Boolean(resolvedAssetUrl && /\.(mp4|webm)(\?|$)/i.test(resolvedAssetUrl));
 
   const common = {
     initial: { y: 0, rotate: 0, scale: 1 },
-    animate: animate ? { y: [0, -5, 0], rotate: [-2, 2, -2], scale: [1, 1.04, 1] } : undefined,
+    animate: motionEnabled ? { y: [0, -5, 0], rotate: [-2, 2, -2], scale: [1, 1.04, 1] } : undefined,
     transition: { duration: 3, repeat: Infinity, ease: 'easeInOut' as const },
   };
 
@@ -51,20 +56,20 @@ export default function GiftArtwork({
         isVideo ? (
           <video
             src={resolvedAssetUrl}
-            autoPlay={animate}
+            autoPlay={motionEnabled}
             loop
             muted
             playsInline
-            preload={animate ? 'metadata' : 'none'}
-            onError={() => setAssetFailed(true)}
+            preload={motionEnabled ? 'metadata' : 'none'}
+            onError={() => setFailedAssetUrl(resolvedAssetUrl)}
             className="h-full w-full object-contain"
           />
         ) : (
           <img
             src={resolvedAssetUrl}
             alt={name || 'VANTA gift'}
-            loading={animate ? 'eager' : 'lazy'}
-            onError={() => setAssetFailed(true)}
+            loading={motionEnabled ? 'eager' : 'lazy'}
+            onError={() => setFailedAssetUrl(resolvedAssetUrl)}
             className="h-full w-full object-contain"
           />
         )
