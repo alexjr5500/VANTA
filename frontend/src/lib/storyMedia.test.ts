@@ -93,5 +93,6 @@ describe('storyMedia multi-file selection rules', () => {
     expect(toUserFacingStoryError(new Error('Network error while uploading. Check your connection.'))).toContain('network');
     expect(toUserFacingStoryError({ statusCode: 499, message: 'Upload cancelled' })).toContain('cancelled');
     expect(toUserFacingStoryError(new Error('something else'))).toContain('something else');
+    expect(toUserFacingStoryError(new Error('Invalid `prisma.story.create()` invocation: The column `replyAudience` does not exist in the current database.'))).toBe('Status posting is temporarily unavailable. Please try again later.');
   });
 });
