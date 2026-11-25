@@ -68,5 +68,6 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 - [ ] Record baseline p50/p95/p99 API latency, errors, throughput and cost under controlled load.
 - [ ] Optimize hot database queries/indexes, frontend rendering, startup, media payloads, pagination and redundant requests.
 - [ ] Measure real Android production builds on low-end devices and constrained Nigerian mobile networks (cold/warm start, scroll, Reels startup, chat, upload resume, data use).
+- [x] Add offline comparison evaluator, sample validation, matched-condition gates, error accounting and synthetic CI tests.
 - [ ] Compare equivalent flows against competing apps on the same device/network; record methodology, versions, sample size and variance. Never claim superiority without comparable measurements.
 - [ ] Verify performance and reliability budgets in staging before release; repeat against a controlled post-release baseline only after approval.
