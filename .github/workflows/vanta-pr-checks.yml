@@ -108,6 +108,22 @@ jobs:
           src/__tests__/post.service.test.ts
           src/ai/__tests__/privacy.middleware.test.ts
 
+      - name: Install media verification tools
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version
+          ffprobe -version
+      - name: Verify actual Status video media
+        env:
+          RUN_STATUS_MEDIA_INTEGRATION: '1'
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_test?schema=public
+          JWT_SECRET: test-jwt-secret-long-enough-for-tests
+          JWT_REFRESH_SECRET: test-jwt-refresh-secret-long-enough-for-tests
+        run: npm --prefix backend run test -- --runInBand src/__tests__/status-video-media.integration.test.ts
+
   backend-build:
     name: Backend TypeScript production build
     runs-on: ubuntu-latest
