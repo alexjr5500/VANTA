@@ -22,6 +22,7 @@ import BuyCoinsModal from '@/components/wallet/BuyCoinsModal';
 import SendCoinsModal from '@/components/wallet/SendCoinsModal';
 import WithdrawModal from '@/components/wallet/WithdrawModal';
 import ReceiveCoinsModal from '@/components/wallet/ReceiveCoinsModal';
+import WalletActivity from '@/components/wallet/WalletActivity';
 import { useWalletDialog } from '@/components/wallet/useWalletDialog';
 
 // ============================================================================
@@ -128,6 +129,16 @@ export default function BalancePage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [directionFilter, setDirectionFilter] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [historyRows, setHistoryRows] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [historyRetry, setHistoryRetry] = useState(0);
+  const [receiptNotice, setReceiptNotice] = useState('');
+  const historyVersion = useRef(0);
   const [activeTab, setActiveTab] = useState<BalanceTab>('overview');
   const [showBuyModal, setShowBuyModal] = useState(false);
   const [showSendModal, setShowSendModal] = useState(false);
@@ -194,8 +205,7 @@ export default function BalancePage() {
       setWallet(walletData);
       const txList = Array.isArray(txData) ? txData : txData?.transactions ?? txData?.data ?? [];
       setTransactions(Array.isArray(txList) ? txList : []);
-      setTransactionOffset(Array.isArray(txList) ? txList.length : 0);
-      setTransactionTotal(Number.isSafeInteger(txData?.total) ? txData.total : (Array.isArray(txList) ? txList.length : 0));
+      setHistoryRetry(v => v + 1);
       const giftDataObj = Array.isArray(giftData) ? { sentGifts: giftData, receivedGifts: [] } : giftData;
       const sentList = giftDataObj?.sentGifts ?? [];
       const recvList = giftDataObj?.receivedGifts ?? [];
@@ -260,25 +270,52 @@ export default function BalancePage() {
     fetchWallet();
   };
 
+  const historyQuery = useMemo(() => {
+    const params = new URLSearchParams();
+    if (filter !== 'all') params.set('type', filter);
+    if (searchQuery.trim()) params.set('search', searchQuery.trim());
+    if (statusFilter) params.set('status', statusFilter);
+    if (directionFilter) params.set('direction', directionFilter);
+    if (startDate) params.set('startDate', new Date(startDate + 'T00:00:00').toISOString());
+    if (endDate) params.set('endDate', new Date(endDate + 'T23:59:59.999').toISOString());
+    return params.toString();
+  }, [filter, searchQuery, statusFilter, directionFilter, startDate, endDate]);
+
+  useEffect(() => {
+    const version = ++historyVersion.current;
+    loadMoreLock.current = false;
+    setLoadingMore(false); setMoreError(''); setHistoryRows([]); setTransactionOffset(0); setTransactionTotal(0);
+    setHistoryError('');
+    if (!token || activeTab !== 'transactions') { setHistoryLoading(false); return; }
+    if (startDate && endDate && startDate > endDate) { setHistoryError('Start date must be before end date.'); setHistoryLoading(false); return; }
+    setHistoryLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const page = await apiGet<any>('/api/wallets/transactions?limit=50&offset=0&' + historyQuery, token, { skipCache: true });
+        if (version !== historyVersion.current) return;
+        if (!Array.isArray(page?.transactions) || !Number.isSafeInteger(page?.total)) throw new Error('Invalid history');
+        setHistoryRows(page.transactions); setTransactionOffset(page.transactions.length); setTransactionTotal(page.total);
+      } catch { if (version === historyVersion.current) setHistoryError('Could not load transaction history.'); }
+      finally { if (version === historyVersion.current) setHistoryLoading(false); }
+    }, 250);
+    return () => { window.clearTimeout(timer); historyVersion.current++; };
+  }, [token, activeTab, historyQuery, historyRetry, startDate, endDate]);
+
   const loadMore = async () => {
-    if (!token || loadMoreLock.current || transactionOffset >= transactionTotal) return;
-    const version = requestVersion.current;
+    if (!token || historyLoading || loadMoreLock.current || transactionOffset >= transactionTotal) return;
+    const version = historyVersion.current;
     loadMoreLock.current = true;
-    setLoadingMore(true);
-    setMoreError('');
+    setLoadingMore(true); setMoreError('');
     try {
-      const page = await apiGet<any>(`/api/wallets/transactions?limit=50&offset=${transactionOffset}`, token, { skipCache: true });
-      if (version !== requestVersion.current) return;
-      const rows = Array.isArray(page?.transactions) ? page.transactions : [];
-      setTransactions(previous => [...new Map([...previous, ...rows].map(row => [row.id, row])).values()]);
-      setTransactionOffset(previous => previous + rows.length);
-      if (Number.isSafeInteger(page?.total)) setTransactionTotal(page.total);
-      if (!rows.length) setMoreError('No additional transactions returned. Refresh history to try again.');
-    } catch {
-      if (version === requestVersion.current) setMoreError('Could not load more transactions. Try again.');
-    } finally {
-      if (version === requestVersion.current) { loadMoreLock.current = false; setLoadingMore(false); }
-    }
+      const page = await apiGet<any>('/api/wallets/transactions?limit=50&offset=' + transactionOffset + '&' + historyQuery, token, { skipCache: true });
+      if (version !== historyVersion.current) return;
+      if (!Array.isArray(page?.transactions) || !Number.isSafeInteger(page?.total)) throw new Error('Invalid history');
+      const rows = page.transactions;
+      setHistoryRows(previous => [...new Map([...previous, ...rows].map(row => [row.id, row])).values()]);
+      setTransactionOffset(previous => previous + rows.length); setTransactionTotal(page.total);
+      if (!rows.length) setMoreError('No additional records returned. Refresh history.');
+    } catch { if (version === historyVersion.current) setMoreError('Could not load more transactions. Try again.'); }
+    finally { if (version === historyVersion.current) { loadMoreLock.current = false; setLoadingMore(false); } }
   };
 
   const handleExport = async () => {
@@ -286,7 +323,7 @@ export default function BalancePage() {
     setExporting(true);
     setExportError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/api/wallets/transactions/export`, {
+      const response = await fetch(`${API_BASE_URL}/api/wallets/transactions/export?${historyQuery}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) throw new Error('Export failed');
@@ -306,33 +343,19 @@ export default function BalancePage() {
     }
   };
 
-  // Filter transactions
-  const filteredTx = useMemo(() => {
-    let list = transactions;
-    if (searchQuery) {
-      const q = searchQuery.trim().toLowerCase().replace(/^@/, '');
-      list = list.filter(tx =>
-        (tx.description || '').toLowerCase().includes(q) ||
-        (tx.type || '').toLowerCase().includes(q) ||
-        (tx.counterparty?.username || '').toLowerCase().includes(q) ||
-        String(tx.reference || '').toLowerCase().includes(q) ||
-        formatTxLabel(tx.type).toLowerCase().includes(q)
-      );
-    }
-    if (filter !== 'all') {
-      const typeMap: Record<string, string[]> = {
-        purchases: ['PURCHASE', 'DEPOSIT'],
-        transfers: ['TRANSFER_SENT', 'TRANSFER_RECEIVED'],
-        gifts: ['GIFT_SENT', 'GIFT_RECEIVED'],
-        earnings: ['GIFT_RECEIVED', 'CREATOR_EARNING'],
-        withdrawals: ['WITHDRAWAL'],
-        refunds: ['REFUND'],
-      };
-      const types = typeMap[filter];
-      if (types) list = list.filter(tx => types.includes(tx.type));
-    }
-    return [...list].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [transactions, filter, searchQuery]);
+  const filteredTx = historyRows;
+  const hasFilters = Boolean(searchQuery.trim() || filter !== 'all' || statusFilter || directionFilter || startDate || endDate);
+  const clearFilters = () => { setSearchQuery(''); setFilter('all'); setStatusFilter(''); setDirectionFilter(''); setStartDate(''); setEndDate(''); };
+
+  const downloadReceipt = (tx: any) => {
+    const lines = ['VANTA transaction record', 'ID: ' + tx.id, 'Reference: ' + (tx.reference || 'Not assigned'), 'Date: ' + tx.createdAt,
+      'Type: ' + formatTxLabel(tx.type), 'Status: ' + tx.status, 'Currency: ' + tx.currency,
+      'Ledger amount: ' + (tx.displayAmount ?? tx.amount), 'Fee (included in sender transfer debit): ' + (tx.fee ?? 0),
+      'Balance after entry: ' + tx.balance, 'This record does not confirm external settlement.'];
+    const url = URL.createObjectURL(new Blob([lines.join('\n')], {type:'text/plain;charset=utf-8'}));
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'vanta-transaction-' + tx.id + '.txt';
+    document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 
   const recentTx = [...transactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5);
   const sortedGifts = [...gifts].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -536,6 +559,7 @@ export default function BalancePage() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-3"
         >
+          {token && <WalletActivity token={token} hidden={hideBalance}/>}
           {/* Recent Transactions */}
           <section className="rounded-xl border border-white/[0.07] bg-[var(--surface)] p-3">
             <div className="flex items-center justify-between mb-4">
@@ -551,7 +575,7 @@ export default function BalancePage() {
               </button>
             </div>
 
-            {historyErrors.includes('Transactions') ? <p className="py-4 text-sm text-[var(--text-secondary)]">Transaction history could not load.</p> : recentTx.length === 0 ? (
+            {hideBalance ? <p className="text-sm text-[var(--text-secondary)]">Recent transactions hidden.</p> : historyErrors.includes('Transactions') ? <p className="py-4 text-sm text-[var(--text-secondary)]">Transaction history could not load.</p> : recentTx.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center">
                 <History size={28} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
                 <p className="text-sm text-[var(--text-secondary)]">No transactions yet.</p>
@@ -567,7 +591,7 @@ export default function BalancePage() {
                   return (
                     <button
                       key={tx.id}
-                      onClick={() => setSelectedTx(tx)}
+                      onClick={() => {setReceiptNotice(''); setSelectedTx(tx);}}
                       className="flex min-h-14 w-full items-center gap-3 rounded-lg p-2 text-left transition hover:bg-white/[0.03]"
                     >
                       <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center border shrink-0', getTxColor(tx.type))}>
@@ -614,7 +638,7 @@ export default function BalancePage() {
               </button>
             </div>
 
-            {historyErrors.includes('Gifts') ? <p className="py-4 text-sm text-[var(--text-secondary)]">Gift history could not load.</p> : recentGifts.length === 0 ? (
+            {hideBalance ? <p className="text-sm text-[var(--text-secondary)]">Gift activity hidden.</p> : historyErrors.includes('Gifts') ? <p className="py-4 text-sm text-[var(--text-secondary)]">Gift history could not load.</p> : recentGifts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center">
                 <Gift size={28} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
                 <p className="text-sm text-[var(--text-secondary)]">No gift activity yet.</p>
@@ -702,7 +726,7 @@ export default function BalancePage() {
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 placeholder="Search transactions..."
-                aria-label="Search loaded transactions"
+                aria-label="Search all transactions" maxLength={120}
                 className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-[var(--text-primary)] placeholder-[#8A8A8A] outline-none transition-all"
               />
             </div>
@@ -728,7 +752,7 @@ export default function BalancePage() {
               </div>
               <button
                 onClick={handleExport}
-                disabled={exporting || historyErrors.includes('Transactions') || transactions.length === 0}
+                disabled={exporting || historyLoading || Boolean(historyError) || transactionTotal === 0 || hideBalance}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-[var(--text-secondary)] hover:text-white disabled:opacity-50 transition-all"
               >
                 {exporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
@@ -737,15 +761,16 @@ export default function BalancePage() {
             </div>
           </div>
 
+          <div className="grid grid-cols-2 gap-2 text-xs"><label className="min-w-0">Status<select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className="mt-1 min-h-11 w-full rounded-lg bg-[var(--surface)] p-2"><option value="">All statuses</option>{['COMPLETED','PENDING','FAILED','REVERSED'].map(s=><option key={s} value={s}>{s}</option>)}</select></label><label className="min-w-0">Direction<select value={directionFilter} onChange={e=>setDirectionFilter(e.target.value)} className="mt-1 min-h-11 w-full rounded-lg bg-[var(--surface)] p-2"><option value="">All directions</option><option value="incoming">Incoming</option><option value="outgoing">Outgoing</option></select></label><label className="min-w-0">From<input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="mt-1 min-h-11 w-full min-w-0 rounded-lg bg-[var(--surface)] p-2"/></label><label className="min-w-0">To<input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} className="mt-1 min-h-11 w-full min-w-0 rounded-lg bg-[var(--surface)] p-2"/></label></div>
           {exportError && <p role="alert" className="text-sm text-red-300">{exportError}</p>}
-          <p role="status" className="text-xs text-[var(--text-secondary)]">{filteredTx.length} matching · {transactions.length} of {transactionTotal} transactions loaded. Search and filters apply to loaded records. CSV exports up to 10,000 recent records.</p>
+          <p role="status" className="text-xs text-[var(--text-secondary)]">{hideBalance ? 'History hidden by wallet privacy.' : `${historyRows.length} of ${transactionTotal} matching transactions loaded. CSV exports up to 10,000 matching records.`}</p>
           {/* Transaction List */}
-          {filteredTx.length === 0 ? (
+          {hideBalance ? null : historyLoading ? <p role="status">Loading transactions…</p> : historyError ? <p role="alert" className="text-sm">{historyError} <button type="button" onClick={()=>setHistoryRetry(v=>v+1)} className="min-h-11 text-[var(--vanta-gold-bright)]">Retry</button></p> : filteredTx.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center rounded-3xl bg-white/[0.02] border border-white/[0.04]">
               <History size={32} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
-              <h3 className="text-[var(--text-primary)] font-medium text-base mb-1">{historyErrors.includes('Transactions') ? 'History unavailable' : searchQuery.trim() || filter !== 'all' ? 'No matching transactions' : 'No transactions yet'}</h3>
+              <h3 className="text-[var(--text-primary)] font-medium text-base mb-1">{hasFilters ? 'No matching transactions' : 'No transactions yet'}</h3>
               <p className="text-[var(--text-secondary)] text-sm max-w-xs">
-                 {historyErrors.includes('Transactions') ? 'Retry loading your history.' : searchQuery.trim() || filter !== 'all' ? 'Try another search or clear the filters.' : 'Your transaction history will appear here when you buy, send, or receive VANTA Coins.'}
+                 {hasFilters ? 'Try another search or clear the filters.' : 'Your transaction history will appear here when you buy, send, or receive VANTA Coins.'}
               </p>
             </div>
           ) : (
@@ -757,12 +782,13 @@ export default function BalancePage() {
                 const isUsd = tx.currency === 'USD';
                 const formattedAmount = isUsd ? Math.abs(displayAmount).toFixed(2) : Math.abs(displayAmount).toLocaleString();
                 return (
+                  <div key={tx.id}>
+                  {(i === 0 || formatDate(filteredTx[i-1].createdAt) !== formatDate(tx.createdAt)) && <h3 className="px-2 pt-3 text-xs font-semibold text-[var(--text-secondary)]">{formatDate(tx.createdAt)}</h3>}
                   <motion.button
-                    key={tx.id}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: Math.min(i * 0.02, 0.5) }}
-                    onClick={() => setSelectedTx(tx)}
+                    onClick={() => {setReceiptNotice(''); setSelectedTx(tx);}}
                     className="w-full flex items-center gap-4 p-4 rounded-lg hover:bg-white/[0.03] transition-colors text-left"
                   >
                     <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center border shrink-0', getTxColor(tx.type))}>
@@ -802,13 +828,14 @@ export default function BalancePage() {
                       <p className="text-[11px] text-[var(--text-secondary)]">Balance: {isUsd ? '$' : ''}{isUsd ? Number(tx.balance ?? 0).toFixed(2) : (tx.balance ?? 0).toLocaleString()}</p>
                     </div>
                   </motion.button>
+                  </div>
                 );
               })}
             </div>
           )}
-          {(searchQuery || filter !== 'all') && <button type="button" onClick={() => { setSearchQuery(''); setFilter('all'); }} className="min-h-11 px-3 text-sm font-semibold text-[var(--vanta-gold-bright)]">Clear filters</button>}
+          {hasFilters && <button type="button" onClick={clearFilters} className="min-h-11 px-3 text-sm font-semibold text-[var(--vanta-gold-bright)]">Clear filters</button>}
           {moreError && <p role="alert" className="text-sm text-red-300">{moreError}</p>}
-          {transactionOffset < transactionTotal && <button type="button" onClick={loadMore} disabled={loadingMore} className="min-h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] text-sm font-semibold text-[var(--vanta-gold-bright)] disabled:opacity-50">{loadingMore ? 'Loading…' : 'Load older transactions'}</button>}
+          {!hideBalance && !historyLoading && !historyError && transactionOffset < transactionTotal && <button type="button" onClick={loadMore} disabled={loadingMore} className="min-h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] text-sm font-semibold text-[var(--vanta-gold-bright)] disabled:opacity-50">{loadingMore ? 'Loading…' : 'Load older transactions'}</button>}
         </motion.div>
       )}
 
@@ -1159,6 +1186,7 @@ export default function BalancePage() {
                       <span className="font-medium text-[var(--text-primary)]">@{selectedTx.counterparty.username}</span>
                     </div>
                   )}
+                  <div className="flex justify-between gap-2 text-xs"><span>Transaction ID</span><span className="max-w-[65%] break-all text-right font-mono">{selectedTx.id}</span></div>
                   {selectedTx.reference && (
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-[var(--text-secondary)]">Reference</span>
@@ -1167,6 +1195,8 @@ export default function BalancePage() {
                   )}
                 </div>
 
+                <div className="grid grid-cols-2 gap-2"><button type="button" onClick={async()=>{try{await navigator.clipboard.writeText(selectedTx.reference || selectedTx.id);setReceiptNotice('Reference copied.');}catch{setReceiptNotice('Copy unavailable. Select the displayed reference instead.');}}} className="min-h-11 rounded-lg bg-[var(--surface)] text-xs">Copy reference</button><button type="button" onClick={()=>downloadReceipt(selectedTx)} className="min-h-11 rounded-lg bg-[var(--vanta-gold)] text-xs font-semibold text-black">Download record</button></div>
+                {receiptNotice && <p role="status" className="text-xs">{receiptNotice}</p>}
                 {selectedTx.description && (
                   <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{selectedTx.description}</p>
                 )}
