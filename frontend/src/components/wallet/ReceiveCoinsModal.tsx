@@ -1,5 +1,7 @@
 'use client';
 
+import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
+
 import { useEffect, useState } from 'react';
 import { X, Copy, Share2, Shield, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -44,7 +46,7 @@ export default function ReceiveCoinsModal({ open, onClose }: Props) {
   if (!open) return null;
   return <div className="fixed inset-0 z-[101] grid place-items-center bg-black/70 p-3" onClick={onClose}>
     <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Receive VANTA Coins" onClick={event => event.stopPropagation()} className="vanta-wallet-ui w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--background-secondary)] p-4 sm:p-6">
-      <header className="flex items-center justify-between gap-3"><h2 className="text-lg font-bold text-[var(--vanta-gold-bright)]">Receive VANTA</h2><button type="button" aria-label="Close" onClick={onClose} className="grid h-11 w-11 place-items-center"><X size={20}/></button></header>
+      <header className="flex items-center justify-between gap-3"><h2 className="flex items-center gap-2 text-lg font-bold text-[var(--vanta-gold-bright)]"><VantaCoinIcon size={24} decorative />Receive VANTA</h2><button type="button" aria-label="Close" onClick={onClose} className="grid h-11 w-11 place-items-center"><X size={20}/></button></header>
       <div className="flex flex-col items-center gap-2 py-4">
         <Avatar size="xl" src={typeof user?.avatar === 'string' ? user.avatar : undefined} alt={user?.username || 'Your profile'} verified={Boolean(user?.verified)}/>
         <p className="break-all font-semibold">@{user?.username}</p>
