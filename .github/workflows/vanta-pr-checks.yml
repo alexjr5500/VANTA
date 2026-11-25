@@ -240,3 +240,7 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
           VANTA_CI_REDIS_URL: redis://127.0.0.1:6379
         run: npm --prefix backend run test -- --runInBand src/__tests__/cache.shared.redis.integration.test.ts
+      - name: Verify cross-server Socket.IO delivery
+        env:
+          VANTA_CI_REDIS_URL: redis://127.0.0.1:6379
+        run: npm --prefix backend run test -- --runInBand src/__tests__/realtime-redis.integration.test.ts

@@ -63,11 +63,14 @@ import { setSocialEventsIO } from './services/social-events.service';
 import { apiLatencyMiddleware, healthStatus, metricsCollector, cacheService, setupDefaultAlerts } from './services';
 import { uploadStorageDir, getStorageDiagnostics } from './services/upload.service';
 import { ServerReadiness, BackgroundDrain, shutdownWithin } from './services/server-lifecycle';
+import { realtimeRedisConfig, RealtimeRedisAdapter } from './services/realtime-redis-adapter';
 
 const app: Express = express();
+const realtimeConfig = realtimeRedisConfig(process.env);
+const realtimeAdapter = new RealtimeRedisAdapter(realtimeConfig);
 const traffic = new ServerReadiness(
   () => prisma.$queryRaw`SELECT 1`,
-  () => process.env.VANTA_READINESS_REQUIRE_REDIS !== 'true' || cacheService.isRedisAvailable,
+  () => realtimeAdapter.ready && (process.env.VANTA_READINESS_REQUIRE_REDIS !== 'true' || cacheService.isRedisAvailable),
 );
 const backgroundDrain = new BackgroundDrain();
 
@@ -542,7 +545,8 @@ app.use('/api/analytics', analyticsRouter);
 // ============================================================================
 
 const io = new Server(httpServer, {
-  allowRequest: (_req, callback) => callback(null, !traffic.draining),
+  ...(realtimeConfig?.transport === 'websocket' ? { transports: ['websocket' as const] } : {}),
+  allowRequest: (_req, callback) => callback(null, !traffic.draining && realtimeAdapter.ready),
   cors: {
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
       if (isOriginAllowed(origin, corsAllowedOrigins, isProduction)) {
@@ -850,8 +854,11 @@ async function startServer() {
     // verification are under maintenance. Existing wallet balances, ledgers,
     // withdrawals, and completed entitlements remain untouched.
 
-    // Start HTTP server
+    // Install distributed room delivery before accepting any connection.
     if (traffic.draining) return;
+    await realtimeAdapter.start(io);
+    // Start HTTP server
+    if (traffic.draining) { realtimeAdapter.close(); return; }
     httpServer.listen(PORT, () => {
       traffic.markServing();
       console.info(`Server running on port ${PORT}`);
@@ -859,7 +866,8 @@ async function startServer() {
     });
   } catch (error) {
     console.error('Server startup failed:', error);
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV === 'production' || realtimeConfig) {
+      realtimeAdapter.close();
       process.exit(1);
     } else {
       console.warn('Continuing despite startup errors in non-production environment.');
@@ -913,6 +921,7 @@ if (process.env.VANTA_GRACEFUL_SHUTDOWN_ENABLED === 'true') {
       // Socket.IO closes its clients and the underlying HTTP server. Node waits
       // for already accepted HTTP responses before the close callback returns.
       await Promise.all([sweeps, new Promise<void>(resolve => { void io.close(() => resolve()); })]);
+      realtimeAdapter.close();
       await cacheService.closeRedisConnection();
       await prisma.$disconnect();
     }, 25000).then(clean => {

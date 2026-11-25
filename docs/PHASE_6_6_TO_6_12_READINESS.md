@@ -35,6 +35,7 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 - [x] Add opt-in per-process connection pool bounds, connection budget calculation and read-only replica readiness probe; actual replica provisioning, lag baselines and routing remain gated.
 - [ ] Verify mobile bandwidth and video rendition switching.
 - [x] Add opt-in shared-only Redis cache mode and cross-client regression tests; live staging and distributed tag invalidation/call-site review remain required.
+- [x] Add opt-in Socket.IO Redis room adapter and two-server integration coverage; distributed presence, authorization state, sticky routing and real client acceptance remain gated.
 - [ ] Performance optimization and competitive benchmarking (Phase 6.13); see `docs/PERFORMANCE_BENCHMARKING.md`.
 
 ## 6.11 — Security and recovery
