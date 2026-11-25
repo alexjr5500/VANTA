@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { API_BASE_URL } from '@/lib/api';
@@ -21,15 +21,9 @@ import BuyCoinsModal from '@/components/wallet/BuyCoinsModal';
 
 import SendCoinsModal from '@/components/wallet/SendCoinsModal';
 import WithdrawModal from '@/components/wallet/WithdrawModal';
+import { useWalletDialog } from '@/components/wallet/useWalletDialog';
 
 // ============================================================================
-function csvCell(value: unknown): string {
-  const raw = String(value ?? '');
-  // Prefix spreadsheet formula-like text before CSV quoting.
-  const safe = /^[\s\u0000-\u001f]*[=+@\-]/.test(raw) ? `'${raw}` : raw;
-  return `"${safe.replace(/"/g, '""')}"`;
-}
-
 // TRANSACTION TYPE HELPERS
 // ============================================================================
 
@@ -140,6 +134,16 @@ export default function BalancePage() {
   const [selectedTx, setSelectedTx] = useState<any>(null);
   const [hideBalance, setHideBalance] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const [historyErrors, setHistoryErrors] = useState<string[]>([]);
+  const [transactionTotal, setTransactionTotal] = useState(0);
+  const [transactionOffset, setTransactionOffset] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState('');
+  const [twoFactor, setTwoFactor] = useState<boolean | null>(null);
+  const requestVersion = useRef(0);
+  const loadMoreLock = useRef(false);
+  const detailsRef = useWalletDialog<HTMLDivElement>(Boolean(selectedTx), () => setSelectedTx(null));
 
   // Deep links (e.g. wallet notifications land on /balance/transactions, which
   // redirects to /balance?tab=transactions) must select the requested tab on
@@ -164,21 +168,31 @@ export default function BalancePage() {
   }, [router]);
 
   const fetchWallet = useCallback(async () => {
-    if (!token) return;
+    if (!token) { setLoading(false); return; }
+    const version = ++requestVersion.current;
+    loadMoreLock.current = false;
+    setLoadingMore(false);
+    setMoreError('');
     setLoading(true);
     setError(null);
     try {
-      const [walletData, txData, giftData, withdrawalData] = await Promise.all([
+      const [walletData, txData, giftData, withdrawalData, securityData] = await Promise.all([
         apiGet<any>('/api/wallets/me', token, { skipCache: true }),
-        apiGet<any>('/api/wallets/transactions', token, { skipCache: true }).catch(() => ({ transactions: [] })),
-        apiGet<any>('/api/wallets/gift-history', token, { skipCache: true }).catch(() => ({ sentGifts: [], receivedGifts: [] })),
-        apiGet<any>('/api/wallets/withdrawals/history', token, { skipCache: true }).catch(() => ({ withdrawals: [] })),
+        apiGet<any>('/api/wallets/transactions?limit=50&offset=0', token, { skipCache: true }).catch(() => null),
+        apiGet<any>('/api/wallets/gift-history', token, { skipCache: true }).catch(() => null),
+        apiGet<any>('/api/wallets/withdrawals/history', token, { skipCache: true }).catch(() => null),
+        apiGet<{ enabled: boolean }>('/api/auth/2fa/status', token, { skipCache: true }).catch(() => null),
       ]);
+      if (version !== requestVersion.current) return;
+      setHistoryErrors([...(txData === null ? ['Transactions'] : []), ...(giftData === null ? ['Gifts'] : []), ...(withdrawalData === null ? ['Withdrawals'] : [])]);
+      setTwoFactor(typeof securityData?.enabled === 'boolean' ? securityData.enabled : null);
       const loadedBalance = Number(walletData?.coinBalance);
       if (!Number.isSafeInteger(loadedBalance) || loadedBalance < 0) throw new Error('The Balance service returned invalid account data.');
       setWallet(walletData);
       const txList = Array.isArray(txData) ? txData : txData?.transactions ?? txData?.data ?? [];
       setTransactions(Array.isArray(txList) ? txList : []);
+      setTransactionOffset(Array.isArray(txList) ? txList.length : 0);
+      setTransactionTotal(Number.isSafeInteger(txData?.total) ? txData.total : (Array.isArray(txList) ? txList.length : 0));
       const giftDataObj = Array.isArray(giftData) ? { sentGifts: giftData, receivedGifts: [] } : giftData;
       const sentList = giftDataObj?.sentGifts ?? [];
       const recvList = giftDataObj?.receivedGifts ?? [];
@@ -189,14 +203,15 @@ export default function BalancePage() {
       const wdData = Array.isArray(withdrawalData) ? withdrawalData : withdrawalData?.withdrawals ?? [];
       setWithdrawals(Array.isArray(wdData) ? wdData : []);
     } catch (err: any) {
-      setError(err.message || 'Couldn\'t load your balance.');
+      if (version === requestVersion.current) setError(err.message || 'Couldn\'t load your balance.');
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   }, [token]);
 
   useEffect(() => {
-    fetchWallet();
+    void fetchWallet();
+    return () => { requestVersion.current++; };
   }, [fetchWallet]);
 
   const coinBalance = Number(wallet?.coinBalance ?? 0);
@@ -222,9 +237,31 @@ export default function BalancePage() {
     fetchWallet();
   };
 
+  const loadMore = async () => {
+    if (!token || loadMoreLock.current || transactionOffset >= transactionTotal) return;
+    const version = requestVersion.current;
+    loadMoreLock.current = true;
+    setLoadingMore(true);
+    setMoreError('');
+    try {
+      const page = await apiGet<any>(`/api/wallets/transactions?limit=50&offset=${transactionOffset}`, token, { skipCache: true });
+      if (version !== requestVersion.current) return;
+      const rows = Array.isArray(page?.transactions) ? page.transactions : [];
+      setTransactions(previous => [...new Map([...previous, ...rows].map(row => [row.id, row])).values()]);
+      setTransactionOffset(previous => previous + rows.length);
+      if (Number.isSafeInteger(page?.total)) setTransactionTotal(page.total);
+      if (!rows.length) setMoreError('No additional transactions returned. Refresh history to try again.');
+    } catch {
+      if (version === requestVersion.current) setMoreError('Could not load more transactions. Try again.');
+    } finally {
+      if (version === requestVersion.current) { loadMoreLock.current = false; setLoadingMore(false); }
+    }
+  };
+
   const handleExport = async () => {
-    if (!token) return;
+    if (!token || exporting) return;
     setExporting(true);
+    setExportError('');
     try {
       const response = await fetch(`${API_BASE_URL}/api/wallets/transactions/export`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -235,30 +272,12 @@ export default function BalancePage() {
       const a = document.createElement('a');
       a.href = url;
       a.download = `vanta-transactions-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch {
-      // Fallback: client-side CSV
-      const headers = ['Date', 'Type', 'Currency', 'Description', 'Amount', 'Fee', 'Balance', 'Status', 'Reference'];
-      const rows = transactions.map((tx: any) => [
-        new Date(tx.createdAt).toISOString(),
-        tx.type,
-        tx.currency || 'VANTA',
-        tx.description || '',
-        tx.displayAmount ?? tx.amount ?? 0,
-        tx.fee ?? 0,
-        tx.balance ?? 0,
-        tx.status,
-        tx.reference || '',
-      ]);
-      const csv = [headers, ...rows].map(row => row.map(csvCell).join(',')).join('\n');
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `vanta-transactions-${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
+      setExportError('Could not export the transaction history. Please try again.');
     } finally {
       setExporting(false);
     }
@@ -268,11 +287,13 @@ export default function BalancePage() {
   const filteredTx = useMemo(() => {
     let list = transactions;
     if (searchQuery) {
-      const q = searchQuery.toLowerCase();
+      const q = searchQuery.trim().toLowerCase().replace(/^@/, '');
       list = list.filter(tx =>
         (tx.description || '').toLowerCase().includes(q) ||
         (tx.type || '').toLowerCase().includes(q) ||
-        (tx.counterparty?.username || '').toLowerCase().includes(q)
+        (tx.counterparty?.username || '').toLowerCase().includes(q) ||
+        String(tx.reference || '').toLowerCase().includes(q) ||
+        formatTxLabel(tx.type).toLowerCase().includes(q)
       );
     }
     if (filter !== 'all') {
@@ -290,19 +311,19 @@ export default function BalancePage() {
     return [...list].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [transactions, filter, searchQuery]);
 
-  const recentTx = filteredTx.slice(0, 5);
-  const recentGifts = gifts.slice(0, 5);
+  const recentTx = [...transactions].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5);
+  const recentGifts = [...gifts].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 5);
 
-  if (loading) return <BalanceSkeleton />;
+  if (loading) return <div role="status" aria-label="Loading balance"><BalanceSkeleton /></div>;
 
-  if (error) {
+  if (error || !wallet) {
     return (
       <div className="mx-auto flex min-h-[calc(100dvh-8rem)] max-w-sm flex-col items-center justify-center px-4 text-center">
         <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)]">
           <Loader2 size={24} className="text-[var(--text-secondary)]" />
         </div>
         <h2 className="mb-2 text-base font-semibold text-[var(--text-primary)]">Balance could not load</h2>
-        <p className="mb-6 text-sm leading-5 text-[var(--text-secondary)]">{error}</p>
+        <p className="mb-6 text-sm leading-5 text-[var(--text-secondary)]">{error || 'Sign in to view your balance.'}</p>
         <button
           onClick={fetchWallet}
           className="px-5 py-2.5 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold hover:bg-[var(--vanta-gold-bright)] transition-all"
@@ -314,6 +335,7 @@ export default function BalancePage() {
   }
 
   return (
+    <MotionConfig reducedMotion="user">
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -328,7 +350,8 @@ export default function BalancePage() {
           <button
             type="button"
             onClick={() => setHideBalance(!hideBalance)}
-            aria-label={hideBalance ? 'Show balance' : 'Hide balance'}
+            aria-label={hideBalance ? 'Show available balance' : 'Hide available balance'}
+            aria-pressed={hideBalance}
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] text-[var(--text-secondary)] transition hover:text-white"
           >
             {hideBalance ? <EyeOff size={18} /> : <Eye size={18} />}
@@ -356,7 +379,7 @@ export default function BalancePage() {
                 </span>
               )}
               {!isFrozen && (
-                <span className="flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[.04] px-2.5 py-1 text-[10px] text-[var(--text-secondary)]">
+                <span className="flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[.04] px-2.5 py-1 text-[11px] text-[var(--text-secondary)]">
                   <i className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Active
                 </span>
               )}
@@ -366,7 +389,7 @@ export default function BalancePage() {
           <motion.div key={coinBalance} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
             <div className="flex min-w-0 items-center gap-2.5">
               <VantaCoinIcon size={24} className="shrink-0 text-[var(--vanta-gold)]" />
-              <h2 className="min-w-0 truncate text-[2rem] font-semibold leading-none tracking-tight text-white tabular-nums">
+              <h2 className="min-w-0 break-all text-[clamp(1.45rem,7vw,2rem)] font-semibold leading-tight tracking-tight text-[var(--text-primary)] tabular-nums">
                 {hideBalance ? '••••••' : coinBalance.toLocaleString()}
               </h2>
             </div>
@@ -376,48 +399,51 @@ export default function BalancePage() {
             </p>
           </motion.div>
 
+          {isFrozen && <p role="status" className="mt-3 rounded-lg border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-300">Your wallet is frozen. Transfers and withdrawals are unavailable.</p>}
           {/* Quick Actions */}
           <div className="mt-4 grid w-full grid-cols-3 gap-1.5">
             <button
               onClick={() => setShowBuyModal(true)}
-              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-[var(--vanta-gold)] px-2 py-2.5 text-xs font-bold text-black transition active:scale-[.98]"
+              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-[var(--vanta-gold)] px-2 py-2.5 text-xs font-bold text-black transition active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Plus size={16} />
                Buy
             </button>
             <button
               onClick={() => setShowSendModal(true)}
-              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98]"
+              disabled={isFrozen}
+              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ArrowUpRight size={16} />
                Send
             </button>
             <button
               onClick={() => router.push('/gifts')}
-              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98]"
+              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Gift size={16} />
               Gift
             </button>
             {isCreator && earningsBalance > 0 && (
               <button
-                onClick={() => setShowWithdrawModal(true)}
-                className="col-span-3 flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98]"
+                onClick={() => setShowWithdrawModal(true)} disabled={isFrozen}
+                className="col-span-3 flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <ArrowUpFromLine size={16} />
-                Withdraw ${earningsBalance.toFixed(2)}
+                Withdraw {hideBalance ? '••••' : `${earningsBalance.toFixed(2)}`}
               </button>
             )}
           </div>
 
 
-          <div className="mt-3 flex items-center gap-2 border-t border-white/[.06] pt-2.5 text-[10px] text-[var(--text-secondary)]">
+          <div className="mt-3 flex items-center gap-2 border-t border-white/[.06] pt-2.5 text-[11px] text-[var(--text-secondary)]">
             <Lock size={14} />
             Protected by VANTA Balance security
           </div>
         </div>
       </motion.section>
 
+      {historyErrors.length > 0 && <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-400/20 bg-[var(--surface)] p-3 text-sm text-[var(--text-secondary)]"><span>Could not load: {historyErrors.join(', ')}.</span><button type="button" onClick={fetchWallet} className="min-h-11 font-semibold text-[var(--vanta-gold-bright)]">Retry</button></div>}
       {/* Stats Grid */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Balance summary">
         {[
@@ -457,8 +483,9 @@ export default function BalancePage() {
             key={tab.id}
             onClick={() => changeTab(tab.id as BalanceTab)}
             aria-pressed={activeTab === tab.id}
+            type="button"
             className={cn(
-               'flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold whitespace-nowrap transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vanta-gold-bright)]',
+               'flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold whitespace-nowrap transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vanta-gold-bright)]',
               activeTab === tab.id ? 'bg-[var(--vanta-gold)] text-black' : 'text-[var(--text-secondary)] hover:text-white'
             )}
           >
@@ -490,9 +517,9 @@ export default function BalancePage() {
               </button>
             </div>
 
-            {recentTx.length === 0 ? (
+            {historyErrors.includes('Transactions') ? <p className="py-4 text-sm text-[var(--text-secondary)]">Transaction history could not load.</p> : recentTx.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center">
-                <History size={28} className="text-white/10 mb-3" />
+                <History size={28} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
                 <p className="text-sm text-[var(--text-secondary)]">No transactions yet.</p>
               </div>
             ) : (
@@ -516,19 +543,19 @@ export default function BalancePage() {
                         <p className="text-sm font-medium text-[var(--text-primary)] truncate">
                           {tx.description || formatTxLabel(tx.type)}
                         </p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] text-[var(--text-secondary)]">
+                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                          <span className="text-[11px] text-[var(--text-secondary)]">
                             {formatDate(tx.createdAt)} · {formatTime(tx.createdAt)}
                           </span>
-                          <span className="text-[10px] text-[var(--text-secondary)]">·</span>
-                          <span className="text-[10px] text-[var(--text-secondary)]">{formatTxLabel(tx.type)}</span>
+                          <span className="text-[11px] text-[var(--text-secondary)]">·</span>
+                          <span className="text-[11px] text-[var(--text-secondary)]">{formatTxLabel(tx.type)}</span>
                         </div>
                       </div>
                       <div className="text-right shrink-0">
                         <p className={cn('text-sm font-bold tabular-nums', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                           {sign}{isUsd ? '$' : ''}{formattedAmount}
                         </p>
-                        <p className="text-[9px] text-[var(--text-secondary)]">{tx.status}</p>
+                        <p className="text-[11px] text-[var(--text-secondary)]">{tx.status}</p>
                       </div>
                     </button>
                   );
@@ -553,9 +580,9 @@ export default function BalancePage() {
               </button>
             </div>
 
-            {recentGifts.length === 0 ? (
+            {historyErrors.includes('Gifts') ? <p className="py-4 text-sm text-[var(--text-secondary)]">Gift history could not load.</p> : recentGifts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center">
-                <Gift size={28} className="text-white/10 mb-3" />
+                <Gift size={28} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
                 <p className="text-sm text-[var(--text-secondary)]">No gift activity yet.</p>
               </div>
             ) : (
@@ -574,7 +601,7 @@ export default function BalancePage() {
                           {isIncoming ? `Received ${gift.gift?.name || 'Gift'} from ` : `Sent ${gift.gift?.name || 'Gift'} to `}
                           <span className="text-[var(--text-secondary)]">{displayName}</span>
                         </p>
-                        <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">
+                        <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
                           {formatDate(gift.createdAt)} · {formatTime(gift.createdAt)}
                         </p>
                       </div>
@@ -582,7 +609,7 @@ export default function BalancePage() {
                         <p className={cn('text-sm font-bold', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                           {isIncoming ? '+' : '-'}{(gift.amount ?? 0).toLocaleString()}
                         </p>
-                        <p className="text-[9px] text-[var(--text-secondary)]">{isIncoming ? 'Received' : 'Sent'}</p>
+                        <p className="text-[11px] text-[var(--text-secondary)]">{isIncoming ? 'Received' : 'Sent'}</p>
                       </div>
                     </div>
                   );
@@ -641,6 +668,7 @@ export default function BalancePage() {
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 placeholder="Search transactions..."
+                aria-label="Search loaded transactions"
                 className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-[var(--text-primary)] placeholder-[#8A8A8A] outline-none transition-all"
               />
             </div>
@@ -654,8 +682,9 @@ export default function BalancePage() {
                   <button
                     key={f.id}
                     onClick={() => setFilter(f.id)}
+                    aria-pressed={filter === f.id}
                     className={cn(
-                      'px-3 py-1.5 rounded-lg text-[10px] font-medium whitespace-nowrap transition-all',
+                      'min-h-11 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition-all',
                       filter === f.id ? 'bg-[var(--vanta-gold)] text-black' : 'text-[var(--text-secondary)] hover:text-white'
                     )}
                   >
@@ -665,22 +694,24 @@ export default function BalancePage() {
               </div>
               <button
                 onClick={handleExport}
-                disabled={exporting || transactions.length === 0}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[10px] text-[var(--text-secondary)] hover:text-white disabled:opacity-50 transition-all"
+                disabled={exporting || historyErrors.includes('Transactions') || transactions.length === 0}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-[var(--text-secondary)] hover:text-white disabled:opacity-50 transition-all"
               >
                 {exporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-                Export CSV
+                {exporting ? 'Exporting…' : 'Export CSV'}
               </button>
             </div>
           </div>
 
+          {exportError && <p role="alert" className="text-sm text-red-300">{exportError}</p>}
+          <p role="status" className="text-xs text-[var(--text-secondary)]">{filteredTx.length} matching · {transactions.length} of {transactionTotal} transactions loaded. Search and filters apply to loaded records.</p>
           {/* Transaction List */}
           {filteredTx.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center rounded-3xl bg-white/[0.02] border border-white/[0.04]">
-              <History size={32} className="text-white/10 mb-3" />
-              <h3 className="text-white/50 font-medium text-base mb-1">No transactions yet</h3>
-              <p className="text-white/25 text-sm max-w-xs">
-                 Your transaction history will appear here when you buy, send, or receive VANTA Coins.
+              <History size={32} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
+              <h3 className="text-[var(--text-primary)] font-medium text-base mb-1">{historyErrors.includes('Transactions') ? 'History unavailable' : searchQuery.trim() || filter !== 'all' ? 'No matching transactions' : 'No transactions yet'}</h3>
+              <p className="text-[var(--text-secondary)] text-sm max-w-xs">
+                 {historyErrors.includes('Transactions') ? 'Retry loading your history.' : searchQuery.trim() || filter !== 'all' ? 'Try another search or clear the filters.' : 'Your transaction history will appear here when you buy, send, or receive VANTA Coins.'}
               </p>
             </div>
           ) : (
@@ -708,14 +739,14 @@ export default function BalancePage() {
                         {tx.description || formatTxLabel(tx.type)}
                       </p>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-[10px] text-[var(--text-secondary)]">
+                        <span className="text-[11px] text-[var(--text-secondary)]">
                           {formatDate(tx.createdAt)} · {formatTime(tx.createdAt)}
                         </span>
-                        <span className="text-[10px] text-[var(--text-secondary)]">·</span>
-                        <span className="text-[10px] text-[var(--text-secondary)]">{formatTxLabel(tx.type)}</span>
+                        <span className="text-[11px] text-[var(--text-secondary)]">·</span>
+                        <span className="text-[11px] text-[var(--text-secondary)]">{formatTxLabel(tx.type)}</span>
                         {tx.fee > 0 && (
                           <>
-                            <span className="text-[10px] text-[var(--text-secondary)]">·</span>
+                            <span className="text-[11px] text-[var(--text-secondary)]">·</span>
                             <span className="text-[10px] text-amber-400/70">Fee: {tx.currency === 'USD' ? '$' + Number(tx.fee).toFixed(2) : tx.fee.toLocaleString()}</span>
                           </>
                         )}
@@ -734,13 +765,16 @@ export default function BalancePage() {
                       <p className={cn('text-sm font-bold tabular-nums', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                         {sign}{isUsd ? '$' : ''}{formattedAmount}
                       </p>
-                      <p className="text-[9px] text-[var(--text-secondary)]">Balance: {isUsd ? '$' : ''}{isUsd ? Number(tx.balance ?? 0).toFixed(2) : (tx.balance ?? 0).toLocaleString()}</p>
+                      <p className="text-[11px] text-[var(--text-secondary)]">Balance: {isUsd ? '$' : ''}{isUsd ? Number(tx.balance ?? 0).toFixed(2) : (tx.balance ?? 0).toLocaleString()}</p>
                     </div>
                   </motion.button>
                 );
               })}
             </div>
           )}
+          {(searchQuery || filter !== 'all') && <button type="button" onClick={() => { setSearchQuery(''); setFilter('all'); }} className="min-h-11 px-3 text-sm font-semibold text-[var(--vanta-gold-bright)]">Clear filters</button>}
+          {moreError && <p role="alert" className="text-sm text-red-300">{moreError}</p>}
+          {transactionOffset < transactionTotal && <button type="button" onClick={loadMore} disabled={loadingMore} className="min-h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] text-sm font-semibold text-[var(--vanta-gold-bright)] disabled:opacity-50">{loadingMore ? 'Loading…' : 'Load older transactions'}</button>}
         </motion.div>
       )}
 
@@ -767,9 +801,9 @@ export default function BalancePage() {
 
           {gifts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center rounded-3xl bg-white/[0.02] border border-white/[0.04]">
-              <Gift size={32} className="text-white/10 mb-3" />
-              <h3 className="text-white/50 font-medium text-base mb-1">No gift activity yet</h3>
-              <p className="text-white/25 text-sm max-w-xs">
+              <Gift size={32} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
+              <h3 className="text-[var(--text-primary)] font-medium text-base mb-1">No gift activity yet</h3>
+              <p className="text-[var(--text-secondary)] text-sm max-w-xs">
                 You haven&apos;t sent or received any gifts yet. Support creators during their live streams!
               </p>
             </div>
@@ -795,14 +829,14 @@ export default function BalancePage() {
                         {isIncoming ? `Received ${gift.gift?.name || 'Gift'} from ` : `Sent ${gift.gift?.name || 'Gift'} to `}
                         <span className="text-[var(--text-secondary)]">{displayName}</span>
                       </p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] text-[var(--text-secondary)]">
+                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                        <span className="text-[11px] text-[var(--text-secondary)]">
                           {formatDate(gift.createdAt)} · {formatTime(gift.createdAt)}
                         </span>
                         {gift.streamId && (
                           <>
-                            <span className="text-[10px] text-[var(--text-secondary)]">·</span>
-                            <span className="text-[10px] text-[var(--text-secondary)]">Live Stream</span>
+                            <span className="text-[11px] text-[var(--text-secondary)]">·</span>
+                            <span className="text-[11px] text-[var(--text-secondary)]">Live Stream</span>
                           </>
                         )}
                       </div>
@@ -811,7 +845,7 @@ export default function BalancePage() {
                       <p className={cn('text-sm font-bold', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                         {isIncoming ? '+' : '-'}{(gift.amount ?? 0).toLocaleString()}
                       </p>
-                      <p className="text-[9px] text-[var(--text-secondary)]">{isIncoming ? 'Received' : 'Sent'}</p>
+                      <p className="text-[11px] text-[var(--text-secondary)]">{isIncoming ? 'Received' : 'Sent'}</p>
                     </div>
                   </motion.div>
                 );
@@ -846,14 +880,14 @@ export default function BalancePage() {
                   {stat.icon}
                 </div>
                 <p className="text-lg font-bold text-[var(--text-primary)]">{stat.value}</p>
-                <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">{stat.label}</p>
+                <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">{stat.label}</p>
               </motion.div>
             ))}
           </div>
 
           {earningsBalance > 0 && (
             <button
-              onClick={() => setShowWithdrawModal(true)}
+              onClick={() => setShowWithdrawModal(true)} disabled={isFrozen}
               className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold hover:bg-[var(--vanta-gold-bright)] transition-all"
             >
               <ArrowUpFromLine size={16} />
@@ -863,9 +897,9 @@ export default function BalancePage() {
 
           {earningsBalance === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-center rounded-3xl bg-white/[0.02] border border-white/[0.04]">
-              <TrendingUp size={32} className="text-white/10 mb-3" />
-              <h3 className="text-white/50 font-medium text-base mb-1">No earnings yet</h3>
-              <p className="text-white/25 text-sm max-w-xs">
+              <TrendingUp size={32} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
+              <h3 className="text-[var(--text-primary)] font-medium text-base mb-1">No earnings yet</h3>
+              <p className="text-[var(--text-secondary)] text-sm max-w-xs">
                 Your creator earnings will appear here when you receive gifts and subscriptions.
               </p>
             </div>
@@ -887,7 +921,7 @@ export default function BalancePage() {
             </div>
             {earningsBalance > 0 && (
               <button
-                onClick={() => setShowWithdrawModal(true)}
+                onClick={() => setShowWithdrawModal(true)} disabled={isFrozen}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--vanta-gold)] text-black text-xs font-bold hover:bg-[var(--vanta-gold-bright)] transition-all"
               >
                 <ArrowUpFromLine size={12} />
@@ -898,9 +932,9 @@ export default function BalancePage() {
 
           {withdrawals.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center rounded-3xl bg-white/[0.02] border border-white/[0.04]">
-              <ArrowUpFromLine size={32} className="text-white/10 mb-3" />
-              <h3 className="text-white/50 font-medium text-base mb-1">No withdrawals yet</h3>
-              <p className="text-white/25 text-sm max-w-xs">
+              <ArrowUpFromLine size={32} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
+              <h3 className="text-[var(--text-primary)] font-medium text-base mb-1">No withdrawals yet</h3>
+              <p className="text-[var(--text-secondary)] text-sm max-w-xs">
                 Your withdrawal history will appear here when you request a payout.
               </p>
             </div>
@@ -915,14 +949,14 @@ export default function BalancePage() {
                     <p className="text-sm font-medium text-[var(--text-primary)]">
                       Withdrawal of ${wd.amount.toFixed(2)}
                     </p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-[var(--text-secondary)]">
+                    <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+                      <span className="text-[11px] text-[var(--text-secondary)]">
                         {formatDate(wd.createdAt)} · {formatTime(wd.createdAt)}
                       </span>
-                      <span className="text-[10px] text-[var(--text-secondary)]">·</span>
-                      <span className="text-[10px] text-[var(--text-secondary)]">Fee: ${wd.fee.toFixed(2)}</span>
-                      <span className="text-[10px] text-[var(--text-secondary)]">·</span>
-                      <span className="text-[10px] text-[var(--text-secondary)]">Net: ${wd.netAmount.toFixed(2)}</span>
+                      <span className="text-[11px] text-[var(--text-secondary)]">·</span>
+                      <span className="text-[11px] text-[var(--text-secondary)]">Fee: ${wd.fee.toFixed(2)}</span>
+                      <span className="text-[11px] text-[var(--text-secondary)]">·</span>
+                      <span className="text-[11px] text-[var(--text-secondary)]">Net: ${wd.netAmount.toFixed(2)}</span>
                     </div>
                   </div>
                   <div className="text-right shrink-0">
@@ -955,7 +989,7 @@ export default function BalancePage() {
               <h2 className="text-base font-bold text-[var(--text-primary)]">Balance Security</h2>
             </div>
 
-            <div className="grid grid-cols-1  gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-[var(--text-secondary)]">Wallet PIN</span>
@@ -963,19 +997,21 @@ export default function BalancePage() {
                     {hasPin ? 'Set' : 'Not Set'}
                   </span>
                 </div>
-                <p className="text-[10px] text-[var(--text-secondary)]">
+                <p className="text-[11px] text-[var(--text-secondary)]">
                   {hasPin ? 'Your PIN protects transfers and withdrawals.' : 'Set a PIN to protect your transfers and withdrawals.'}
                 </p>
+                <button type="button" onClick={() => router.push('/settings/payments')} className="mt-2 min-h-11 text-sm font-semibold text-[var(--vanta-gold-bright)]">{hasPin ? 'Manage wallet PIN' : 'Set wallet PIN'}</button>
               </div>
 
               <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-[var(--text-secondary)]">Two-Factor Auth</span>
-                  <span className="text-xs text-[var(--text-secondary)]">Via Account</span>
+                  <span className="text-xs text-[var(--text-secondary)]">{twoFactor === null ? 'Unavailable' : twoFactor ? 'Enabled' : 'Not enabled'}</span>
                 </div>
-                <p className="text-[10px] text-[var(--text-secondary)]">
-                  Enable 2FA in your account settings for stronger protection.
+                <p className="text-[11px] text-[var(--text-secondary)]">
+                  {twoFactor ? 'An authenticator protects sensitive account actions.' : 'Manage two-factor authentication in account settings.'}
                 </p>
+                <button type="button" onClick={() => router.push('/settings')} className="mt-2 min-h-11 text-sm font-semibold text-[var(--vanta-gold-bright)]">Account settings</button>
               </div>
 
               <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
@@ -985,8 +1021,8 @@ export default function BalancePage() {
                     {usdtWalletAddress ? 'Connected' : 'Not Set'}
                   </span>
                 </div>
-                <p className="text-[10px] text-[var(--text-secondary)] truncate">
-                  {usdtWalletAddress || 'Connect a USDT (BEP-20) wallet for withdrawals.'}
+                <p className="text-[11px] text-[var(--text-secondary)] truncate">
+                  {usdtWalletAddress ? `${usdtWalletAddress.slice(0, 6)}…${usdtWalletAddress.slice(-4)}` : 'Connect a USDT (BEP-20) wallet for withdrawals.'}
                 </p>
               </div>
 
@@ -997,7 +1033,7 @@ export default function BalancePage() {
                     {isFrozen ? 'Frozen' : 'Active'}
                   </span>
                 </div>
-                <p className="text-[10px] text-[var(--text-secondary)]">
+                <p className="text-[11px] text-[var(--text-secondary)]">
                   {isFrozen ? 'Your balance is frozen. Contact support.' : 'Your balance is active and secure.'}
                 </p>
               </div>
@@ -1025,15 +1061,17 @@ export default function BalancePage() {
               role="dialog"
               aria-modal="true"
               aria-label="Transaction details"
+              ref={detailsRef}
+              tabIndex={-1}
             >
-              <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] shrink-0">
+              <div className="flex items-center justify-between px-4 py-4 sm:px-6 border-b border-white/[0.06] shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-white/[0.06] border border-white/[0.08] flex items-center justify-center">
                     {getTxIcon(selectedTx.type)}
                   </div>
                   <div>
                     <h2 className="text-lg font-bold text-[var(--text-primary)]">Transaction Details</h2>
-                    <p className="text-[10px] text-[var(--text-secondary)]">{formatTxLabel(selectedTx.type)}</p>
+                    <p className="text-[11px] text-[var(--text-secondary)]">{formatTxLabel(selectedTx.type)}</p>
                   </div>
                 </div>
                 <button onClick={() => setSelectedTx(null)} className="rounded-xl p-2 text-[var(--text-secondary)] hover:text-white hover:bg-white/[0.05] transition" aria-label="Close">
@@ -1041,7 +1079,7 @@ export default function BalancePage() {
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto scrollbar-hide p-6 space-y-4">
+              <div className="flex-1 overflow-y-auto scrollbar-hide p-4 sm:p-6 space-y-4">
                 <div className="text-center">
                   <p className={cn('text-3xl font-bold tabular-nums', selectedTx.isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
                     {selectedTx.isIncoming ? '+' : '-'}{selectedTx.currency === 'USD' ? '$' : ''}{selectedTx.currency === 'USD' ? Math.abs(selectedTx.displayAmount ?? selectedTx.amount ?? 0).toFixed(2) : Math.abs(selectedTx.displayAmount ?? selectedTx.amount ?? 0).toLocaleString()}
@@ -1088,7 +1126,7 @@ export default function BalancePage() {
                   {selectedTx.reference && (
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-[var(--text-secondary)]">Reference</span>
-                      <span className="font-medium text-[var(--text-primary)] font-mono text-[10px] truncate max-w-[180px]">{selectedTx.reference}</span>
+                      <span className="font-medium text-[var(--text-primary)] font-mono text-xs break-all max-w-[65%] text-right">{selectedTx.reference}</span>
                     </div>
                   )}
                 </div>
@@ -1098,7 +1136,7 @@ export default function BalancePage() {
                 )}
               </div>
 
-              <div className="shrink-0 border-t border-white/[0.06] px-6 py-4">
+              <div className="shrink-0 border-t border-white/[0.06] px-4 py-4 sm:px-6">
                 <button
                   onClick={() => setSelectedTx(null)}
                   className="w-full py-2.5 rounded-2xl bg-white/[0.05] border border-white/[0.08] text-sm font-medium text-[var(--text-primary)] hover:bg-white/[0.08] transition-all"
@@ -1133,5 +1171,6 @@ export default function BalancePage() {
         onSuccess={handleSuccess}
       />
     </motion.div>
+    </MotionConfig>
   );
 }
