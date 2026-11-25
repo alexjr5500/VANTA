@@ -10,17 +10,18 @@ import {
   Plus, ArrowUpRight, ArrowDownLeft, Gift, Loader2,
   History, Search, Shield, Ban, X,
   ArrowUpFromLine, Download, ChevronRight,
-  Wallet, Sparkles, TrendingUp, DollarSign, Lock, Eye, EyeOff, ArrowLeft
+  Wallet, Sparkles, TrendingUp, DollarSign, Lock, Eye, EyeOff, ArrowLeft, RefreshCw, Headphones
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
 import GiftArtwork from '@/components/gifts/GiftArtwork';
 import { giftVisualQuality } from '@/lib/giftCatalog';
-import { formatCoinsCompact } from '@/lib/wallet';
+import { formatCoinsCompact, resolveWalletSpendable, transferDeductionBudget, type WalletTransferLimits } from '@/lib/wallet';
 import BuyCoinsModal from '@/components/wallet/BuyCoinsModal';
 
 import SendCoinsModal from '@/components/wallet/SendCoinsModal';
 import WithdrawModal from '@/components/wallet/WithdrawModal';
+import ReceiveCoinsModal from '@/components/wallet/ReceiveCoinsModal';
 import { useWalletDialog } from '@/components/wallet/useWalletDialog';
 
 // ============================================================================
@@ -130,6 +131,7 @@ export default function BalancePage() {
   const [activeTab, setActiveTab] = useState<BalanceTab>('overview');
   const [showBuyModal, setShowBuyModal] = useState(false);
   const [showSendModal, setShowSendModal] = useState(false);
+  const [showReceiveModal, setShowReceiveModal] = useState(false);
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [selectedTx, setSelectedTx] = useState<any>(null);
   const [hideBalance, setHideBalance] = useState(false);
@@ -186,8 +188,7 @@ export default function BalancePage() {
       if (version !== requestVersion.current) return;
       setHistoryErrors([...(txData === null ? ['Transactions'] : []), ...(giftData === null ? ['Gifts'] : []), ...(withdrawalData === null ? ['Withdrawals'] : [])]);
       setTwoFactor(typeof securityData?.enabled === 'boolean' ? securityData.enabled : null);
-      const loadedBalance = Number(walletData?.coinBalance);
-      if (!Number.isSafeInteger(loadedBalance) || loadedBalance < 0) throw new Error('The Balance service returned invalid account data.');
+      if (resolveWalletSpendable(walletData) === null) throw new Error('The Balance service returned invalid account data.');
       setWallet(walletData);
       const txList = Array.isArray(txData) ? txData : txData?.transactions ?? txData?.data ?? [];
       setTransactions(Array.isArray(txList) ? txList : []);
@@ -214,7 +215,15 @@ export default function BalancePage() {
     return () => { requestVersion.current++; };
   }, [fetchWallet]);
 
-  const coinBalance = Number(wallet?.coinBalance ?? 0);
+  const coinBalance = wallet?.coinBalance ?? 0;
+  const spendable = resolveWalletSpendable(wallet) ?? 0;
+  const limits: WalletTransferLimits | null = wallet?.effectiveTransferLimits ?? null;
+  const transferBudget = transferDeductionBudget(spendable, limits);
+  const pendingRows: { currency: string; count: number; amount: number }[] | null = Array.isArray(wallet?.pendingTransactions) ? wallet.pendingTransactions : null;
+  const pendingCount = pendingRows?.reduce((sum, row) => sum + row.count, 0);
+  const hidden = '••••••';
+  const displayCoins = (value: number) => hideBalance ? hidden : value.toLocaleString();
+  const displayUsd = (value: number) => hideBalance ? hidden : `${value.toFixed(2)}`;
   const earningsBalance = wallet?.earningsBalance ?? 0;
   const lifetimeEarnings = wallet?.lifetimeEarnings ?? 0;
   const totalCoinsPurchased = wallet?.totalCoinsPurchased ?? 0;
@@ -348,10 +357,11 @@ export default function BalancePage() {
         <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-white/[.05] hover:text-white"><ArrowLeft size={20} /></button>
         <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[var(--text-primary)]">Balance</h1>
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          <button type="button" onClick={fetchWallet} aria-label="Refresh wallet" className="grid h-11 w-11 place-items-center rounded-lg text-[var(--vanta-gold-bright)]"><RefreshCw size={18}/></button>
           <button
             type="button"
             onClick={() => setHideBalance(!hideBalance)}
-            aria-label={hideBalance ? 'Show available balance' : 'Hide available balance'}
+            aria-label={hideBalance ? 'Show wallet summaries' : 'Hide wallet summaries'}
             aria-pressed={hideBalance}
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] text-[var(--text-secondary)] transition hover:text-white"
           >
@@ -365,7 +375,7 @@ export default function BalancePage() {
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
         className="relative overflow-hidden rounded-2xl border border-[var(--gold-border)] bg-[var(--surface)] px-4 py-4"
-        aria-label="Available balance"
+        aria-label="Spendable wallet balance"
       >
         <div className="relative">
           <div className="mb-3 flex items-center justify-between">
@@ -386,41 +396,49 @@ export default function BalancePage() {
               )}
             </div>
           </div>
-          <p className="mb-1.5 text-xs font-medium text-[var(--text-secondary)]">Available balance</p>
-          <motion.div key={coinBalance} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+          <p className="mb-1.5 text-xs font-medium text-[var(--text-secondary)]">Available to spend</p>
+          <motion.div key={spendable} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
             <div className="flex min-w-0 items-center gap-2.5">
               <VantaCoinIcon size={24} className="shrink-0 text-[var(--vanta-gold)]" />
-              <h2 className="min-w-0 break-all text-[clamp(1.45rem,7vw,2rem)] font-semibold leading-tight tracking-tight text-[var(--text-primary)] tabular-nums">
-                {hideBalance ? '••••••' : coinBalance.toLocaleString()}
+              <h2 className="min-w-0 break-all text-[clamp(1.75rem,8vw,2.6rem)] font-semibold leading-tight tracking-tight text-[var(--vanta-gold-bright)] tabular-nums">
+                {displayCoins(spendable)}
               </h2>
             </div>
             <p className="mt-1.5 text-xs font-medium text-[var(--text-secondary)]">VANTA Coins</p>
-            <p className="mt-2 text-xs font-medium text-white/55">
-              ≈ ${hideBalance ? '••••' : ((coinBalance / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))} USD
-            </p>
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">Platform currency · not a cash withdrawal balance</p>
+            <dl className="mt-4 space-y-2 border-t border-[var(--border)] pt-3 text-sm">
+              <div className="flex items-center justify-between gap-3"><dt>Total coins</dt><dd className="tabular-nums">{displayCoins(coinBalance)}</dd></div>
+              <div className="flex items-center justify-between gap-3"><dt>Locked / reserved coins</dt><dd className="tabular-nums">{displayCoins(wallet.lockedCoins)}</dd></div>
+              <div className="flex items-center justify-between gap-3"><dt>Pending transactions</dt><dd className="tabular-nums">{pendingCount === undefined ? 'Unavailable' : displayCoins(pendingCount)}</dd></div>
+              {pendingRows?.filter(row => row.count > 0).map(row => <div key={row.currency} className="flex items-center justify-between gap-3 text-xs text-[var(--text-secondary)]"><dt>Pending {row.currency} ledger total</dt><dd>{row.currency === 'USD' ? displayUsd(row.amount) : displayCoins(row.amount) + ' ' + row.currency}</dd></div>)}
+              {isCreator && <><div className="flex items-center justify-between gap-3"><dt>Creator earnings</dt><dd>{displayUsd(earningsBalance)}</dd></div><div className="flex items-center justify-between gap-3"><dt>Pending withdrawals (net)</dt><dd>{typeof wallet?.pendingWithdrawals?.netUsd === 'number' ? displayUsd(wallet.pendingWithdrawals.netUsd) : 'Unavailable'}</dd></div></>}
+            </dl>
           </motion.div>
 
           {isFrozen && <p role="status" className="mt-3 rounded-lg border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-300">Your wallet is frozen. Transfers and withdrawals are unavailable.</p>}
+          {!isFrozen && !limits && <p className="mt-2 text-xs text-[var(--text-secondary)]">Transfer limits unavailable. Refresh before sending.</p>}
           {/* Quick Actions */}
-          <div className="mt-4 grid w-full grid-cols-3 gap-1.5">
+          <div className="mt-4 grid w-full grid-cols-4 gap-1.5">
             <button
               onClick={() => setShowBuyModal(true)}
-              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-[var(--vanta-gold)] px-2 py-2.5 text-xs font-bold text-black transition active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg bg-[var(--vanta-gold)] px-2 py-2.5 text-xs font-bold text-black transition active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Plus size={16} />
                Buy
             </button>
             <button
               onClick={() => setShowSendModal(true)}
-              disabled={isFrozen}
-              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isFrozen || transferBudget <= 0}
+              className="flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <ArrowUpRight size={16} className="text-[var(--vanta-gold-bright)]" />
                Send
             </button>
+            <button type="button" onClick={() => setShowReceiveModal(true)} className="flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface-secondary)] px-1 py-2 text-xs font-medium"><ArrowDownLeft size={18} className="text-[var(--vanta-gold-bright)]"/>Receive</button>
             <button
+              disabled={isFrozen || spendable <= 0}
               onClick={() => router.push('/gifts')}
-              className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Gift size={16} className="text-[var(--vanta-gold-bright)]" />
               Gift
@@ -428,10 +446,10 @@ export default function BalancePage() {
             {isCreator && earningsBalance > 0 && (
               <button
                 onClick={() => setShowWithdrawModal(true)} disabled={isFrozen}
-                className="col-span-3 flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                className="col-span-4 flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] px-2 py-2.5 text-xs font-medium text-[var(--text-primary)] active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <ArrowUpFromLine size={16} className="text-[var(--vanta-gold-bright)]" />
-                Withdraw {hideBalance ? '••••' : `${earningsBalance.toFixed(2)}`}
+                Withdraw {hideBalance ? '••••' : displayUsd(earningsBalance)}
               </button>
             )}
           </div>
@@ -464,7 +482,7 @@ export default function BalancePage() {
             <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--active-soft)] text-[var(--vanta-gold-bright)]">
               {stat.icon}
             </div>
-            <p className="truncate text-lg font-semibold tabular-nums text-[var(--text-primary)]">{stat.value}</p>
+            <p className="truncate text-lg font-semibold tabular-nums text-[var(--text-primary)]">{hideBalance ? hidden : stat.value}</p>
             <p className="mt-0.5 truncate text-[11px] font-medium text-[var(--text-secondary)]">{stat.label}</p>
           </motion.div>
         ))}
@@ -637,15 +655,15 @@ export default function BalancePage() {
               <div className="grid grid-cols-2  gap-3">
                 <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4">
                   <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-secondary)]">Available</p>
-                  <p className="mt-1 text-xl font-bold text-[var(--text-primary)]">${earningsBalance.toFixed(2)}</p>
+                  <p className="mt-1 text-xl font-bold text-[var(--text-primary)]">{displayUsd(earningsBalance)}</p>
                 </div>
                 <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4">
                   <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-secondary)]">Lifetime</p>
-                  <p className="mt-1 text-xl font-bold text-[var(--text-primary)]">${lifetimeEarnings.toFixed(2)}</p>
+                  <p className="mt-1 text-xl font-bold text-[var(--text-primary)]">{displayUsd(lifetimeEarnings)}</p>
                 </div>
                 <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4">
                   <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-secondary)]">Withdrawn</p>
-                  <p className="mt-1 text-xl font-bold text-[var(--text-primary)]">${totalWithdrawn.toFixed(2)}</p>
+                  <p className="mt-1 text-xl font-bold text-[var(--text-primary)]">{displayUsd(totalWithdrawn)}</p>
                 </div>
               </div>
             </section>
@@ -865,9 +883,9 @@ export default function BalancePage() {
         >
           <div className="grid grid-cols-2  gap-3">
             {[
-              { label: 'Available', value: `$${earningsBalance.toFixed(2)}`, icon: <DollarSign size={16} /> },
-              { label: 'Lifetime', value: `$${lifetimeEarnings.toFixed(2)}`, icon: <TrendingUp size={16} /> },
-              { label: 'Withdrawn', value: `$${totalWithdrawn.toFixed(2)}`, icon: <ArrowUpFromLine size={16} /> },
+              { label: 'Available', value: `${displayUsd(earningsBalance)}`, icon: <DollarSign size={16} /> },
+              { label: 'Lifetime', value: `${displayUsd(lifetimeEarnings)}`, icon: <TrendingUp size={16} /> },
+              { label: 'Withdrawn', value: `${displayUsd(totalWithdrawn)}`, icon: <ArrowUpFromLine size={16} /> },
               { label: 'Gifts Received', value: totalGiftsReceived.toLocaleString(), icon: <Gift size={16} /> },
             ].map((stat, i) => (
               <motion.div
@@ -880,7 +898,7 @@ export default function BalancePage() {
                 <div className="w-8 h-8 rounded-lg bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-[var(--text-secondary)] mb-2">
                   {stat.icon}
                 </div>
-                <p className="text-lg font-bold text-[var(--text-primary)]">{stat.value}</p>
+                <p className="text-lg font-bold text-[var(--text-primary)]">{hideBalance ? hidden : stat.value}</p>
                 <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">{stat.label}</p>
               </motion.div>
             ))}
@@ -892,7 +910,7 @@ export default function BalancePage() {
               className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold hover:bg-[var(--vanta-gold-bright)] transition-all"
             >
               <ArrowUpFromLine size={16} />
-              Withdraw ${earningsBalance.toFixed(2)}
+              Withdraw {displayUsd(earningsBalance)}
             </button>
           )}
 
@@ -1044,6 +1062,7 @@ export default function BalancePage() {
         </motion.div>
       )}
 
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4" aria-label="Wallet transfer limits"><h2 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Shield size={16} className="text-[var(--vanta-gold-bright)]"/>Transfer limits</h2>{limits ? <dl className="space-y-2 text-xs"><div className="flex justify-between gap-2"><dt>Daily limit</dt><dd>{displayCoins(limits.dailyLimit)}</dd></div><div className="flex justify-between gap-2"><dt>Remaining today (UTC)</dt><dd>{displayCoins(limits.dailyRemaining)}</dd></div><div className="flex justify-between gap-2"><dt>Single transfer limit</dt><dd>{displayCoins(limits.singleTxLimit)}</dd></div><p className="text-[var(--text-secondary)]">Limits include transfer fees.</p></dl> : <p className="text-xs text-[var(--text-secondary)]">Unavailable. Refresh wallet.</p>}</section>
       {/* Transaction Details Modal */}
       <AnimatePresence>
         {selectedTx && (
@@ -1160,10 +1179,14 @@ export default function BalancePage() {
 
       <SendCoinsModal
         open={showSendModal}
-        balance={coinBalance}
+        balance={spendable}
+        transferBudget={transferBudget}
+        dailyRemaining={limits?.dailyRemaining}
         onClose={() => setShowSendModal(false)}
         onSuccess={handleSuccess}
       />
+
+      <ReceiveCoinsModal open={showReceiveModal} walletId="" onClose={() => setShowReceiveModal(false)} />
 
       <WithdrawModal
         open={showWithdrawModal}
