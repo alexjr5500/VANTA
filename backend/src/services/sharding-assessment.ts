@@ -3,11 +3,11 @@ import { Client } from 'pg';
 const CANDIDATES = [
   { table: 'AnalyticsEvent', key: 'createdAt', strategy: 'time_partition_first' },
   { table: 'InteractionEvent', key: 'createdAt', strategy: 'time_partition_first' },
-  { table: 'ContentView', key: 'createdAt', strategy: 'time_partition_first' },
+  { table: 'ContentView', key: 'viewedAt', strategy: 'time_partition_first' },
   { table: 'Notification', key: 'userId', strategy: 'user_domain_later' },
   { table: 'Message', key: 'conversationId', strategy: 'conversation_domain_later' },
   { table: 'Post', key: 'authorId', strategy: 'content_domain_later' },
-  { table: 'Video', key: 'userId', strategy: 'content_domain_later' },
+  { table: 'Video', key: 'creatorId', strategy: 'content_domain_later' },
   { table: 'Follow', key: 'followerId', strategy: 'social_graph_later' },
   { table: 'User', key: 'id', strategy: 'keep_primary' },
   { table: 'Wallet', key: 'userId', strategy: 'keep_primary' },
