@@ -60,9 +60,10 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { ConnectionState } from 'livekit-client';
+import { ConnectionState, Track } from 'livekit-client';
 import { useAuth } from '@/context/AuthContext';
-import { apiGet, apiPost, apiPut } from '@/lib/apiClient';
+import { apiGet, apiPost, apiPut, apiUpload } from '@/lib/apiClient';
+import { captureLivePreviewFrame } from '@/lib/livePreviewFrame';
 import { API_BASE_URL, authHeaders } from '@/lib/api';
 import { createSocket, type Socket } from '@/lib/socketClient';
 import { useLiveKit, getLiveKitToken } from '@/lib/hooks/useLiveKit';
@@ -905,6 +906,40 @@ export default function GoLivePage() {
       lk.room?.off('trackSubscribed', onSub as any);
     };
   }, [phase, lk.localParticipant, lk.room]);
+
+  // Publish a single still cover from the real outgoing camera feed. Never
+  // start a second camera, subscribe to other viewers, or capture pre-live.
+  const previewAttempted = useRef<string | null>(null);
+  useEffect(() => {
+    const sid = streamData?.id;
+    if (phase !== 'LIVE' || !sid || !token || !lk.isCameraOn || !roomVideo || previewAttempted.current === sid) return;
+    const publication = lk.localParticipant?.getTrackPublication(Track.Source.Camera);
+    const track = publication?.track?.mediaStreamTrack;
+    if (!track || publication?.isMuted) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    const capture = async () => {
+      if (controller.signal.aborted || phaseRef.current !== 'LIVE' || previewAttempted.current === sid) return;
+      attempts++;
+      const blob = await captureLivePreviewFrame(track, controller.signal);
+      if (controller.signal.aborted || phaseRef.current !== 'LIVE') return;
+      if (!blob) {
+        if (attempts < 3) timer = setTimeout(() => void capture(), 1200);
+        return;
+      }
+      const data = new FormData();
+      data.append('thumbnail', blob, 'live-preview.jpg');
+      data.append('streamId', sid);
+      data.append('autoPreview', 'true');
+      previewAttempted.current = sid;
+      try {
+        await apiUpload('/api/upload/thumbnail', data, token, 'POST', undefined, controller.signal);
+      } catch { /* Covers are best-effort; the live stream must keep running. */ }
+    };
+    timer = setTimeout(() => void capture(), 700);
+    return () => { controller.abort(); if (timer) clearTimeout(timer); };
+  }, [phase, streamData?.id, token, lk.isCameraOn, lk.localParticipant, roomVideo]);
 
   // ---------------------------------------------------------------------------
   // Guest stage tick — remote track subscriptions/participant changes must

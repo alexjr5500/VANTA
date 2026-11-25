@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { Play, Eye, Gift, Clock, Radio, Check } from 'lucide-react';
 import { formatNumber } from '@/lib/utils';
-import { resolveMediaUrl } from '@/lib/mediaUrl';
+import LivePreviewImage from './LivePreviewImage';
 import Avatar from '@/components/ui/Avatar';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import type { VerificationType } from '@/types/verification';
@@ -79,18 +79,7 @@ export default function LiveStreamCard({ stream, ended = false, index = 0 }: Liv
     >
       {/* Thumbnail */}
       <div className="relative aspect-video overflow-hidden rounded-md border border-white/[0.07] bg-[#1F2630] transition-colors group-hover:border-white/[0.16]">
-        {stream.thumbnailUrl ? (
-          <img
-            src={resolveMediaUrl(stream.thumbnailUrl)}
-            alt={stream.title}
-            className="h-full w-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center bg-[#0D0D0F]">
-            <Radio size={30} className="text-white/10" />
-          </div>
-        )}
+        <LivePreviewImage thumbnail={stream.thumbnailUrl} avatar={host.avatar} name={host.username} />
 
         {/* Overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Play, Volume2, VolumeX } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX } from 'lucide-react';
 import VideoTrimTimeline from '@/components/video/VideoTrimTimeline';
 import { generateFilmstrip, formatVideoTime, formatFileSize, estimatedStatusTrimSize } from '@/lib/videoTrim';
 
@@ -13,9 +13,11 @@ type Props = {
   poster: string | null;
   range?: StatusTrimRange;
   onRange: (range: StatusTrimRange) => void;
+  showSize?: boolean;
+  onDuration?: (duration: number) => void;
 };
 
-export default function StatusVideoPreview({ src, duration, size, poster, range, onRange }: Props) {
+export default function StatusVideoPreview({ src, duration, size, poster, range, onRange, showSize = true, onDuration }: Props) {
   const player = useRef<HTMLVideoElement>(null);
   const [detected, setDetected] = useState(duration || 0);
   const [filmstrip, setFilmstrip] = useState<string | null>(null);
@@ -59,19 +61,19 @@ export default function StatusVideoPreview({ src, duration, size, poster, range,
         onRangeChange={(start, end) => { player.current?.pause(); onRange({ start, end }); seek(start); }}
         onSeek={time => { player.current?.pause(); seek(time); }} />
       <div className="mt-2 flex items-center gap-2 text-[14px] text-white">
-        <button type="button" aria-label={muted ? 'Unmute video preview' : 'Mute video preview'} aria-pressed={!muted} onClick={() => setMuted(v => !v)} className="grid h-8 w-10 place-items-center rounded-full bg-black/40">{muted ? <VolumeX size={17} /> : <Volume2 size={17} />}</button>
-        <span className="rounded-full bg-black/40 px-3 py-1.5 font-normal tabular-nums">{formatVideoTime(Math.floor(Math.max(0, end-start))).replace(/^0(?=\d:)/, '')} • {trimmed ? 'Est. ' : ''}{formatFileSize(displaySize)}</span>
+        <button type="button" aria-label={muted ? 'Unmute video preview' : 'Mute video preview'} aria-pressed={!muted} onClick={() => setMuted(v => !v)} className="grid h-8 w-10 place-items-center rounded-full bg-[var(--surface)]">{muted ? <VolumeX size={17} /> : <Volume2 size={17} />}</button>
+        <span className="rounded-full bg-black/40 px-3 py-1.5 font-normal tabular-nums">{formatVideoTime(Math.floor(Math.max(0, end-start))).replace(/^0(?=\d:)/, '')}{showSize && <> • {trimmed ? 'Est. ' : ''}{formatFileSize(displaySize)}</>}</span>
       </div>
     </div>
     <div className="relative min-h-[100px] flex-1 overflow-hidden bg-[var(--background)]">
-      <video ref={player} src={src} poster={poster || undefined} preload="auto" playsInline muted={muted} controls
+      <video ref={player} src={src} poster={poster || undefined} preload="auto" playsInline muted={muted}
         className="absolute inset-0 h-full w-full object-contain" onCanPlay={() => { setReady(true); setError(false); }}
-        onLoadedMetadata={e => { const v=e.currentTarget; if (Number.isFinite(v.duration) && v.duration>0) {setDetected(v.duration); if (start>0) v.currentTime=start;} }}
+        onLoadedMetadata={e => { const v=e.currentTarget; if (Number.isFinite(v.duration) && v.duration>0) {setDetected(v.duration); onDuration?.(v.duration); if (start>0) v.currentTime=start;} }}
         onTimeUpdate={e => { const v=e.currentTarget; setPosition(v.currentTime); if (!v.paused && end>0 && v.currentTime>=end) {v.pause(); v.currentTime=start;} }}
         onVolumeChange={e => setMuted(e.currentTarget.muted)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => setError(true)} />
-      {!playing && <button type="button" aria-label="Play video" onClick={toggle} className="absolute left-1/2 top-1/2 z-10 grid h-12 w-12 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/65 text-[#dfbd55]"><Play size={23} fill="currentColor" /></button>}
+      <button type="button" aria-label={playing ? "Pause video" : "Play video"} onClick={toggle} className={`absolute inset-0 z-10 flex items-center justify-center ${playing ? "group" : ""}`}><span className={`grid h-12 w-12 place-items-center rounded-full bg-black/65 text-[var(--vanta-gold-bright)] transition-opacity ${playing ? "opacity-0 group-focus-visible:opacity-100 group-hover:opacity-100" : ""}`}>{playing ? <Pause size={23} fill="currentColor" /> : <Play size={23} fill="currentColor" />}</span></button>
       {!ready && !error && <span className="pointer-events-none absolute left-3 top-3 text-xs text-white/60">Loading video…</span>}
-      {error && <p role="alert" className="absolute inset-x-3 bottom-2 rounded-lg bg-black/80 p-2 text-center text-xs text-white">This device could not play the selected video. Try another video if playback remains unavailable.</p>}
+      {error && <p role="alert" className="pointer-events-none absolute inset-x-3 bottom-2 z-20 rounded-lg bg-black/80 p-2 text-center text-xs text-white">This device could not play the selected video. Try another video if playback remains unavailable.</p>}
     </div>
   </div>;
 }

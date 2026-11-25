@@ -2,6 +2,8 @@ import { Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { uploadService } from "../services";
 import { prisma } from "../prisma";
+import { unlink } from "node:fs/promises";
+import { cacheService, CACHE_KEYS } from "../services/cache.service";
 
 // ============================================================================
 // GENERIC UPLOAD
@@ -145,6 +147,19 @@ export const uploadStreamThumbnail = async (req: AuthRequest, res: Response): Pr
     if (!req.file) { res.status(400).json({ error: "Thumbnail file is required" }); return; }
 
     const streamId = typeof req.body.streamId === "string" ? req.body.streamId : undefined;
+    const autoPreview = req.body.autoPreview === "true";
+    if (autoPreview) {
+      const [stream, settings] = await Promise.all([
+        streamId ? prisma.liveStream.findFirst({ where: { id: streamId, hostId: userId, active: true, status: "LIVE", moderationRemovedAt: null, thumbnailUrl: null }, select: { id: true } }) : Promise.resolve(null),
+        prisma.userSettings.findUnique({ where: { userId }, select: { liveStreamVisibility: true, privacyLiveStream: true } }),
+      ]);
+      const publicMode = (mode: string | null | undefined) => mode == null || ["everyone", "public"].includes(mode.toLowerCase());
+      if (!stream || !publicMode(settings?.liveStreamVisibility) || !publicMode(settings?.privacyLiveStream)) {
+        await unlink(req.file.path).catch(() => undefined);
+        res.status(409).json({ error: "Automatic preview unavailable for this stream" });
+        return;
+      }
+    }
 
     const result = await uploadService.uploadFile(req, req.file, {
       category: "thumbnail",
@@ -152,8 +167,15 @@ export const uploadStreamThumbnail = async (req: AuthRequest, res: Response): Pr
       recordId: streamId,
     });
 
-    // Update the live stream thumbnail if streamId provided
-    if (streamId) {
+    // An automatic cover must never replace a host-selected cover or update an ended stream.
+    if (autoPreview && streamId) {
+      const updated = await prisma.liveStream.updateMany({ where: { id: streamId, hostId: userId, active: true, status: "LIVE", moderationRemovedAt: null, thumbnailUrl: null }, data: { thumbnailUrl: result.url } });
+      if (!updated.count) {
+        await uploadService.deleteFile(result.filename, result.id);
+        res.status(409).json({ error: "Automatic preview unavailable for this stream" });
+        return;
+      }
+    } else if (streamId) {
       const stream = await prisma.liveStream.findUnique({ where: { id: streamId } });
       if (!stream || stream.hostId !== userId) {
         await uploadService.deleteFile(result.filename, result.id);
@@ -169,6 +191,7 @@ export const uploadStreamThumbnail = async (req: AuthRequest, res: Response): Pr
       }
     }
 
+    if (streamId) await Promise.all([cacheService.del(CACHE_KEYS.LIVE_STREAMS), cacheService.del(CACHE_KEYS.LIVE_STREAM(streamId))]).catch(() => undefined);
     res.status(200).json({ message: "Thumbnail uploaded successfully", url: result.url, file: result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Thumbnail upload failed";
