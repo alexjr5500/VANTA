@@ -227,7 +227,7 @@ export class GiftService {
     };
   }
 
-  async sendGift(senderId: string, receiverId: string, giftId: string, streamId?: string, options: { quantity?: number; message?: string; isAnon?: boolean; isSuper?: boolean; requestId?: string; videoId?: string } = {}) {
+  async sendGift(senderId: string, receiverId: string, giftId: string, streamId?: string, options: { quantity?: number; message?: string; isAnon?: boolean; isSuper?: boolean; requestId?: string; videoId?: string; expectedPrice?: number; requireExpectedPrice?: boolean } = {}) {
     const quantity = options.quantity === undefined ? 1 : options.quantity;
     if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 99) {
       throw new Error('quantity must be an integer between 1 and 99');
@@ -269,6 +269,9 @@ export class GiftService {
     const gift = await prisma.gift.findUnique({ where: { id: giftId } });
     if (!gift) throw new Error('Gift not found');
     if (!gift.isActive) throw new Error('This gift is no longer available');
+    if ((options.requireExpectedPrice || options.expectedPrice !== undefined) && (!Number.isSafeInteger(options.expectedPrice) || options.expectedPrice !== gift.price)) {
+      throw new Error('Gift price has changed. Refresh the gift catalog and confirm the new price.');
+    }
 
     if (senderId === receiverId) {
       throw new Error('Cannot send a gift to yourself');
