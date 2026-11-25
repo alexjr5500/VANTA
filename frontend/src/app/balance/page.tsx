@@ -23,6 +23,9 @@ import SendCoinsModal from '@/components/wallet/SendCoinsModal';
 import WithdrawModal from '@/components/wallet/WithdrawModal';
 import ReceiveCoinsModal from '@/components/wallet/ReceiveCoinsModal';
 import WalletActivity from '@/components/wallet/WalletActivity';
+import { readWalletReceipt, downloadWalletReceipt } from '@/lib/walletReceipt';
+import { VANTA_SUPPORT_EMAIL } from '@/lib/socialLinks';
+import { parseReceivingLink, receivingOrigins } from '@/lib/walletReceivingLink';
 import { useWalletDialog } from '@/components/wallet/useWalletDialog';
 
 // ============================================================================
@@ -243,7 +246,8 @@ export default function BalancePage() {
   const totalCoinsSent = wallet?.totalCoinsSent ?? 0;
   const totalGiftsSent = wallet?.totalGiftsSent ?? 0;
   const totalGiftsReceived = wallet?.totalGiftsReceived ?? 0;
-  const totalWithdrawn = wallet?.totalWithdrawn ?? 0;
+  const settledUsd = typeof wallet?.completedWithdrawals?.netUsd === 'number' ? wallet.completedWithdrawals.netUsd : null;
+  const pendingWithdrawalUsd = typeof wallet?.pendingWithdrawals?.netUsd === 'number' ? wallet.pendingWithdrawals.netUsd : null;
   const isFrozen = wallet?.isFrozen ?? false;
   const hasPin = wallet?.hasPin ?? false;
   const usdtWalletAddress = wallet?.usdtWalletAddress ?? '';
@@ -254,7 +258,7 @@ export default function BalancePage() {
     const url = new URL(window.location.href);
     const id = url.searchParams.get('recipient');
     if (!id) return;
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id) || id === user?.id) setRecipientLinkError('This receiving link is invalid or belongs to your account.');
+    if (parseReceivingLink(url.href, receivingOrigins()) !== id || id === user?.id) setRecipientLinkError('This receiving link is invalid or belongs to your account.');
     else if (isFrozen || transferBudget <= 0) setRecipientLinkError('Sending is unavailable. Check your spendable balance and transfer limits.');
     else { setInitialRecipientId(id); setShowSendModal(true); }
     url.searchParams.delete('recipient');
@@ -397,7 +401,7 @@ export default function BalancePage() {
           <button type="button" onClick={fetchWallet} aria-label="Refresh wallet" className="grid h-11 w-11 place-items-center rounded-lg text-[var(--vanta-gold-bright)]"><RefreshCw size={18}/></button>
           <button
             type="button"
-            onClick={() => setHideBalance(!hideBalance)}
+            onClick={() => { setHideBalance(!hideBalance); setSelectedTx(null); }}
             aria-label={hideBalance ? 'Show wallet summaries' : 'Hide wallet summaries'}
             aria-pressed={hideBalance}
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/[0.08] bg-[var(--surface-secondary)] text-[var(--text-secondary)] transition hover:text-white"
@@ -701,8 +705,8 @@ export default function BalancePage() {
                   <p className="mt-1 text-xl font-bold text-[var(--text-primary)]">{displayUsd(lifetimeEarnings)}</p>
                 </div>
                 <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4">
-                  <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-secondary)]">Withdrawn</p>
-                  <p className="mt-1 text-xl font-bold text-[var(--text-primary)]">{displayUsd(totalWithdrawn)}</p>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-secondary)]">Completed payouts</p>
+                  <p className="mt-1 text-xl font-bold text-[var(--text-primary)]">{(settledUsd === null ? 'Unavailable' : displayUsd(settledUsd))}</p>
                 </div>
               </div>
             </section>
@@ -860,7 +864,7 @@ export default function BalancePage() {
             </button>
           </div>
 
-          {historyErrors.includes('Gifts') ? <p className="py-4 text-sm text-[var(--text-secondary)]">Gift history could not load. Use Retry above.</p> : gifts.length === 0 ? (
+          {hideBalance ? <p className="text-sm text-[var(--text-secondary)]">Gift history hidden by wallet privacy.</p> : historyErrors.includes('Gifts') ? <p className="py-4 text-sm text-[var(--text-secondary)]">Gift history could not load. Use Retry above.</p> : gifts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center rounded-3xl bg-white/[0.02] border border-white/[0.04]">
               <Gift size={32} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
               <h3 className="text-[var(--text-primary)] font-medium text-base mb-1">No gift activity yet</h3>
@@ -927,7 +931,8 @@ export default function BalancePage() {
             {[
               { label: 'Available', value: `${displayUsd(earningsBalance)}`, icon: <DollarSign size={16} /> },
               { label: 'Lifetime', value: `${displayUsd(lifetimeEarnings)}`, icon: <TrendingUp size={16} /> },
-              { label: 'Withdrawn', value: `${displayUsd(totalWithdrawn)}`, icon: <ArrowUpFromLine size={16} /> },
+              { label: 'Completed payouts', value: `${(settledUsd === null ? 'Unavailable' : displayUsd(settledUsd))}`, icon: <ArrowUpFromLine size={16} /> },
+              { label: 'Pending payouts (net)', value: pendingWithdrawalUsd === null ? 'Unavailable' : displayUsd(pendingWithdrawalUsd), icon: <History size={16} /> },
               { label: 'Gifts Received', value: totalGiftsReceived.toLocaleString(), icon: <Gift size={16} /> },
             ].map((stat, i) => (
               <motion.div
@@ -956,6 +961,7 @@ export default function BalancePage() {
             </button>
           )}
 
+          <p className="rounded-xl bg-[var(--surface)] p-3 text-xs text-[var(--text-secondary)]">Withdrawal requests require at least $10 and incur a 10% fee. Only verified completed settlements are included in completed payouts.</p>
           {earningsBalance === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-center rounded-3xl bg-white/[0.02] border border-white/[0.04]">
               <TrendingUp size={32} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
@@ -991,7 +997,7 @@ export default function BalancePage() {
             )}
           </div>
 
-          {historyErrors.includes('Withdrawals') ? <p className="py-4 text-sm text-[var(--text-secondary)]">Withdrawal history could not load. Use Retry above.</p> : withdrawals.length === 0 ? (
+          {hideBalance ? <p className="text-sm text-[var(--text-secondary)]">Withdrawal history hidden by wallet privacy.</p> : historyErrors.includes('Withdrawals') ? <p className="py-4 text-sm text-[var(--text-secondary)]">Withdrawal history could not load. Use Retry above.</p> : withdrawals.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center rounded-3xl bg-white/[0.02] border border-white/[0.04]">
               <ArrowUpFromLine size={32} className="text-[var(--vanta-gold-bright)] opacity-65 mb-3" />
               <h3 className="text-[var(--text-primary)] font-medium text-base mb-1">No withdrawals yet</h3>
@@ -1029,6 +1035,7 @@ export default function BalancePage() {
                     )}>
                       {wd.status}
                     </span>
+                    <button type="button" onClick={()=>{const record=readWalletReceipt(wd);if(record)downloadWalletReceipt('withdrawal',record);}} disabled={!readWalletReceipt(wd)} className="mt-1 block min-h-11 text-xs text-[var(--vanta-gold-bright)] disabled:opacity-50">Record</button>
                   </div>
                 </div>
               ))}
@@ -1072,7 +1079,7 @@ export default function BalancePage() {
                 <p className="text-[11px] text-[var(--text-secondary)]">
                   {twoFactor ? 'An authenticator protects sensitive account actions.' : 'Manage two-factor authentication in account settings.'}
                 </p>
-                <button type="button" onClick={() => router.push('/settings')} className="mt-2 min-h-11 text-sm font-semibold text-[var(--vanta-gold-bright)]">Account settings</button>
+                <button type="button" onClick={() => router.push('/settings/security')} className="mt-2 min-h-11 text-sm font-semibold text-[var(--vanta-gold-bright)]">Account settings</button>
               </div>
 
               <div className="rounded-2xl bg-white/[0.03] border border-white/[0.04] p-4">
@@ -1096,7 +1103,7 @@ export default function BalancePage() {
                   </span>
                 </div>
                 <p className="text-[11px] text-[var(--text-secondary)]">
-                  {isFrozen ? 'Your balance is frozen. Contact support.' : 'Your balance is active and secure.'}
+                  {isFrozen ? 'Your balance is frozen. Contact support.' : 'Your wallet is active. Keep your PIN and account security up to date.'}
                 </p>
               </div>
             </div>
@@ -1105,6 +1112,13 @@ export default function BalancePage() {
       )}
 
       <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4" aria-label="Wallet transfer limits"><h2 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Shield size={16} className="text-[var(--vanta-gold-bright)]"/>Transfer limits</h2>{limits ? <dl className="space-y-2 text-xs"><div className="flex justify-between gap-2"><dt>Daily limit</dt><dd>{displayCoins(limits.dailyLimit)}</dd></div><div className="flex justify-between gap-2"><dt>Remaining today (UTC)</dt><dd>{displayCoins(limits.dailyRemaining)}</dd></div><div className="flex justify-between gap-2"><dt>Single transfer limit</dt><dd>{displayCoins(limits.singleTxLimit)}</dd></div><p className="text-[var(--text-secondary)]">Limits include transfer fees.</p></dl> : <p className="text-xs text-[var(--text-secondary)]">Unavailable. Refresh wallet.</p>}</section>
+      {activeTab === 'overview' && <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4"><div className="flex items-center justify-between gap-2"><h2 className="flex items-center gap-2 text-sm font-semibold"><Shield size={17} className="text-[var(--vanta-gold-bright)]"/>Wallet security</h2><button type="button" onClick={()=>changeTab('security')} className="min-h-11 text-xs text-[var(--vanta-gold-bright)]">Manage <ChevronRight size={14} className="inline"/></button></div><dl className="space-y-2 text-sm"><div className="flex justify-between gap-2"><dt>Wallet PIN</dt><dd>{hasPin?'Set':'Not set'}</dd></div><div className="flex justify-between gap-2"><dt>Two-factor authentication</dt><dd>{twoFactor===null?'Unavailable':twoFactor?'Enabled':'Not enabled'}</dd></div><div className="flex justify-between gap-2"><dt>Account status</dt><dd>{isFrozen?'Frozen':'Active'}</dd></div></dl></section>}
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-2"><h2 className="flex items-center gap-2 text-sm font-semibold"><Headphones size={17} className="text-[var(--vanta-gold-bright)]"/>Wallet help &amp; support</h2>
+        <details className="text-sm"><summary className="cursor-pointer py-2">Coins and locked balance</summary><p className="text-xs leading-relaxed text-[var(--text-secondary)]">VANTA Coins are platform currency, not withdrawable cash. Reserved coins cannot be spent until released. Creator earnings are separate.</p></details>
+        <details className="text-sm"><summary className="cursor-pointer py-2">Transfers and fees</summary><p className="text-xs leading-relaxed text-[var(--text-secondary)]">Transfers carry a 5% fee rounded up to whole coins. Check the recipient and total debit before confirming. If the result is uncertain, check history before sending again.</p></details>
+        <details className="text-sm"><summary className="cursor-pointer py-2">Purchases and withdrawals</summary><p className="text-xs leading-relaxed text-[var(--text-secondary)]">Coin purchases remain under maintenance. Eligible earnings withdrawals are request-only and subject to review and settlement verification.</p></details>
+        <div className="flex flex-wrap gap-2"><button type="button" onClick={()=>router.push('/settings/help')} className="min-h-11 rounded-lg border border-[var(--border)] px-3 text-xs">Help Center</button><a href={'mailto:'+VANTA_SUPPORT_EMAIL+'?subject='+encodeURIComponent('VANTA wallet support')} className="flex min-h-11 items-center rounded-lg bg-[var(--vanta-gold)] px-3 text-xs font-semibold text-black">Contact support</a></div>
+      </section>
       {/* Transaction Details Modal */}
       <AnimatePresence>
         {selectedTx && (
@@ -1196,6 +1210,7 @@ export default function BalancePage() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-2"><button type="button" onClick={async()=>{try{await navigator.clipboard.writeText(selectedTx.reference || selectedTx.id);setReceiptNotice('Reference copied.');}catch{setReceiptNotice('Copy unavailable. Select the displayed reference instead.');}}} className="min-h-11 rounded-lg bg-[var(--surface)] text-xs">Copy reference</button><button type="button" onClick={()=>downloadReceipt(selectedTx)} className="min-h-11 rounded-lg bg-[var(--vanta-gold)] text-xs font-semibold text-black">Download record</button></div>
+                <a href={'mailto:'+VANTA_SUPPORT_EMAIL+'?subject='+encodeURIComponent('VANTA transaction support')+'&body='+encodeURIComponent('Transaction reference: '+(selectedTx.reference || selectedTx.id)+'\nDescribe the issue (do not include PIN or OTP): ')} className="flex min-h-11 items-center justify-center rounded-lg border border-[var(--border)] text-xs text-[var(--vanta-gold-bright)]">Get help with this transaction</a>
                 {receiptNotice && <p role="status" className="text-xs">{receiptNotice}</p>}
                 {selectedTx.description && (
                   <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{selectedTx.description}</p>
@@ -1225,6 +1240,7 @@ export default function BalancePage() {
       <SendCoinsModal
         open={showSendModal}
         balance={spendable}
+        hideBalance={hideBalance}
         transferBudget={transferBudget}
         dailyRemaining={limits?.dailyRemaining}
         initialRecipientId={initialRecipientId}
@@ -1237,6 +1253,7 @@ export default function BalancePage() {
       <WithdrawModal
         open={showWithdrawModal}
         balance={earningsBalance}
+        hideBalance={hideBalance}
         walletAddress={usdtWalletAddress}
         onClose={() => setShowWithdrawModal(false)}
         onSuccess={handleSuccess}
