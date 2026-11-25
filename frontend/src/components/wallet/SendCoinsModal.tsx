@@ -25,11 +25,14 @@ interface UserResult {
 interface SendCoinsModalProps {
   open: boolean;
   balance: number;
+  transferBudget?: number;
+  dailyRemaining?: number;
+  initialRecipientId?: string | null;
   onClose: () => void;
   onSuccess: () => void;
 }
 
-export default function SendCoinsModal({ open, balance, onClose, onSuccess }: SendCoinsModalProps) {
+export default function SendCoinsModal({ open, balance, transferBudget = balance, dailyRemaining, initialRecipientId, onClose, onSuccess }: SendCoinsModalProps) {
   const { token, user } = useAuth();
   const [step, setStep] = useState<'recipient' | 'amount' | 'review' | 'otp' | 'processing' | 'success'>('recipient');
   const [searchQuery, setSearchQuery] = useState('');
@@ -54,7 +57,8 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
   const [notice, setNotice] = useState('');
   const submitLock = useRef(false);
   const dialogRef = useWalletDialog<HTMLDivElement>(open, onClose, sending || resending || step === 'processing' || step === 'success', step);
-  const maxAmount = maxTransferableCoins(balance);
+  const budget = Math.min(balance, transferBudget);
+  const maxAmount = maxTransferableCoins(budget);
   const fee = calculateTransferFee(amount);
   const totalDeduction = amount + fee;
 
@@ -80,7 +84,24 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
       setSearchFailed(false);
       submitLock.current = false;
     }
-  }, [open]);
+  }, [open, initialRecipientId]);
+
+  // Receiving links identify an exact account; never select a fuzzy username match.
+  useEffect(() => {
+    if (!open || !token || !initialRecipientId) return;
+    let current = true;
+    setSearching(true);
+    apiGet<{ user: UserResult }>(`/api/wallets/receive-recipient?id=${encodeURIComponent(initialRecipientId)}`, token, { skipCache: true })
+      .then(result => {
+        if (!current) return;
+        if (!result.user || result.user.id !== initialRecipientId || result.user.id === user?.id) throw new Error('Invalid recipient');
+        setSelectedUser(result.user);
+        setStep('amount');
+      })
+      .catch(() => { if (current) setError('Could not verify the receiving link. Search for a recipient instead.'); })
+      .finally(() => { if (current) setSearching(false); });
+    return () => { current = false; };
+  }, [open, token, initialRecipientId, user?.id]);
 
   // Normalize @username searches and ignore stale responses from earlier queries.
   const recipientQuery = searchQuery.trim().replace(/^@+/, '');
@@ -113,13 +134,14 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
 
   const handleAmountNext = () => {
     if (!Number.isSafeInteger(amount) || amount <= 0) { setError('Enter a positive whole-coin amount.'); return; }
-    if (totalDeduction > balance) { setError(`Insufficient balance. You need ${totalDeduction.toLocaleString()} VANTA including the fee.`); return; }
+    if (totalDeduction > budget) { setError(`Insufficient spendable balance or transfer allowance. You need ${totalDeduction.toLocaleString()} VANTA including the fee.`); return; }
     setError('');
     setStep('review');
   };
 
   const handleSend = async () => {
     if (!token || !selectedUser || sending || submitLock.current) return;
+    if (!requestId && totalDeduction > budget) { setError('Your spendable balance or transfer allowance is too low.'); return; }
     if (!/^\d{4,6}$/.test(pinCode)) { setError('Enter your 4-6 digit wallet PIN.'); return; }
     submitLock.current = true;
     setSending(true);
@@ -269,7 +291,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
             <div className="flex-1 overflow-y-auto scrollbar-hide p-4 sm:p-6">
               {/* Balance */}
               <div className="mb-5 rounded-2xl bg-white/[0.03] border border-white/[0.06] px-4 py-3 flex items-center justify-between">
-                <span className="text-xs text-[var(--text-secondary)]">Your balance</span>
+                <span className="text-xs text-[var(--text-secondary)]">Available to spend</span>
                 <span className="text-sm font-bold text-white">{balance.toLocaleString()} <VantaCoinIcon size={14} className="inline-block text-[var(--vanta-gold-bright)]" /></span>
               </div>
 
@@ -420,8 +442,9 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                     />
                   </div>
 
-                  <p className="text-xs text-[var(--text-secondary)]">Maximum including the fee: {maxAmount.toLocaleString()} VANTA.</p>
-                  {totalDeduction > balance && <p role="alert" className="text-sm text-red-300">Not enough coins to cover the transfer and fee.</p>}
+                  <p className="text-xs text-[var(--text-secondary)]">Maximum including fees and limits: {maxAmount.toLocaleString()} VANTA.</p>
+                  {dailyRemaining !== undefined && <p className="text-xs text-[var(--text-secondary)]">Remaining daily allowance (including fees): {dailyRemaining.toLocaleString()} VANTA.</p>}
+                  {totalDeduction > budget && <p role="alert" className="text-sm text-red-300">The transfer and fee exceed your spendable balance or transfer allowance.</p>}
                   {/* Fee breakdown */}
                   {amount > 0 && (
                     <div className="rounded-2xl bg-white/[0.02] border border-white/[0.04] p-4 space-y-2">
@@ -442,7 +465,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
 
                   <button
                     onClick={handleAmountNext}
-                    disabled={amount <= 0 || totalDeduction > balance}
+                    disabled={amount <= 0 || totalDeduction > budget}
                     className="w-full py-3 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
                     Continue
