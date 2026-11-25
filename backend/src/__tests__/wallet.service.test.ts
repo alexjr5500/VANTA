@@ -109,11 +109,12 @@ describe('WalletService', () => {
         {currency: 'VANTA', _count: {_all: 1}, _sum: {amount: 10}},
         {currency: 'USD', _count: {_all: 1}, _sum: {amount: 2}},
       ]);
-      (prisma.withdrawal.aggregate as jest.Mock).mockResolvedValue({_count: {_all: 1}, _sum: {amount: 20, netAmount: 18}});
+      (prisma.withdrawal.aggregate as jest.Mock).mockResolvedValueOnce({_count: {_all: 1}, _sum: {amount: 20, netAmount: 18}}).mockResolvedValueOnce({_count: {_all: 2}, _sum: {netAmount: 42}});
       const result = await walletService.getWallet('user1');
       expect(result.availableCoins).toBe(100);
       expect(result.pendingTransactions).toEqual([{currency:'VANTA',count:1,amount:10},{currency:'USD',count:1,amount:2}]);
       expect(result.pendingWithdrawals).toEqual({count:1,grossUsd:20,netUsd:18});
+      expect(result.completedWithdrawals).toEqual({count:2,netUsd:42});
       expect(result.coinBalance).toBe(100);
       expect(result.hasPin).toBe(false);
       // VANTA Coins are valued at 100 coins per USD; earningsBalance is already USD.
