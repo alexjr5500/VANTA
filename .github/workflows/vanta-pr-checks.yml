@@ -210,6 +210,7 @@ jobs:
           src/__tests__/realtime-presence.test.ts
           src/__tests__/http-telemetry.test.ts
           src/__tests__/dependency-telemetry.test.ts
+          src/__tests__/alert-delivery.test.ts
 
   redis-cache:
     name: Redis cache adapter integration

@@ -29,6 +29,7 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 - [x] Add opt-in fixed-window HTTP histogram, true error ratio, aborted/active counts and sustained structured alert logs; centralized collection and routing remain pending.
 - [x] Declare Redis runtime dependency, add opt-in connection readiness, bounded TTL and counter fixes, and real-Redis CI coverage (staging acceptance and CI result still required).
 - [ ] Alerts with tested notification routing, on-call owner and runbook links.
+- [x] Add opt-in bounded authenticated HTTPS alert delivery for HTTP, dependency and queue signals; receiver provisioning, actual notification delivery and incident ownership remain gated.
 
 ## 6.10 — Capacity
 - [ ] Baseline and load-test reels playback/upload, feeds, chat, notification delivery and DB.

@@ -65,12 +65,14 @@ import { uploadStorageDir, getStorageDiagnostics } from './services/upload.servi
 import { ServerReadiness, BackgroundDrain, shutdownWithin } from './services/server-lifecycle';
 import { HttpTelemetry, startHttpTelemetry } from './services/http-telemetry';
 import { DependencyProbe, DependencyTelemetry } from './services/dependency-telemetry';
+import { AlertDelivery, alertConfig } from './services/alert-delivery';
 import { realtimeRedisConfig, RealtimeRedisAdapter } from './services/realtime-redis-adapter';
 import { DistributedMaintenance, maintenanceConnectionUrl, type MaintenanceTask } from './services/distributed-maintenance';
 
 const app: Express = express();
+const alertDelivery = new AlertDelivery(alertConfig(process.env));
 const httpTelemetry = process.env.VANTA_HTTP_TELEMETRY_ENABLED === 'true' ? new HttpTelemetry() : null;
-const stopHttpTelemetry = httpTelemetry ? startHttpTelemetry(httpTelemetry) : () => {};
+const stopHttpTelemetry = httpTelemetry ? startHttpTelemetry(httpTelemetry, alertDelivery.enqueue) : () => {};
 if (httpTelemetry) app.use(httpTelemetry.middleware);
 const realtimeConfig = realtimeRedisConfig(process.env);
 const realtimeAdapter = new RealtimeRedisAdapter(realtimeConfig);
@@ -882,7 +884,7 @@ async function startServer() {
           postgres: new DependencyProbe(true, async () => { await prisma.$queryRaw`SELECT 1`; return true; }),
           redis_cache: new DependencyProbe(process.env.VANTA_REDIS_CACHE_ENABLED === 'true', () => cacheService.probeRedis()),
           redis_realtime: new DependencyProbe(Boolean(realtimeConfig), async () => realtimeAdapter.ready),
-        });
+        }, alertDelivery.enqueue);
         backgroundDrain.schedule(() => dependencies.sample(), 60000);
       }
       console.info(`Server running on port ${PORT}`);
@@ -947,6 +949,7 @@ if (process.env.VANTA_GRACEFUL_SHUTDOWN_ENABLED === 'true') {
       // for already accepted HTTP responses before the close callback returns.
       await Promise.all([sweeps, new Promise<void>(resolve => { void io.close(() => resolve()); })]);
       realtimeAdapter.close();
+      await alertDelivery.close();
       await cacheService.closeRedisConnection();
       await prisma.$disconnect();
     }, 25000).then(clean => {

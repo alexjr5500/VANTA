@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import type { RequestHandler } from 'express';
+import type { AlertSink } from './alert-delivery';
 
 const BOUNDS_MS = [10, 25, 50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 5000, 10000, 30000] as const;
 export interface HttpWindow {
@@ -97,7 +98,7 @@ export class HttpAlertGate {
   }
 }
 
-export function startHttpTelemetry(telemetry: HttpTelemetry): () => void {
+export function startHttpTelemetry(telemetry: HttpTelemetry, sink?: AlertSink): () => void {
   const gate = new HttpAlertGate();
   const timer = setInterval(() => {
     const window = telemetry.snapshotAndReset();
@@ -108,6 +109,7 @@ export function startHttpTelemetry(telemetry: HttpTelemetry): () => void {
         timestamp: new Date().toISOString(), scope: 'process', code, completed: window.completed,
         aborted: window.aborted, serverErrors: window.serverErrors, p95UpperMs: window.p95UpperMs,
         p95Overflow: window.p95Overflow }));
+      sink?.({ code, transition: 'degraded', severity: code === 'high_server_error_rate' ? 'critical' : 'warning' });
     }
   }, 60000);
   timer.unref?.();

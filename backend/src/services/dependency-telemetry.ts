@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import type { AlertSink } from './alert-delivery';
 
 export type Status = 'ok' | 'slow' | 'unavailable' | 'timeout' | 'disabled';
 export type Sample = { status: Status; latencyMs: number | null };
@@ -45,7 +46,7 @@ export class DependencyAlertGate {
 
 export class DependencyTelemetry {
   private gate = new DependencyAlertGate();
-  constructor(private probes: Record<Name, DependencyProbe>) {}
+  constructor(private probes: Record<Name, DependencyProbe>, private sink?: AlertSink) {}
   async sample(): Promise<void> {
     const names: Name[] = ['postgres', 'redis_cache', 'redis_realtime'];
     const samples = await Promise.all(names.map(name => this.probes[name].sample()));
@@ -59,6 +60,7 @@ export class DependencyTelemetry {
       const log = transition === 'degraded' ? console.warn : console.info;
       log(JSON.stringify({ event: 'vanta.dependencies.alert', schemaVersion: 1, timestamp,
         scope: 'process', dependency: name, transition, status }));
+      this.sink?.({ code: name, transition, severity: name === 'postgres' ? 'critical' : 'warning' });
     });
   }
 }
