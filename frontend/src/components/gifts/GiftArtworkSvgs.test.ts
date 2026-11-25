@@ -11,33 +11,18 @@ import {
   type GiftArtworkId,
 } from './GiftArtworkSvgs.core';
 import { initialGiftCatalog } from '../../../../backend/prisma/gift-catalog.data';
+import { giftArtworkAsset } from './giftArtworkAssets';
 
-/**
- * Artwork-coverage regression suite.
- *
- * The VANTA catalog is 63 gifts today. Every one must resolve to a dedicated,
- * premium, hand-authored artwork scene — never the generic fallback box. These
- * tests pin that contract using the REAL seed catalog (no copy to drift).
- */
-
+// Reference assets are the primary artwork; retain regression checks for historical SVG scenes.
 const SCENES_SRC = readFileSync(join(__dirname, 'GiftArtworkSvgs.tsx'), 'utf8');
 
 describe('GiftArtworkSvgs — complete premium artwork coverage', () => {
-  it('covers every gift in the real 63-gift catalog with a dedicated scene (never the generic fallback)', () => {
-    const gifts = initialGiftCatalog;
-    expect(gifts.length).toBeGreaterThanOrEqual(63);
-
-    const generic: string[] = [];
-    const byScene: Record<string, string[]> = {};
-    for (const gift of gifts) {
-      const id = resolveGiftArtworkId(gift.slug, gift.artworkType);
-      (byScene[id] = byScene[id] || []).push(gift.slug);
-      if (id === 'giftbox') generic.push(gift.slug);
-      expect(GIFT_ARTWORK_IDS, `id "${id}" (${gift.slug}) is a known artwork scene`).toContain(id);
-    }
-
-    expect(generic, `no gift falls back to the generic giftbox: ${generic.join(', ')}`).toEqual([]);
-    expect(Object.keys(byScene).length, 'catalog spans ≥ 23 distinct premium scenes').toBeGreaterThanOrEqual(23);
+  it('maps every approved gift to a distinct, exact reference asset', () => {
+    expect(initialGiftCatalog).toHaveLength(70);
+    const paths = initialGiftCatalog.map(gift => giftArtworkAsset(gift.slug, gift.name));
+    expect(paths).toEqual(initialGiftCatalog.map(gift => '/gifts/reference/' + gift.slug + '.webp'));
+    expect(new Set(paths).size).toBe(70);
+    expect(giftArtworkAsset('unknown-custom-gift')).toBeUndefined();
   });
 
   it('implements and labels every artwork id in the type union', () => {
@@ -75,7 +60,7 @@ describe('GiftArtworkSvgs — complete premium artwork coverage', () => {
     expect(resolveGiftArtworkId('starry-love', 'heart')).toBe('love');
   });
 
-  it('catalog names and slugs are unique (63 real gifts, untouched product data)', () => {
+  it('catalog names and slugs are unique', () => {
     const names = new Set(initialGiftCatalog.map((g) => g.name));
     const slugs = new Set(initialGiftCatalog.map((g) => g.slug));
     expect(names.size).toBe(initialGiftCatalog.length);
@@ -90,18 +75,12 @@ describe('GiftArtworkSvgs — complete premium artwork coverage', () => {
     }
   });
 
-  it('resolves the complete 63-gift distribution to exactly the intentional scene set', () => {
-    const byScene: Record<string, number> = {};
-    for (const gift of initialGiftCatalog) {
-      const id = resolveGiftArtworkId(gift.slug, gift.artworkType);
-      byScene[id] = (byScene[id] || 0) + 1;
-    }
-    // 23 art families cover the catalog today; any change to this distribution
-    // must be a deliberate art-direction decision.
-    expect(Object.keys(byScene)).toHaveLength(23);
-    expect(byScene.thumb).toBe(1);
-    expect((byScene.flame || 0) >= 5).toBe(true);
-    expect((byScene.rose || 0) >= 5).toBe(true);
-    expect((byScene.crown || 0) >= 6).toBe(true);
+  it('pins the approved luxury prices and preserves catalog ordering', () => {
+    expect(initialGiftCatalog.slice(10,20).map(gift => [gift.name, gift.price])).toEqual([
+      ['Phoenix', 50000], ['Castle', 100000], ['Galaxy Dragon', 250000],
+      ['Golden Throne', 500000], ['Infinity', 1000000], ['Luxury Car', 250],
+      ['Motorcycle', 500], ['Ferrari', 500], ['G-Wagon', 1000], ['Superyacht', 2000],
+    ]);
+    expect(initialGiftCatalog.map(gift => gift.sortOrder)).toEqual(Array.from({length: 70}, (_, i) => i + 1));
   });
 });
