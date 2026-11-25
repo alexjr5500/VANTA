@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Clapperboard, Loader2, Upload, X, Camera, ArrowLeft } from 'lucide-react';
+import { Loader2, X, ArrowLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
@@ -13,19 +13,19 @@ import { startUpload } from '@/lib/uploads/store';
 
 interface ReelUploaderProps {
   open: boolean;
+  selectedFile: File | null;
+  onChooseAnother: () => void;
   onClose: () => void;
 }
 
-type Step = 'select' | 'preview' | 'editor';
+type Step = 'preview' | 'editor';
 
 const STEP_TITLES: Record<Step, string> = {
-  select: 'Upload Reel',
   preview: 'Preview',
   editor: 'Reel details',
 };
 
 const STEP_SUBTITLES: Record<Step, string> = {
-  select: 'Share a short video with your audience',
   preview: 'Review your video before continuing',
   editor: 'Add a caption before posting',
 };
@@ -42,11 +42,11 @@ const STEP_SUBTITLES: Record<Step, string> = {
  * upload indicator) while the user navigates anywhere in VANTA. The Reel only
  * becomes visible (PUBLISHED) after its media actually reaches storage.
  */
-export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
+export default function ReelUploader({ open, selectedFile, onChooseAnother, onClose }: ReelUploaderProps) {
   const { token, user, getAccessToken, renewAccessToken } = useAuth();
   const { showToast } = useToast();
 
-  const [step, setStep] = useState<Step>('select');
+  const [step, setStep] = useState<Step>('preview');
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [duration, setDuration] = useState(0);
@@ -59,62 +59,46 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
   const [description, setDescription] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
-  const [dragActive, setDragActive] = useState(false);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
-
-  // ---- Lifecycle ----------------------------------------------------------
-
-  const resetAll = useCallback(() => {
-    setStep('select');
+  // The provider opens the native picker before this editor appears.
+  // Cancelling that picker never creates a draft or opens an upload screen.
+  useEffect(() => {
+    if (!open || !selectedFile) return;
+    let cancelled = false;
+    let objectUrl = '';
+    setStep('preview');
     setFile(null);
     setPreviewUrl('');
     setDuration(0);
-    setProbing(false);
     setLoadError(null);
-    setPreviewFailed(false);
     setFormError(null);
+    setPreviewFailed(false);
     setTitle('');
     setDescription('');
     setSubmitting(false);
-    setDragActive(false);
-  }, []);
-
-  useEffect(() => {
-    if (open) resetAll();
-  }, [open, resetAll]);
-
-  useEffect(() => {
-    if (!open) setStep('select');
-  }, [open]);
-
-  // ---- File selection -----------------------------------------------------
-
-  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
-
-  const handleFiles = async (files: FileList | null) => {
-    const candidate = files?.[0];
-    if (!candidate || probing) return;
-    setLoadError(null);
-    setFormError(null);
-    const validation = validateVideoFile(candidate);
-    if (validation) { setLoadError(validation); return; }
+    const validation = validateVideoFile(selectedFile);
+    if (validation) { setLoadError(validation); setProbing(false); return; }
     setProbing(true);
-    try {
-      const original = normalizeVideoFileForUpload(candidate);
-      const actualDuration = await probeVideoFileDuration(original);
-      // Some valid containers/codecs cannot be previewed by the current browser.
-      // Keep the original uploadable; the backend checks duration with ffprobe.
-      if (!actualDuration) { setDuration(0); }
-      if (actualDuration > VIDEO_MAX_DURATION_SECONDS) { setLoadError('Reels can be up to 10 minutes long. Choose a shorter video.'); return; }
+    const original = normalizeVideoFileForUpload(selectedFile);
+    void probeVideoFileDuration(original).then(actualDuration => {
+      if (cancelled) return;
+      if (actualDuration > VIDEO_MAX_DURATION_SECONDS) {
+        setLoadError('Reels can be up to 10 minutes long. Choose a shorter video.');
+        return;
+      }
+      objectUrl = URL.createObjectURL(original);
       setFile(original);
-      setPreviewFailed(false);
       setDuration(actualDuration);
-      setPreviewUrl(URL.createObjectURL(original));
-      setStep('preview');
-    } finally { setProbing(false); }
-  };
+      setPreviewUrl(objectUrl);
+    }).catch(() => {
+      if (!cancelled) setLoadError('Could not open this video. Choose another video.');
+    }).finally(() => {
+      if (!cancelled) setProbing(false);
+    });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [open, selectedFile]);
 
   // ---- Publish ------------------------------------------------------------
 
@@ -177,7 +161,7 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
 
   return (
     <AnimatePresence>
-      {open && (
+      {open && selectedFile && (
         <>
           {/* Backdrop */}
           <motion.div
@@ -199,7 +183,7 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
             aria-label={STEP_TITLES[step]}
           >
             <header className="relative flex shrink-0 items-center justify-between border-b border-[var(--border)] px-3 py-1.5">
-              <button type="button" aria-label="Go back" onClick={() => step === 'editor' ? setStep('preview') : step === 'preview' ? setStep('select') : requestClose()} disabled={submitting} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"><ArrowLeft size={20} /></button>
+              <button type="button" aria-label="Go back" onClick={() => step === 'editor' ? setStep('preview') : requestClose()} disabled={submitting} className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"><ArrowLeft size={20} /></button>
               <div className="pointer-events-none min-w-0 flex-1 text-center">
                 <h2 className="truncate text-[15px] font-semibold tracking-tight text-[var(--text-primary)]">{STEP_TITLES[step]}</h2>
                 <p className="truncate text-[11px] text-[var(--text-muted)]">{STEP_SUBTITLES[step]}</p>
@@ -232,83 +216,10 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
                 </div>
               )}
 
-              {step === 'select' ? (
-                <div className="mx-auto flex w-full max-w-xl flex-col items-start text-left">
-                  <div className="mt-6 flex items-center gap-3">
-                    <Clapperboard className="text-[#dfbd55]" size={22} />
-                    <div><h3 className="text-base font-semibold text-white">Choose a video</h3><p className="mt-0.5 text-sm text-[var(--text-secondary)]">Select a clip to preview before posting.</p></div>
-                  </div>
-
-                  {loadError && <div className="form-error mt-4 w-full text-left">{loadError}</div>}
-
-                  <label
-                    onClick={() => fileInputRef.current?.click()}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      setDragActive(true);
-                    }}
-                    onDragLeave={() => setDragActive(false)}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      setDragActive(false);
-                      void handleFiles(event.dataTransfer?.files);
-                    }}
-                    className={cn(
-                      'group mt-5 hidden w-full cursor-pointer flex-col items-center rounded-xl border border-dashed px-5 py-8 transition sm:flex',
-                      dragActive ? 'border-[#c9a227]/70 bg-[#c9a227]/10' : 'border-white/[0.12] bg-white/[0.02]'
-                    )}
-                  >
-                    <Upload
-                      size={28}
-                      className={cn('transition', dragActive ? 'text-[#dfbd55]' : 'text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]')}
-                    />
-                    <span className="mt-3 text-sm font-medium text-[var(--text-secondary)]">Drop a video here or tap to choose</span>
-                    <span className="mt-1 text-[11px] text-[var(--text-muted)]">MP4, WebM, MOV or M4V · up to 100MB · 10 minutes</span>
-                  </label>
-
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="video/*,.mp4,.webm,.mov,.m4v"
-                    className="sr-only"
-                    onChange={(event) => {
-                      void handleFiles(event.target.files);
-                      event.target.value = '';
-                    }}
-                  />
-
-                  <input
-                    ref={cameraInputRef}
-                    type="file"
-                    accept="video/*,.mp4,.webm,.mov,.m4v"
-                    capture="environment"
-                    className="sr-only"
-                    onChange={(event) => {
-                      void handleFiles(event.target.files);
-                      event.target.value = '';
-                    }}
-                  />
-
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={probing}
-                    className="btn-gold mt-4 min-h-12 w-full rounded-xl disabled:opacity-50"
-                  >
-                    {probing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
-                    {probing ? 'Checking video…' : 'Choose Video'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => cameraInputRef.current?.click()}
-                    disabled={probing}
-                    className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl text-sm text-[var(--text-secondary)] transition hover:bg-white/[0.04] hover:text-[var(--text-primary)] disabled:opacity-50"
-                  >
-                    <Camera size={16} />
-                    Capture Video
-                  </button>
-                </div>
+              {probing ? (
+                <div className="grid h-full place-items-center text-sm text-[var(--text-secondary)]"><span className="flex items-center gap-2"><Loader2 size={18} className="animate-spin" />Checking video…</span></div>
+              ) : loadError ? (
+                <div className="space-y-4 pt-5"><p role="alert" className="form-error">{loadError}</p><button type="button" onClick={onChooseAnother} className="btn-gold min-h-11 w-full rounded-lg">Choose another video</button></div>
               ) : step === 'preview' ? (
                 <div className="flex h-full min-h-0 flex-col gap-3 pt-3">
                   <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-[var(--surface)]">
@@ -333,11 +244,11 @@ export default function ReelUploader({ open, onClose }: ReelUploaderProps) {
                     <Avatar src={user?.avatarUrl || user?.avatar || null} alt={user?.username || 'You'} size="sm" />
                     <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium text-[var(--text-primary)]">{user?.fullName || user?.username || 'You'}</p><p className="truncate text-xs text-[var(--text-secondary)]">Posting as @{(user?.username || 'you').toLowerCase()}</p></div>
                   </div>
-                  <button type="button" onClick={() => { setFile(null); setPreviewUrl(''); setDuration(0); setPreviewFailed(false); setStep('select'); }} disabled={submitting} className="min-h-11 w-full rounded-lg border border-[var(--border)] text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-40">Choose a different video</button>
+                  <button type="button" onClick={onChooseAnother} disabled={submitting} className="min-h-11 w-full rounded-lg border border-[var(--border)] text-sm text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] disabled:opacity-40">Choose a different video</button>
                 </div>
               )}
             </div>
-            {step !== 'select' && <footer className="shrink-0 border-t border-[var(--border)] bg-[var(--background)] px-4 pt-3 pb-[calc(.75rem+env(safe-area-inset-bottom))]">
+            {!probing && !loadError && <footer className="shrink-0 border-t border-[var(--border)] bg-[var(--background)] px-4 pt-3 pb-[calc(.75rem+env(safe-area-inset-bottom))]">
               <button type="button" onClick={() => step === 'preview' ? setStep('editor') : void handleSubmit()} disabled={submitting || !file} className="btn-gold min-h-12 w-full rounded-xl disabled:opacity-50">{submitting ? <><Loader2 size={16} className="animate-spin" /> Preparing Reel…</> : step === 'preview' ? 'Next' : 'Post Reel'}</button>
             </footer>}
           </motion.div>
