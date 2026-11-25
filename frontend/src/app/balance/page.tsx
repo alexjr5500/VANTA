@@ -440,7 +440,7 @@ export default function BalancePage() {
           <p className="mb-1.5 text-xs font-medium text-[var(--text-secondary)]">Available to spend</p>
           <motion.div key={spendable} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
             <div className="flex min-w-0 items-center gap-2.5">
-              <VantaCoinIcon size={24} className="shrink-0 text-[var(--vanta-gold)]" />
+              <VantaCoinIcon size={36} decorative />
               <h2 className="min-w-0 break-all text-[clamp(1.75rem,8vw,2.6rem)] font-semibold leading-tight tracking-tight text-[var(--vanta-gold-bright)] tabular-nums">
                 {displayCoins(spendable)}
               </h2>
@@ -448,8 +448,8 @@ export default function BalancePage() {
             <p className="mt-1.5 text-xs font-medium text-[var(--text-secondary)]">VANTA Coins</p>
             <p className="mt-2 text-xs text-[var(--text-secondary)]">Platform currency · not a cash withdrawal balance</p>
             <dl className="mt-4 space-y-2 border-t border-[var(--border)] pt-3 text-sm">
-              <div className="flex items-center justify-between gap-3"><dt>Total coins</dt><dd className="tabular-nums">{displayCoins(coinBalance)}</dd></div>
-              <div className="flex items-center justify-between gap-3"><dt>Locked / reserved coins</dt><dd className="tabular-nums">{displayCoins(wallet.lockedCoins)}</dd></div>
+              <div className="flex items-center justify-between gap-3"><dt>Total coins</dt><dd className="tabular-nums">{displayCoins(coinBalance)} <VantaCoinIcon size={15} decorative /></dd></div>
+              <div className="flex items-center justify-between gap-3"><dt>Locked / reserved coins</dt><dd className="tabular-nums">{displayCoins(wallet.lockedCoins)} <VantaCoinIcon size={15} decorative /></dd></div>
               <div className="flex items-center justify-between gap-3"><dt>Pending transactions</dt><dd className="tabular-nums">{pendingCount === undefined ? 'Unavailable' : displayCoins(pendingCount)}</dd></div>
               {pendingRows?.filter(row => row.count > 0).map(row => <div key={row.currency} className="flex items-center justify-between gap-3 text-xs text-[var(--text-secondary)]"><dt>Pending {row.currency} ledger total</dt><dd>{row.currency === 'USD' ? displayUsd(row.amount) : displayCoins(row.amount) + ' ' + row.currency}</dd></div>)}
               {isCreator && <><div className="flex items-center justify-between gap-3"><dt>Creator earnings</dt><dd>{displayUsd(earningsBalance)}</dd></div><div className="flex items-center justify-between gap-3"><dt>Pending withdrawals (net)</dt><dd>{typeof wallet?.pendingWithdrawals?.netUsd === 'number' ? displayUsd(wallet.pendingWithdrawals.netUsd) : 'Unavailable'}</dd></div></>}
@@ -464,7 +464,7 @@ export default function BalancePage() {
               onClick={() => setShowBuyModal(true)}
               className="flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg bg-[var(--vanta-gold)] px-2 py-2.5 text-xs font-bold text-black transition active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Plus size={16} />
+              <VantaCoinIcon size={20} decorative />
                Buy
             </button>
             <button
@@ -524,7 +524,7 @@ export default function BalancePage() {
             <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--active-soft)] text-[var(--vanta-gold-bright)]">
               {stat.icon}
             </div>
-            <p className="truncate text-lg font-semibold tabular-nums text-[var(--text-primary)]">{hideBalance ? hidden : stat.value}</p>
+            <p className="truncate text-lg font-semibold tabular-nums text-[var(--text-primary)]">{hideBalance ? hidden : stat.value} {stat.label !== 'Gifts' && <VantaCoinIcon size={14} decorative />}</p>
             <p className="mt-0.5 truncate text-[11px] font-medium text-[var(--text-secondary)]">{stat.label}</p>
           </motion.div>
         ))}
@@ -615,7 +615,7 @@ export default function BalancePage() {
                       </div>
                       <div className="text-right shrink-0">
                         <p className={cn('text-sm font-bold tabular-nums', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
-                          {sign}{isUsd ? '$' : ''}{formattedAmount}
+                          {sign}{isUsd ? '$' : ''}{formattedAmount} {tx.currency === 'VANTA' && <VantaCoinIcon size={14} />}
                         </p>
                         <p className="text-[11px] text-[var(--text-secondary)]">{tx.status}</p>
                       </div>
@@ -669,7 +669,7 @@ export default function BalancePage() {
                       </div>
                       <div className="text-right shrink-0">
                         <p className={cn('text-sm font-bold', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
-                          {isIncoming ? '+' : '-'}{(gift.amount ?? 0).toLocaleString()}
+                          {isIncoming ? '+' : '-'}{(gift.amount ?? 0).toLocaleString()} <VantaCoinIcon size={14} />
                         </p>
                         <p className="text-[11px] text-[var(--text-secondary)]">{isIncoming ? 'Received' : 'Sent'}</p>
                       </div>
@@ -827,7 +827,7 @@ export default function BalancePage() {
                     </div>
                     <div className="text-right shrink-0">
                       <p className={cn('text-sm font-bold tabular-nums', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
-                        {sign}{isUsd ? '$' : ''}{formattedAmount}
+                        {sign}{isUsd ? '$' : ''}{formattedAmount} {tx.currency === 'VANTA' && <VantaCoinIcon size={14} />}
                       </p>
                       <p className="text-[11px] text-[var(--text-secondary)]">Balance: {isUsd ? '$' : ''}{isUsd ? Number(tx.balance ?? 0).toFixed(2) : (tx.balance ?? 0).toLocaleString()}</p>
                     </div>
@@ -908,7 +908,7 @@ export default function BalancePage() {
                     </div>
                     <div className="text-right shrink-0">
                       <p className={cn('text-sm font-bold', isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
-                        {isIncoming ? '+' : '-'}{(gift.amount ?? 0).toLocaleString()}
+                        {isIncoming ? '+' : '-'}{(gift.amount ?? 0).toLocaleString()} <VantaCoinIcon size={14} />
                       </p>
                       <p className="text-[11px] text-[var(--text-secondary)]">{isIncoming ? 'Received' : 'Sent'}</p>
                     </div>
@@ -1111,7 +1111,7 @@ export default function BalancePage() {
         </motion.div>
       )}
 
-      <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4" aria-label="Wallet transfer limits"><h2 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Shield size={16} className="text-[var(--vanta-gold-bright)]"/>Transfer limits</h2>{limits ? <dl className="space-y-2 text-xs"><div className="flex justify-between gap-2"><dt>Daily limit</dt><dd>{displayCoins(limits.dailyLimit)}</dd></div><div className="flex justify-between gap-2"><dt>Remaining today (UTC)</dt><dd>{displayCoins(limits.dailyRemaining)}</dd></div><div className="flex justify-between gap-2"><dt>Single transfer limit</dt><dd>{displayCoins(limits.singleTxLimit)}</dd></div><p className="text-[var(--text-secondary)]">Limits include transfer fees.</p></dl> : <p className="text-xs text-[var(--text-secondary)]">Unavailable. Refresh wallet.</p>}</section>
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4" aria-label="Wallet transfer limits"><h2 className="mb-2 flex items-center gap-2 text-sm font-semibold"><Shield size={16} className="text-[var(--vanta-gold-bright)]"/>Transfer limits</h2>{limits ? <dl className="space-y-2 text-xs"><div className="flex justify-between gap-2"><dt>Daily limit</dt><dd>{displayCoins(limits.dailyLimit)} <VantaCoinIcon size={14} /> </dd></div><div className="flex justify-between gap-2"><dt>Remaining today (UTC)</dt><dd>{displayCoins(limits.dailyRemaining)} <VantaCoinIcon size={14} /> </dd></div><div className="flex justify-between gap-2"><dt>Single transfer limit</dt><dd>{displayCoins(limits.singleTxLimit)} <VantaCoinIcon size={14} /> </dd></div><p className="text-[var(--text-secondary)]">Limits include transfer fees.</p></dl> : <p className="text-xs text-[var(--text-secondary)]">Unavailable. Refresh wallet.</p>}</section>
       {activeTab === 'overview' && <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4"><div className="flex items-center justify-between gap-2"><h2 className="flex items-center gap-2 text-sm font-semibold"><Shield size={17} className="text-[var(--vanta-gold-bright)]"/>Wallet security</h2><button type="button" onClick={()=>changeTab('security')} className="min-h-11 text-xs text-[var(--vanta-gold-bright)]">Manage <ChevronRight size={14} className="inline"/></button></div><dl className="space-y-2 text-sm"><div className="flex justify-between gap-2"><dt>Wallet PIN</dt><dd>{hasPin?'Set':'Not set'}</dd></div><div className="flex justify-between gap-2"><dt>Two-factor authentication</dt><dd>{twoFactor===null?'Unavailable':twoFactor?'Enabled':'Not enabled'}</dd></div><div className="flex justify-between gap-2"><dt>Account status</dt><dd>{isFrozen?'Frozen':'Active'}</dd></div></dl></section>}
       <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-2"><h2 className="flex items-center gap-2 text-sm font-semibold"><Headphones size={17} className="text-[var(--vanta-gold-bright)]"/>Wallet help &amp; support</h2>
         <details className="text-sm"><summary className="cursor-pointer py-2">Coins and locked balance</summary><p className="text-xs leading-relaxed text-[var(--text-secondary)]">VANTA Coins are platform currency, not withdrawable cash. Reserved coins cannot be spent until released. Creator earnings are separate.</p></details>
@@ -1159,7 +1159,7 @@ export default function BalancePage() {
               <div className="flex-1 overflow-y-auto scrollbar-hide p-4 sm:p-6 space-y-4">
                 <div className="text-center">
                   <p className={cn('text-3xl font-bold tabular-nums', selectedTx.isIncoming ? 'text-emerald-400' : 'text-[var(--text-primary)]')}>
-                    {selectedTx.isIncoming ? '+' : '-'}{selectedTx.currency === 'USD' ? '$' : ''}{selectedTx.currency === 'USD' ? Math.abs(selectedTx.displayAmount ?? selectedTx.amount ?? 0).toFixed(2) : Math.abs(selectedTx.displayAmount ?? selectedTx.amount ?? 0).toLocaleString()}
+                    {selectedTx.isIncoming ? '+' : '-'}{selectedTx.currency === 'USD' ? '$' : ''}{selectedTx.currency === 'USD' ? Math.abs(selectedTx.displayAmount ?? selectedTx.amount ?? 0).toFixed(2) : Math.abs(selectedTx.displayAmount ?? selectedTx.amount ?? 0).toLocaleString()} {selectedTx.currency === 'VANTA' && <VantaCoinIcon size={24} decorative />}
                   </p>
                   <p className="mt-1 text-xs text-[var(--text-secondary)]">{selectedTx.currency === 'USD' ? 'USD / USDT' : 'VANTA Coins'}</p>
                 </div>
@@ -1171,12 +1171,12 @@ export default function BalancePage() {
                   </div>
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-[var(--text-secondary)]">Amount</span>
-                    <span className="font-medium text-[var(--text-primary)]">{selectedTx.currency === 'USD' ? '$' : ''}{selectedTx.currency === 'USD' ? Math.abs(selectedTx.amount ?? 0).toFixed(2) : Math.abs(selectedTx.amount ?? 0).toLocaleString()}</span>
+                    <span className="font-medium text-[var(--text-primary)]">{selectedTx.currency === 'USD' ? '$' : ''}{selectedTx.currency === 'USD' ? Math.abs(selectedTx.amount ?? 0).toFixed(2) : Math.abs(selectedTx.amount ?? 0).toLocaleString()} {selectedTx.currency === 'VANTA' && <VantaCoinIcon size={14} />}</span>
                   </div>
                   {selectedTx.fee > 0 && (
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-[var(--text-secondary)]">Fee</span>
-                      <span className="font-medium text-[var(--text-primary)]">{selectedTx.currency === 'USD' ? '$' : ''}{selectedTx.currency === 'USD' ? selectedTx.fee.toFixed(2) : selectedTx.fee.toLocaleString()}</span>
+                      <span className="font-medium text-[var(--text-primary)]">{selectedTx.currency === 'USD' ? '$' : ''}{selectedTx.currency === 'USD' ? selectedTx.fee.toFixed(2) : selectedTx.fee.toLocaleString()} {selectedTx.currency === 'VANTA' && <VantaCoinIcon size={14} />}</span>
                     </div>
                   )}
                   <div className="flex items-center justify-between text-xs">
