@@ -8,7 +8,7 @@ import {
   updateTransferLimit,
   getCoinPackages, searchWalletUsers,
   getCoinPurchases,
-  exportTransactions, getReceiveLink, resolveReceiveRecipient,
+  exportTransactions, getCoinActivity, getReceiveLink, resolveReceiveRecipient,
 } from '../controllers/wallet.controller';
 import { authenticateJWT } from '../middleware/auth.middleware';
 import { rateLimiter } from '../security/rateLimiter';
@@ -46,6 +46,7 @@ router.post('/pin/verify', rateLimiter.otp, verifyPin);
 router.put('/limits', updateTransferLimit);
 
 // Transaction history
+router.get('/activity', getCoinActivity);
 router.get('/transactions', getTransactionHistory);
 router.get('/transactions/export', exportTransactions);
 router.get('/gift-history', getGiftHistory);
