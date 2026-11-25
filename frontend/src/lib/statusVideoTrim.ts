@@ -1,4 +1,4 @@
-import { buildTrimmedVideoFile, trimVideoSegment, VIDEO_MIN_GAP_SECONDS } from './videoTrim';
+import { buildTrimmedVideoFile, trimVideoSegment, statusTrimBitrate, VIDEO_MIN_GAP_SECONDS } from './videoTrim';
 import { validateStoryMediaFile } from './storyMedia';
 
 export type StatusTrimRange = { start: number; end: number };
@@ -37,7 +37,7 @@ export async function prepareStatusVideo(file: File, src: string, range: StatusT
     if (!Number.isFinite(end) || end - start < VIDEO_MIN_GAP_SECONDS) throw new Error('Select a valid video range.');
     if (start <= 0.01 && end >= video.duration - 0.01) return file;
     if (signal.aborted) throw new DOMException('Trimming cancelled', 'AbortError');
-    const blob = await trimVideoSegment({ video, start, end, signal, silentPlayback: true });
+    const blob = await trimVideoSegment({ video, start, end, signal, silentPlayback: true, bitrate: statusTrimBitrate(file.size, video.duration) });
     if (signal.aborted) throw new DOMException('Trimming cancelled', 'AbortError');
     if (!blob.size) throw new Error('The trimmed video is empty. Adjust the range and try again.');
     const result = buildTrimmedVideoFile(blob, file.name);

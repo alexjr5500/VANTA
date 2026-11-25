@@ -199,7 +199,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { unreadCount: notificationUnread } = useNotifications();
   const { chatUnreadCount: chatUnread } = useChatUnread();
   const { chatCalls } = useCalls();
-  const { activeFlow, createHubOpen, openCreateHub, openStoryModal, closeCreateHub, closeAll } = useContentCreation();
+  const { activeFlow, reelFile, openReelUploader, createHubOpen, openCreateHub, openStoryModal, closeCreateHub, closeAll } = useContentCreation();
   const { latestNotification: notificationToast, dismissLatestNotification } = useNotifications();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isFloatingCreateOpen, setIsFloatingCreateOpen] = useState(false);
@@ -476,7 +476,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <CreatePostModal open={postOpen} initialIntent="post" onClose={closeAll} />
           <StoryComposer open={activeFlow === 'story'} onClose={closeAll} onRequestOpen={openStoryModal} />
           <GoLiveModal open={activeFlow === 'live'} onClose={closeAll} />
-          <ReelUploader open={activeFlow === 'reel'} onClose={closeAll} />
+          <ReelUploader open={activeFlow === 'reel'} selectedFile={reelFile} onChooseAnother={openReelUploader} onClose={closeAll} />
         </>}
         {/* Global background-upload indicator — always mounted so an in-progress
             Story/Reel upload stays visible and controllable while the user

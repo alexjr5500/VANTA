@@ -344,7 +344,22 @@ export async function generateFilmstrip(
 // Core trim engine
 // ============================================================================
 
+/** A conservative encoding budget based on the original video's average bitrate. */
+export function statusTrimBitrate(sourceBytes: number, sourceSeconds: number): {videoBitsPerSecond: number; audioBitsPerSecond: number} {
+  const average = sourceSeconds > 0 && sourceBytes > 0 ? sourceBytes * 8 / sourceSeconds : 1_500_000;
+  const budget = Math.max(160_000, Math.min(3_000_000, Math.floor(average * 0.78)));
+  const audioBitsPerSecond = Math.min(96_000, Math.max(32_000, Math.floor(budget * 0.15)));
+  return { videoBitsPerSecond: budget - audioBitsPerSecond, audioBitsPerSecond };
+}
+
+export function estimatedStatusTrimSize(sourceBytes: number, sourceSeconds: number, selectedSeconds: number): number {
+  if (!(sourceSeconds > 0) || selectedSeconds >= sourceSeconds - 0.01) return sourceBytes;
+  const {videoBitsPerSecond, audioBitsPerSecond} = statusTrimBitrate(sourceBytes, sourceSeconds);
+  return Math.ceil((videoBitsPerSecond + audioBitsPerSecond) * Math.max(0, selectedSeconds) / 8 * 1.05);
+}
+
 export interface TrimVideoOptions {
+  bitrate?: { videoBitsPerSecond: number; audioBitsPerSecond: number };
   /** The source <video> element. It should be visible and share-origin (blob URL). */
   video: HTMLVideoElement;
   start: number;
@@ -362,7 +377,7 @@ export interface TrimVideoOptions {
  * uploading the full original.
  */
 export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
-  const { video, start, end, onProgress, signal, silentPlayback = false } = options;
+  const { video, start, end, onProgress, signal, silentPlayback = false, bitrate } = options;
 
   const support = getTrimmingSupport();
   if (!support.ok) return Promise.reject(new Error(support.reason || 'Trimming is not supported here.'));
@@ -413,7 +428,7 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
     // ---- Recording --------------------------------------------------------------
     let recorder: MediaRecorder;
     try {
-      recorder = new MediaRecorder(sourceStream, { mimeType, videoBitsPerSecond: 5_000_000 });
+      recorder = new MediaRecorder(sourceStream, { mimeType, videoBitsPerSecond: 5_000_000, ...bitrate });
     } catch {
       sourceStream.getTracks().forEach((track) => track.stop());
       if (audioContext) void audioContext.close().catch(() => undefined);
