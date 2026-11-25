@@ -285,7 +285,7 @@ export class WalletService {
     });
 
     // Compute derived balances
-    const [pendingByCurrency, pendingWithdrawals] = await Promise.all([
+    const [pendingByCurrency, pendingWithdrawals, completedWithdrawals] = await Promise.all([
       prisma.walletTransaction.groupBy({
         by: ["currency"], where: { userId, status: "PENDING" },
         _count: { _all: true }, _sum: { amount: true },
@@ -293,6 +293,10 @@ export class WalletService {
       prisma.withdrawal.aggregate({
         where: { userId, status: { in: ["PENDING", "PROCESSING", "APPROVED"] } },
         _count: { _all: true }, _sum: { amount: true, netAmount: true },
+      }),
+      prisma.withdrawal.aggregate({
+        where: { userId, status: "COMPLETED" },
+        _count: { _all: true }, _sum: { netAmount: true },
       }),
     ]);
     // Legacy pendingBalance is retained for compatibility; new UI never mixes currencies.
@@ -320,6 +324,7 @@ export class WalletService {
         grossUsd: pendingWithdrawals._sum.amount || 0,
         netUsd: pendingWithdrawals._sum.netAmount || 0,
       },
+      completedWithdrawals: { count: completedWithdrawals._count._all, netUsd: completedWithdrawals._sum.netAmount || 0 },
       hasPin: !!pin,
       pendingBalance,
       lockedBalance,
