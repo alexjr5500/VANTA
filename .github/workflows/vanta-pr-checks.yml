@@ -266,7 +266,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --test backend/scripts/staging-load-test.test.mjs backend/scripts/evaluate-performance.test.mjs backend/scripts/acceptance-preflight.test.mjs backend/scripts/acceptance-migrate.test.mjs
+      - run: node --test backend/scripts/staging-load-test.test.mjs backend/scripts/evaluate-performance.test.mjs backend/scripts/acceptance-preflight.test.mjs backend/scripts/acceptance-migrate.test.mjs backend/scripts/acceptance-provider-probe.test.mjs
 
   database-streaming-replication:
     name: Disposable PostgreSQL streaming replica and fenced failover
