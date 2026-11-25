@@ -10,7 +10,7 @@ import {
   ArrowUpRight, ArrowDownLeft, Gift, Loader2,
   History, Search, Shield, Ban, X,
   ArrowUpFromLine, Download, ChevronRight,
-  Wallet, TrendingUp, DollarSign, Eye, EyeOff, ArrowLeft, RefreshCw, Headphones
+  TrendingUp, DollarSign, Eye, EyeOff, ArrowLeft, RefreshCw, Headphones
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
@@ -437,7 +437,7 @@ export default function BalancePage() {
           {isFrozen && <p role="status" className="mt-3 rounded-lg border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-300">Your wallet is frozen. Transfers and withdrawals are unavailable.</p>}
           {!isFrozen && !limits && <p className="mt-2 text-xs text-[var(--text-secondary)]">Transfer limits unavailable. Refresh before sending.</p>}
           {/* Quick Actions */}
-          <div className="mt-2 grid w-full grid-cols-4 gap-1">
+          <div className="mt-2 grid w-full grid-cols-2 gap-2 min-[360px]:grid-cols-4">
             <button
               onClick={() => setShowBuyModal(true)}
               className="flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-lg bg-[var(--vanta-gold)] px-2 py-2.5 text-xs font-bold text-black transition active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
@@ -511,8 +511,7 @@ export default function BalancePage() {
           <section className="border-b border-[var(--border)] px-1 pb-3">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                <History size={16} className="text-[var(--vanta-gold-bright)]" />
-                <h2 className="text-sm font-semibold text-[var(--text-primary)]">Recent activity</h2>
+                <h2 className="text-base font-semibold text-[var(--text-primary)]">Recent activity</h2>
               </div>
               <button
                 onClick={() => changeTab('transactions')}
