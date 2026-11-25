@@ -28,7 +28,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
   const [twoFactorCode, setTwoFactorCode] = useState('');
 
   const submitLock = useRef(false);
-  const dialogRef = useWalletDialog<HTMLDivElement>(open, onClose, sending || step === 'processing' || step === 'success');
+  const dialogRef = useWalletDialog<HTMLDivElement>(open, onClose, sending || step === 'processing' || step === 'success', step);
   const fee = amount > 0 ? Math.round(amount * 0.10 * 100) / 100 : 0;
   const netAmount = amount > 0 ? Math.round((amount - fee) * 100) / 100 : 0;
 
@@ -58,6 +58,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
 
   const handleNext = () => {
     if (!Number.isFinite(amount) || amount <= 0) { setError('Enter a valid amount'); return; }
+    if (!Number.isSafeInteger(Math.round(amount * 100)) || Number(amount.toFixed(2)) !== amount) { setError('Enter an amount with at most two decimal places.'); return; }
     if (amount < 10) { setError('Minimum withdrawal amount is $10.00'); return; }
     if (amount > balance) { setError(`Insufficient balance. You have $${balance.toFixed(2)} available.`); return; }
     if (!/^0x[0-9a-fA-F]{40}$/.test(address.trim())) { setError('Enter a valid USDT (BEP-20) wallet address'); return; }
@@ -109,7 +110,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 30 }}
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed inset-x-0 top-[max(12px,env(safe-area-inset-top))] bottom-[max(12px,env(safe-area-inset-bottom))] z-[101] mx-auto flex min-h-0 w-[calc(100%-1.5rem)] max-w-[456px] flex-col overflow-hidden rounded-3xl border border-white/[0.08] bg-[var(--background-secondary)] shadow-2xl backdrop-blur-2xl"
+            className="vanta-wallet-ui fixed inset-x-0 top-[max(12px,env(safe-area-inset-top))] bottom-[max(12px,env(safe-area-inset-bottom))] z-[101] mx-auto flex min-h-0 w-[calc(100%-1.5rem)] max-w-[456px] flex-col overflow-hidden rounded-3xl border border-white/[0.08] bg-[var(--background-secondary)] shadow-2xl backdrop-blur-2xl"
             role="dialog"
             aria-modal="true"
             aria-label="Withdraw earnings"
