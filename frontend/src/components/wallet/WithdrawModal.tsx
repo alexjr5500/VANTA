@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { apiGet, apiPost } from '@/lib/apiClient';
 import { useWalletDialog } from './useWalletDialog';
+import { readWalletReceipt, downloadWalletReceipt, type WalletReceipt } from '@/lib/walletReceipt';
 
 interface WithdrawModalProps {
   open: boolean;
@@ -23,6 +24,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
   const [address, setAddress] = useState(walletAddress || '');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
+  const [receipt, setReceipt] = useState<WalletReceipt | null>(null);
   const [pinCode, setPinCode] = useState('');
   const [twoFactorEnabled, setTwoFactorEnabled] = useState<boolean | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState('');
@@ -47,6 +49,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
     if (open) {
       setStep('form');
       setSending(false);
+      setReceipt(null);
       submitLock.current = false;
       setAmount(0);
       setAddress(walletAddress || '');
@@ -61,7 +64,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
     if (!Number.isSafeInteger(Math.round(amount * 100)) || Number(amount.toFixed(2)) !== amount) { setError('Enter an amount with at most two decimal places.'); return; }
     if (amount < 10) { setError('Minimum withdrawal amount is $10.00'); return; }
     if (amount > balance) { setError(`Insufficient balance. You have $${balance.toFixed(2)} available.`); return; }
-    if (!/^0x[0-9a-fA-F]{40}$/.test(address.trim())) { setError('Enter a valid USDT (BEP-20) wallet address'); return; }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address.trim()) || /^0x0{40}$/.test(address.trim())) { setError('Enter a valid USDT (BEP-20) wallet address'); return; }
     setError('');
     setStep('review');
   };
@@ -76,12 +79,15 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
     setStep('processing');
 
     try {
-      await apiPost('/api/wallets/withdraw', {
+      const result = await apiPost<{withdrawal?:unknown}>('/api/wallets/withdraw', {
         amount,
         walletAddress: address.trim(),
         pinCode,
         twoFactorCode: twoFactorEnabled ? twoFactorCode : undefined,
       }, token);
+      const confirmed = readWalletReceipt(result?.withdrawal);
+      if (!confirmed) { setError('The request outcome could not be confirmed. Close and check withdrawal history before retrying.'); setStep('review'); setSending(false); return; }
+      setReceipt(confirmed);
       setPinCode('');
       setTwoFactorCode('');
       setStep('success');
@@ -295,7 +301,7 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                     disabled={sending || twoFactorEnabled === null || (twoFactorEnabled && !twoFactorCode.trim())}
                     className="w-full py-3 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
-                    {sending ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Confirm & Withdraw'}
+                    {sending ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Confirm withdrawal request'}
                   </button>
                 </div>
               )}
@@ -352,8 +358,9 @@ export default function WithdrawModal({ open, balance, walletAddress, onClose, o
                     transition={{ delay: 0.4 }}
                     className="text-sm text-[var(--text-secondary)] max-w-xs"
                   >
-                    ${netAmount.toFixed(2)} USDT will be sent to your wallet after review.
+                    Your request for USDT {(receipt?.netAmount ?? netAmount).toFixed(2)} was recorded. Settlement is subject to review and verification.
                   </motion.p>
+                {receipt && <div className="mt-4 w-full space-y-2 rounded-xl bg-[var(--surface)] p-3 text-sm"><p>Reference: <span className="break-all font-mono text-xs">{receipt.id}</span></p><p>Status: {receipt.status}</p><button type="button" onClick={()=>downloadWalletReceipt('withdrawal',receipt)} className="min-h-11 w-full rounded-lg border border-[var(--border)] text-[var(--vanta-gold-bright)]">Download withdrawal record</button></div>}
                 <button type="button" onClick={() => { onClose(); onSuccess(); }} className="mt-5 min-h-11 w-full rounded-xl bg-[var(--vanta-gold)] px-4 font-semibold text-black">Done</button>
                 </div>
               )}
