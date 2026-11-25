@@ -26,7 +26,7 @@ describe('Reel media finalization', () => {
   const uploaded = {
     id: 'upload-1', userId: 'creator-1', fileType: 'VIDEO',
     category: 'reel', recordType: 'Video', recordId: 'reel-1',
-    deletedAt: null, url: 'https://res.cloudinary.com/test/video/upload/clip.mp4',
+    deletedAt: null, path: 'cloudinary:video:vanta/reel/clip', url: 'https://res.cloudinary.com/test/video/upload/clip.mp4',
   };
 
   const makeResponse = () => {
@@ -60,7 +60,8 @@ describe('Reel media finalization', () => {
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(tx.uploadedFile.updateMany).toHaveBeenCalledWith({
       where: {
-        id: 'upload-1', userId: 'creator-1', fileType: 'VIDEO', deletedAt: null,
+        id: 'upload-1', userId: 'creator-1', fileType: 'VIDEO', category: 'reel',
+        path: uploaded.path, url: uploaded.url, deletedAt: null,
         OR: [{ recordId: null }, { recordType: 'Video', recordId: 'reel-1' }],
       },
       data: { recordType: 'Video', recordId: 'reel-1', category: 'reel' },
@@ -105,6 +106,15 @@ describe('Reel media finalization', () => {
     await finalizeReel(request() as any, res);
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it.each(['message', 'verification', 'generic', 'story'])('rejects an upload categorized as %s before linking or publication', async category => {
+    (prisma.uploadedFile.findUnique as jest.Mock).mockResolvedValue({ ...uploaded, category, recordId: null });
+    const res = makeResponse();
+    await finalizeReel(request() as any, res);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(tx.video.update).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
   });
 
   it('refuses to finalize a deleted or non-video upload', async () => {
