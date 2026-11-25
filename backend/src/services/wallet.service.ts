@@ -285,7 +285,21 @@ export class WalletService {
     });
 
     // Compute derived balances
-    const pendingBalance = await this.getPendingBalance(userId);
+    const [pendingByCurrency, pendingWithdrawals] = await Promise.all([
+      prisma.walletTransaction.groupBy({
+        by: ["currency"], where: { userId, status: "PENDING" },
+        _count: { _all: true }, _sum: { amount: true },
+      }),
+      prisma.withdrawal.aggregate({
+        where: { userId, status: { in: ["PENDING", "PROCESSING", "APPROVED"] } },
+        _count: { _all: true }, _sum: { amount: true, netAmount: true },
+      }),
+    ]);
+    // Legacy pendingBalance is retained for compatibility; new UI never mixes currencies.
+    const pendingBalance = pendingByCurrency.reduce((sum, row) => sum + (row._sum.amount || 0), 0);
+    const limits = resolveEffectiveTransferLimits(transferLimit);
+    const dailyUsed = transferLimit && transferLimit.lastResetDate >= startOfUTCDay(new Date()) ? transferLimit.dailyUsed : 0;
+    const availableCoins = resolveAvailableCoins(wallet);
     const lockedBalance = wallet.lockedCoins || 0;
     const usdtBalance = wallet.earningsBalance || 0;
     const usdEstimate = coinsToUsd(wallet.coinBalance || 0);
@@ -294,6 +308,18 @@ export class WalletService {
     return {
       ...wallet,
       transferLimit,
+      availableCoins,
+      effectiveTransferLimits: {
+        ...limits, dailyUsed, dailyRemaining: Math.max(0, limits.dailyLimit - dailyUsed),
+      },
+      pendingTransactions: pendingByCurrency.map(row => ({
+        currency: row.currency, count: row._count._all, amount: row._sum.amount || 0,
+      })),
+      pendingWithdrawals: {
+        count: pendingWithdrawals._count._all,
+        grossUsd: pendingWithdrawals._sum.amount || 0,
+        netUsd: pendingWithdrawals._sum.netAmount || 0,
+      },
       hasPin: !!pin,
       pendingBalance,
       lockedBalance,
@@ -308,6 +334,7 @@ export class WalletService {
     const wallet = await this.ensureWallet(userId);
     return {
       coinBalance: wallet.coinBalance,
+      availableCoins: resolveAvailableCoins(wallet),
       earningsBalance: wallet.earningsBalance,
       totalCoinsPurchased: wallet.totalCoinsPurchased,
       totalCoinsReceived: wallet.totalCoinsReceived,
