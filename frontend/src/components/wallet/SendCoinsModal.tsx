@@ -10,6 +10,8 @@ import { resolveMediaUrl } from '@/lib/mediaUrl';
 import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import type { VerificationType } from '@/types/verification';
+import { calculateTransferFee, maxTransferableCoins } from '@/lib/wallet';
+import { useWalletDialog } from './useWalletDialog';
 
 interface UserResult {
   id: string;
@@ -47,7 +49,13 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
   const [resending, setResending] = useState(false);
   const searchTimer = useRef<NodeJS.Timeout | null>(null);
 
-  const fee = amount > 0 ? Math.ceil(amount * 0.05) : 0;
+  const [searchFailed, setSearchFailed] = useState(false);
+  const [searchRetry, setSearchRetry] = useState(0);
+  const [notice, setNotice] = useState('');
+  const submitLock = useRef(false);
+  const dialogRef = useWalletDialog<HTMLDivElement>(open, onClose, sending || resending || step === 'processing' || step === 'success');
+  const maxAmount = maxTransferableCoins(balance);
+  const fee = calculateTransferFee(amount);
   const totalDeduction = amount + fee;
 
   // Reset state when opened
@@ -68,6 +76,9 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
       setRequestId('');
       setSending(false);
       setResending(false);
+      setNotice('');
+      setSearchFailed(false);
+      submitLock.current = false;
     }
   }, [open]);
 
@@ -76,6 +87,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
   useEffect(() => {
     let current = true;
     setSearchResults([]);
+    setSearchFailed(false);
     if (!open || step !== 'recipient' || recipientQuery.length < 2) {
       setSearching(false);
       return;
@@ -86,13 +98,13 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
         const data = await apiGet<any>(`/api/wallets/users/search?q=${encodeURIComponent(recipientQuery)}`, token || undefined);
         if (current) setSearchResults(Array.isArray(data) ? data : data?.users ?? []);
       } catch {
-        if (current) setSearchResults([]);
+        if (current) { setSearchResults([]); setSearchFailed(true); }
       } finally {
         if (current) setSearching(false);
       }
     }, 300);
     return () => { current = false; if (searchTimer.current) clearTimeout(searchTimer.current); };
-  }, [recipientQuery, step, open, token]);
+  }, [recipientQuery, step, open, token, searchRetry]);
 
   const handleSelectUser = (u: UserResult) => {
     setSelectedUser(u);
@@ -100,17 +112,19 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
   };
 
   const handleAmountNext = () => {
-    if (amount <= 0) { setError('Enter an amount'); return; }
+    if (!Number.isSafeInteger(amount) || amount <= 0) { setError('Enter a positive whole-coin amount.'); return; }
     if (totalDeduction > balance) { setError(`Insufficient balance. You need ${totalDeduction.toLocaleString()} VANTA including the fee.`); return; }
     setError('');
     setStep('review');
   };
 
   const handleSend = async () => {
-    if (!token || !selectedUser || sending) return;
+    if (!token || !selectedUser || sending || submitLock.current) return;
     if (!/^\d{4,6}$/.test(pinCode)) { setError('Enter your 4-6 digit wallet PIN.'); return; }
+    submitLock.current = true;
     setSending(true);
     setError('');
+    setNotice('');
     setStep('processing');
     const intentRequestId = requestId || (typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID()
@@ -134,22 +148,22 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
         setSending(false);
         return;
       }
+      if (!result?.transfer) throw new Error('The transfer was not confirmed by the server. Please try again.');
+      setPinCode('');
       setStep('success');
-      setTimeout(() => {
-        onSuccess();
-        onClose();
-      }, 1500);
     } catch (err: any) {
       setError(err.message || 'Failed to send VANTA');
       setStep('review');
       setSending(false);
-    }
+    } finally { submitLock.current = false; }
   };
 
   const handleVerifyOtp = async () => {
-    if (!token || !selectedUser || !challengeId || !/^\d{6}$/.test(otpCode) || sending) return;
+    if (!token || !selectedUser || !challengeId || !/^\d{6}$/.test(otpCode) || sending || resending || submitLock.current) return;
+    submitLock.current = true;
     setSending(true);
     setError('');
+    setNotice('');
     setStep('processing');
     try {
       const result = await apiPost<any>('/api/wallets/transfer', {
@@ -165,20 +179,20 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
       if (result?.requiresOTP || !result?.transfer) {
         throw new Error('The transfer was not confirmed by the server. Please try again.');
       }
+      setPinCode('');
+      setOtpCode('');
+      setTwoFactorCode('');
       setStep('success');
-      setTimeout(() => {
-        onSuccess();
-        onClose();
-      }, 1500);
     } catch (err: any) {
       setError(err.message || 'The code is invalid or expired. Check it and try again.');
       setStep('otp');
       setSending(false);
-    }
+    } finally { submitLock.current = false; }
   };
 
   const handleResendOtp = async () => {
-    if (!token || !selectedUser || resending || sending) return;
+    if (!token || !selectedUser || resending || sending || submitLock.current) return;
+    submitLock.current = true;
     setResending(true);
     setError('');
     try {
@@ -194,11 +208,12 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
       }
       setChallengeId(String(result.challengeId));
       setOtpCode('');
-      setError('A new verification code has been sent to your verified email address.');
+      setNotice('A new verification code has been sent to your verified email address.');
     } catch (err: any) {
       setError(err.message || 'Unable to resend the code. Please wait and try again.');
     } finally {
       setResending(false);
+      submitLock.current = false;
     }
   };
 
@@ -213,7 +228,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-md"
-            onClick={() => step !== 'processing' && onClose()}
+            onClick={() => !sending && !resending && step !== 'processing' && step !== 'success' && onClose()}
           />
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 30 }}
@@ -224,9 +239,11 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
             role="dialog"
             aria-modal="true"
             aria-label="Send VANTA"
+            ref={dialogRef}
+            tabIndex={-1}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] shrink-0">
+            <div className="flex items-center justify-between px-4 py-4 sm:px-6 border-b border-white/[0.06] shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-white/[0.08] border border-white/[0.1] flex items-center justify-center">
                   <VantaCoinIcon size={18} className="text-[var(--vanta-gold-bright)]" />
@@ -243,21 +260,22 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                   </p>
                 </div>
               </div>
-              <button onClick={() => step !== 'processing' && onClose()} className="rounded-xl p-2 text-gray-400 hover:text-white hover:bg-white/[0.05] transition" aria-label="Close">
+              <button onClick={() => !sending && !resending && step !== 'processing' && step !== 'success' && onClose()} className="rounded-xl p-2 text-gray-400 hover:text-white hover:bg-white/[0.05] transition" aria-label="Close" disabled={sending || resending || step === 'processing' || step === 'success'}>
                 <X size={18} />
               </button>
             </div>
 
             {/* Body */}
-            <div className="flex-1 overflow-y-auto scrollbar-hide p-6">
+            <div className="flex-1 overflow-y-auto scrollbar-hide p-4 sm:p-6">
               {/* Balance */}
               <div className="mb-5 rounded-2xl bg-white/[0.03] border border-white/[0.06] px-4 py-3 flex items-center justify-between">
                 <span className="text-xs text-[var(--text-secondary)]">Your balance</span>
                 <span className="text-sm font-bold text-white">{balance.toLocaleString()} <VantaCoinIcon size={14} className="inline-block text-[var(--vanta-gold-bright)]" /></span>
               </div>
 
+              {notice && <p role="status" className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-sm text-[var(--text-primary)]">{notice}</p>}
               {error && (
-                <div className="mb-4 flex items-center gap-2 text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
+                <div role="alert" className="mb-4 flex items-center gap-2 text-red-400 text-xs bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
                   <AlertCircle size={14} className="shrink-0" />
                   {error}
                 </div>
@@ -267,22 +285,24 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
               {step === 'recipient' && (
                 <div className="space-y-4">
                   <div>
-                    <label className="text-xs font-medium text-[var(--text-secondary)] mb-1.5 block">Search users</label>
+                    <label htmlFor="wallet-recipient" className="text-sm font-medium text-[var(--text-secondary)] mb-1.5 block">Search users</label>
                     <div className="relative">
                       <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)]" />
                       <input
-                        type="text"
+                        id="wallet-recipient"
+                        type="search"
+                        autoComplete="off"
                         value={searchQuery}
                         onChange={e => setSearchQuery(e.target.value)}
                         placeholder="Search by username or display name..."
-                        autoFocus
-                        className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] px-10 py-3 text-sm text-white placeholder-gray-500 outline-none transition-all"
+                                                className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] px-10 py-3 text-sm text-white placeholder-gray-500 outline-none transition-all"
                       />
                     </div>
                   </div>
 
+                  {recipientQuery.length < 2 && <p className="text-sm text-[var(--text-secondary)]">Enter at least two characters to search.</p>}
                   {searching && (
-                    <div className="flex items-center justify-center py-8">
+                    <div role="status" aria-label="Searching users" className="flex items-center justify-center py-8">
                       <Loader2 size={20} className="animate-spin text-[var(--text-secondary)]" />
                     </div>
                   )}
@@ -308,7 +328,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                             {u.avatar ? (
                               <img src={resolveMediaUrl(u.avatar)} alt={u.username} className="w-full h-full object-cover" />
                             ) : (
-                              <User size={16} className="text-white/60" />
+                              <User size={16} className="text-[var(--text-secondary)]" />
                             )}
                           </div>
                           <div className="flex-1 min-w-0">
@@ -324,8 +344,9 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                     </div>
                   )}
 
-                  {!searching && recipientQuery.length >= 2 && searchResults.length === 0 && (
-                    <div className="text-center py-8 text-sm text-white/30">No users found</div>
+                  {searchFailed && <div role="alert" className="rounded-xl bg-[var(--surface)] p-3 text-sm text-[var(--text-secondary)]">Search could not load. <button type="button" onClick={() => setSearchRetry(v => v + 1)} className="min-h-11 font-semibold text-[var(--vanta-gold-bright)]">Try again</button></div>}
+                  {!searching && !searchFailed && recipientQuery.length >= 2 && searchResults.length === 0 && (
+                    <div className="text-center py-8 text-sm text-[var(--text-secondary)]">No matching users found</div>
                   )}
                 </div>
               )}
@@ -333,13 +354,14 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
               {/* Step 2: Amount */}
               {step === 'amount' && selectedUser && (
                 <div className="space-y-4">
+                  <button type="button" onClick={() => { setStep('recipient'); setError(''); }} className="min-h-11 text-sm font-semibold text-[var(--vanta-gold-bright)]">Change recipient</button>
                   {/* Selected recipient */}
                   <div className="flex items-center gap-3 p-3 rounded-2xl bg-white/[0.03] border border-white/[0.08]">
                     <div className="w-10 h-10 rounded-xl bg-white/[0.06] border border-white/[0.08] flex items-center justify-center overflow-hidden shrink-0">
                       {selectedUser.avatar ? (
                         <img src={resolveMediaUrl(selectedUser.avatar)} alt={selectedUser.username} className="w-full h-full object-cover" />
                       ) : (
-                        <User size={16} className="text-white/60" />
+                        <User size={16} className="text-[var(--text-secondary)]" />
                       )}
                     </div>
                     <div>
@@ -349,15 +371,15 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-[var(--text-secondary)] mb-1.5 block">Amount</label>
+                    <label htmlFor="wallet-send-amount" className="text-sm font-medium text-[var(--text-secondary)] mb-1.5 block">Amount</label>
                     <div className="relative">
                       <input
-                        type="number"
+                        id="wallet-send-amount"
+                        type="number" inputMode="numeric" min={1} step={1}
                         value={amount || ''}
                         onChange={e => setAmount(Math.min(Math.max(0, parseInt(e.target.value) || 0), balance))}
                         placeholder="0"
-                        autoFocus
-                        className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] px-4 py-3.5 text-xl font-bold text-white placeholder-gray-600 outline-none focus:border-[var(--vanta-gold)] transition-all"
+                                                className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.04] px-4 py-3.5 text-xl font-bold text-white placeholder-gray-600 outline-none focus:border-[var(--vanta-gold)] transition-all"
                       />
                       <VantaCoinIcon size={20} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--vanta-gold-bright)]" />
                     </div>
@@ -366,18 +388,19 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                         <button
                           key={p}
                           onClick={() => setAmount(Math.min(p, balance))}
-                          disabled={p > balance}
+                          disabled={p > maxAmount}
                           className={cn(
-                            'min-h-9 rounded-lg text-xs font-medium transition-all border disabled:opacity-30 disabled:cursor-not-allowed',
-                            amount === p ? 'border-white/30 bg-white/10 text-white' : 'border-white/[0.06] text-[var(--text-secondary)] hover:text-white'
+                            'min-h-11 rounded-lg text-xs font-medium transition-all border disabled:opacity-30 disabled:cursor-not-allowed',
+                            amount === p ? 'border-[var(--active-border)] bg-[var(--active-soft)] text-[var(--vanta-gold-bright)]' : 'border-white/[0.06] text-[var(--text-secondary)] hover:text-white'
                           )}
                         >
                           {p >= 1000 ? `${p / 1000}K` : p}
                         </button>
                       ))}
                       <button
-                        onClick={() => setAmount(balance)}
-                        className="min-h-9 rounded-lg border border-white/[0.06] text-xs font-medium text-[var(--text-secondary)] transition-all hover:text-white"
+                        onClick={() => setAmount(maxAmount)}
+                        disabled={maxAmount <= 0}
+                        className="min-h-11 rounded-lg border border-white/[0.06] text-xs font-medium text-[var(--text-secondary)] transition-all hover:text-white"
                       >
                         Max
                       </button>
@@ -386,8 +409,9 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                   </div>
 
                   <div>
-                    <label className="text-xs font-medium text-[var(--text-secondary)] mb-1.5 block">Note (optional)</label>
+                    <label htmlFor="wallet-transfer-note" className="text-sm font-medium text-[var(--text-secondary)] mb-1.5 block">Note (optional)</label>
                     <input
+                      id="wallet-transfer-note"
                       type="text"
                       value={note}
                       onChange={e => setNote(e.target.value)}
@@ -396,6 +420,8 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                     />
                   </div>
 
+                  <p className="text-xs text-[var(--text-secondary)]">Maximum including the fee: {maxAmount.toLocaleString()} VANTA.</p>
+                  {totalDeduction > balance && <p role="alert" className="text-sm text-red-300">Not enough coins to cover the transfer and fee.</p>}
                   {/* Fee breakdown */}
                   {amount > 0 && (
                     <div className="rounded-2xl bg-white/[0.02] border border-white/[0.04] p-4 space-y-2">
@@ -405,7 +431,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                       </div>
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-[var(--text-secondary)]">Network fee (5%)</span>
-                        <span className="text-white/60">{fee.toLocaleString()} VANTA</span>
+                        <span className="text-[var(--text-secondary)]">{fee.toLocaleString()} VANTA</span>
                       </div>
                       <div className="flex items-center justify-between text-xs border-t border-white/[0.06] pt-2">
                         <span className="text-[var(--text-secondary)] font-semibold">Total deduction</span>
@@ -416,7 +442,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
 
                   <button
                     onClick={handleAmountNext}
-                    disabled={amount <= 0}
+                    disabled={amount <= 0 || totalDeduction > balance}
                     className="w-full py-3 rounded-2xl bg-[var(--vanta-gold)] text-black text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   >
                     Continue
@@ -427,6 +453,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
               {/* Step 3: Review */}
               {step === 'review' && selectedUser && (
                 <div className="space-y-4">
+                  {!requestId && <button type="button" onClick={() => { setStep('amount'); setError(''); setPinCode(''); }} className="min-h-11 text-sm font-semibold text-[var(--vanta-gold-bright)]">Edit amount</button>}
                   <div className="text-center">
                     <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto mb-3">
                       <Check size={22} className="text-emerald-400" />
@@ -448,16 +475,16 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                     </div>
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-[var(--text-secondary)]">Transfer fee</span>
-                      <span className="text-white/60">{fee.toLocaleString()} VANTA</span>
+                      <span className="text-[var(--text-secondary)]">{fee.toLocaleString()} VANTA</span>
                     </div>
                     <div className="flex items-center justify-between border-t border-white/[0.06] pt-2.5 text-xs">
-                      <span className="font-semibold text-white/60">Total deduction</span>
+                      <span className="font-semibold text-[var(--text-secondary)]">Total deduction</span>
                       <span className="font-bold text-white">{totalDeduction.toLocaleString()} VANTA</span>
                     </div>
                   </div>
 
                   <div className="space-y-1.5">
-                    <label htmlFor="wallet-transfer-pin" className="block text-xs font-medium text-white/60">Wallet PIN</label>
+                    <label htmlFor="wallet-transfer-pin" className="block text-xs font-medium text-[var(--text-secondary)]">Wallet PIN</label>
                     <input id="wallet-transfer-pin" type="password" inputMode="numeric" autoComplete="off" maxLength={6}
                       value={pinCode} onChange={e => setPinCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                       placeholder="Enter your 4-6 digit PIN" aria-label="Wallet PIN"
@@ -482,30 +509,30 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                       <AlertCircle size={23} className="text-[#c9a45c]" />
                     </div>
                     <h3 className="text-base font-bold text-white">Verify your transfer</h3>
-                    <p className="mt-2 text-sm leading-6 text-white/55">We sent a six-digit verification code to your verified email address. Enter it to send {amount.toLocaleString()} VANTA Coins to @{selectedUser.username}.</p>
+                    <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">We sent a six-digit verification code to your verified email address. Enter it to send {amount.toLocaleString()} VANTA Coins to @{selectedUser.username}.</p>
                   </div>
                   <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4 space-y-2">
-                    <div className="flex items-center justify-between text-xs"><span className="text-white/45">Recipient</span><span className="font-medium text-white">@{selectedUser.username}</span></div>
-                    <div className="flex items-center justify-between text-xs"><span className="text-white/45">Transfer amount</span><span className="font-semibold text-white">{amount.toLocaleString()} VANTA</span></div>
-                    <div className="flex items-center justify-between text-xs"><span className="text-white/45">Transfer fee</span><span className="text-white/70">{fee.toLocaleString()} VANTA</span></div>
-                    <div className="flex items-center justify-between border-t border-white/[0.07] pt-2 text-xs"><span className="text-white/45">Total deduction</span><span className="font-semibold text-white">{totalDeduction.toLocaleString()} VANTA</span></div>
+                    <div className="flex items-center justify-between text-xs"><span className="text-[var(--text-secondary)]">Recipient</span><span className="font-medium text-white">@{selectedUser.username}</span></div>
+                    <div className="flex items-center justify-between text-xs"><span className="text-[var(--text-secondary)]">Transfer amount</span><span className="font-semibold text-white">{amount.toLocaleString()} VANTA</span></div>
+                    <div className="flex items-center justify-between text-xs"><span className="text-[var(--text-secondary)]">Transfer fee</span><span className="text-white/70">{fee.toLocaleString()} VANTA</span></div>
+                    <div className="flex items-center justify-between border-t border-white/[0.07] pt-2 text-xs"><span className="text-[var(--text-secondary)]">Total deduction</span><span className="font-semibold text-white">{totalDeduction.toLocaleString()} VANTA</span></div>
                   </div>
                   <div>
-                    <label htmlFor="vanta-transfer-otp" className="mb-2 block text-xs font-medium text-white/60">6-digit email code</label>
+                    <label htmlFor="vanta-transfer-otp" className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">6-digit email code</label>
                     <input id="vanta-transfer-otp" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]*" maxLength={6} value={otpCode} onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))} onKeyDown={e => { if (e.key === 'Enter' && otpCode.length === 6) void handleVerifyOtp(); }} placeholder="000000" aria-describedby="vanta-transfer-otp-help" className="w-full rounded-2xl border border-[#c9a45c]/30 bg-white/[0.04] px-4 py-4 text-center text-2xl font-semibold tracking-[0.5em] text-white placeholder:text-white/20 outline-none focus:border-[#c9a45c]" />
                     <p id="vanta-transfer-otp-help" className="mt-2 text-[11px] text-white/35">The code expires after 10 minutes and can only be used once.</p>
                   </div>
                   {requiresTwoFactor && (
                     <div>
-                      <label htmlFor="vanta-transfer-2fa" className="mb-2 block text-xs font-medium text-white/60">Authenticator app code</label>
+                      <label htmlFor="vanta-transfer-2fa" className="mb-2 block text-xs font-medium text-[var(--text-secondary)]">Authenticator app code</label>
                       <input id="vanta-transfer-2fa" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={8}
                         value={twoFactorCode} onChange={e => setTwoFactorCode(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8))}
                         placeholder="6-digit app code or backup code"
-                        className="w-full rounded-2xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-center text-sm tracking-widest text-white placeholder:tracking-normal placeholder:text-white/30 outline-none focus:border-[var(--vanta-gold)]" />
+                        className="w-full rounded-2xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-center text-sm tracking-widest text-white placeholder:tracking-normal placeholder:text-[var(--text-secondary)] outline-none focus:border-[var(--vanta-gold)]" />
                     </div>
                   )}
                   <button onClick={handleVerifyOtp} disabled={sending || otpCode.length !== 6 || !challengeId || (requiresTwoFactor && !twoFactorCode)} className="w-full rounded-2xl bg-[var(--vanta-gold)] py-3.5 text-sm font-bold text-black transition disabled:cursor-not-allowed disabled:opacity-45">{sending ? <Loader2 size={15} className="mx-auto animate-spin" /> : 'Verify and Continue'}</button>
-                  <button type="button" onClick={handleResendOtp} disabled={resending || sending} className="w-full py-2 text-xs font-semibold text-white/60 transition hover:text-white disabled:opacity-40">{resending ? 'Sending new code…' : 'Resend verification code'}</button>
+                  <button type="button" onClick={handleResendOtp} disabled={resending || sending} className="w-full py-2 text-xs font-semibold text-[var(--text-secondary)] transition hover:text-white disabled:opacity-40">{resending ? 'Sending new code…' : 'Resend verification code'}</button>
                 </div>
               )}
 
@@ -523,7 +550,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                   <p className="text-sm text-[var(--text-secondary)] max-w-xs">
                     Your transaction is being processed securely...
                   </p>
-                  <div className="mt-6 flex items-center gap-2 text-xs text-white/30">
+                  <div className="mt-6 flex items-center gap-2 text-xs text-[var(--text-secondary)]">
                     <Sparkles size={12} />
                     Atomic & secure transfer
                   </div>
@@ -563,6 +590,7 @@ export default function SendCoinsModal({ open, balance, onClose, onSuccess }: Se
                   >
                     {amount.toLocaleString()} VANTA sent to @{selectedUser.username}
                   </motion.p>
+                <button type="button" onClick={() => { onClose(); onSuccess(); }} className="mt-5 min-h-11 w-full rounded-xl bg-[var(--vanta-gold)] px-4 font-semibold text-black">Done</button>
                 </div>
               )}
             </div>
