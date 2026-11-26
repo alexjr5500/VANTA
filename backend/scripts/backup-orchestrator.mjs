@@ -49,8 +49,10 @@ export async function runBackupSet({ scope, runId, policy, adapters }) {
     check(lease && await lease.healthy(), 'Backup writer busy');
     phase = 'inventory';
     const observed = await adapters.measureCapacity();
-    const pre = assessBackupRun({ ...policy, ...observed, enabled: policy.enabled,
-      ownerApproved: policy.ownerApproved, exclusiveLockHeld: true, sourceFenced: true });
+    const pre = assessBackupRun({ ...policy, nowMs: observed.nowMs, inventoryAtMs: observed.inventoryAtMs,
+      storedBytes: observed.storedBytes, incompleteUploadBytes: observed.incompleteUploadBytes,
+      scratchFreeBytes: observed.scratchFreeBytes, inventoryComplete: observed.inventoryComplete,
+      unresolvedAttempt: observed.unresolvedAttempt, exclusiveLockHeld: true, sourceFenced: true });
     // sourceFenced is provisional only for the capacity calculation; no
     // capture occurs until a real fence is obtained and checked below.
     check(pre.allowed, 'Backup policy rejected: ' + pre.issues.join(','));
@@ -74,6 +76,7 @@ export async function runBackupSet({ scope, runId, policy, adapters }) {
     check(await lease.healthy(), 'Backup writer lock lost');
     const mediaArtifact = await adapters.upload('media.tar.age', media.path, policy.mediaLimitBytes);
     check(await lease.healthy(), 'Backup writer lock lost');
+    check(database?.bytes === db.bytes && mediaArtifact?.bytes === media.bytes, 'Uploaded capture size mismatch');
     const manifest = verifiedBackupSet(database, mediaArtifact, runId, scope);
     phase = 'marker';
     const signed = await adapters.signManifest({ manifest, scope, capturedAtMs });
