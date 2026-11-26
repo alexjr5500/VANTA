@@ -419,7 +419,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // Homes and +Property own their page-specific sticky headers and need the
   // same flush-to-top, full-bleed scroll surface as Discover without importing
   // any Discover header content.
-  const isHomesHeaderRoute = pathname === '/homes' || pathname === '/homes/create';
+  const isHomesEditor = pathname === '/homes/create';
+  const isHomesDetail = Boolean(pathname && /^\/homes\/[^/]+$/.test(pathname) && !['/homes/create', '/homes/manage', '/homes/saved'].includes(pathname));
+  const isHomesTaskPage = isHomesEditor || isHomesDetail;
+  const isHomesHeaderRoute = pathname === '/homes' || isHomesTaskPage;
   // Notifications, Bookmarks, Gift Store (canonical route /gifts), Balance and
   // the Live feed render the same Discover-style full-bleed sticky header, so
   // they get the same flush-top treatment as Settings (the shell zeroes its top
@@ -437,7 +440,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     pathname === '/community-guidelines';
 
   const isProfilePage = pathname === '/profile' || pathname?.startsWith('/profile/');
-  const isImmersiveSurface = isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isProfilePage || isPostReplyPage;
+  const isImmersiveSurface = isHomesTaskPage || isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isProfilePage || isPostReplyPage;
   const isScrollPage = !isImmersiveSurface;
 
   const handleLogout = useCallback(() => {
@@ -510,7 +513,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               isReelsPage && 'px-0 py-0',
               isPostReplyPage && 'px-0 py-0',
               // Home / Discover / Stories are full-bleed immersive surfaces.
-              (isHomePage || isDiscoverPage || isStoryPage) && 'px-0 py-0',
+              (isHomePage || isDiscoverPage || isStoryPage || isHomesTaskPage) && 'px-0 py-0',
               // Live viewer + studio are full-bleed playback surfaces.
               isLiveViewer && 'px-0 py-0',
               // Standard user pages keep the classic page inset (px-4 py-5).
@@ -527,7 +530,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             )}>
             <motion.div
               key={isClient ? pathname : 'initial'}
-              className={cn(isSettingsRoute && 'vanta-settings-shell', (isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isChatPage || isProfilePage || isPostReplyPage) && 'h-full min-h-0')}
+              className={cn(isSettingsRoute && 'vanta-settings-shell', (isHomesTaskPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isChatPage || isProfilePage || isPostReplyPage) && 'h-full min-h-0')}
               initial={{ opacity: 0, ...(isConsolePage ? {} : { y: 10 }) }}
               animate={{ opacity: 1, ...(isConsolePage ? {} : { y: 0 }) }}
               transition={{ duration: 0.2, ease: 'easeOut' }}
@@ -595,7 +598,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </button>
         )}
         <AnimatePresence initial={false}>
-          {(!isEditProfilePage && !isPostDetailPage && (!isReelsPage || isReelsFeed) && !isLiveViewer && !isStoryPage && !isGoLivePage && !isChatConversation && !createHubOpen && !activeFlow && !isFloatingCreateOpen) && (
+          {(!isHomesTaskPage && !isEditProfilePage && !isPostDetailPage && (!isReelsPage || isReelsFeed) && !isLiveViewer && !isStoryPage && !isGoLivePage && !isChatConversation && !createHubOpen && !activeFlow && !isFloatingCreateOpen) && (
           <motion.nav
             initial={{ y: 64, opacity: 0 }}
             animate={{ y: bottomNavHidden ? '100%' : 0, opacity: bottomNavHidden ? 0 : 1 }}
