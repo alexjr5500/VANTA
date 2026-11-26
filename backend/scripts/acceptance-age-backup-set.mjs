@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { checkAcceptanceConfig } from './acceptance-preflight.mjs';
 import { checkDatabase } from './acceptance-provider-probe.mjs';
 import { sha256, MAX_BACKUP_BYTES } from './backup-envelope.mjs';
+import { captureEncryptedArtifact } from './backup-bounded-capture.mjs';
 import { uploadEncryptedArtifact, publishEncryptedBackupSet, parseBackupManifest } from './backup-r2-multipart.mjs';
 
 const log = x => console.log('[AGE BACKUP SET 282] ' + JSON.stringify(x));
@@ -103,14 +104,13 @@ try {
   const dump = join(writer, 'database.dump.age'), tar = join(writer, 'media.tar.age');
   step = 'archive';
   const start = Date.now();
-  // Pipefail ensures producer failure cannot be reported as a valid archive.
-  // age itself runs with a clean environment in the encryption helper.
-  run('bash', ['-o', 'pipefail', '-c',
-    'pg_dump --format=custom --no-owner --no-acl --dbname "$1" | bash backend/scripts/backup-age-encrypt.sh "$2"',
-    'backup', source, dump], { env: { ...pgEnv, VANTA_BACKUP_AGE_RECIPIENT: recipient } });
-  run('bash', ['-o', 'pipefail', '-c',
-    'tar -C "$1" -cf - fixture.bin | bash backend/scripts/backup-age-encrypt.sh "$2"',
-    'backup', mediaDir, tar], { env: { PATH: env.PATH, HOME: writer, VANTA_BACKUP_AGE_RECIPIENT: recipient } });
+  // A failed producer, encryption process, deadline or byte limit prevents publication.
+  await captureEncryptedArtifact({ producer: 'pg_dump',
+    args: ['--format=custom', '--no-owner', '--no-acl', '--dbname', source],
+    producerEnv: pgEnv, recipient, output: dump, maxBytes: 1024 * 1024 });
+  await captureEncryptedArtifact({ producer: 'tar',
+    args: ['-C', mediaDir, '-cf', '-', 'fixture.bin'],
+    producerEnv: { PATH: env.PATH, HOME: writer }, recipient, output: tar, maxBytes: MAX_BACKUP_BYTES });
   log({ step, passed: true, sourceDataCopied: false, databaseMajor: 18 });
   step = 'sdk';
   const sdkDir = join(root, 'sdk'); await mkdir(sdkDir);
