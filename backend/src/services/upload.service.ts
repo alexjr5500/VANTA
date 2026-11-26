@@ -8,7 +8,7 @@ import { v2 as cloudinary } from "cloudinary";
 import { prisma } from "../prisma";
 import { imageOptimizer } from "./image-optimizer.service";
 import { createPrivateMediaUrl } from "./private-media.service";
-import { assertCloudinaryUploadAllowed, isCloudinaryStorageConfigured } from "./cloudinary-storage-config";
+import { assertVerificationUploadAvailable, isCloudinaryStorageConfigured } from "./cloudinary-storage-config";
 import { DurableQueueRepository } from "./durable-queue.repository";
 import { enqueueCloudinaryMediaForUpload } from "./cloudinary-media-producer";
 
@@ -579,7 +579,7 @@ export class UploadService {
       throw new Error("Invalid upload path.");
     }
     try {
-      if (useCloudinary) assertCloudinaryUploadAllowed(category, recordType);
+      assertVerificationUploadAvailable(category, recordType);
       verifyFileContent(file);
     } catch (error) {
       removeLocalFile(file.path);

@@ -12,6 +12,7 @@ import {
   ALLOWED_DOC_TYPES,
 } from "./upload.service";
 import { prisma } from "../prisma";
+import { assertVerificationUploadAvailable } from "./cloudinary-storage-config";
 
 // ============================================================================
 // RESUMABLE / CHUNKED UPLOADS (Story + Reel background publishing)
@@ -124,6 +125,7 @@ export class ChunkUploadService {
     const mimeType = normalizeMime(String(input.mimeType || ""));
     const category = String(input.category || "generic").slice(0, 50);
     const fileSize = Math.floor(Number(input.fileSize) || 0);
+    assertVerificationUploadAvailable(category, input.recordType);
 
     if (!ALL_ALLOWED.includes(mimeType)) {
       throw new Error(`File type ${mimeType || "(empty)"} is not allowed`);
@@ -254,6 +256,8 @@ export class ChunkUploadService {
         (options.recordId !== undefined && options.recordId !== session.recordId)) {
       throw new Error("Upload completion must match the original session category and record binding.");
     }
+
+    assertVerificationUploadAvailable(session.category, session.recordType);
 
     if (session.status === "COMPLETE") {
       // Idempotent re-completion: return the already-uploaded file when present.

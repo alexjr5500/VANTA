@@ -69,6 +69,13 @@ describe('ChunkUploadService', () => {
   });
 
   describe('initChunkSession', () => {
+    it('rejects verification documents before creating a session', async () => {
+      await expect(chunkUploadService.initChunkSession('user-1', {
+        fileName: 'synthetic.pdf', fileSize: 100, mimeType: 'application/pdf', category: 'verification',
+      })).rejects.toThrow('Secure verification document storage');
+      expect(db.uploadSession.create).not.toHaveBeenCalled();
+    });
+
     it('rejects a disallowed mime type before any bytes transfer', async () => {
       (db.uploadSession.create as jest.Mock).mockResolvedValue({ ...baseSession });
       await expect(
@@ -136,6 +143,12 @@ describe('ChunkUploadService', () => {
   });
 
   describe('completeChunkSession', () => {
+    it('rejects an existing verification session before returning a completed file', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, category: 'verification', status: 'COMPLETE' });
+      await expect(chunkUploadService.completeChunkSession(req, baseSession.id)).rejects.toThrow('Secure verification document storage');
+      expect(db.uploadedFile.findFirst).not.toHaveBeenCalled();
+    });
+
     it.each([
       { category: 'post-image' },
       { recordType: 'Post' },

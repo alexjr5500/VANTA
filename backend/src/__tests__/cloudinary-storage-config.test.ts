@@ -1,4 +1,4 @@
-import { assertCloudinaryUploadAllowed, isCloudinaryStorageConfigured } from '../services/cloudinary-storage-config';
+import { assertVerificationUploadAvailable, isCloudinaryStorageConfigured } from '../services/cloudinary-storage-config';
 
 describe('Cloudinary upload storage configuration', () => {
   const valid = {
@@ -61,14 +61,14 @@ describe('Cloudinary upload storage configuration', () => {
   });
 });
 
-describe('Cloudinary verification document cutover guard', () => {
-  it.each(['verification', ' Verification ', 'identity', 'KYC'])('rejects %s before provider upload', category => {
-    expect(() => assertCloudinaryUploadAllowed(category)).toThrow('Secure verification document storage');
+describe('Verification document maintenance guard', () => {
+  it.each(['verification', ' Verification ', 'identity', 'KYC'])('rejects %s before storage', category => {
+    expect(() => assertVerificationUploadAvailable(category)).toThrow('Secure verification document storage');
   });
   it('rejects verification record bindings even with a generic category', () => {
-    expect(() => assertCloudinaryUploadAllowed('generic', 'VerificationRequest')).toThrow('Secure verification document storage');
+    expect(() => assertVerificationUploadAvailable('generic', 'VerificationRequest')).toThrow('Secure verification document storage');
   });
   it.each(['post-image', 'reel', 'story', 'message', 'avatar'])('preserves existing upload flow for %s', category => {
-    expect(() => assertCloudinaryUploadAllowed(category)).not.toThrow();
+    expect(() => assertVerificationUploadAvailable(category)).not.toThrow();
   });
 });
