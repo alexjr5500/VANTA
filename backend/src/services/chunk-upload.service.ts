@@ -246,6 +246,15 @@ export class ChunkUploadService {
       throw new Error("Upload session expired. Please upload again.");
     }
 
+    // Completion is not a new upload authorization. Keep the category and
+    // record binding that were validated when the session was initialized.
+    // Check before the completed-session lookup as well as before assembly.
+    if ((options.category !== undefined && options.category !== session.category) ||
+        (options.recordType !== undefined && options.recordType !== session.recordType) ||
+        (options.recordId !== undefined && options.recordId !== session.recordId)) {
+      throw new Error("Upload completion must match the original session category and record binding.");
+    }
+
     if (session.status === "COMPLETE") {
       // Idempotent re-completion: return the already-uploaded file when present.
       const existing = await prisma.uploadedFile.findFirst({
@@ -331,9 +340,9 @@ export class ChunkUploadService {
 
     try {
       const result = await uploadService.uploadFile(req, multerFile, {
-        category: options.category || session.category,
-        recordType: options.recordType || session.recordType || null,
-        recordId: options.recordId || session.recordId || null,
+        category: session.category,
+        recordType: session.recordType || undefined,
+        recordId: session.recordId || undefined,
       });
       await prisma.uploadSession.update({
         where: { id: session.id },

@@ -136,6 +136,31 @@ describe('ChunkUploadService', () => {
   });
 
   describe('completeChunkSession', () => {
+    it.each([
+      { category: 'post-image' },
+      { recordType: 'Post' },
+      { recordId: 'other-record' },
+    ])('rejects changed session metadata %j before assembly', async options => {
+      const spy = jest.spyOn(uploadService, 'uploadFile');
+      try {
+        await expect(chunkUploadService.completeChunkSession(req, baseSession.id, options)).rejects.toThrow('original session');
+        expect(spy).not.toHaveBeenCalled();
+        expect(db.uploadSession.update).not.toHaveBeenCalled();
+      } finally { spy.mockRestore(); }
+    });
+
+    it('does not reclassify a verification document session as public media', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, category: 'verification', recordType: 'VerificationRequest', recordId: 'user-1' });
+      await expect(chunkUploadService.completeChunkSession(req, baseSession.id, { category: 'post-image' })).rejects.toThrow('original session');
+      expect(db.uploadSession.update).not.toHaveBeenCalled();
+    });
+
+    it('checks the original binding before returning a completed upload', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, status: 'COMPLETE' });
+      await expect(chunkUploadService.completeChunkSession(req, baseSession.id, { recordId: 'other-record' })).rejects.toThrow('original session');
+      expect(db.uploadedFile.findFirst).not.toHaveBeenCalled();
+    });
+
     it('throws when not all parts have arrived (incomplete upload)', async () => {
       (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, totalChunks: 2, fileSize: 8 });
       fs.mkdirSync(stagingDir(baseSession.id), { recursive: true });
