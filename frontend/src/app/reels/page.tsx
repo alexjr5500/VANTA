@@ -172,6 +172,7 @@ export default function ReelsPage() {
   const activeIndexRef = useRef(active);
   activeIndexRef.current = active;
   const playRequest = useRef(0);
+  const pendingPlay = useRef<{id: string; video: HTMLVideoElement; request: number} | null>(null);
 
   const load = useCallback(async (start = 0, append = false, background = false) => {
     if (!append && !background) Object.values(videos.current).forEach(video => video?.pause());
@@ -308,7 +309,7 @@ export default function ReelsPage() {
   useEffect(() => {
     const root = reelsViewport.current;
     if (!root || loading) return;
-    root.scrollTo({ top: Math.max(0, requestedIndex) * root.clientHeight, behavior: 'instant' });
+    root.scrollTo({ top: Math.max(0, requestedIndex) * root.clientHeight, behavior: 'auto' });
   }, [feedRevision, requestedIndex, loading]);
 
   const tryPlay = useCallback((id: string) => {
@@ -316,15 +317,16 @@ export default function ReelsPage() {
     if (!video || playbackIntent.current.id !== id || !playbackIntent.current.play || document.hidden) return;
     // One playback owner. Read current intent, not the render that queued the event.
     Object.entries(videos.current).forEach(([otherId, other]) => { if (otherId !== id) other?.pause(); });
-    if (!video.paused) return;
+    if (!video.paused || (pendingPlay.current?.video === video && pendingPlay.current.request === playRequest.current)) return;
     const request = ++playRequest.current;
+    pendingPlay.current = {id, video, request};
     void video.play().then(() => {
       if (playbackIntent.current.id !== id || !playbackIntent.current.play || document.hidden) video.pause();
       else if (request === playRequest.current) setBlockedId(null);
     }).catch((error: unknown) => {
       if (request !== playRequest.current || playbackIntent.current.id !== id || !playbackIntent.current.play) return;
       if (error instanceof DOMException && error.name === 'NotAllowedError') setBlockedId(id);
-    });
+    }).finally(() => { if (pendingPlay.current?.request === request) pendingPlay.current = null; });
   }, []);
 
   useEffect(() => {
@@ -340,7 +342,7 @@ export default function ReelsPage() {
     const video = videos.current[id];
     if (!video) return;
     // An explicit tap on blocked playback is a play request, not a pause.
-    const play = video.paused;
+    const play = !playbackIntent.current.play || video.paused;
     playbackIntent.current.play = play;
     setManualPlayback({ id, play });
     setBlockedId(null);
@@ -967,7 +969,7 @@ function ReelCard({ reel, isOwn, index, active, preload, muted, shouldPlay, bloc
           <div className="pointer-events-none absolute inset-0 z-[2] bg-gradient-to-t from-black/90 via-transparent to-black/35" />
 
           {active && videoLoading && !videoFailed && shouldPlay && !blocked && <div className="pointer-events-none absolute inset-0 z-[3] grid place-items-center"><Loader2 className="animate-spin text-[#dfbd55]" size={24} /></div>}
-          {active && !videoFailed && <button type="button" aria-label={shouldPlay && !blocked ? "Pause Reel" : "Play Reel"} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={clearTap} onPointerLeave={clearTap} onClick={event => { if (event.detail === 0) onPlayToggle(); }} className="absolute inset-0 z-[4] grid touch-pan-y place-items-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#dfbd55]">{(!shouldPlay || blocked) && <span className="grid h-12 w-12 place-items-center rounded-full bg-black/55 text-[#dfbd55]"><Play size={22} fill="currentColor" /></span>}</button>}
+          {active && !videoFailed && <button type="button" aria-label={shouldPlay && !blocked ? "Pause Reel" : "Play Reel"} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={clearTap} onPointerLeave={() => { if (pointer.current) clearTap(); }} onClick={event => { if (event.detail === 0) onPlayToggle(); }} className="absolute inset-0 z-[4] grid touch-pan-y place-items-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#dfbd55]">{(!shouldPlay || blocked) && <span className="grid h-12 w-12 place-items-center rounded-full bg-black/55 text-[#dfbd55]"><Play size={22} fill="currentColor" /></span>}</button>}
           {videoFailed && <div className="absolute inset-0 z-20 grid place-items-center bg-black/75 px-8 text-center"><div><Clapperboard className="mx-auto text-white/40" /><h3 className="mt-4 font-semibold">Unable to load Reel</h3><p className="mt-1 max-w-xs text-xs leading-5 text-white/45">{videoError || 'The video could not be played.'}</p><button type="button" onClick={retry} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-white/15 px-4 py-2 text-sm"><RefreshCw size={15} />Retry</button></div></div>}
 
           <div className="absolute right-3 top-16 z-10 flex gap-2">
