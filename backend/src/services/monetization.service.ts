@@ -1,7 +1,5 @@
 import { prisma } from '../prisma';
-import { notificationService } from './notification.service';
 import { walletService } from './wallet.service';
-import { calculateCreatorEarningsCents, creatorEarningsCentsToUsd } from '../config/wallet.config';
 import { PurchasePackageNotFoundError } from '../errors/purchase.errors';
 import {
   COIN_PAYMENT_MODE,
@@ -12,15 +10,6 @@ import {
 // Subscription revenue split. Gift cash earnings use the separate explicit
 // 2-cent-per-3-eligible-coins rule in wallet.config.ts.
 const REVENUE_SPLIT = Object.freeze({ CREATOR: 0.7, PLATFORM: 0.3 });
-
-// Gift combo configuration
-const COMBO_TIMEOUT_MS = 10000; // 10 seconds to combo
-const COMBO_MULTIPLIERS: Record<number, number> = {
-  2: 1.1,  // 10% bonus
-  3: 1.2,  // 20% bonus
-  5: 1.35, // 35% bonus
-  10: 1.5, // 50% bonus
-};
 
 // Loyalty levels
 const LOYALTY_LEVELS = [
@@ -127,7 +116,7 @@ export class MonetizationService {
   // ==========================================
 
   async getGifts(category?: string) {
-    const where: any = { isActive: true };
+    const where: any = { isActive: true, retiredAt: null };
     if (category && category !== 'all') {
       where.category = category;
     }
@@ -138,201 +127,10 @@ export class MonetizationService {
   }
 
   async getGiftById(giftId: string) {
-    return prisma.gift.findUnique({ where: { id: giftId } });
+    return prisma.gift.findFirst({ where: { id: giftId, isActive: true, retiredAt: null } });
   }
 
-  async sendGift(senderId: string, receiverId: string, giftId: string, options?: {
-    streamId?: string;
-    isAnon?: boolean;
-    isSuper?: boolean;
-  }) {
-    const gift = await prisma.gift.findUnique({ where: { id: giftId } });
-    if (!gift || !gift.isActive) throw new Error('Gift not found or inactive');
-    if (gift.expiresAt && gift.expiresAt < new Date()) throw new Error('Gift has expired');
-
-    const senderWallet = await prisma.wallet.findUnique({ where: { userId: senderId } });
-    if (!senderWallet || senderWallet.coinBalance < gift.price) {
-      throw new Error('Insufficient VANTA Coins');
-    }
-
-    // Check for combo
-    let combo: any = null;
-    if (gift.comboEnabled) {
-      combo = await this.checkCombo(senderId, receiverId, options?.streamId);
-    }
-
-    const finalAmount = combo ? Math.round(gift.price * combo.multiplier) : gift.price;
-    const comboCount = combo ? combo.comboCount : 1;
-
-    // Execute transaction
-    const transaction = await prisma.$transaction(async (tx: any) => {
-      // Deduct coins from sender
-      await tx.wallet.update({
-        where: { userId: senderId },
-        data: {
-          coinBalance: { decrement: finalAmount },
-          totalGiftsSent: { increment: 1 },
-        },
-      });
-
-      // Creator cash earnings follow the explicit 2 cents / 3 eligible coins rule.
-      // Do not apply the legacy 70% coin split a second time to cash earnings.
-      const earningsCents = calculateCreatorEarningsCents(finalAmount);
-      const earnings = creatorEarningsCentsToUsd(earningsCents);
-      await tx.wallet.update({
-        where: { userId: receiverId },
-        data: {
-          earningsBalance: { increment: earnings },
-          lifetimeEarnings: { increment: earnings },
-          totalGiftsReceived: { increment: 1 },
-        },
-      });
-
-      // Record gift transaction
-      const txRecord = await tx.giftTransaction.create({
-        data: {
-          senderId,
-          receiverId,
-          giftId,
-          streamId: options?.streamId || null,
-          amount: finalAmount,
-          isCombo: !!combo,
-          comboCount,
-          isAnon: options?.isAnon || false,
-          isSuper: options?.isSuper || false,
-        },
-      });
-
-      // Record wallet transactions
-      await tx.walletTransaction.create({
-        data: {
-          userId: senderId,
-          type: 'GIFT_SENT',
-          amount: -finalAmount,
-          fee: 0,
-          description: `Sent ${gift.name} gift`,
-          reference: txRecord.id,
-        },
-      });
-
-      await tx.walletTransaction.create({
-        data: {
-          userId: receiverId,
-          type: 'GIFT_RECEIVED',
-          amount: earnings,
-          fee: finalAmount - earnings,
-          description: `Creator earnings from ${gift.name} gift (${earnings.toFixed(2)})`,
-          reference: txRecord.id,
-          metadata: JSON.stringify({ giftId, giftCoinValue: finalAmount, creatorEarningsCents: earningsCents, creatorEarningsUsd: earnings, earningsRule: '2 cents per 3 eligible gift coins; floor incomplete groups per transaction' }),
-        },
-      });
-
-      // Record live gift event if in stream
-      if (options?.streamId) {
-        const sender = await tx.user.findUnique({ where: { id: senderId } });
-        await tx.liveGiftEvent.create({
-          data: {
-            streamId: options.streamId,
-            senderId,
-            receiverId,
-            giftId,
-            giftName: gift.name,
-            giftEmoji: gift.emoji,
-            amount: finalAmount,
-            isCombo: !!combo,
-            comboCount,
-            isLegendary: gift.isLegendary,
-            isAnon: options?.isAnon || false,
-            senderName: options?.isAnon ? 'Anonymous' : sender?.username || 'Unknown',
-          },
-        });
-      }
-
-      // Update combo
-      if (combo && combo.id) {
-        await tx.giftCombo.update({
-          where: { id: combo.id },
-          data: {
-            count: combo.comboCount,
-            multiplier: combo.multiplier,
-          },
-        });
-      } else if (gift.comboEnabled) {
-        await tx.giftCombo.create({
-          data: {
-            senderId,
-            receiverId,
-            giftId,
-            streamId: options?.streamId || null,
-            count: 1,
-            multiplier: 1.0,
-          },
-        });
-      }
-
-      // Update loyalty XP
-      await this.addLoyaltyXP(senderId, finalAmount, tx);
-
-      return txRecord;
-    });
-
-    // Send notifications
-    const sender = await prisma.user.findUnique({
-      where: { id: senderId },
-      select: { username: true },
-    });
-
-    await notificationService.createNotification(
-      receiverId,
-      'GIFT',
-      `${gift.isLegendary ? '🌟 LEGENDARY GIFT! 🌟' : '🎁 New Gift!'}`,
-      `${options?.isAnon ? 'Someone' : sender?.username} sent ${gift.name}${combo ? ` x${comboCount}` : ''}!`,
-      {
-        giftId: gift.id,
-        giftName: gift.name,
-        giftEmoji: gift.emoji,
-        isLegendary: gift.isLegendary,
-        isCombo: !!combo,
-        comboCount,
-        senderId,
-        senderName: options?.isAnon ? 'Anonymous' : sender?.username,
-        isAnon: options?.isAnon,
-      }
-    );
-
-    return { transaction, gift, isLegendary: gift.isLegendary, combo };
-  }
-
-  private async checkCombo(senderId: string, receiverId: string, streamId?: string) {
-    const recentCombo = await prisma.giftCombo.findFirst({
-      where: {
-        senderId,
-        receiverId,
-        OR: streamId ? [{ streamId }] : [{ streamId: null }],
-      },
-      orderBy: { updatedAt: 'desc' },
-    });
-
-    if (!recentCombo) return null;
-
-    const timeSinceLastGift = Date.now() - recentCombo.updatedAt.getTime();
-    if (timeSinceLastGift > COMBO_TIMEOUT_MS) {
-      return null;
-    }
-
-    const newCount = recentCombo.count + 1;
-    const multiplier = this.getComboMultiplier(newCount);
-
-    return { id: recentCombo.id, comboCount: newCount, multiplier };
-  }
-
-  private getComboMultiplier(count: number): number {
-    const keys = Object.keys(COMBO_MULTIPLIERS).map(Number).sort((a, b) => b - a);
-    for (const key of keys) {
-      if (count >= key) return COMBO_MULTIPLIERS[key];
-    }
-    return 1.0;
-  }
+  // All gift sends use GiftService, the single authoritative wallet transaction path.
 
   // ==========================================
   // WALLET
@@ -796,40 +594,6 @@ export class MonetizationService {
   // ==========================================
   // LOYALTY
   // ==========================================
-
-  private async addLoyaltyXP(userId: string, coins: number, tx?: any) {
-    const client = tx || prisma;
-    const xp = Math.floor(coins / 10);
-
-    const level = await client.loyaltyLevel.findUnique({ where: { userId } });
-    if (!level) {
-      await client.loyaltyLevel.create({
-        data: { userId, xp, level: 1, tier: 'BRONZE' },
-      });
-      return;
-    }
-
-    const newXp = level.xp + xp;
-    const newLevel = this.calculateLevel(newXp);
-
-    await client.loyaltyLevel.update({
-      where: { userId },
-      data: {
-        xp: newXp,
-        level: newLevel.level,
-        tier: newLevel.title.toUpperCase(),
-      },
-    });
-  }
-
-  private calculateLevel(xp: number) {
-    for (let i = LOYALTY_LEVELS.length - 1; i >= 0; i--) {
-      if (xp >= LOYALTY_LEVELS[i].minCoins) {
-        return LOYALTY_LEVELS[i];
-      }
-    }
-    return LOYALTY_LEVELS[0];
-  }
 
   async getLoyaltyLevel(userId: string) {
     let level = await prisma.loyaltyLevel.findUnique({ where: { userId } });

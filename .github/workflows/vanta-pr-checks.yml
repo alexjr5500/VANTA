@@ -81,6 +81,7 @@ jobs:
           src/__tests__/wallet.reconciliation.test.ts
           src/__tests__/monetization.earnings-ledger.test.ts
           src/__tests__/gift.service.test.ts
+          src/__tests__/gift-catalog.test.ts
           src/__tests__/monetization.subscription-security.test.ts
           src/__tests__/security.fail-closed-prerequisites.test.ts
           src/__tests__/security.admin-session-2fa.test.ts
@@ -110,6 +111,22 @@ jobs:
           src/__tests__/replyAudience.test.ts
           src/__tests__/post.service.test.ts
           src/ai/__tests__/privacy.middleware.test.ts
+
+      - name: Install media verification tools
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version
+          ffprobe -version
+      - name: Verify actual Status video media
+        env:
+          RUN_STATUS_MEDIA_INTEGRATION: '1'
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_test?schema=public
+          JWT_SECRET: test-jwt-secret-long-enough-for-tests
+          JWT_REFRESH_SECRET: test-jwt-refresh-secret-long-enough-for-tests
+        run: npm --prefix backend run test -- --runInBand src/__tests__/status-video-media.integration.test.ts
 
   backend-build:
     name: Backend TypeScript production build
@@ -168,6 +185,10 @@ jobs:
           VANTA_CI_MAINTENANCE_DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
           VANTA_CI_SHARDING_DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
         run: npm --prefix backend run test -- --runInBand src/__tests__/durable-queue.postgres.integration.test.ts src/__tests__/database-replica.postgres.integration.test.ts src/__tests__/distributed-maintenance.postgres.integration.test.ts src/__tests__/sharding-assessment.postgres.integration.test.ts
+      - name: Verify approved gift catalog migration and historical records
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
+        run: node backend/scripts/verify-reference-gift-migration.cjs
 
   durable-media:
     name: Durable media handlers and real FFmpeg integration

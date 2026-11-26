@@ -78,6 +78,8 @@ class MainActivity : Activity() {
         private val VANTA_HOSTS = setOfNotNull(Uri.parse(BuildConfig.VANTA_ORIGIN).host)
         // Marker used only by the first-party Status media input to open the secure gallery.
         private const val STATUS_MEDIA_PICKER = "application/x-vanta-status-picker"
+        private const val REEL_VIDEO_PICKER = "video/x-vanta-reel-picker"
+        private const val REEL_CAMERA_PERMISSION_REQUEST = 4113
         private const val FILE_CHOOSER_REQUEST = 4107
         private const val CAMERA_REQUEST = 4108
         private const val CAMERA_URI_STATE = "vanta.pending.camera.uri"
@@ -369,11 +371,13 @@ class MainActivity : Activity() {
                         .toTypedArray()
 
                     val statusMediaPicker = STATUS_MEDIA_PICKER in acceptedFileTypes
-                    acceptedFileTypes = acceptedFileTypes.filterNot { it == STATUS_MEDIA_PICKER }.toTypedArray()
+                    val reelVideoPicker = REEL_VIDEO_PICKER in acceptedFileTypes
+                    acceptedFileTypes = acceptedFileTypes.filterNot { it == STATUS_MEDIA_PICKER || it == REEL_VIDEO_PICKER }.toTypedArray()
                     val accepted = acceptedFileTypes
                     val mediaOnly = accepted.isNotEmpty() && accepted.all { it.startsWith("image/") || it.startsWith("video/") }
                     when {
                         statusMediaPicker -> launchPhotos(maxItems = 7)
+                        reelVideoPicker -> openReelVideoChooser()
                         mediaOnly && fileChooserParams.isCaptureEnabled -> launchCamera()
                         mediaOnly -> launchPhotos()
                         else -> launchFiles()
@@ -416,6 +420,10 @@ class MainActivity : Activity() {
                 if (pendingNativeLocationId != null) {
                     if (granted) requestNativeLocationFix() else finishNativeLocation(null, "permission-denied")
                 }
+            }
+            REEL_CAMERA_PERMISSION_REQUEST -> {
+                if (pendingFileCallback != null && isTrustedPage(webView.url)) launchReelVideoChooser()
+                else completeFileSelection(null)
             }
             STATUS_GALLERY_PERMISSION_REQUEST -> {
                 notifyNativeGalleryChanged()
@@ -920,6 +928,36 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    // Single video selection, with Android's system camera action offered
+    // alongside gallery/file providers. No broad gallery permission is needed.
+    private fun openReelVideoChooser() {
+        if (!hasPermission(Manifest.permission.CAMERA)) {
+            requestPermissions(arrayOf(Manifest.permission.CAMERA), REEL_CAMERA_PERMISSION_REQUEST)
+        } else {
+            launchReelVideoChooser()
+        }
+    }
+
+    private fun launchReelVideoChooser() {
+        if (pendingFileCallback == null) return
+        val gallery = Intent(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "video/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
+        }
+        val chooser = Intent.createChooser(gallery, "Choose or record a video")
+        // Permission denial must never block choosing an existing video.
+        // ACTION_VIDEO_CAPTURE returns the captured video URI, not a photo.
+        if (hasPermission(Manifest.permission.CAMERA)) {
+            val camera = Intent(MediaStore.ACTION_VIDEO_CAPTURE).apply {
+                putExtra(MediaStore.EXTRA_DURATION_LIMIT, 600)
+                putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 1)
+            }
+            chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(camera))
+        }
+        launchIntent(chooser, FILE_CHOOSER_REQUEST)
+    }
 
     private fun launchCamera() {
         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)

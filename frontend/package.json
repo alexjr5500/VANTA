@@ -9,7 +9,7 @@
     "dev": "next dev",
     "dev:lan": "node scripts/dev-lan.mjs",
     "dev:https": "node scripts/dev-lan.mjs",
-    "build": "node scripts/install-branding-assets.mjs && next build",
+    "build": "node scripts/install-branding-assets.mjs && node scripts/install-gift-reference-artwork.mjs && next build",
     "start": "next start",
     "lint": "eslint",
     "test": "node ../node_modules/vitest/vitest.mjs run",

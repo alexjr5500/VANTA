@@ -1596,6 +1596,7 @@ model Gift {
   particleColor           String?
   soundEffect             String?
   isActive                Boolean                  @default(true)
+  retiredAt               DateTime?
   isFeatured              Boolean                  @default(false)
   isTrending              Boolean                  @default(false)
   isPopular               Boolean                  @default(false)
@@ -1649,7 +1650,7 @@ model GiftTransaction {
   comboCount Int      @default(1)
   isAnon     Boolean  @default(false)
   isSuper    Boolean  @default(false)
-  gift       Gift     @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  gift       Gift     @relation(fields: [giftId], references: [id], onDelete: Restrict)
   sender     User     @relation("SentGiftTransactions", fields: [senderId], references: [id], onDelete: Cascade)
   receiver   User     @relation("ReceivedGiftTransactions", fields: [receiverId], references: [id], onDelete: Cascade)
   video      Video?   @relation(fields: [videoId], references: [id], onDelete: SetNull)
@@ -1683,7 +1684,7 @@ model LiveGiftEvent {
   stream      LiveStream @relation(fields: [streamId], references: [id], onDelete: Cascade)
   sender      User       @relation("EventSender", fields: [senderId], references: [id], onDelete: Cascade)
   receiver    User       @relation("EventReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
-  gift        Gift       @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  gift        Gift       @relation(fields: [giftId], references: [id], onDelete: Restrict)
   createdAt   DateTime   @default(now())
 
   @@index([streamId])
@@ -2074,7 +2075,7 @@ model GiftCombo {
   multiplier Float    @default(1.0)
   sender     User     @relation("ComboSender", fields: [senderId], references: [id], onDelete: Cascade)
   receiver   User     @relation("ComboReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
-  gift       Gift     @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  gift       Gift     @relation(fields: [giftId], references: [id], onDelete: Restrict)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -2167,7 +2168,7 @@ model EventGift {
   id        String   @id @default(cuid())
   eventId   String
   giftId    String
-  gift      Gift     @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  gift      Gift     @relation(fields: [giftId], references: [id], onDelete: Restrict)
   createdAt DateTime @default(now())
 
   @@index([eventId])
@@ -3518,7 +3519,7 @@ model FollowerRewardCampaign {
   rewardPerUser     Int // Coins per follower (COINS) or gift price (GIFT)
   coinAmount        Int? // Total coins allocated (COINS reward)
   giftId            String?
-  gift              Gift?                 @relation(fields: [giftId], references: [id], onDelete: SetNull)
+  gift              Gift?                 @relation(fields: [giftId], references: [id], onDelete: Restrict)
   // Reserved/distributed accounting (all in VANTA Coins).
   reservedAmount    Int
   distributedAmount Int                   @default(0)
@@ -3560,7 +3561,7 @@ model FollowerRewardClaim {
   rewardType          String // COINS | GIFT
   coinAmount          Int? // Coins credited to the claimant
   giftId              String?
-  gift                Gift?                  @relation(fields: [giftId], references: [id], onDelete: SetNull)
+  gift                Gift?                  @relation(fields: [giftId], references: [id], onDelete: Restrict)
   giftSnapshot        String? // JSON snapshot of the delivered gift (name/emoji/slug)
   walletTransactionId String? // Follower credit WalletTransaction (coins) / GiftTransaction (gifts)
   status              String                 @default("COMPLETED")

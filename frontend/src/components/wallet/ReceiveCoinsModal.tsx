@@ -1,127 +1,63 @@
 'use client';
 
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { X, Copy, Check, QrCode, User, Wallet, Shield } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { useAuth } from '@/context/AuthContext';
 import VantaCoinIcon from '@/components/ui/VantaCoinIcon';
 
-interface ReceiveCoinsModalProps {
-  open: boolean;
-  walletId: string;
-  onClose: () => void;
-}
+import { useEffect, useState } from 'react';
+import { X, Copy, Share2, Shield, RefreshCw } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+import { apiGet } from '@/lib/apiClient';
+import Avatar from '@/components/ui/Avatar';
+import { useWalletDialog } from './useWalletDialog';
 
-export default function ReceiveCoinsModal({ open, walletId, onClose }: ReceiveCoinsModalProps) {
-  const { user } = useAuth();
-  const [copied, setCopied] = useState<'wallet' | 'username' | null>(null);
+type ReceiveData = { username: string; link: string; qrCode: string };
+interface Props { open: boolean; walletId?: string; onClose: () => void }
 
-  const walletAddress = walletId || user?.id || '';
-
-  const handleCopy = (type: 'wallet' | 'username') => {
-    const text = type === 'wallet' ? walletAddress : `@${user?.username || ''}`;
-    if (text) {
-      navigator.clipboard.writeText(text);
-      setCopied(type);
-      setTimeout(() => setCopied(null), 2000);
+export default function ReceiveCoinsModal({ open, onClose }: Props) {
+  const { token, user } = useAuth();
+  const [data, setData] = useState<ReceiveData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [retry, setRetry] = useState(0);
+  const ref = useWalletDialog<HTMLDivElement>(open, onClose);
+  useEffect(() => {
+    let current = true;
+    setData(null); setNotice(''); setError('');
+    if (!open || !token) return;
+    setLoading(true);
+    apiGet<ReceiveData>('/api/wallets/receive-link', token, { skipCache: true }).then(result => {
+      if (current) setData(result);
+    }).catch(() => { if (current) setError('Could not generate your receiving link.'); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [open, token, retry]);
+  async function copy(value: string, label: string) {
+    try { await navigator.clipboard.writeText(value); setNotice(label + ' copied.'); }
+    catch { setNotice('Copy unavailable. Select and copy the displayed text.'); }
+  }
+  async function share() {
+    if (!data) return;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Receive VANTA Coins', url: data.link }); return; }
+      catch (err) { if (err instanceof Error && err.name === 'AbortError') return; }
     }
-  };
-
+    await copy(data.link, 'Receiving link');
+  }
   if (!open) return null;
-
-  return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-md"
-            onClick={onClose}
-          />
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 30 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 30 }}
-            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed inset-x-0 top-[max(12px,env(safe-area-inset-top))] bottom-[max(12px,env(safe-area-inset-bottom))] z-[101] mx-auto flex min-h-0 w-[calc(100%-1.5rem)] max-w-[456px] flex-col overflow-hidden rounded-3xl border border-white/[0.08] bg-[#0e0e16]/95 shadow-2xl backdrop-blur-2xl"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Receive VANTA"
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06] shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-white/[0.08] border border-white/[0.1] flex items-center justify-center">
-                  <VantaCoinIcon size={18} className="text-[#d8d8d8]" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-white">Receive VANTA</h2>
-                  <p className="text-[10px] text-gray-500">Share your wallet details</p>
-                </div>
-              </div>
-              <button onClick={onClose} className="rounded-xl p-2 text-gray-400 hover:text-white hover:bg-white/[0.05] transition" aria-label="Close">
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="flex-1 overflow-y-auto scrollbar-hide p-6 space-y-5">
-              {/* QR Code */}
-              <div className="flex flex-col items-center">
-                <div className="relative w-48 h-48 rounded-3xl bg-white p-3 shadow-2xl">
-                  {/* Placeholder QR - in production use a QR library */}
-                  <div className="w-full h-full rounded-2xl bg-gradient-to-br from-[#0e0e16] to-[#1a1a2e] flex items-center justify-center">
-                    <QrCode size={80} className="text-white" />
-                  </div>
-                  <div className="absolute inset-0 rounded-3xl ring-1 ring-white/10" />
-                </div>
-                <p className="text-[10px] text-white/30 mt-3">Scan to receive VANTA</p>
-              </div>
-
-              {/* Wallet ID */}
-              <div>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-white/30 font-semibold mb-2">Wallet ID</p>
-                <div className="flex items-center gap-2 p-3 rounded-2xl bg-white/[0.03] border border-white/[0.06]">
-                  <Wallet size={14} className="text-white/30 shrink-0" />
-                  <code className="flex-1 text-xs text-white/60 font-mono truncate">{walletAddress}</code>
-                  <button
-                    onClick={() => handleCopy('wallet')}
-                    className="shrink-0 p-2 rounded-lg hover:bg-white/[0.05] transition"
-                    aria-label="Copy wallet ID"
-                  >
-                    {copied === 'wallet' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} className="text-gray-400" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Username */}
-              <div>
-                <p className="text-[10px] uppercase tracking-[0.2em] text-white/30 font-semibold mb-2">Username</p>
-                <div className="flex items-center gap-2 p-3 rounded-2xl bg-white/[0.03] border border-white/[0.06]">
-                  <User size={14} className="text-white/30 shrink-0" />
-                  <span className="flex-1 text-sm text-white/60 truncate">@{user?.username || 'username'}</span>
-                  <button
-                    onClick={() => handleCopy('username')}
-                    className="shrink-0 p-2 rounded-lg hover:bg-white/[0.05] transition"
-                    aria-label="Copy username"
-                  >
-                    {copied === 'username' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} className="text-gray-400" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Info */}
-              <div className="flex items-start gap-2 text-[10px] text-white/30 bg-white/[0.02] border border-white/[0.04] rounded-xl p-3">
-                <Shield size={10} className="shrink-0 mt-0.5 text-emerald-400" />
-                <p>Anyone with your Wallet ID or @username can send you VANTA. Never share your login credentials or PIN.</p>
-              </div>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
-  );
+  return <div className="fixed inset-0 z-[101] grid place-items-center bg-black/70 p-3" onClick={onClose}>
+    <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Receive VANTA Coins" onClick={event => event.stopPropagation()} className="vanta-wallet-ui w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--background-secondary)] p-4 sm:p-6">
+      <header className="flex items-center justify-between gap-3"><h2 className="flex items-center gap-2 text-lg font-semibold text-[var(--text-primary)]"><VantaCoinIcon size={24} decorative />Receive VANTA</h2><button type="button" aria-label="Close" onClick={onClose} className="grid h-11 w-11 place-items-center"><X size={20}/></button></header>
+      <div className="flex flex-col items-center gap-2 py-4">
+        <Avatar size="xl" src={typeof user?.avatar === 'string' ? user.avatar : undefined} alt={user?.username || 'Your profile'} verified={Boolean(user?.verified)}/>
+        <p className="break-all font-semibold">@{user?.username}</p>
+        {loading && <p role="status" className="text-sm text-[var(--text-secondary)]">Generating receiving QR…</p>}
+        {data && <><div className="rounded-lg bg-white p-2"><img src={data.qrCode} alt="QR code for your VANTA receiving link" width={240} height={240} className="h-auto max-w-full"/></div><p className="text-center text-xs text-[var(--text-secondary)]">Scan using a phone camera or share the link.</p></>}
+      </div>
+      {error && <div role="alert" className="rounded-xl border border-[var(--border)] p-3 text-sm">{error}<button type="button" onClick={() => setRetry(v => v + 1)} className="ml-2 min-h-11 text-[var(--vanta-gold-bright)]"><RefreshCw size={14} className="inline"/> Retry</button></div>}
+      <button type="button" disabled={!user?.username} onClick={() => copy('@' + user?.username, 'Username')} className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[var(--border)]"><Copy size={16}/>Copy username</button>
+      {data && <><p className="my-3 select-all break-all border-y border-[var(--border)] py-3 text-xs text-[var(--text-secondary)]">{data.link}</p><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => copy(data.link, 'Receiving link')} className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[var(--border)]"><Copy size={15}/>Copy link</button><button type="button" onClick={share} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[var(--vanta-gold)] font-semibold text-black"><Share2 size={15}/>Share</button></div></>}
+      {notice && <p role="status" className="mt-2 text-sm">{notice}</p>}
+      <p className="mt-4 flex gap-2 text-xs leading-relaxed text-[var(--text-secondary)]"><Shield className="shrink-0 text-[var(--vanta-gold-bright)]" size={16}/>A receiving link identifies your account, not a payment authorization. Never share your PIN, password or verification code.</p>
+    </div>
+  </div>;
 }

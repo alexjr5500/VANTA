@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react';
 import type { QuoteRef } from '@/lib/quotePost';
 
 type CreationFlow = 'post' | 'story' | 'live' | 'reel' | null;
@@ -29,6 +29,7 @@ interface ContentCreationState {
   openPostModal: () => void;
   openStoryModal: () => void;
   openGoLiveModal: () => void;
+  reelFile: File | null;
   openReelUploader: () => void;
   closeAll: () => void;
 }
@@ -40,6 +41,8 @@ export function ContentCreationProvider({ children }: { children: ReactNode }) {
   const [createHubOpen, setCreateHubOpen] = useState(false);
   const [postPrefill, setPostPrefill] = useState('');
   const [quoteTarget, setQuoteTarget] = useState<QuoteRef | null>(null);
+  const [reelFile, setReelFile] = useState<File | null>(null);
+  const reelInput = useRef<HTMLInputElement>(null);
   const [liveDraft, setLiveDraftState] = useState<LiveDraft | null>(null);
 
   const setLiveDraft = useCallback((draft: LiveDraft) => setLiveDraftState(draft), []);
@@ -69,13 +72,19 @@ export function ContentCreationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openReelUploader = useCallback(() => {
-    setActiveFlow('reel');
+    // Keep the input mounted and invoke the OS picker synchronously from the
+    // original tap. A later effect can lose browser transient user activation.
+    const input = reelInput.current;
+    if (!input) return;
+    input.value = '';
+    input.click();
   }, []);
 
   const closeAll = useCallback(() => {
     setActiveFlow(null);
     setCreateHubOpen(false);
     setQuoteTarget(null);
+    setReelFile(null);
   }, []);
 
   return (
@@ -94,10 +103,26 @@ export function ContentCreationProvider({ children }: { children: ReactNode }) {
         openPostModal,
         openStoryModal,
         openGoLiveModal,
+        reelFile,
         openReelUploader,
         closeAll,
       }}
     >
+      <input
+        ref={reelInput}
+        type="file"
+        accept="video/*,video/x-vanta-reel-picker,.mp4,.webm,.mov,.m4v"
+        className="sr-only"
+        tabIndex={-1}
+        aria-label="Choose or capture a Reel video"
+        onChange={event => {
+          const selected = event.currentTarget.files?.[0];
+          event.currentTarget.value = '';
+          if (!selected) return;
+          setReelFile(selected);
+          setActiveFlow('reel');
+        }}
+      />
       {children}
     </ContentCreationContext.Provider>
   );

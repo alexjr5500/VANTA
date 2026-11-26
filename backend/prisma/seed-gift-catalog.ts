@@ -8,15 +8,9 @@ export async function seedGiftCatalog() {
     await prisma.gift.upsert({
       where: { slug: gift.slug },
       create: { id: `gift_${gift.slug.replace(/-/g, '_')}`, ...gift, sortOrder: index + 1, isActive: true },
-      update: { ...gift, sortOrder: index + 1, isActive: true },
+      update: {}, // Never overwrite an existing gift's state during a routine seed.
     });
   }
-  // The catalog is the 70-gift list above: retire anything not in it so the
-  // picker counts stay exact. Existing transactions keep their gift relation.
-  await prisma.gift.updateMany({
-    where: { slug: { notIn: initialGiftCatalog.map((gift) => gift.slug) }, isActive: true },
-    data: { isActive: false },
-  });
   return prisma.gift.count({ where: { isActive: true } });
 }
 

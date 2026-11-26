@@ -344,7 +344,22 @@ export async function generateFilmstrip(
 // Core trim engine
 // ============================================================================
 
+/** A conservative encoding budget based on the original video's average bitrate. */
+export function statusTrimBitrate(sourceBytes: number, sourceSeconds: number): {videoBitsPerSecond: number; audioBitsPerSecond: number} {
+  const average = sourceSeconds > 0 && sourceBytes > 0 ? sourceBytes * 8 / sourceSeconds : 1_500_000;
+  const budget = Math.max(160_000, Math.min(3_000_000, Math.floor(average * 0.78)));
+  const audioBitsPerSecond = Math.min(96_000, Math.max(32_000, Math.floor(budget * 0.15)));
+  return { videoBitsPerSecond: budget - audioBitsPerSecond, audioBitsPerSecond };
+}
+
+export function estimatedStatusTrimSize(sourceBytes: number, sourceSeconds: number, selectedSeconds: number): number {
+  if (!(sourceSeconds > 0) || selectedSeconds >= sourceSeconds - 0.01) return sourceBytes;
+  const {videoBitsPerSecond, audioBitsPerSecond} = statusTrimBitrate(sourceBytes, sourceSeconds);
+  return Math.ceil((videoBitsPerSecond + audioBitsPerSecond) * Math.max(0, selectedSeconds) / 8 * 1.05);
+}
+
 export interface TrimVideoOptions {
+  bitrate?: { videoBitsPerSecond: number; audioBitsPerSecond: number };
   /** The source <video> element. It should be visible and share-origin (blob URL). */
   video: HTMLVideoElement;
   start: number;
@@ -362,8 +377,9 @@ export interface TrimVideoOptions {
  * uploading the full original.
  */
 export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
-  const { video, start, end, onProgress, signal, silentPlayback = false } = options;
+  const { video, start, end, onProgress, signal, silentPlayback = false, bitrate } = options;
 
+  if (signal?.aborted) return Promise.reject(new DOMException('Trimming cancelled', 'AbortError'));
   const support = getTrimmingSupport();
   if (!support.ok) return Promise.reject(new Error(support.reason || 'Trimming is not supported here.'));
   const mimeType = pickRecorderMimeType();
@@ -413,7 +429,7 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
     // ---- Recording --------------------------------------------------------------
     let recorder: MediaRecorder;
     try {
-      recorder = new MediaRecorder(sourceStream, { mimeType, videoBitsPerSecond: 5_000_000 });
+      recorder = new MediaRecorder(sourceStream, { mimeType, videoBitsPerSecond: 5_000_000, ...bitrate });
     } catch {
       sourceStream.getTracks().forEach((track) => track.stop());
       if (audioContext) void audioContext.close().catch(() => undefined);
@@ -423,7 +439,6 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
 
     const chunks: BlobPart[] = [];
     let finished = false;
-    let canceled = false;
     let raf = 0;
     let drawRaf = 0;
     let completionTimer = 0;
@@ -431,6 +446,9 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
     let recordingEnded = 0;
 
     const stopTracks = () => {
+      signal?.removeEventListener('abort', onAbort);
+      video.removeEventListener('timeupdate', stopAtEnd);
+      video.removeEventListener('ended', stopAtEnd);
       sourceStream.getTracks().forEach((track) => track.stop());
       if (raf) cancelAnimationFrame(raf);
       if (drawRaf) cancelAnimationFrame(drawRaf);
@@ -469,15 +487,13 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
     };
 
     const onStop = () => {
+      if (finished) return; // already handled by fail()
+      if (signal?.aborted) { fail(new DOMException('Trimming cancelled', 'AbortError')); return; }
+      if (video.currentTime < end - 0.06) { fail(new Error('Video recording ended before the selected range finished.')); return; }
       video.pause();
-      if (finished && !canceled) return; // already handled by fail()
       finished = true;
       clearTimeout(completionTimer);
       stopTracks();
-      if (canceled) {
-        reject(new DOMException('Trimming cancelled', 'AbortError'));
-        return;
-      }
       const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'video/webm' });
       if (silentPlayback && recordingStarted > 0) {
         void repairRecordedWebmDuration(blob, (recordingEnded || performance.now()) - recordingStarted).then(resolve, reject);
@@ -494,26 +510,33 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
     recorder.addEventListener('dataavailable', onDataAvailable);
     recorder.addEventListener('stop', onStop);
     recorder.addEventListener('error', onError);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        canceled = true;
+    function onAbort() {
+      fail(new DOMException('Trimming cancelled', 'AbortError'));
+    }
+
+    // timeupdate/ended also fire when animation frames are throttled. Stop the
+    // recorder on the selected end, including when it is the source's last frame.
+    function stopAtEnd() {
+      if (finished || recorder.state !== 'recording') return;
+      if (video.currentTime >= end || (video.ended && video.currentTime >= end - 0.06)) {
+        recordingEnded = performance.now();
         video.pause();
-        if (recorder.state !== 'inactive') {
-          try {
-            recorder.stop();
-          } catch {
-            // noop
-          }
-        }
-      },
-      { once: true }
-    );
+        recorder.stop();
+      } else if (video.ended) {
+        fail(new Error('Video ended before the selected range finished.'));
+      }
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+    video.addEventListener('timeupdate', stopAtEnd);
+    video.addEventListener('ended', stopAtEnd);
+    if (signal?.aborted) { onAbort(); return; }
 
     // ---- Capture loop -----------------------------------------------------------
     const run = async () => {
       try {
         await seekTo(video, start);
+        if (finished || signal?.aborted) return;
+        if (video.seeking || Math.abs(video.currentTime - start) > 0.06) throw new Error('Could not seek to the selected start. Try trimming again.');
         video.pause();
 
         // Keep the captured track audible in the output, not on the device.
@@ -522,25 +545,22 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
         if (silentPlayback && !audioContext) video.volume = 0;
         video.muted = false;
         if (audioContext?.state === 'suspended') await audioContext.resume();
+        if (finished || signal?.aborted) return;
         recordingStarted = performance.now();
         recorder.start(250);
 
         const tick = () => {
-          if (finished || canceled) return;
+          if (finished || signal?.aborted) return;
           if (recorder.state === 'inactive') return;
           const current = video.currentTime;
-          if (current >= end) {
-            video.pause();
-            if (recorder.state === 'recording') { recordingEnded = performance.now(); recorder.stop(); }
-            return;
-          }
+          if (current >= end || video.ended) { stopAtEnd(); return; }
           const percent = clampTime(((current - start) / (end - start)) * 100, 0, 100);
           onProgress?.(percent, current);
           raf = window.requestAnimationFrame(tick);
         };
 
         const draw = () => {
-          if (finished || canceled) return;
+          if (finished || signal?.aborted) return;
           if (canvas) {
             const ctx = canvas.getContext('2d');
             if (ctx) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -554,6 +574,7 @@ export function trimVideoSegment(options: TrimVideoOptions): Promise<Blob> {
           fail(new Error('The browser blocked playback needed for trimming. Tap "Continue" again.'));
           return;
         }
+        if (finished || signal?.aborted) return;
         if (canvas) draw();
         tick();
       } catch (error) {

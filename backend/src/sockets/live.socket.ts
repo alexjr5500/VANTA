@@ -237,7 +237,7 @@ export const handleLiveSocket = (io: Server, scheduleSweep?: (work: () => Promis
     });
 
     socket.on('send_gift', async (data) => {
-      const { streamId, giftId, quantity, requestId } = data;
+      const { streamId, giftId, quantity, requestId, expectedPrice } = data;
       try {
         if (socket.data.streamId !== streamId || typeof giftId !== 'string') throw new Error('Invalid gift request');
         // Wallet churn protection: at most 5 live gifts per 15s per user. Gift
@@ -249,7 +249,7 @@ export const handleLiveSocket = (io: Server, scheduleSweep?: (work: () => Promis
         const stream = await liveService.getStream(streamId);
         if (!stream) throw new Error('Stream not found');
         
-        const tx = await giftService.sendGift(userId, stream.hostId, giftId, streamId, { requestId });
+        const tx = await giftService.sendGift(userId, stream.hostId, giftId, streamId, { requestId, expectedPrice, requireExpectedPrice: true });
         // GiftService is the single publisher for normalized room events. Do
         // not emit a second, reduced payload here or viewers animate twice.
         socket.emit('gift_sent', tx);

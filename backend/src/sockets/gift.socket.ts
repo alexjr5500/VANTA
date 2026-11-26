@@ -57,12 +57,13 @@ export function handleGiftSocket(io: Server) {
       giftId: string;
       streamId: string;
       requestId: string;
+      expectedPrice?: number;
       isAnon?: boolean;
       isSuper?: boolean;
     }) => {
       try {
         if (!data || typeof data !== 'object') throw new Error('Invalid gift request');
-        const { receiverId, giftId, streamId, isAnon, isSuper, requestId } = data;
+        const { receiverId, giftId, streamId, isAnon, isSuper, requestId, expectedPrice } = data;
         if (typeof receiverId !== 'string' || !receiverId.trim() || typeof giftId !== 'string' || !giftId.trim() || typeof streamId !== 'string' || !streamId.trim()) {
           throw new Error('receiverId, giftId and streamId are required');
         }
@@ -79,7 +80,7 @@ export function handleGiftSocket(io: Server) {
         const result = await giftService.sendGift(userId, receiverId, giftId, streamId, {
           isAnon: isAnon === true,
           isSuper: isSuper === true,
-          requestId,
+          requestId, expectedPrice, requireExpectedPrice: true,
         });
         const { transaction, gift } = result;
         const username = await usernamePromise;

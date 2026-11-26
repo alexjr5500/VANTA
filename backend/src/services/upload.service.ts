@@ -323,16 +323,24 @@ const removeLocalFile = (filePath?: string): void => {
   if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
 };
 
-const probeVideoDuration = async (filePath: string): Promise<number | undefined> => {
+/** Server-side media metadata only; browser-provided duration is never trusted. */
+export const probeVideoDuration = async (filePath: string): Promise<number | undefined> => {
   try {
     const { stdout } = await execFileAsync(process.env.FFPROBE_PATH || "ffprobe", [
-      "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath,
-    ], { timeout: 15_000 });
-    const duration = Number(stdout.trim());
-    return Number.isFinite(duration) && duration > 0 ? duration : undefined;
-  } catch {
-    // ffprobe is optional in development. Cloudinary validates/probes cloud video;
-    // production local-storage deployments should provide FFPROBE_PATH.
+      "-v", "error", "-show_entries", "format=duration:stream=codec_type,duration", "-of", "json", filePath,
+    ], { timeout: 15_000, maxBuffer: 256 * 1024 });
+    const metadata = JSON.parse(stdout);
+    const streams = Array.isArray(metadata.streams) ? metadata.streams : [];
+    if (!streams.some((stream: { codec_type?: string }) => stream.codec_type === "video")) return undefined;
+    const durations = [metadata.format?.duration, ...streams.map((stream: { duration?: string }) => stream.duration)]
+      .map(value => Number(value)).filter(value => Number.isFinite(value) && value > 0);
+    return durations.length ? Math.max(...durations) : undefined;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "ENOENT" || code === "EACCES") {
+      // Do not misreport a missing server dependency as a user's bad video.
+      console.error("[upload] ffprobe unavailable:", code);
+    }
     return undefined;
   }
 };
@@ -631,7 +639,7 @@ export class UploadService {
           overwrite: false,
         });
         if (isStatus && fileType === "VIDEO") {
-          try { assertStatusVideoDuration(cloudResult.duration ?? probedDuration); }
+          try { assertStatusVideoDuration(typeof cloudResult.duration === "number" && Number.isFinite(cloudResult.duration) && cloudResult.duration > 0 ? Math.max(cloudResult.duration, probedDuration ?? 0) : probedDuration); }
           catch (error) { await cloudinary.uploader.destroy(cloudResult.public_id, { resource_type: "video", invalidate: true }); throw error; }
         }
         finalUrl = cloudResult.secure_url;

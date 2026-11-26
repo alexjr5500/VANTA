@@ -133,6 +133,7 @@ const makeRequestInternal = async <T>(
     cacheTTL?: number;
     skipCache?: boolean;
     signal?: AbortSignal;
+    noRetry?: boolean;
   } = {}
 ): Promise<T> => {
   const url = `${API_BASE_URL}${path}`;
@@ -223,7 +224,7 @@ const makeRequestInternal = async <T>(
       }
 
       // Retry on network errors or transient gateway/time-out 5xx with backoff
-      if (retryCount < MAX_RETRIES) {
+      if (!options.noRetry && retryCount < MAX_RETRIES) {
         const delay = RETRY_DELAY * Math.pow(RETRY_BACKOFF, retryCount);
         if (process.env.NODE_ENV === 'development') {
           console.log(`[API] Retry ${retryCount + 1}/${MAX_RETRIES} for ${method} ${url} after ${delay}ms`);
@@ -231,6 +232,9 @@ const makeRequestInternal = async <T>(
         await sleep(delay);
         return executeFetch(retryCount + 1);
       }
+
+      // Preserve structured server errors after retry exhaustion or explicit no-retry.
+      if (error instanceof ApiError) throw error;
 
       // Network error or parsing error after all retries
       console.error(`[API] Error ${method} ${url}:`, error);
@@ -272,6 +276,7 @@ const makeRequest = async <T>(
     cacheTTL?: number;
     skipCache?: boolean;
     signal?: AbortSignal;
+    noRetry?: boolean;
   } = {}
 ): Promise<T> => {
   // Try batching first
@@ -326,11 +331,12 @@ export const apiPost = async <T>(
   path: string,
   payload: unknown,
   token?: string,
-  headers?: Record<string, string>
+  headers?: Record<string, string>,
+  options?: { noRetry?: boolean }
 ): Promise<T> => {
   // Invalidate related caches on mutation
   invalidateCache(path.split('/').slice(1, 3).join('/'));
-  return makeRequest<T>('POST', path, { body: payload, token, headers });
+  return makeRequest<T>('POST', path, { body: payload, token, headers, ...options });
 };
 
 export const apiPut = async <T>(

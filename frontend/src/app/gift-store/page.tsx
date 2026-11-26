@@ -124,15 +124,15 @@ export default function GiftStorePage() {
   if (loading || loadError) {
     return (
       <div className="w-full min-w-0">
-        <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[#080808]/90 px-4 backdrop-blur-xl">
-          <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><ArrowLeft size={20} /></button>
-          <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[#f5f5f5]">Gift Store</h1>
+        <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-[var(--border)] bg-[var(--header-surface)] px-4 backdrop-blur-xl">
+          <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"><ArrowLeft size={20} /></button>
+          <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[var(--text-primary)]">Gift Store</h1>
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
-            <button type="button" aria-pressed={featuredOnly} onClick={() => setFeaturedOnly(value => !value)} aria-label={featuredOnly ? 'Showing featured gifts' : 'Filter featured gifts'} className={`grid h-9 w-9 place-items-center rounded-lg transition ${featuredOnly ? 'bg-[var(--vanta-gold)]/15 text-[var(--vanta-gold)]' : 'text-white/55 hover:bg-white/[.05] hover:text-white'}`}>
+            <button type="button" aria-pressed={featuredOnly} onClick={() => setFeaturedOnly(value => !value)} aria-label={featuredOnly ? 'Showing featured gifts' : 'Filter featured gifts'} className={`grid h-9 w-9 place-items-center rounded-lg transition ${featuredOnly ? 'bg-[var(--vanta-gold)]/15 text-[var(--vanta-gold)]' : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]'}`}>
               <SlidersHorizontal size={16} />
             </button>
             {balance !== null && (
-              <span className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-white/[.045] px-2.5 text-xs font-semibold text-white tabular-nums">
+              <span className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[var(--surface-secondary)] px-2.5 text-xs font-semibold text-[var(--text-primary)] tabular-nums">
                 <VantaCoinIcon size={14} className="shrink-0 text-[var(--vanta-gold)]" />
                 {balance.toLocaleString()}
               </span>
@@ -145,14 +145,14 @@ export default function GiftStorePage() {
         <div className="mt-4 flex min-h-[55dvh] w-full min-w-0 flex-col items-center justify-center px-5 text-center">
           {loading ? (
             <>
-              <Loader2 size={32} className="mx-auto animate-spin text-[#8A8A8A]" />
-              <p className="mt-3 text-sm text-gray-400">Loading gift store...</p>
+              <Loader2 size={32} className="mx-auto animate-spin text-[var(--text-secondary)]" />
+              <p className="mt-3 text-sm text-[var(--text-secondary)]">Loading gift store...</p>
             </>
           ) : (
             <>
-              <Gift size={28} className="mb-3 text-white/25" />
-              <h1 className="text-base font-semibold text-white">Gift Store could not load</h1>
-              <p className="mx-auto mt-2 max-w-sm text-sm leading-5 text-[#8A8A8A]">{loadError}</p>
+              <Gift size={28} className="mb-3 text-[var(--text-muted)]" />
+              <h1 className="text-base font-semibold text-[var(--text-primary)]">Gift Store could not load</h1>
+              <p className="mx-auto mt-2 max-w-sm text-sm leading-5 text-[var(--text-secondary)]">{loadError}</p>
               <button type="button" onClick={() => void fetchData()} className="mt-5 min-h-11 rounded-lg bg-white px-5 text-sm font-semibold text-black transition hover:bg-white/90">Try again</button>
             </>
           )}
@@ -162,16 +162,16 @@ export default function GiftStorePage() {
   }
 
   return (
-    <div className="min-h-[calc(100dvh-5rem)] w-full min-w-0 pb-[calc(5rem+env(safe-area-inset-bottom))]">
+    <div className="min-h-[calc(100dvh-5rem)] w-full min-w-0 bg-[var(--background)] pb-[calc(5rem+env(safe-area-inset-bottom))] text-[var(--text-primary)]">
       {sendingGift && !recipient && (
         <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/70 p-0 backdrop-blur-md  " onClick={() => setSendingGift(null)}>
-          <section role="dialog" aria-modal="true" aria-label="Choose a gift recipient" className="w-full max-w-[480px] rounded-t-xl border border-white/10 bg-[#0D0D0F]/98 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 shadow-2xl" onClick={event => event.stopPropagation()}>
-            <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-white/20" /><div className="flex items-center justify-between"><div><h2 className="text-base font-semibold text-white">Choose a recipient</h2><p className="mt-1 text-xs text-white/45">Send {sendingGift.name} to a creator or friend.</p></div><button aria-label="Close" onClick={() => setSendingGift(null)} className="grid h-10 w-10 place-items-center rounded-lg text-white/60 hover:bg-white/10"><X size={18} /></button></div>
-            <div className="relative mt-5"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/35"/><input autoFocus value={recipientQuery} onChange={event => setRecipientQuery(event.target.value)} placeholder="Search by name or username" className="h-11 w-full rounded-xl border border-white/10 bg-white/[.04] pl-9 pr-10 text-sm text-white outline-none placeholder:text-white/30"/>{searchingRecipients && <Loader2 size={16} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-white/45"/>}</div>
+          <section role="dialog" aria-modal="true" aria-label="Choose a gift recipient" className="w-full max-w-[480px] rounded-t-xl border border-[var(--border)] bg-[var(--background-secondary)] px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 shadow-2xl" onClick={event => event.stopPropagation()}>
+            <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-white/20" /><div className="flex items-center justify-between"><div><h2 className="text-base font-semibold text-[var(--text-primary)]">Choose a recipient</h2><p className="mt-1 text-xs text-[var(--text-secondary)]">Send {sendingGift.name} to a creator or friend.</p></div><button aria-label="Close" onClick={() => setSendingGift(null)} className="grid h-10 w-10 place-items-center rounded-lg text-[var(--text-secondary)] hover:bg-[var(--surface-hover)]"><X size={18} /></button></div>
+            <div className="relative mt-5"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"/><input autoFocus value={recipientQuery} onChange={event => setRecipientQuery(event.target.value)} placeholder="Search by name or username" className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--surface-secondary)] pl-9 pr-10 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"/>{searchingRecipients && <Loader2 size={16} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-[var(--text-secondary)]"/>}</div>
             <div className="mt-3 max-h-[42dvh] space-y-1 overflow-y-auto overscroll-contain">
-              {recipientResults.map(person => <button key={person.id} onClick={() => setRecipient(person)} className="flex min-h-14 w-full items-center gap-3 rounded-lg p-3 text-left hover:bg-white/[.06]"><Avatar src={person.avatar} alt={person.username} size="sm"/><div className="min-w-0"><p className="truncate text-sm font-medium text-white">{person.fullName || person.username}</p><p className="truncate text-xs text-white/40">@{person.username}</p></div></button>)}
-              {recipientQuery.trim().length >= 2 && !searchingRecipients && recipientResults.length === 0 && <p className="py-8 text-center text-sm text-white/40">No matching recipients found.</p>}
-              {recipientQuery.trim().length < 2 && <p className="py-8 text-center text-sm text-white/40">Enter at least two characters to search.</p>}
+              {recipientResults.map(person => <button key={person.id} onClick={() => setRecipient(person)} className="flex min-h-14 w-full items-center gap-3 rounded-lg p-3 text-left hover:bg-[var(--surface-hover)]"><Avatar src={person.avatar} alt={person.username} size="sm"/><div className="min-w-0"><p className="truncate text-sm font-medium text-[var(--text-primary)]">{person.fullName || person.username}</p><p className="truncate text-xs text-[var(--text-muted)]">@{person.username}</p></div></button>)}
+              {recipientQuery.trim().length >= 2 && !searchingRecipients && recipientResults.length === 0 && <p className="py-8 text-center text-sm text-[var(--text-muted)]">No matching recipients found.</p>}
+              {recipientQuery.trim().length < 2 && <p className="py-8 text-center text-sm text-[var(--text-muted)]">Enter at least two characters to search.</p>}
             </div>
           </section>
         </div>
@@ -194,36 +194,37 @@ export default function GiftStorePage() {
       />
 
       <div className="w-full min-w-0">
-        <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[#080808]/90 px-4 backdrop-blur-xl">
-          <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#8a8a8a] hover:bg-white/[.05] hover:text-white"><ArrowLeft size={20} /></button>
-          <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[#f5f5f5]">Gift Store</h1>
+        <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-[var(--border)] bg-[var(--header-surface)] px-4 backdrop-blur-xl">
+          <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"><ArrowLeft size={20} /></button>
+          <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[var(--text-primary)]">Gift Store</h1>
           <div className="ml-auto flex shrink-0 items-center gap-1">
             {balance !== null && (
-              <span className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#0D0D0F] px-2.5 text-xs font-bold text-white tabular-nums">
+              <span className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 text-xs font-bold text-[var(--text-primary)] tabular-nums">
                 <VantaCoinIcon size={14} className="shrink-0 text-[var(--vanta-gold)]" />
                 {balance.toLocaleString()}
               </span>
             )}
           </div>
         </header>
-        <div className="mt-3 w-full min-w-0 space-y-3">
+        <div className="mt-3 w-full min-w-0 space-y-4">
+          <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-[var(--vanta-gold-bright)]">Virtual gifts</h2><p className="mt-1 text-xs text-[var(--text-secondary)]">Support your favorite creators.</p></div><button type="button" onClick={() => setShowPurchase(true)} className="min-h-11 shrink-0 rounded-lg border border-[#b89446]/35 px-3 text-xs font-medium text-[var(--vanta-gold-bright)]">Buy coins</button></div>
         {/* Search and Categories */}
         <div className="flex flex-col gap-2">
           {/* Search */}
           <div className="relative">
-            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-secondary)]" />
             <input
               type="text"
               placeholder="Search gifts..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="h-10 w-full rounded-lg border border-white/[0.08] bg-[#0D0D0F] pl-11 pr-10 text-sm text-white outline-none placeholder:text-gray-500"
+              className="h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-11 pr-10 text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
                 aria-label="Clear search"
-                className="absolute right-3 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-md text-gray-400 hover:bg-white/[0.06] hover:text-white"
+                className="absolute right-3 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
               >
                 <X size={15} />
               </button>
@@ -240,10 +241,12 @@ export default function GiftStorePage() {
                 <button
                   key={cat.id}
                   onClick={() => setActiveCategory(cat.id)}
-                  className={`flex flex-shrink-0 items-center gap-2 rounded-full px-3 py-2 text-xs font-medium transition whitespace-nowrap ${
+                  type="button"
+                  aria-pressed={isActive}
+                  className={`flex min-h-11 flex-shrink-0 items-center gap-1.5 border-b-2 px-2 py-2 text-xs font-medium whitespace-nowrap ${
                     isActive
-                      ? 'bg-[var(--vanta-gold)] text-black'
-                      : 'bg-white/[0.045] text-white/55 hover:text-white'
+                      ? 'border-[var(--vanta-gold)] text-[var(--vanta-gold-bright)]'
+                      : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                   }`}
                 >
                   <Icon size={14} />
@@ -259,47 +262,45 @@ export default function GiftStorePage() {
 
         {/* Gift Grid */}
         {filteredGifts.length === 0 ? (
-          <div className="rounded-lg border border-white/[0.08] bg-[#101010] px-5 py-12 text-center">
-            <GiftIcon size={28} className="mx-auto mb-3 text-white/25" />
-            <h3 className="text-sm font-medium text-white">{gifts.length ? 'No gifts found' : 'No gifts available right now'}</h3>
-            <p className="mx-auto mt-1.5 max-w-xs text-xs leading-5 text-gray-400">{gifts.length ? 'Try a different category or search term.' : 'The live gift catalog is currently empty.'}</p>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-5 py-12 text-center">
+            <GiftIcon size={28} className="mx-auto mb-3 text-[var(--text-muted)]" />
+            <h3 className="text-sm font-medium text-[var(--text-primary)]">{gifts.length ? 'No gifts found' : 'No gifts available right now'}</h3>
+            <p className="mx-auto mt-1.5 max-w-xs text-xs leading-5 text-[var(--text-secondary)]">{gifts.length ? 'Try a different category or search term.' : 'The live gift catalog is currently empty.'}</p>
           </div>
 
         ) : (
           <>
             {activeCategory === 'luxury' && (
-              <div className="flex items-center gap-2 border-b border-white/[0.08] pb-3 text-sm font-semibold text-[var(--vanta-gold)]">
+              <div className="flex items-center gap-2 border-b border-[var(--border)] pb-3 text-sm font-semibold text-[var(--vanta-gold)]">
                 <Star size={14} /> Luxury collection
               </div>
             )}
 
-            {/* Gift grid — artwork is the hero. No frames, borders or card
-                backgrounds; ~4 per row, adapting to the mobile shell width. */}
-            <div className="grid w-full min-w-0 grid-cols-4 gap-2 sm:grid-cols-5 sm:gap-2.5 md:grid-cols-7 lg:grid-cols-8 xl:grid-cols-10">
+            {/* Reference-led collectible cards; backend prices stay authoritative. */}
+            <div className="grid w-full min-w-0 grid-cols-3 gap-2 min-[380px]:grid-cols-4 sm:grid-cols-5 sm:gap-2.5 md:grid-cols-7 lg:grid-cols-8 xl:grid-cols-10">
               {filteredGifts.map((gift) => (
                 <button
                   key={gift.id}
-                  onClick={() => setSendingGift(gift)}
+                  onClick={() => { setRecipient(null); setRecipientQuery(''); setSendingGift(gift); }}
                   aria-label={`Send ${gift.name} for ${gift.price.toLocaleString()} coins`}
-                  className="group relative flex min-w-0 flex-col items-center gap-1.5 overflow-hidden rounded-lg px-1 pb-2 pt-1 text-center transition-colors hover:bg-white/[.04] active:scale-[.98]"
+                  className="group relative flex min-w-0 flex-col items-center gap-1.5 overflow-hidden rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-1 pb-2 pt-1 text-center transition-colors hover:border-[var(--vanta-gold)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vanta-gold-bright)]"
                 >
-                  <div className="relative flex aspect-square w-full max-h-[112px] items-center justify-center">
-                    <div className="absolute inset-3 rounded-full opacity-25 blur-2xl transition-opacity group-active:opacity-40" style={{ backgroundColor: gift.glowColor || 'transparent' }} />
-                    <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={gift.thumbnailUrl || gift.image} size={88} animate={false} quality={giftVisualQuality(gift)} />
+                  <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden">
+                    <GiftArtwork slug={gift.slug} name={gift.name} artworkType={gift.artworkType} assetUrl={gift.thumbnailUrl || gift.image} size={112} responsive blendReferenceBackground animate={false} quality={giftVisualQuality(gift)} />
                     {(gift.isLegendary || gift.isLimited) && (
                       <span
                         title={gift.isLegendary ? 'Exclusive' : 'Limited'}
                         aria-hidden="true"
-                        className="absolute right-0 top-0 grid h-4 w-4 place-items-center rounded-full bg-black/70 backdrop-blur-sm"
+                        className="absolute right-0 top-0 grid h-4 w-4 place-items-center rounded-full bg-[var(--surface-active)]"
                       >
-                        {gift.isLegendary ? <Star size={9} className="text-[var(--vanta-gold)]" /> : <Flame size={9} className="text-white/70" />}
+                        {gift.isLegendary ? <Star size={9} className="text-[var(--vanta-gold)]" /> : <Flame size={9} className="text-[var(--text-secondary)]" />}
                       </span>
                     )}
                   </div>
-                  <h3 className="w-full truncate text-[10px] font-semibold leading-tight text-white/90 sm:text-[11px]">{gift.name}</h3>
-                  <span className="flex min-w-0 items-center justify-center gap-0.5 text-[11px] font-semibold">
-                    <VantaCoinIcon size={11} className={gift.isLegendary ? 'text-[var(--vanta-gold)]' : 'text-[#c8a24a]'} />
-                    <span className="truncate text-white">{gift.price.toLocaleString()}</span>
+                  <h3 className="flex min-h-[2.2em] w-full items-center justify-center break-words text-[11px] font-medium leading-tight text-[var(--text-primary)] sm:text-xs">{gift.name}</h3>
+                  <span className="flex min-w-0 flex-wrap items-center justify-center gap-1 text-[11px] font-medium tabular-nums">
+                    <VantaCoinIcon size={13} decorative />
+                    <span className="truncate text-[var(--text-primary)]">{gift.price.toLocaleString()}</span>
                   </span>
                 </button>
               ))}
@@ -308,7 +309,7 @@ export default function GiftStorePage() {
           </>
         )}
 
-        <p className="border-t border-white/[0.08] pt-4 text-center text-xs leading-5 text-gray-500">Recipients receive 70% of a gift&apos;s coin value, converted to earnings automatically.</p>
+        <p className="border-t border-[var(--border)] pt-4 text-center text-xs leading-5 text-[var(--text-muted)]">Recipients receive 70% of a gift&apos;s coin value in spendable VANTA Coins.</p>
 
         </div>
       </div>
