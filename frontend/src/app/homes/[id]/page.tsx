@@ -15,7 +15,9 @@ import Skeleton from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import { formatDate } from '@/lib/utils';
-import { API_BASE_URL } from '@/lib/api';
+import Avatar from '@/components/ui/Avatar';
+import HomeMediaImage from '@/components/homes/HomeMediaImage';
+import { homeMediaSource, homeImageCandidates, isHomeVideo } from '@/lib/homeMedia';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import {
   MapPin, Bed, Bath, Home, Play, Share2, Phone, MessageCircle,
@@ -118,14 +120,6 @@ interface MediaFee {
   currency?: string;
 }
 
-function resolveHomeMediaUrl(media: any): string | null {
-  const raw = media?.uploadedFile?.url || media?.url || media?.thumbnailUrl || media?.uploadedFile?.thumbnailUrl;
-  if (typeof raw !== 'string' || !raw.trim()) return null;
-  const value = raw.trim();
-  if (/^(https?:|blob:|data:)/i.test(value)) return value;
-  try { return new URL(value.startsWith('/') ? value : `/${value}`, API_BASE_URL).toString(); } catch { return value; }
-}
-
 function parseJsonArray<T>(raw: unknown): T[] {
   if (Array.isArray(raw)) return raw as T[];
   if (typeof raw !== 'string' || raw.trim() === '') return [];
@@ -188,6 +182,7 @@ export default function HomeDetailPage() {
   const [reporting, setReporting] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [loadedPhoto, setLoadedPhoto] = useState<{id: string; src: string} | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -243,7 +238,8 @@ export default function HomeDetailPage() {
 
   const activeIndex = Math.min(viewerIndex, Math.max(media.length - 1, 0));
   const activeMedia = media[activeIndex] || null;
-  const activeSrc = resolveHomeMediaUrl(activeMedia);
+  const activeSrc = homeMediaSource(activeMedia);
+  const activePhoto = loadedPhoto?.id === activeMedia?.id ? loadedPhoto?.src : null;
 
   const amenities = useMemo(() => parseJsonArray<string>(listing?.amenities), [listing]);
   const fees = useMemo<MediaFee[]>(() => parseJsonArray<MediaFee>(listing?.additionalFees), [listing]);
@@ -466,13 +462,13 @@ export default function HomeDetailPage() {
         <section aria-label="Property photos" className="relative mx-auto w-full overflow-hidden bg-[#111] sm:px-5 lg:px-8">
           <div className="relative h-[56vw] min-h-[230px] max-h-[560px] overflow-hidden bg-[#10151c] sm:rounded-2xl sm:ring-1 sm:ring-white/[.08] lg:h-[min(58vh,560px)]">
             {activeMedia ? (
-              activeMedia.type === 'VIDEO' || activeMedia.type === 'video' ? (
-                <video key={activeMedia.id} src={activeSrc || undefined} poster={resolveHomeMediaUrl(activeMedia) || undefined} controls playsInline className="h-full w-full bg-[#101010] object-contain" />
+              isHomeVideo(activeMedia) ? (
+                <video key={activeMedia.id} src={activeSrc || undefined} poster={homeImageCandidates(activeMedia, true)[0] || undefined} controls playsInline className="h-full w-full bg-[#101010] object-contain" />
               ) : (
-                <button type="button" onClick={() => setLightboxOpen(true)} className="group relative block h-full w-full" aria-label="Open photo full screen">
-                  <img src={activeSrc || undefined} alt={listing.title || 'Property photo'} className="h-full w-full bg-[#101010] object-cover" />
+                <button type="button" disabled={!activePhoto} onClick={() => setLightboxOpen(true)} className="group relative block h-full w-full disabled:cursor-default" aria-label="Open photo full screen">
+                  <HomeMediaImage key={activeMedia.id} media={activeMedia} alt={listing.title || "Property photo"} onReady={src => setLoadedPhoto({id: activeMedia.id, src})} />
                   <span className="absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-black/10" />
-                  <span className="absolute bottom-4 right-4 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-2 text-xs text-white backdrop-blur-sm"><Maximize2 size={13} /> View photo</span>
+                  {activePhoto && <span className="absolute bottom-4 right-4 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-2 text-xs text-white backdrop-blur-sm"><Maximize2 size={13} /> View photo</span>}
                 </button>
               )
             ) : <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-white/25"><Home size={42} strokeWidth={1.2} /><span className="text-xs">Photos coming soon</span></div>}
@@ -485,17 +481,16 @@ export default function HomeDetailPage() {
           </div>
           {media.length > 1 && <div className="mx-auto flex max-w-[1440px] gap-2 overflow-x-auto px-3 py-2.5 sm:px-5 lg:px-8">
             {media.map((item, index) => {
-              const thumb = resolveHomeMediaUrl(item) || '';
               const isActive = index === activeIndex;
               return <button key={item.id} type="button" onClick={() => setViewerIndex(index)} className={"relative h-14 w-20 shrink-0 overflow-hidden rounded-md transition sm:h-16 sm:w-24 " + (isActive ? "ring-2 ring-[#c9a227] ring-offset-1 ring-offset-[#080808]" : "opacity-55 hover:opacity-100")} aria-label={"View media " + (index + 1)} aria-current={isActive}>
-                {thumb ? <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" /> : <span className="flex h-full w-full items-center justify-center bg-white/[.04]"><Home size={15} /></span>}
+                <HomeMediaImage media={item} alt={`Property media ${index + 1}`} thumbnailFirst />
                 {['VIDEO', 'video'].includes(item.type) && <span className="absolute inset-0 flex items-center justify-center bg-black/40"><Play size={15} className="text-white" fill="currentColor" /></span>}
               </button>;
             })}
           </div>}
         </section>
 
-        <ImageViewer src={lightboxOpen && activeMedia && !['VIDEO', 'video'].includes(activeMedia.type) ? activeSrc : null} alt={listing.title} onClose={() => setLightboxOpen(false)} />
+        <ImageViewer src={lightboxOpen && activeMedia && !isHomeVideo(activeMedia) ? activePhoto || null : null} alt={listing.title} onClose={() => setLightboxOpen(false)} />
 
         <div className="mx-auto grid w-full max-w-[1440px] grid-cols-1 gap-0 lg:grid-cols-[minmax(0,1fr)_340px] lg:px-8">
           <div className="min-w-0 px-4 sm:px-6 lg:px-8">
@@ -539,7 +534,7 @@ export default function HomeDetailPage() {
               <h2 className="text-xs font-semibold uppercase tracking-[.16em] text-white/40">Property contact</h2>
               <div className="mt-4 flex items-center gap-3">
                 <button type="button" onClick={() => owner?.username && router.push('/profile/' + owner.username)} disabled={!owner?.username} className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full bg-white/[.06] disabled:cursor-default" aria-label={owner?.username ? "View " + ownerName + "'s profile" : 'Property owner'}>
-                  {owner?.avatar ? <img src={owner.avatar} alt="" className="h-full w-full object-cover" /> : <span className="flex h-full w-full items-center justify-center text-white/40"><User size={22} /></span>}
+                  <Avatar src={owner?.avatar} alt={ownerName} size="lg" />
                 </button>
                 <div className="min-w-0"><div className="flex items-center gap-1.5"><p className="truncate text-sm font-semibold text-white">{ownerName}</p>{verif.type !== 'NONE' && <VerificationBadge type={verif.type} verified size="sm" showTooltip />}</div><p className="mt-1 text-xs text-white/45">{verif.label}</p></div>
               </div>
