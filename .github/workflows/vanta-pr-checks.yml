@@ -318,6 +318,10 @@ jobs:
         with:
           node-version: 22
       - run: npm --prefix backend install
+      - name: Install age encryption tool
+        run: sudo apt-get update && sudo apt-get install -y age
+      - name: Verify streaming public-key backup encryption
+        run: bash backend/scripts/ci-backup-age.sh
       - name: Exercise isolated database and media recovery
         env:
           VANTA_CI_DISPOSABLE_RESTORE: "yes"

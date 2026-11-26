@@ -7,9 +7,11 @@ COPY --from=node_runtime /usr/local/lib/node_modules/ /usr/local/lib/node_module
 RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
  && apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates openssl libatomic1 ffmpeg \
+ && apt-get install -y --no-install-recommends ca-certificates openssl libatomic1 ffmpeg age rclone \
  && rm -rf /var/lib/apt/lists/* \
  && node --version \
+ && age --version \
+ && rclone version \
  && pg_dump --version | grep -E '^pg_dump \(PostgreSQL\) 18\.' \
  && pg_restore --version | grep -E '^pg_restore \(PostgreSQL\) 18\.' \
  && psql --version | grep -E '^psql \(PostgreSQL\) 18\.'
