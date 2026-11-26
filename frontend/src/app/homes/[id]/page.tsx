@@ -1,5 +1,7 @@
 'use client';
 
+import { homeLocationLine } from '@/lib/homeLocation';
+
 import BookmarkIcon from '@/components/ui/BookmarkIcon';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -129,11 +131,6 @@ function parseJsonArray<T>(raw: unknown): T[] {
   } catch {
     return [];
   }
-}
-
-function locationLine(listing: any): string {
-  const parts = [listing?.area, listing?.city, listing?.state, listing?.country].filter(Boolean);
-  return parts.length > 0 ? parts.join(', ') : 'Location to be confirmed';
 }
 
 const AMENITY_LABEL: Record<string, string> = {
@@ -501,7 +498,7 @@ export default function HomeDetailPage() {
                 <div className="min-w-0 flex-1">
                   <p className="mb-2 text-[10px] font-semibold uppercase tracking-[.2em] text-[#c9a227]">{typeLabel}{listing.furnished ? ' · Furnished' : ''}</p>
                   <h1 className="text-2xl font-semibold leading-tight tracking-tight text-white sm:text-3xl lg:text-4xl">{listing.title}</h1>
-                  <p className="mt-2 flex items-start gap-1.5 text-sm leading-5 text-white/55"><MapPin size={15} className="mt-0.5 shrink-0" />{locationLine(listing)}</p>
+                  <p className="mt-2 flex items-start gap-1.5 text-sm leading-5 text-white/55"><MapPin size={15} className="mt-0.5 shrink-0" />{homeLocationLine(listing)}</p>
                 </div>
                 <div className="shrink-0 text-right"><p className="text-xl font-bold tabular-nums text-[#e4c65d] sm:text-2xl">{rent}</p><p className="mt-1 text-xs text-white/45">{periodSuffix}</p></div>
               </div>
