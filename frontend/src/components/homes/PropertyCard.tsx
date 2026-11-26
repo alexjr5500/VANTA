@@ -6,19 +6,12 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useToast } from '@/components/ui/Toast';
 import { toggleSaveHome } from '@/lib/services';
-import { API_BASE_URL } from '@/lib/api';
+import HomeMediaImage from './HomeMediaImage';
+import { isHomeVideo } from '@/lib/homeMedia';
 import { useAuth } from '@/context/AuthContext';
 import { MapPin, Bed, Bath, Home, Play } from 'lucide-react';
 
 export interface PropertyCardProps { listing: any; }
-
-const resolveHomeMediaUrl = (media: any): string | null => {
-  const raw = media?.uploadedFile?.url || media?.url || media?.thumbnailUrl || media?.uploadedFile?.thumbnailUrl;
-  if (typeof raw !== 'string' || !raw.trim()) return null;
-  const value = raw.trim();
-  if (/^(https?:|blob:|data:)/i.test(value)) return value;
-  try { return new URL(value.startsWith('/') ? value : `/${value}`, API_BASE_URL).toString(); } catch { return value; }
-};
 
 const PERIOD_LABEL: Record<string, string> = { WEEKLY: '/week', MONTHLY: '/month', YEARLY: '/year' };
 const CURRENCY_SYMBOL: Record<string, string> = {
@@ -42,7 +35,6 @@ export default function PropertyCard({ listing }: PropertyCardProps) {
   const [saved, setSaved] = useState<boolean>(Boolean(listing.isSaved));
   const [saving, setSaving] = useState(false);
   const cover = Array.isArray(listing.media) ? [...listing.media].sort((a, b) => Number(Boolean(b.isCover)) - Number(Boolean(a.isCover)) || (a.order ?? 0) - (b.order ?? 0))[0] : null;
-  const coverUrl = resolveHomeMediaUrl(cover);
   const price = formatHomePrice(listing.rentAmount, listing.currency || 'NGN');
   const period = PERIOD_LABEL[listing.rentPeriod || 'MONTHLY'] || '/month';
   const type = TYPE_LABEL[listing.propertyType || 'OTHER'] || 'Other';
@@ -71,27 +63,27 @@ export default function PropertyCard({ listing }: PropertyCardProps) {
   if (listing.loading) return <div className="animate-pulse"><div className="aspect-[4/3] rounded-xl bg-white/[.06]" /><div className="mt-3 h-4 w-2/3 rounded bg-white/[.06]" /><div className="mt-2 h-4 w-1/3 rounded bg-white/[.06]" /></div>;
 
   return (
-    <article className="group min-w-0">
+    <article className="group flex min-w-0 flex-col">
       <div className="relative aspect-[4/3] overflow-hidden rounded-xl bg-[#151a21] ring-1 ring-white/[.07]">
         <Link href={'/homes/' + listing.id} className="absolute inset-0 block" aria-label={'View ' + listing.title}>
-          {coverUrl ? <img src={coverUrl} alt={listing.title || 'Property photo'} className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.04]" loading="lazy" onError={(event) => { event.currentTarget.style.display = 'none'; event.currentTarget.parentElement?.classList.add('home-media-failed'); }} /> : <div className="flex h-full w-full items-center justify-center text-white/25"><Home size={32} strokeWidth={1.4} /></div>}
-          {cover?.type === 'VIDEO' && <span className="absolute inset-0 flex items-center justify-center bg-black/25"><Play size={28} className="text-white" /></span>}
+          <HomeMediaImage key={cover?.id || listing.id} media={cover} alt={listing.title || 'Property photo'} thumbnailFirst className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.04]" />
+          {isHomeVideo(cover) && <span className="absolute inset-0 flex items-center justify-center bg-black/25"><Play size={28} className="text-white" /></span>}
         </Link>
         <span className="absolute bottom-3 left-3 max-w-[calc(100%-4rem)] truncate rounded-full bg-black/65 px-3 py-1.5 text-[10px] font-semibold tracking-wide text-white backdrop-blur-sm">{type}</span>
         <button type="button" onClick={() => void handleSave()} disabled={saving} className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full border border-white/15 bg-black/55 text-white shadow-lg backdrop-blur-md transition hover:bg-black/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#c9a227] disabled:opacity-60" aria-label={saved ? 'Remove from saved homes' : 'Save this property'} aria-pressed={saved}>
           <BookmarkIcon size={17} saved={saved} />
         </button>
       </div>
-      <div className="min-w-0 px-0 pb-2 pt-3">
+      <div className="flex min-w-0 flex-1 flex-col px-0 pb-2 pt-3">
         <Link href={'/homes/' + listing.id} className="block min-w-0 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#c9a227]">
-          <h3 className="line-clamp-2 break-words text-[13px] font-semibold leading-[1.45] text-white transition group-hover:text-[#e4c65d] sm:text-sm">{listing.title}</h3>
+          <h3 className="line-clamp-2 min-h-[2.9em] break-words text-[13px] font-semibold leading-[1.45] text-white transition group-hover:text-[#e4c65d] sm:text-sm">{listing.title}</h3>
         </Link>
         <p className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-white/50 sm:text-xs"><MapPin size={13} className="shrink-0" /><span className="line-clamp-2 break-words">{[listing.area, listing.city].filter(Boolean).join(', ') || 'Location not specified'}</span></p>
-        <div className="mt-2.5 flex min-w-0 flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
+        <div className="mt-2.5 flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-1">
           <p className="max-w-full break-words text-sm font-bold leading-5 tabular-nums text-[#e4c65d] sm:text-base">{price}</p>
           <p className="shrink-0 text-[11px] text-white/40">{period}</p>
         </div>
-        <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 pt-2 text-[10px] text-white/50 sm:text-[11px]">
+        <div className="mt-auto flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 pt-2 text-[10px] text-white/50 sm:text-[11px]">
           <span className="inline-flex items-center gap-1.5"><Bed size={14} className="shrink-0" /> {listing.bedrooms ?? '—'} beds</span>
           <span className="inline-flex items-center gap-1.5"><Bath size={14} className="shrink-0" /> {listing.bathrooms ?? '—'} baths</span>
           {listing.furnished && <span>Furnished</span>}
