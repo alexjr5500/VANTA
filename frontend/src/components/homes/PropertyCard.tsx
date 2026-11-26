@@ -1,5 +1,7 @@
 'use client';
 
+import { homeLocationLine } from '@/lib/homeLocation';
+
 import BookmarkIcon from '@/components/ui/BookmarkIcon';
 
 import React, { useState } from 'react';
@@ -78,7 +80,7 @@ export default function PropertyCard({ listing }: PropertyCardProps) {
         <Link href={'/homes/' + listing.id} className="block min-w-0 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#c9a227]">
           <h3 className="line-clamp-2 min-h-[2.9em] break-words text-[13px] font-semibold leading-[1.45] text-white transition group-hover:text-[#e4c65d] sm:text-sm">{listing.title}</h3>
         </Link>
-        <p className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-white/50 sm:text-xs"><MapPin size={13} className="shrink-0" /><span className="line-clamp-2 break-words">{[listing.area, listing.city].filter(Boolean).join(', ') || 'Location not specified'}</span></p>
+        <p className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-white/50 sm:text-xs"><MapPin size={13} className="shrink-0" /><span className="line-clamp-2 break-words">{homeLocationLine({area: listing.area, city: listing.city}, 'Location not specified')}</span></p>
         <div className="mt-2.5 flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-1">
           <p className="max-w-full break-words text-sm font-bold leading-5 tabular-nums text-[#e4c65d] sm:text-base">{price}</p>
           <p className="shrink-0 text-[11px] text-white/40">{period}</p>
