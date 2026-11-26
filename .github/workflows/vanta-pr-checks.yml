@@ -55,7 +55,7 @@ jobs:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_test?schema=public
         run: npx prisma generate
       - name: Verify bounded encrypted backup envelope
-        run: node --test backend/scripts/backup-envelope.test.mjs backend/scripts/backup-r2-multipart.test.mjs backend/scripts/backup-run-policy.test.mjs backend/scripts/backup-orchestrator.test.mjs backend/scripts/backup-operational-adapters.test.mjs backend/scripts/backup-offline-runner.test.mjs backend/scripts/backup-operations.test.mjs
+        run: node --test backend/scripts/backup-envelope.test.mjs backend/scripts/backup-r2-multipart.test.mjs backend/scripts/backup-run-policy.test.mjs backend/scripts/backup-orchestrator.test.mjs backend/scripts/backup-operational-adapters.test.mjs backend/scripts/backup-offline-runner.test.mjs backend/scripts/backup-operations.test.mjs backend/scripts/backup-monitor.test.mjs
 
       - name: Run targeted backend security regression tests
         env:
@@ -351,3 +351,14 @@ jobs:
             echo "Unapproved backup runner unexpectedly succeeded"
             exit 1
           fi
+
+  backup-maintenance-volume-rehearsal:
+    name: Disposable backup maintenance and volume rollback rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build isolated maintenance image
+        run: docker build -f backend/Dockerfile.backup -t vanta-maintenance-ci .
+      - name: Rehearse volume continuity and refusal without approval
+        run: bash backend/scripts/ci-backup-maintenance.sh
