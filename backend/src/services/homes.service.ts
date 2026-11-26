@@ -699,7 +699,7 @@ export async function addListingMedia(listingId: string, userId: string, files: 
     orderBy: { order: 'desc' },
     select: { order: true },
   });
-  let nextOrder = (maxOrder?.order || -1) + 1;
+  let nextOrder = (maxOrder?.order ?? -1) + 1;
 
   const results = [];
   for (const file of files) {
@@ -958,7 +958,7 @@ export async function contactListing(listingId: string, enquirerId: string, mess
     'system',
     'New property enquiry',
     `${enquirer.username || 'A user'} is interested in "${listing.title}"`,
-    { listingId, conversationId: conversation.id, enquirerId, destination: `/chat/${conversation.id}` }
+    { listingId, conversationId: conversation.id, enquirerId, destination: `/chat?conversation=${encodeURIComponent(conversation.id)}` }
   );
 
   await auditLog.log({

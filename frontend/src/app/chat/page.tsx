@@ -472,6 +472,8 @@ export default function MessagesPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [messageLoad, setMessageLoad] = useState<{id: string; state: 'loading' | 'ready' | 'error'} | null>(null);
+  const messageLoadRequest = useRef(0);
   const [messageInput, setMessageInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showMobileList, setShowMobileList] = useState(true);
@@ -857,6 +859,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     pushChatView('media');
   }, [pushChatView]);
 
+  const requestedConversationId = searchParams.get('conversation');
+  const requestedConversationRef = useRef(requestedConversationId);
+  requestedConversationRef.current = requestedConversationId;
+  const [deepLinkIssue, setDeepLinkIssue] = useState<string | null>(null);
+  const conversationListRequestRef = useRef(0);
   const fetchConversations = useCallback(async (refresh?: unknown) => {
     // Pull-to-refresh passes an explicit `true`; legacy callers (e.g. the
     // error screen's onClick handler) pass other values and keep the default
@@ -864,9 +871,24 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     const background = refresh === true;
     if (!token) return;
     if (!background) setError(null);
+    const request = ++conversationListRequestRef.current;
+    const requested = requestedConversationRef.current;
     try {
-      const data = await apiGet<any>('/api/messages', token);
-      const convList = Array.isArray(data) ? data : data?.conversations ?? data?.data ?? [];
+      const data = await apiGet<any>('/api/messages', token, { skipCache: true });
+      const convList = [...(Array.isArray(data) ? data : data?.conversations ?? data?.data ?? [])];
+      let cursor = data?.nextCursor ?? null;
+      // An existing Homes enquiry can refer to a conversation beyond page one.
+      // Bound the lookup and preserve the cursor for manual pagination.
+      const seenCursors = new Set<string>();
+      while (requested && !convList.some((conv: any) => conv.id === requested) && cursor && seenCursors.size < 5 && !seenCursors.has(cursor)) {
+        seenCursors.add(cursor);
+        const page = await apiGet<any>(`/api/messages?limit=25&cursor=${encodeURIComponent(cursor)}`, token, { skipCache: true });
+        if (conversationListRequestRef.current !== request) return;
+        for (const conv of page?.conversations ?? []) if (!convList.some((existing: any) => existing.id === conv.id)) convList.push(conv);
+        cursor = page?.nextCursor ?? null;
+      }
+      if (conversationListRequestRef.current !== request) return;
+      setDeepLinkIssue(requested && !convList.some((conv: any) => conv.id === requested) ? requested : null);
       const normalizedConversations = convList.map((conv: any) => ({
         id: conv.id,
       type: (conv.type || (conv.isGroup ? 'GROUP' : 'DIRECT')).toLowerCase(),
@@ -907,14 +929,15 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         return bTime - aTime;
       });
       setConversations(normalizedConversations);
-      setConversationCursor(data?.nextCursor ?? null);
+      setConversationCursor(cursor);
     } catch (err: any) {
+      if (conversationListRequestRef.current !== request) return;
       // A pull-to-refresh failure must not replace the whole chat screen:
       // rethrow so the gesture can show its retry hint instead.
       if (background) throw err;
       setError(err.message || 'Failed to load conversations');
     } finally {
-      if (!background) setLoading(false);
+      if (conversationListRequestRef.current === request) setLoading(false);
     }
   }, [token, user?.id]);
 
@@ -934,23 +957,33 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
   const fetchMessages = useCallback(async (conversationId: string) => {
     if (!token) return;
+    const request = ++messageLoadRequest.current;
+    const current = () => activeConversationRef.current === conversationId && messageLoadRequest.current === request;
+    setMessageLoad({id: conversationId, state: 'loading'});
     try {
       const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50`, token, { skipCache: true });
-      if (activeConversationRef.current !== conversationId) return;
+      if (!current()) return;
       setCommunityChatSettings({ conversationId, allowedReactions: Array.isArray(data?.allowedReactions) ? data.allowedReactions.filter((reaction: unknown) => COMMUNITY_REACTIONS.some(item => item === reaction)) : [...COMMUNITY_REACTIONS], welcome: data?.welcome || null });
       const msgList = Array.isArray(data) ? data : data?.messages ?? data?.data ?? [];
       setMessages(msgList.map((msg: any) => normalizeMessageRecord(msg, user?.id)).filter((msg: Message) => !msg.deletedAt));
       setMessageCursor(data?.nextCursor ?? null);
+      setMessageLoad({id: conversationId, state: 'ready'});
       await apiPut<any>(`/api/messages/${conversationId}/read`, {}, token).catch(() => undefined);
-      if (activeConversationRef.current === conversationId) {
+      if (current()) {
         setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation));
       }
     } catch (err: any) {
-      if (activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Chat unavailable', message: errorMessage(err, { action: 'load this conversation', context: 'conversation', fallback: 'Could not load this conversation.' }) });
+      if (current()) {
+        setMessageLoad({id: conversationId, state: 'error'});
+        showToast?.({ type: 'error', title: 'Chat unavailable', message: errorMessage(err, { action: 'load this conversation', context: 'conversation', fallback: 'Could not load this conversation.' }) });
+      }
     }
   }, [token, user?.id, showToast]);
 
   useEffect(() => { fetchConversations(); }, [fetchConversations]);
+  useEffect(() => {
+    if (requestedConversationId && activeConversationRef.current !== requestedConversationId) void fetchConversations(true).catch(() => setDeepLinkIssue(requestedConversationId));
+  }, [requestedConversationId, fetchConversations]);
 
   // Keep the global header Chat badge in sync with this page's per-conversation
   // unread state (no page refresh needed). The backend also pushes the same
@@ -1332,6 +1365,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setFirstUnreadId(null);
     setPendingNewMessage(false);
     setActiveConversation(id);
+    setMessageLoad({id, state: 'loading'});
     setCommunityChatSettings(null);
     setReactionPickerMessageId(null);
     setMessages([]);
@@ -2880,6 +2914,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
           </div>
         )}
 
+        {deepLinkIssue && deepLinkIssue === requestedConversationId && !conversations.some(conversation => conversation.id === deepLinkIssue) && <div role="alert" className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[.08] px-4 py-3 text-xs text-white/65"><span>Could not find the requested conversation. Refresh or load more chats.</span><button type="button" className="shrink-0 text-[#dfbd55]" onClick={() => void fetchConversations(true).catch(() => undefined)}>Retry</button></div>}
         {/* Conversation List */}
         <PullToRefresh onRefresh={() => fetchConversations(true)} className="min-h-0 w-full flex-1 touch-pan-y" ariaLabel="Your conversations">
           {filteredConversations.length === 0 ? (
@@ -3078,7 +3113,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             {/* Messages */}
             <div ref={messagesViewportRef} className={cn("relative min-h-0 flex-1 touch-pan-y overscroll-contain overflow-x-hidden overflow-y-auto scrollbar-hide bg-[#050505] px-3 py-4 pb-6 [overflow-anchor:none] [-webkit-overflow-scrolling:touch]", activeConv.type === 'direct' && 'vanta-direct-wallpaper', selectedMessageIds.size > 0 && "pt-4 pb-4")}>
               {messageCursor && <div className="flex justify-center"><button onClick={loadOlderMessages} disabled={loadingOlder} className="rounded-full bg-white/[0.05] px-3 py-1 text-[10px] text-white/50 disabled:opacity-50">{loadingOlder ? 'Loading…' : 'Load older messages'}</button></div>}
-              {messages.length === 0 ? (
+              {messages.length === 0 && (messageLoad?.id !== activeConv.id || messageLoad.state === 'loading') ? (
+                <div role="status" className="flex h-full items-center justify-center gap-2 text-sm text-white/60"><Loader2 size={18} className="animate-spin text-[#dfbd55]" /> Loading messages…</div>
+              ) : messages.length === 0 && messageLoad?.state === 'error' ? (
+                <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 text-sm text-white/65"><span>Could not load messages</span><button type="button" onClick={() => void fetchMessages(activeConv.id)} className="rounded-lg border border-[#c9a227]/40 px-4 py-2 text-[#dfbd55]">Retry</button></div>
+              ) : messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center">
                   <MessageCircle size={32} className="text-white/10 mb-3" />
                   <p className="text-sm text-white/50">{activeConv.type === 'channel' ? 'No posts yet' : 'No chats yet'}</p>
