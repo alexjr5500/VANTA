@@ -340,18 +340,14 @@ jobs:
           node-version: 22
       - name: Check runtime dependency lock
         run: |
-          if [ -f backend/backup-runtime/package-lock.json ]; then
-            npm --prefix backend/backup-runtime ci --omit=dev --ignore-scripts --no-audit --no-fund
-            docker build -f backend/Dockerfile.backup -t vanta-backup-ci .
-            docker run --rm vanta-backup-ci node --version
-            docker run --rm vanta-backup-ci pg_dump --version
-            docker run --rm vanta-backup-ci age --version
-            if docker run --rm vanta-backup-ci; then
-              echo "Unapproved backup runner unexpectedly succeeded"
-              exit 1
-            fi
-          else
-            npm --prefix backend/backup-runtime install --package-lock-only --ignore-scripts --no-audit --no-fund
-            node -e 'const b=require("node:zlib").gzipSync(require("node:fs").readFileSync("backend/backup-runtime/package-lock.json")).toString("base64");for(let i=0;i<b.length;i+=800)console.log("VANTA_BACKUP_LOCK_CHUNK "+(i/800)+" "+b.slice(i,i+800))'
-            echo "Generated candidate lock only; image not yet verified"
+          test -f backend/backup-runtime/package-lock.json
+          npm --prefix backend/backup-runtime ci --omit=dev --ignore-scripts --no-audit --no-fund
+          npm --prefix backend/backup-runtime audit --omit=dev --audit-level=high
+          docker build -f backend/Dockerfile.backup -t vanta-backup-ci .
+          docker run --rm vanta-backup-ci node --version
+          docker run --rm vanta-backup-ci pg_dump --version
+          docker run --rm vanta-backup-ci age --version
+          if docker run --rm vanta-backup-ci; then
+            echo "Unapproved backup runner unexpectedly succeeded"
+            exit 1
           fi
