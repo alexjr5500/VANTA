@@ -3675,3 +3675,12 @@ html.vanta-native-android .vanta-comment-composer { padding-bottom: 4px; }
 html:not(.light) .gift-reference-theme-blend {
   mix-blend-mode: screen;
 }
+
+/* Reels own their gesture and playback overlays. Android WebView/Safari
+   must not paint their separate default start-playback button. */
+.vanta-reel-video::-webkit-media-controls-start-playback-button,
+.vanta-reel-video::-webkit-media-controls-overlay-play-button,
+.vanta-reel-video::-webkit-media-controls {
+  display: none !important;
+  -webkit-appearance: none;
+}
