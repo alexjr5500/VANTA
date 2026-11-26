@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { randomUUID, randomBytes } from 'node:crypto';
+import { randomUUID, randomBytes, generateKeyPairSync, createHash } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +8,9 @@ import { checkAcceptanceConfig } from './acceptance-preflight.mjs';
 import { checkDatabase } from './acceptance-provider-probe.mjs';
 import { sha256, MAX_BACKUP_BYTES } from './backup-envelope.mjs';
 import { captureEncryptedArtifact } from './backup-bounded-capture.mjs';
-import { uploadEncryptedArtifact, publishEncryptedBackupSet, parseBackupManifest } from './backup-r2-multipart.mjs';
+import { uploadEncryptedArtifact } from './backup-r2-multipart.mjs';
+import { runBackupSet, signBackupManifest, verifySignedBackupManifest } from './backup-orchestrator.mjs';
+import { openBackupJournal, measureR2Inventory, measureScratchFreeBytes } from './backup-operational-adapters.mjs';
 
 const log = x => console.log('[AGE BACKUP SET 282] ' + JSON.stringify(x));
 const check = value => { if (!value) throw new Error('acceptance assertion'); };
@@ -30,6 +32,7 @@ const id = randomUUID(), name = id.replaceAll('-', ''), source = 'vanta_r2_src_'
 const root = await mkdtemp(join(tmpdir(), 'vanta-r2-recovery-'));
 const objects = [], databases = [], clients = [];
 const writer = join(root, 'writer'), recovery = join(root, 'recovery'), identity = join(recovery, 'identity');
+const control = join(root, 'control');
 let recipient;
 const bucket = env.R2_BUCKET;
 let sdk, s3, step = 'database_guard', passed = false, clean = true, adminReady = false;
@@ -54,12 +57,12 @@ async function readBounded(file) {
   const info = await stat(file); check(info.isFile() && info.size > 0 && info.size <= MAX_BACKUP_BYTES);
   const bytes = await readFile(file); check(bytes.length === info.size); return bytes;
 }
-async function upload(kind, file) {
+async function upload(kind, file, maxBytes) {
   const cipher = await readBounded(file);
   const item = { objectKey: 'acceptance/pr-282/' + id + '/' + kind, hash: sha256(cipher), size: cipher.length };
   objects.push(item);
   return uploadEncryptedArtifact({ client: s3, sdk, bucket, runId: id, kind, file,
-    maxBytes: kind === 'manifest.json.age' ? 64 * 1024 : MAX_BACKUP_BYTES });
+    maxBytes });
 }
 async function download(item, basename) {
   const response = await send(new sdk.GetObjectCommand({ Bucket: bucket, Key: item.key }));
@@ -88,7 +91,7 @@ try {
   check(server.name === base.database && !server.standby && Math.floor(server.version / 10000) === 18);
   for (const bin of ['pg_dump', 'pg_restore']) check(/\(PostgreSQL\) 18\./.test(run(bin, ['--version']).toString()));
   step = 'fixtures';
-  await mkdir(writer, { mode: 0o700 }); await mkdir(recovery, { mode: 0o700 });
+  await mkdir(writer, { mode: 0o700 }); await mkdir(recovery, { mode: 0o700 }); await mkdir(control, { mode: 0o700 });
   run('age-keygen', ['-o', identity], { env: { PATH: env.PATH, HOME: recovery } });
   recipient = run('age-keygen', ['-y', identity], { env: { PATH: env.PATH, HOME: recovery } }).toString().trim();
   // Ephemeral drill identity only. Never request or read the owner's private key.
@@ -101,40 +104,82 @@ try {
   await src.query('INSERT INTO fixture_owner VALUES ($1)', ['synthetic-owner']);
   await src.query('INSERT INTO fixture_media VALUES ($1,$2,$3,$4)', ['synthetic-file', 'synthetic-owner', media.length, hash]);
   const expected = (await src.query('SELECT * FROM fixture_media ORDER BY id')).rows;
-  const dump = join(writer, 'database.dump.age'), tar = join(writer, 'media.tar.age');
-  step = 'archive';
-  const start = Date.now();
-  // A failed producer, encryption process, deadline or byte limit prevents publication.
-  await captureEncryptedArtifact({ producer: 'pg_dump',
-    args: ['--format=custom', '--no-owner', '--no-acl', '--dbname', source],
-    producerEnv: pgEnv, recipient, output: dump, maxBytes: 1024 * 1024 });
-  await captureEncryptedArtifact({ producer: 'tar',
-    args: ['-C', mediaDir, '-cf', '-', 'fixture.bin'],
-    producerEnv: { PATH: env.PATH, HOME: writer }, recipient, output: tar, maxBytes: MAX_BACKUP_BYTES });
-  log({ step, passed: true, sourceDataCopied: false, databaseMajor: 18 });
   step = 'sdk';
-  const sdkDir = join(root, 'sdk'); await mkdir(sdkDir);
-  run('npm', ['install', '--prefix', sdkDir, '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact', '@aws-sdk/client-s3@3.1178.0'],
-    { timeout: 90000, env: { PATH: env.PATH, HOME: root, npm_config_cache: join(root, 'npm-cache'), npm_config_registry: 'https://registry.npmjs.org/' } });
-  sdk = createRequire(join(sdkDir, 'package.json'))('@aws-sdk/client-s3');
+  const sdkRequire = createRequire(new URL('../backup-runtime/package.json', import.meta.url));
+  const runtimeLock = JSON.parse(await readFile(new URL('../backup-runtime/package-lock.json', import.meta.url), 'utf8'));
+  check(runtimeLock.packages?.['node_modules/@aws-sdk/client-s3']?.version === '3.1178.0');
+  sdk = sdkRequire('@aws-sdk/client-s3');
   s3 = new sdk.S3Client({ region: 'auto', endpoint: env.R2_ENDPOINT, forcePathStyle: true, maxAttempts: 1,
     credentials: { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY },
     requestChecksumCalculation: 'WHEN_REQUIRED', responseChecksumValidation: 'WHEN_REQUIRED' });
-  step = 'r2_roundtrip';
-  const database = await upload('database.dump.age', dump), mediaArtifact = await upload('media.tar.age', tar);
-  check(mediaArtifact.parts >= 2);
-  log({ step, passed: true, databaseParts: database.parts, mediaParts: mediaArtifact.parts });
-  step = 'manifest';
-  const published = await publishEncryptedBackupSet({ database, media: mediaArtifact, runId: id, encryptManifest,
-    uploadManifest: ({ kind, file }) => upload(kind, file) });
-  check(published.transferVerified && objects.length === 3);
-  const marker = await download(published.marker, 'manifest.json');
-  const manifest = parseBackupManifest(await readFile(marker.destination), id);
-  check(JSON.stringify(manifest) === JSON.stringify(published.manifest));
-  log({ step, passed: true, encryptedMarkerVerified: true, artifactCount: manifest.artifacts.length });
-  step = 'download';
-  const db = await download(manifest.artifacts[0], 'db.dump'), files = await download(manifest.artifacts[1], 'media.tar');
-  log({ step, passed: true, databaseBytes: db.bytes, mediaBytes: files.bytes });
+  const journal = await openBackupJournal(control);
+  const pair = generateKeyPairSync('ed25519');
+  const privateKey = pair.privateKey.export({type:'pkcs8',format:'pem'});
+  const publicKey = pair.publicKey.export({type:'spki',format:'pem'});
+  const signerFingerprint = createHash('sha256').update(pair.publicKey.export({type:'spki',format:'der'})).digest('hex');
+  let writeBlocked = false, fenceReleased = false, sourceLost = false;
+  src.on('error',()=>{sourceLost=true}); src.on('end',()=>{sourceLost=true});
+  const start = Date.now();
+  step = 'orchestration';
+  const result = await runBackupSet({ scope:'acceptance',runId:id,
+    policy:{enabled:true,ownerApproved:true,recoveryCopiesVerified:true,recipientVerified:true,credentialsRotated:true,
+      dependencyLockVerified:true,databaseLimitBytes:1024*1024,mediaLimitBytes:MAX_BACKUP_BYTES,manifestLimitBytes:64*1024},
+    adapters:{
+      acquireExclusiveWriter:()=>journal.acquireExclusiveWriter(),
+      measureCapacity:async()=>({...await measureR2Inventory({client:s3,sdk,bucket}),
+        nowMs:Date.now(),scratchFreeBytes:await measureScratchFreeBytes(writer),unresolvedAttempt:await journal.unresolvedAttempt()}),
+      beginAttempt:args=>journal.beginAttempt(args),
+      fenceSources:async()=>{
+        const healthy=async()=>{
+          if(sourceLost)return false;
+          try{
+            const q=await src.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND backend_type='client backend' AND pid<>pg_backend_pid()");
+            return !sourceLost&&q.rows[0]?.n===0;
+          }catch{return false;}
+        };
+        check(await healthy()); await src.query('BEGIN');
+        try{
+          await src.query("SET LOCAL lock_timeout='3s'");
+          await src.query('LOCK TABLE fixture_owner, fixture_media IN SHARE MODE');
+          const contender=new Client({...base,database:source});
+          try{
+            await contender.connect(); await contender.query("SET lock_timeout='500ms'");
+            try{await contender.query("INSERT INTO fixture_owner VALUES ('must-not-write')");}
+            catch(e){writeBlocked=e.code==='55P03';}
+          }finally{await contender.end();}
+          check(writeBlocked&&await healthy());
+          return {healthy,release:async()=>{await src.query('ROLLBACK');fenceReleased=true;}};
+        }catch{await src.query('ROLLBACK').catch(()=>{});throw Error('Scratch fence failed');}
+      },
+      capture:async(kind,maxBytes)=>{
+        const output=join(writer,kind),isDb=kind==='database.dump.age';
+        const captured=await captureEncryptedArtifact({producer:isDb?'pg_dump':'tar',
+          args:isDb?['--format=custom','--no-owner','--no-acl','--dbname',source]:['-C',mediaDir,'-cf','-','fixture.bin'],
+          producerEnv:isDb?pgEnv:{PATH:env.PATH,HOME:writer},recipient,output,maxBytes});
+        if(!isDb)check(sha256(await readBounded(join(mediaDir,'fixture.bin')))===hash);
+        return {path:output,bytes:captured.bytes};
+      },
+      upload:async(kind,file,maxBytes)=>{check(fenceReleased);return upload(kind,file,maxBytes);},
+      signManifest:args=>signBackupManifest({...args,privateKey}),
+      encryptManifest:async(bytes,maxBytes)=>{const path=encryptManifest(bytes),size=(await stat(path)).size;check(size<=maxBytes);return {path,bytes:size};},
+      recordVerifiedTransfer:args=>journal.recordVerifiedTransfer(args),
+      recordFailure:args=>journal.recordFailure(args),
+      cleanupLocal:async()=>{},
+    }});
+  const recorded=await (await openBackupJournal(control)).readCurrent();
+  check(result.transferVerified&&!result.independentRestoreVerified&&recorded?.runId===id&&recorded.state==='transfer_verified'&&
+    recorded.independentRestoreVerified===false&&writeBlocked&&fenceReleased&&objects.length===3);
+  log({step,passed:true,writeBlocked,sourceFenceReleasedBeforeUpload:fenceReleased,durableJournalReopened:true,
+    signedEncryptedMarker:true,independentRestoreRecorded:false,lockedSdk:true});
+  step='manifest';
+  const marker=await download(result.marker,'manifest.json');
+  const {manifest}=verifySignedBackupManifest({bytes:await readFile(marker.destination),publicKey,expectedFingerprint:signerFingerprint,
+    expectedRunId:id,scope:'acceptance'});
+  check(JSON.stringify(manifest)===JSON.stringify(recorded.manifest));
+  log({step,passed:true,signatureVerified:true,artifactCount:manifest.artifacts.length});
+  step='download';
+  const db=await download(manifest.artifacts[0],'db.dump'),files=await download(manifest.artifacts[1],'media.tar');
+  log({step,passed:true,databaseBytes:db.bytes,mediaBytes:files.bytes});
   step = 'restore';
   const restoreStarted = Date.now();
   run('pg_restore', ['--no-owner', '--no-acl', '--exit-on-error', '--single-transaction', '--dbname', target, db.destination], { env: pgEnv });
@@ -183,6 +228,6 @@ try {
   await rm(root, { recursive: true, force: true }).catch(() => { clean = false; });
   clearTimeout(timer);
   log({ step: 'cleanup', passed: clean, createdObjects: objects.length, removedObjects: removed, createdDatabases: databases.length, droppedDatabases: dropped, reconciliationPrefix: clean ? undefined : 'acceptance/pr-282/' + id });
-  log({ complete: true, passed: passed && clean && removed === 3 && dropped === 2, scope: 'synthetic_scratch_databases_same_staging_cluster_age_manifest_ephemeral_identity' });
+  log({ complete: true, passed: passed && clean && removed === 3 && dropped === 2, scope: 'synthetic_orchestrated_scratch_postgres_lock_signed_marker_same_cluster_ephemeral_keys' });
   process.exitCode = passed && clean && removed === 3 && dropped === 2 ? 0 : 1;
 }

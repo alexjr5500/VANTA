@@ -17,6 +17,7 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && psql --version | grep -E '^psql \(PostgreSQL\) 18\.'
 WORKDIR /app
 COPY backend/ ./backend/
+RUN npm --prefix backend/backup-runtime ci --omit=dev --ignore-scripts --no-audit --no-fund
 RUN npm --prefix backend install --include=dev && npm --prefix backend run build
 # The postgres base image is used for its compatible client binaries only.
 # Do not initialize or run a local PostgreSQL server in the recovery worker.
