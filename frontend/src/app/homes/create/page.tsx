@@ -12,20 +12,13 @@ import {
 import Skeleton from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
-import { resolveMediaUrl } from '@/lib/mediaUrl';
+import HomeMediaImage from '@/components/homes/HomeMediaImage';
 import { ArrowLeft, Home as HomeIcon, ImagePlus, Trash2, Check, ChevronLeft, ChevronRight, MapPin, ShieldCheck, UploadCloud } from 'lucide-react';
 
 const MAX_PHOTOS = 10;
 
-function getHomePhotoSrc(photo: any): string {
-  return resolveMediaUrl(photo?.previewUrl || photo?.uploadedFile?.url || photo?.thumbnailUrl || photo?.url || photo?.mediaUrl || null);
-}
-
-function HomePhotoImage({ src, alt = '' }: { src: string; alt?: string }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
-  if (!src || failed) return <div className="grid h-full w-full place-items-center text-white/25"><ImagePlus size={22} /></div>;
-  return <img src={src} alt={alt} loading="lazy" decoding="async" className="h-full w-full object-cover" onError={() => setFailed(true)} />;
+function HomePhotoImage({ photo, alt = '' }: { photo: any; alt?: string }) {
+  return <HomeMediaImage media={photo?.isLocalPreview ? {url: photo.previewUrl} : photo ? {...photo, url: photo.url || photo.mediaUrl} : null} alt={alt} thumbnailFirst />;
 }
 
 const DEFAULT_TYPES = ['APARTMENT', 'STUDIO', 'FLAT', 'DETACHED_HOUSE', 'SEMI_DETACHED_HOUSE', 'DUPLEX', 'ROOM_SHARED', 'OTHER'];
@@ -107,6 +100,7 @@ function CreateHomeContent() {
   const { user, token, isLoading: authLoading } = useAuth();
   const { showToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const createdDraftRef = useRef<string | null>(null);
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [step, setStep] = useState(0);
@@ -138,7 +132,7 @@ function CreateHomeContent() {
 
   // Load the existing listing when editing.
   useEffect(() => {
-    if (authLoading || !token || !editId) return;
+    if (authLoading || !token || !editId || createdDraftRef.current === editId) return;
     let cancelled = false;
     setLoadingExisting(true);
     fetchHome(editId, token)
@@ -195,7 +189,7 @@ function CreateHomeContent() {
     if (form.title.trim().length < 3) return 'Add a title of at least 3 characters.';
     if (form.description.trim().length < 10) return 'Describe the home in at least 10 characters.';
     const rent = Number(form.rentAmount);
-    if (form.rentAmount.trim() === '' || Number.isNaN(rent) || rent < 0) return 'Enter a valid rent amount.';
+    if (form.rentAmount.trim() === '' || !Number.isFinite(rent) || rent < 0) return 'Enter a valid rent amount.';
     if (!form.country.trim()) return 'Country is required.';
     if (!form.city.trim()) return 'City is required.';
     const bedrooms = Number(form.bedrooms);
@@ -237,15 +231,18 @@ function CreateHomeContent() {
     setFormError(null);
     setSaving(true);
     try {
-      if (isEdit && editId) {
-        await updateHomeListing(editId, payload(), token);
+      const currentId = editId || createdDraftRef.current;
+      if (currentId) {
+        await updateHomeListing(currentId, payload(), token);
         showToast({ type: 'success', title: 'Listing updated' });
-        return editId;
+        return currentId;
       }
       const created = await createHomeListing(payload(), token);
       if (!created?.id) throw new Error('The server did not return a listing id.');
       showToast({ type: 'success', title: 'Draft saved', message: 'Add photos, then submit it for review.' });
       // Carry the new id into the URL so refreshes keep working.
+      createdDraftRef.current = created.id;
+      setExistingStatus('DRAFT');
       router.replace(`/homes/create?edit=${created.id}`, undefined);
       return created.id;
     } catch (e: any) {
@@ -260,7 +257,7 @@ function CreateHomeContent() {
   const handleSave = async () => { await save(); };
 
   const handlePhotos = async (files: FileList | null) => {
-    if (!files || files.length === 0 || !token) return;
+    if (!files || files.length === 0 || !token || uploading || saving) return;
 
     const remaining = MAX_PHOTOS - photos.length;
     if (remaining <= 0) {
@@ -291,7 +288,7 @@ function CreateHomeContent() {
     try {
       // Photos can only attach to a persisted listing, so create the draft after
       // previews are already visible. Temporary blob URLs are never sent to API.
-      const targetId = editId || (await save());
+      const targetId = editId || createdDraftRef.current || (await save());
       if (!targetId) {
         setPhotos(previous => previous.filter(photo => !previews.some(preview => preview.id === photo.id)));
         return;
@@ -302,26 +299,25 @@ function CreateHomeContent() {
       await uploadHomePhotos(targetId, body, token);
       const fresh = await fetchHome(targetId, token);
       setPhotos(Array.isArray(fresh?.media) ? fresh.media : []);
-      previews.forEach(preview => URL.revokeObjectURL(preview.previewUrl));
       showToast({ type: 'success', title: `${selected.length} photo${selected.length === 1 ? '' : 's'} added` });
     } catch (e: any) {
-      // Keep the real previews visible so the user can see what failed; allow
-      // retrying by selecting the same files again after correcting the issue.
+      // Remove temporary previews on failure; the original files can be selected again.
       showToast({ type: 'error', title: 'Upload failed — retry photos', message: e?.message || 'Your selected photos were not saved. Select them again to retry.' });
       setPhotos(previous => previous.filter(photo => !previews.some(preview => preview.id === photo.id)));
-      previews.forEach(preview => URL.revokeObjectURL(preview.previewUrl));
     } finally {
+      previews.forEach(preview => URL.revokeObjectURL(preview.previewUrl));
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
   const removePhoto = async (mediaId: string) => {
-    if (!token || !editId) return;
+    const targetId = editId || createdDraftRef.current;
+    if (!token || !targetId || uploading || saving) return;
     const previous = photos;
     setPhotos((prev) => prev.filter((p) => p.id !== mediaId));
     try {
-      await deleteHomeMedia(editId, mediaId, token);
+      await deleteHomeMedia(targetId, mediaId, token);
       showToast({ type: 'success', title: 'Photo removed' });
     } catch (e: any) {
       setPhotos(previous);
@@ -331,12 +327,12 @@ function CreateHomeContent() {
 
   // Save (creating the draft if needed) then send the listing to moderators.
   const handleSubmitForReview = async () => {
-    if (!token) return;
-    if (photos.length === 0) {
+    if (!token || saving || uploading) return;
+    if (!photos.some(photo => !photo.isLocalPreview)) {
       showToast({ type: 'error', title: 'Add at least one photo', message: 'Listings need a photo before review.' });
       return;
     }
-    const targetId = editId || (await save());
+    const targetId = await save();
     if (!targetId) return;
     setSaving(true);
     try {
@@ -442,9 +438,9 @@ function CreateHomeContent() {
               {step === 2 && <div className="space-y-4 border-t border-white/[.08] py-4 sm:py-5">
                 <div><div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">Property photos</h3><p className="mt-1 text-xs text-white/40">Upload clear photos. Your first cover photo makes the first impression.</p></div><span className="shrink-0 rounded-lg bg-white/[.05] px-2.5 py-1.5 text-xs text-white/55">{photos.length}/{MAX_PHOTOS}</span></div>
                   <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={e=>void handlePhotos(e.target.files)} className="sr-only" id="home-photos"/>
-                  <button type="button" disabled={uploading || photos.length >= MAX_PHOTOS} onClick={()=>fileInputRef.current?.click()} className="mt-3 flex w-full flex-col items-center justify-center rounded-xl border border-dashed border-[#c9a227]/35 bg-[var(--surface)] px-4 py-6 text-center transition-colors hover:bg-[var(--surface-active)] disabled:opacity-50"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#c9a227]/10 text-[#e4c65d]">{uploading ? <UploadCloud size={22} className="animate-pulse"/> : <ImagePlus size={22}/>}</span><span className="mt-3 text-sm font-semibold">{uploading ? 'Uploading photos…' : 'Tap to choose photos'}</span><span className="mt-1 text-xs text-white/40">JPG, PNG or WebP · up to {MAX_PHOTOS} images</span></button>
+                  <button type="button" disabled={uploading || saving || photos.length >= MAX_PHOTOS} onClick={()=>fileInputRef.current?.click()} className="mt-3 flex w-full flex-col items-center justify-center rounded-xl border border-dashed border-[#c9a227]/35 bg-[var(--surface)] px-4 py-6 text-center transition-colors hover:bg-[var(--surface-active)] disabled:opacity-50"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#c9a227]/10 text-[#e4c65d]">{uploading ? <UploadCloud size={22} className="animate-pulse"/> : <ImagePlus size={22}/>}</span><span className="mt-3 text-sm font-semibold">{uploading ? 'Uploading photos…' : 'Tap to choose photos'}</span><span className="mt-1 text-xs text-white/40">JPG, PNG or WebP · up to {MAX_PHOTOS} images</span></button>
                 </div>
-                {photos.length>0 && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{photos.map(photo=>{const src=getHomePhotoSrc(photo);return <div key={photo.id} className="group relative aspect-[4/3] overflow-hidden rounded-xl bg-white/[.03]"><HomePhotoImage src={src} alt="Selected property photo preview" />{photo.isLocalPreview&&<span className="absolute left-2 top-2 rounded bg-black/75 px-2 py-1 text-[10px] font-semibold text-white">Preview</span>}{photo.isCover&&<span className="absolute left-2 top-2 rounded-full bg-[#c9a227] px-2 py-1 text-[10px] font-bold text-black">COVER</span>}{!photo.isLocalPreview&&<button type="button" onClick={()=>void removePhoto(photo.id)} aria-label="Remove photo" className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/75 text-white hover:bg-red-500"><Trash2 size={14}/></button>}</div>})}</div>}
+                {photos.length>0 && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{photos.map(photo=>{return <div key={photo.id} className="group relative aspect-[4/3] overflow-hidden rounded-xl bg-white/[.03]"><HomePhotoImage photo={photo} alt="Selected property photo preview" />{photo.isLocalPreview&&<span className="absolute left-2 top-2 rounded bg-black/75 px-2 py-1 text-[10px] font-semibold text-white">Preview</span>}{photo.isCover&&<span className="absolute left-2 top-2 rounded-full bg-[#c9a227] px-2 py-1 text-[10px] font-bold text-black">COVER</span>}{!photo.isLocalPreview&&<button type="button" disabled={uploading||saving} onClick={()=>void removePhoto(photo.id)} aria-label="Remove photo" className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/75 text-white hover:bg-red-500"><Trash2 size={14}/></button>}</div>})}</div>}
                 <div className="rounded-xl border border-white/[.07] bg-black/20 p-3"><p className="text-xs leading-5 text-white/45">Photos help renters understand the space. Only upload images you have permission to share. You can save your draft and finish later.</p></div>
                 <div><h3 className="mb-3 text-sm font-semibold">Amenities</h3><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{AMENITIES.map(amenity=>{const active=form.amenities.includes(amenity);return <button key={amenity} type="button" onClick={()=>toggleAmenity(amenity)} aria-pressed={active} className={`flex min-h-11 items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-xs transition ${active?'border-[#c9a227]/50 bg-[#c9a227]/[.09] text-[#e4c65d]':'border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)]'}`}><span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${active ? 'border-[#c9a227] bg-[#c9a227] text-black' : 'border-[var(--border-strong)]'}`}>{active && <Check size={12}/>}</span>{AMENITY_LABEL[amenity] || amenity}</button>})}</div></div>
               </div>}
@@ -454,7 +450,7 @@ function CreateHomeContent() {
                 <button type="button" onClick={()=>setField('contactVantaMessaging',!form.contactVantaMessaging)} aria-pressed={form.contactVantaMessaging} className={`flex w-full items-start gap-3 rounded-xl border p-4 text-left ${form.contactVantaMessaging?'border-[#c9a227]/35 bg-[#c9a227]/[.05]':'border-white/10 bg-white/[.02]'}`}><span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded border ${form.contactVantaMessaging?'border-[#c9a227] bg-[#c9a227] text-black':'border-white/20'}`}>{form.contactVantaMessaging&&<Check size={13}/>}</span><span><span className="block text-sm font-semibold">VANTA messages</span><span className="mt-1 block text-xs leading-5 text-white/40">Let interested people send an enquiry inside VANTA.</span></span></button>
                 <div className="grid gap-4 sm:grid-cols-2"><div><label className={labelClass} htmlFor="home-whatsapp">WhatsApp number (optional)</label><input id="home-whatsapp" className={fieldClass} value={form.contactWhatsApp} onChange={e=>setField('contactWhatsApp',e.target.value)} placeholder="+234…"/><label className="mt-2 flex items-center gap-2 text-xs text-white/50"><input type="checkbox" checked={form.contactWhatsAppPublished} onChange={e=>setField('contactWhatsAppPublished',e.target.checked)} className="accent-[#c9a227]"/>Show WhatsApp on my listing</label></div><div><label className={labelClass} htmlFor="home-phone">Phone number (optional)</label><input id="home-phone" className={fieldClass} value={form.contactPhone} onChange={e=>setField('contactPhone',e.target.value)} placeholder="+234…"/><label className="mt-2 flex items-center gap-2 text-xs text-white/50"><input type="checkbox" checked={form.contactPhonePublished} onChange={e=>setField('contactPhonePublished',e.target.checked)} className="accent-[#c9a227]"/>Show phone on my listing</label></div></div>
                 <div className="rounded-xl border border-[#c9a227]/20 bg-[#c9a227]/[.045] p-4"><div className="flex gap-3"><ShieldCheck size={19} className="mt-0.5 shrink-0 text-[#c9a227]"/><div><p className="text-sm font-semibold">Before you submit</p><p className="mt-1 text-xs leading-5 text-white/50">Check the price, location, photos and contact choices. Your listing is saved as a draft first and sent to the VANTA Homes team for review before it appears publicly.</p></div></div></div>
-                <div className="rounded-xl border border-white/10 bg-[var(--surface)] p-3"><div className="flex items-start gap-3"><div className="h-20 w-24 shrink-0 overflow-hidden rounded-lg bg-white/[.04]"><HomePhotoImage src={getHomePhotoSrc(photos[0])} alt="Property cover preview" /></div><div className="min-w-0"><p className="truncate text-sm font-semibold">{form.title || 'Your property title'}</p><p className="mt-1 text-xs text-white/45">{homeLocationLine(form, 'Add your location')}</p><p className="mt-2 text-sm font-bold text-[#e4c65d]">{form.rentAmount ? `${form.currency} ${Number(form.rentAmount).toLocaleString()}` : 'Price not set'} <span className="text-[10px] font-normal text-white/40">/ {PERIOD_LABEL[form.rentPeriod]?.toLowerCase() || 'month'}</span></p><p className="mt-1 text-[10px] text-white/40">{form.bedrooms} beds · {form.bathrooms} baths · {form.furnished?'Furnished':'Unfurnished'}</p></div></div></div>
+                <div className="rounded-xl border border-white/10 bg-[var(--surface)] p-3"><div className="flex items-start gap-3"><div className="h-20 w-24 shrink-0 overflow-hidden rounded-lg bg-white/[.04]"><HomePhotoImage photo={photos.find(photo => photo.isCover) || photos[0]} alt="Property cover preview" /></div><div className="min-w-0"><p className="truncate text-sm font-semibold">{form.title || 'Your property title'}</p><p className="mt-1 text-xs text-white/45">{homeLocationLine(form, 'Add your location')}</p><p className="mt-2 text-sm font-bold text-[#e4c65d]">{form.rentAmount ? `${form.currency} ${Number(form.rentAmount).toLocaleString()}` : 'Price not set'} <span className="text-[10px] font-normal text-white/40">/ {PERIOD_LABEL[form.rentPeriod]?.toLowerCase() || 'month'}</span></p><p className="mt-1 text-[10px] text-white/40">{form.bedrooms} beds · {form.bathrooms} baths · {form.furnished?'Furnished':'Unfurnished'}</p></div></div></div>
               </div>}
 
               {formError && <div role="alert" className="mt-4 rounded-xl border border-red-400/25 bg-red-500/[.07] px-4 py-3 text-sm text-red-300">{formError}</div>}
