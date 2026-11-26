@@ -22,3 +22,14 @@ export function isCloudinaryStorageConfigured(
   }
   return configured.length === names.length;
 }
+
+/** Verification/identity documents have no authorized Cloudinary retrieval flow yet.
+ * Refuse these writes before the provider sees any bytes. This is a cutover gate,
+ * not a replacement for private document storage and reviewer authorization.
+ */
+export function assertCloudinaryUploadAllowed(category: string, recordType?: string): void {
+  if (['verification', 'identity', 'kyc'].includes(category.trim().toLowerCase()) ||
+      recordType?.trim().toLowerCase() === 'verificationrequest') {
+    throw new Error('Secure verification document storage is not available in Cloudinary mode');
+  }
+}
