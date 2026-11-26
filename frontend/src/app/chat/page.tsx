@@ -472,6 +472,8 @@ export default function MessagesPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [messageLoad, setMessageLoad] = useState<{id: string; state: 'loading' | 'ready' | 'error'} | null>(null);
+  const messageLoadRequest = useRef(0);
   const [messageInput, setMessageInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showMobileList, setShowMobileList] = useState(true);
@@ -934,19 +936,26 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
 
   const fetchMessages = useCallback(async (conversationId: string) => {
     if (!token) return;
+    const request = ++messageLoadRequest.current;
+    const current = () => activeConversationRef.current === conversationId && messageLoadRequest.current === request;
+    setMessageLoad({id: conversationId, state: 'loading'});
     try {
       const data = await apiGet<any>(`/api/messages/${conversationId}?limit=50`, token, { skipCache: true });
-      if (activeConversationRef.current !== conversationId) return;
+      if (!current()) return;
       setCommunityChatSettings({ conversationId, allowedReactions: Array.isArray(data?.allowedReactions) ? data.allowedReactions.filter((reaction: unknown) => COMMUNITY_REACTIONS.some(item => item === reaction)) : [...COMMUNITY_REACTIONS], welcome: data?.welcome || null });
       const msgList = Array.isArray(data) ? data : data?.messages ?? data?.data ?? [];
       setMessages(msgList.map((msg: any) => normalizeMessageRecord(msg, user?.id)).filter((msg: Message) => !msg.deletedAt));
       setMessageCursor(data?.nextCursor ?? null);
+      setMessageLoad({id: conversationId, state: 'ready'});
       await apiPut<any>(`/api/messages/${conversationId}/read`, {}, token).catch(() => undefined);
-      if (activeConversationRef.current === conversationId) {
+      if (current()) {
         setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, unread: 0 } : conversation));
       }
     } catch (err: any) {
-      if (activeConversationRef.current === conversationId) showToast?.({ type: 'error', title: 'Chat unavailable', message: errorMessage(err, { action: 'load this conversation', context: 'conversation', fallback: 'Could not load this conversation.' }) });
+      if (current()) {
+        setMessageLoad({id: conversationId, state: 'error'});
+        showToast?.({ type: 'error', title: 'Chat unavailable', message: errorMessage(err, { action: 'load this conversation', context: 'conversation', fallback: 'Could not load this conversation.' }) });
+      }
     }
   }, [token, user?.id, showToast]);
 
@@ -1332,6 +1341,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     setFirstUnreadId(null);
     setPendingNewMessage(false);
     setActiveConversation(id);
+    setMessageLoad({id, state: 'loading'});
     setCommunityChatSettings(null);
     setReactionPickerMessageId(null);
     setMessages([]);
@@ -3078,7 +3088,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
             {/* Messages */}
             <div ref={messagesViewportRef} className={cn("relative min-h-0 flex-1 touch-pan-y overscroll-contain overflow-x-hidden overflow-y-auto scrollbar-hide bg-[#050505] px-3 py-4 pb-6 [overflow-anchor:none] [-webkit-overflow-scrolling:touch]", activeConv.type === 'direct' && 'vanta-direct-wallpaper', selectedMessageIds.size > 0 && "pt-4 pb-4")}>
               {messageCursor && <div className="flex justify-center"><button onClick={loadOlderMessages} disabled={loadingOlder} className="rounded-full bg-white/[0.05] px-3 py-1 text-[10px] text-white/50 disabled:opacity-50">{loadingOlder ? 'Loading…' : 'Load older messages'}</button></div>}
-              {messages.length === 0 ? (
+              {messages.length === 0 && (messageLoad?.id !== activeConv.id || messageLoad.state === 'loading') ? (
+                <div role="status" className="flex h-full items-center justify-center gap-2 text-sm text-white/60"><Loader2 size={18} className="animate-spin text-[#dfbd55]" /> Loading messages…</div>
+              ) : messages.length === 0 && messageLoad?.state === 'error' ? (
+                <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 text-sm text-white/65"><span>Could not load messages</span><button type="button" onClick={() => void fetchMessages(activeConv.id)} className="rounded-lg border border-[#c9a227]/40 px-4 py-2 text-[#dfbd55]">Retry</button></div>
+              ) : messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center">
                   <MessageCircle size={32} className="text-white/10 mb-3" />
                   <p className="text-sm text-white/50">{activeConv.type === 'channel' ? 'No posts yet' : 'No chats yet'}</p>
