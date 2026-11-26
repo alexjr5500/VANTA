@@ -859,6 +859,11 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     pushChatView('media');
   }, [pushChatView]);
 
+  const requestedConversationId = searchParams.get('conversation');
+  const requestedConversationRef = useRef(requestedConversationId);
+  requestedConversationRef.current = requestedConversationId;
+  const [deepLinkIssue, setDeepLinkIssue] = useState<string | null>(null);
+  const conversationListRequestRef = useRef(0);
   const fetchConversations = useCallback(async (refresh?: unknown) => {
     // Pull-to-refresh passes an explicit `true`; legacy callers (e.g. the
     // error screen's onClick handler) pass other values and keep the default
@@ -866,9 +871,24 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
     const background = refresh === true;
     if (!token) return;
     if (!background) setError(null);
+    const request = ++conversationListRequestRef.current;
+    const requested = requestedConversationRef.current;
     try {
-      const data = await apiGet<any>('/api/messages', token);
-      const convList = Array.isArray(data) ? data : data?.conversations ?? data?.data ?? [];
+      const data = await apiGet<any>('/api/messages', token, { skipCache: true });
+      const convList = [...(Array.isArray(data) ? data : data?.conversations ?? data?.data ?? [])];
+      let cursor = data?.nextCursor ?? null;
+      // An existing Homes enquiry can refer to a conversation beyond page one.
+      // Bound the lookup and preserve the cursor for manual pagination.
+      const seenCursors = new Set<string>();
+      while (requested && !convList.some((conv: any) => conv.id === requested) && cursor && seenCursors.size < 5 && !seenCursors.has(cursor)) {
+        seenCursors.add(cursor);
+        const page = await apiGet<any>(`/api/messages?limit=25&cursor=${encodeURIComponent(cursor)}`, token, { skipCache: true });
+        if (conversationListRequestRef.current !== request) return;
+        for (const conv of page?.conversations ?? []) if (!convList.some((existing: any) => existing.id === conv.id)) convList.push(conv);
+        cursor = page?.nextCursor ?? null;
+      }
+      if (conversationListRequestRef.current !== request) return;
+      setDeepLinkIssue(requested && !convList.some((conv: any) => conv.id === requested) ? requested : null);
       const normalizedConversations = convList.map((conv: any) => ({
         id: conv.id,
       type: (conv.type || (conv.isGroup ? 'GROUP' : 'DIRECT')).toLowerCase(),
@@ -909,14 +929,15 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         return bTime - aTime;
       });
       setConversations(normalizedConversations);
-      setConversationCursor(data?.nextCursor ?? null);
+      setConversationCursor(cursor);
     } catch (err: any) {
+      if (conversationListRequestRef.current !== request) return;
       // A pull-to-refresh failure must not replace the whole chat screen:
       // rethrow so the gesture can show its retry hint instead.
       if (background) throw err;
       setError(err.message || 'Failed to load conversations');
     } finally {
-      if (!background) setLoading(false);
+      if (conversationListRequestRef.current === request) setLoading(false);
     }
   }, [token, user?.id]);
 
@@ -960,6 +981,9 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   }, [token, user?.id, showToast]);
 
   useEffect(() => { fetchConversations(); }, [fetchConversations]);
+  useEffect(() => {
+    if (requestedConversationId && activeConversationRef.current !== requestedConversationId) void fetchConversations(true).catch(() => setDeepLinkIssue(requestedConversationId));
+  }, [requestedConversationId, fetchConversations]);
 
   // Keep the global header Chat badge in sync with this page's per-conversation
   // unread state (no page refresh needed). The backend also pushes the same
@@ -2890,6 +2914,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
           </div>
         )}
 
+        {deepLinkIssue && deepLinkIssue === requestedConversationId && !conversations.some(conversation => conversation.id === deepLinkIssue) && <div role="alert" className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[.08] px-4 py-3 text-xs text-white/65"><span>Could not find the requested conversation. Refresh or load more chats.</span><button type="button" className="shrink-0 text-[#dfbd55]" onClick={() => void fetchConversations(true).catch(() => undefined)}>Retry</button></div>}
         {/* Conversation List */}
         <PullToRefresh onRefresh={() => fetchConversations(true)} className="min-h-0 w-full flex-1 touch-pan-y" ariaLabel="Your conversations">
           {filteredConversations.length === 0 ? (
