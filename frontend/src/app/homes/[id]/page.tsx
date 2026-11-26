@@ -2,7 +2,7 @@
 
 import BookmarkIcon from '@/components/ui/BookmarkIcon';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   fetchHome, fetchHomeContactOptions, contactHomeListing, toggleSaveHome, createHomeReport,
@@ -174,6 +174,8 @@ export default function HomeDetailPage() {
   const [saving, setSaving] = useState(false);
   const [contacting, setContacting] = useState(false);
   const [showComposer, setShowComposer] = useState(false);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { if (showComposer) composerRef.current?.scrollIntoView({block: 'nearest', behavior: 'smooth'}); }, [showComposer]);
   const [message, setMessage] = useState('');
   const [reportOpen, setReportOpen] = useState(false);
   const [reportType, setReportType] = useState('SCAM');
@@ -322,7 +324,7 @@ export default function HomeDetailPage() {
       const conversationId = result?.conversationId;
       if (conversationId) {
         // Open the conversation through VANTA's single canonical chat route.
-        router.push(`/chat/${encodeURIComponent(conversationId)}`);
+        router.push(`/chat?conversation=${encodeURIComponent(conversationId)}`);
       } else {
         showToast({ type: 'success', title: 'Message sent', message: 'The owner has been notified.' });
         setShowComposer(false);
@@ -410,8 +412,8 @@ export default function HomeDetailPage() {
   }
 
   return (
-    <main className="relative left-1/2 h-[var(--vanta-vh,100dvh)] min-h-0 w-screen max-w-none -translate-x-1/2 overflow-x-clip bg-[#080808] text-white flex flex-col overflow-hidden">
-      <header className="relative z-50 h-14 shrink-0 border-b border-white/[.07] bg-[#1f2630]/95 px-3 backdrop-blur-xl sm:px-5">
+    <main className="relative left-1/2 h-[var(--vanta-vh,100dvh)] min-h-0 w-screen max-w-none -translate-x-1/2 overflow-x-clip bg-[var(--background)] text-white flex flex-col overflow-hidden">
+      <header className="relative z-50 h-14 shrink-0 border-b border-white/[.07] bg-[var(--header-surface)] px-3 backdrop-blur-xl sm:px-5">
         <div className="flex h-full w-full items-center justify-between gap-3">
           <a href="/homes" className="flex min-w-0 items-center gap-2.5" aria-label="VANTA Homes">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#c9a227] text-black"><Building2 size={19} /></span>
@@ -426,7 +428,7 @@ export default function HomeDetailPage() {
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
 
 
-      <div className="mx-auto w-full max-w-[1440px] pb-28 lg:pb-12">
+      <div className="mx-auto w-full max-w-[1440px] pb-4 lg:pb-8">
         <div className="flex min-h-12 items-center justify-between gap-3 px-3 sm:px-5 lg:px-8">
           <button type="button" onClick={() => router.push('/homes')} className="inline-flex min-h-10 items-center gap-2 text-sm text-white/55 transition hover:text-white"><ArrowLeft size={16} /> All homes</button>
           <div className="flex items-center gap-1 sm:gap-2">
@@ -459,7 +461,7 @@ export default function HomeDetailPage() {
 
         {isOwner && listing.availabilityStatus !== 'PUBLISHED' && <div className="mx-3 mb-3 flex items-start gap-2 border-l-2 border-[#c9a227] bg-[#c9a227]/[.06] px-3 py-3 text-sm text-[#e6c65a] sm:mx-5"><AlertCircle size={16} className="mt-0.5 shrink-0" /><span>This listing is <strong>{(listing.availabilityStatus || 'DRAFT').replace(/_/g, ' ').toLowerCase()}</strong> and is only visible to you until it is published.</span></div>}
 
-        <section aria-label="Property photos" className="relative mx-auto w-full overflow-hidden bg-[#111] sm:px-5 lg:px-8">
+        <section aria-label="Property photos" className="relative mx-auto w-full overflow-hidden bg-[var(--background)] sm:px-5 lg:px-8">
           <div className="relative h-[56vw] min-h-[230px] max-h-[560px] overflow-hidden bg-[#10151c] sm:rounded-2xl sm:ring-1 sm:ring-white/[.08] lg:h-[min(58vh,560px)]">
             {activeMedia ? (
               isHomeVideo(activeMedia) ? (
@@ -530,19 +532,19 @@ export default function HomeDetailPage() {
           </div>
 
           <aside className="min-w-0 border-t border-white/[.08] bg-white/[.015] px-4 sm:px-6 lg:sticky lg:top-0 lg:self-start lg:border-l lg:border-t-0 lg:px-6 lg:py-7">
-            <section className="py-5 lg:sticky lg:top-[4.5rem]">
+            <section className="py-3 lg:sticky lg:top-[4.5rem]">
               <h2 className="text-xs font-semibold uppercase tracking-[.16em] text-white/40">Property contact</h2>
-              <div className="mt-4 flex items-center gap-3">
+              <div className="mt-2 flex items-center gap-3">
                 <button type="button" onClick={() => owner?.username && router.push('/profile/' + owner.username)} disabled={!owner?.username} className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full bg-white/[.06] disabled:cursor-default" aria-label={owner?.username ? "View " + ownerName + "'s profile" : 'Property owner'}>
                   <Avatar src={owner?.avatar} alt={ownerName} size="lg" />
                 </button>
                 <div className="min-w-0"><div className="flex items-center gap-1.5"><p className="truncate text-sm font-semibold text-white">{ownerName}</p>{verif.type !== 'NONE' && <VerificationBadge type={verif.type} verified size="sm" showTooltip />}</div><p className="mt-1 text-xs text-white/45">{verif.label}</p></div>
               </div>
-              {verif.type === 'NONE' && <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-white/45"><Shield size={14} className="mt-0.5 shrink-0 text-[#c9a227]" /><span>This owner has not completed VANTA verification. View the property before sending money and keep communications on VANTA where possible.</span></p>}
+              {verif.type === 'NONE' && <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-[var(--text-secondary)]"><Shield size={14} className="mt-0.5 shrink-0 text-[#c9a227]" /><span>Owner not verified. View the property before paying; keep enquiries on VANTA.</span></p>}
 
-              <div className="mt-5 space-y-2.5 border-t border-white/[.08] pt-5">
+              <div className="mt-3 space-y-2 border-t border-white/[.08] pt-3">
                 {isOwner ? <><p className="text-sm leading-6 text-white/55">This is your listing. Manage it or review enquiries from your dashboard.</p><Button variant="gold" fullWidth onClick={() => router.push('/homes/manage')}>Manage this listing</Button></> : <>
-                  {canContact && <Button variant="gold" fullWidth icon={<MessageCircle size={17} />} loading={contacting} onClick={() => (message.trim() ? void handleContact(message.trim()) : setShowComposer(true))}>Message on VANTA</Button>}
+                  {canContact && !showComposer && <div className="hidden lg:block"><Button variant="gold" fullWidth icon={<MessageCircle size={17} />} loading={contacting} onClick={() => setShowComposer(true)}>Message owner</Button></div>}
                   {contactOptions?.whatsappUrl && <a href={contactOptions.whatsappUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/25 px-4 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/[.08]"><WhatsAppGlyph size={17} /> Chat on WhatsApp</a>}
                   {contactOptions?.phoneUrl && <a href={contactOptions.phoneUrl} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-white/[.1] px-4 text-sm font-semibold text-white/75 transition hover:bg-white/[.04]"><Phone size={16} /> {contactOptions.phone || 'Call owner'}</a>}
                   {!canContact && !contactOptions?.whatsappUrl && !contactOptions?.phoneUrl && <p className="text-sm text-white/50">This owner is not accepting enquiries right now.</p>}
@@ -552,7 +554,7 @@ export default function HomeDetailPage() {
 
               {showComposer && !isOwner && <div className="mt-5 border-t border-white/[.08] pt-4">
                 <label htmlFor="home-enquiry" className="mb-2 block text-xs font-medium text-white/55">Your message</label>
-                <textarea id="home-enquiry" value={message} onChange={(event) => setMessage(event.target.value)} rows={3} placeholder="Hi, is this home still available? I'd like to arrange a viewing." className="w-full resize-none rounded-lg border border-white/[.1] bg-white/[.03] px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:border-[#c9a227]/60" />
+                <textarea ref={composerRef} id="home-enquiry" value={message} onChange={(event) => setMessage(event.target.value)} rows={3} placeholder="Hi, is this home still available? I'd like to arrange a viewing." className="w-full resize-none rounded-lg border border-white/[.1] bg-white/[.03] px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:border-[#c9a227]/60" />
                 <div className="mt-3 flex flex-wrap items-center gap-2"><Button size="sm" variant="gold" loading={contacting} disabled={message.trim().length === 0} onClick={() => void handleContact(message.trim())}>Send & open chat</Button><Button size="sm" variant="ghost" onClick={() => { setShowComposer(false); setMessage(''); }}>Cancel</Button></div>
               </div>}
             </section>
@@ -560,7 +562,7 @@ export default function HomeDetailPage() {
         </div>
       </div>
 
-      {!isOwner && <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/[.08] bg-[#080808]/95 px-3 py-3 backdrop-blur-xl lg:hidden"><div className="mx-auto flex max-w-3xl items-center gap-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-[#e4c65d]">{rent}<span className="ml-1 text-xs font-normal text-white/45">{periodSuffix}</span></p><p className="truncate text-[11px] text-white/45">{listing.title}</p></div>{canContact && <Button variant="gold" icon={<MessageCircle size={16} />} loading={contacting} onClick={() => (message.trim() ? void handleContact(message.trim()) : setShowComposer(true))}>Message owner</Button>}</div></div>}
+      {!isOwner && canContact && !showComposer && <footer className="shrink-0 border-t border-[var(--border)] bg-[var(--background)] px-3 pt-2 pb-[max(8px,env(safe-area-inset-bottom))] lg:hidden"><div className="mx-auto flex max-w-3xl items-center gap-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-[#e4c65d]">{rent}<span className="ml-1 text-xs font-normal text-[var(--text-secondary)]">{periodSuffix}</span></p></div><Button variant="gold" icon={<MessageCircle size={16} />} loading={contacting} onClick={() => setShowComposer(true)}>Message owner</Button></div></footer>}
     
       </div>
     </main>
