@@ -71,6 +71,7 @@ export async function openBackupJournal(controlDir) {
       await requireOwner(); check(uuid(runId) && ['acceptance','production'].includes(scope), 'Invalid backup attempt');
       check(!await this.unresolvedAttempt(), 'Prior attempt requires reconciliation');
       const previous = await readCurrent();
+      check(previous?.runId !== runId, 'Backup run ID already used');
       if (previous) {
         // Immutable history keeps the prior verified-transfer evidence.
         await createRecord(join(controlDir, previous.runId + '.json'), previous);

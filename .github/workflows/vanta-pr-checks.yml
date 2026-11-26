@@ -55,7 +55,7 @@ jobs:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_test?schema=public
         run: npx prisma generate
       - name: Verify bounded encrypted backup envelope
-        run: node --test backend/scripts/backup-envelope.test.mjs backend/scripts/backup-r2-multipart.test.mjs backend/scripts/backup-run-policy.test.mjs backend/scripts/backup-orchestrator.test.mjs backend/scripts/backup-operational-adapters.test.mjs
+        run: node --test backend/scripts/backup-envelope.test.mjs backend/scripts/backup-r2-multipart.test.mjs backend/scripts/backup-run-policy.test.mjs backend/scripts/backup-orchestrator.test.mjs backend/scripts/backup-operational-adapters.test.mjs backend/scripts/backup-offline-runner.test.mjs
 
       - name: Run targeted backend security regression tests
         env:
@@ -328,3 +328,30 @@ jobs:
         env:
           VANTA_CI_DISPOSABLE_RESTORE: "yes"
         run: bash backend/scripts/ci-backup-restore.sh
+
+  backup-runtime-lock:
+    name: Backup runtime dependency lock and image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check runtime dependency lock
+        run: |
+          if [ -f backend/backup-runtime/package-lock.json ]; then
+            npm --prefix backend/backup-runtime ci --omit=dev --ignore-scripts --no-audit --no-fund
+            docker build -f backend/Dockerfile.backup -t vanta-backup-ci .
+            docker run --rm vanta-backup-ci node --version
+            docker run --rm vanta-backup-ci pg_dump --version
+            docker run --rm vanta-backup-ci age --version
+            if docker run --rm vanta-backup-ci; then
+              echo "Unapproved backup runner unexpectedly succeeded"
+              exit 1
+            fi
+          else
+            npm --prefix backend/backup-runtime install --package-lock-only --ignore-scripts --no-audit --no-fund
+            node -e 'const b=require("node:zlib").gzipSync(require("node:fs").readFileSync("backend/backup-runtime/package-lock.json")).toString("base64");for(let i=0;i<b.length;i+=800)console.log("VANTA_BACKUP_LOCK_CHUNK "+(i/800)+" "+b.slice(i,i+800))'
+            echo "Generated candidate lock only; image not yet verified"
+          fi
