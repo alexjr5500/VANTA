@@ -164,7 +164,10 @@ export default function HomeDetailPage() {
   const { showToast } = useToast();
 
   const [listing, setListing] = useState<any>(null);
-  const [contactOptions, setContactOptions] = useState<ContactOptions | null>(null);
+  const [contactState, setContactState] = useState<{ id: string; status: 'loading' | 'ready' | 'error'; options: ContactOptions | null } | null>(null);
+  const [contactRetry, setContactRetry] = useState(0);
+  const contactOptions = contactState?.id === id ? contactState.options : null;
+  const contactStatus = contactState?.id === id ? contactState.status : 'loading';
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -224,11 +227,14 @@ export default function HomeDetailPage() {
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
+    setContactState({ id, status: 'loading', options: null });
+    setShowComposer(false);
+    setMessage('');
     fetchHomeContactOptions(id)
-      .then((data) => { if (!cancelled) setContactOptions(data || null); })
-      .catch(() => { if (!cancelled) setContactOptions(null); });
+      .then((data) => { if (!cancelled) setContactState({ id, status: 'ready', options: data || null }); })
+      .catch(() => { if (!cancelled) setContactState({ id, status: 'error', options: null }); });
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, contactRetry]);
 
   const media = useMemo<ListingMedia[]>(() => {
     const items: ListingMedia[] = Array.isArray(listing?.media) ? listing.media : [];
@@ -314,7 +320,7 @@ export default function HomeDetailPage() {
       showToast({ type: 'info', title: 'This is your listing', message: 'Manage enquiries from your Homes dashboard.' });
       return;
     }
-    if (contacting) return;
+    if (contacting || !canContact) return;
     setContacting(true);
     try {
       const result = await contactHomeListing(id, prefill, token);
@@ -544,12 +550,14 @@ export default function HomeDetailPage() {
                   {canContact && !showComposer && <div className="hidden lg:block"><Button variant="gold" fullWidth icon={<MessageCircle size={17} />} loading={contacting} onClick={() => setShowComposer(true)}>Message owner</Button></div>}
                   {contactOptions?.whatsappUrl && <a href={contactOptions.whatsappUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/25 px-4 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/[.08]"><WhatsAppGlyph size={17} /> Chat on WhatsApp</a>}
                   {contactOptions?.phoneUrl && <a href={contactOptions.phoneUrl} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-white/[.1] px-4 text-sm font-semibold text-white/75 transition hover:bg-white/[.04]"><Phone size={16} /> {contactOptions.phone || 'Call owner'}</a>}
-                  {!canContact && !contactOptions?.whatsappUrl && !contactOptions?.phoneUrl && <p className="text-sm text-white/50">This owner is not accepting enquiries right now.</p>}
+                  {contactStatus === 'loading' && <p role="status" className="text-sm text-[var(--text-secondary)]">Loading contact options…</p>}
+                  {contactStatus === 'error' && <div role="alert" className="flex items-center justify-between gap-2 text-xs text-[var(--text-secondary)]"><span>Could not load contact options.</span><button type="button" className="shrink-0 text-[#e4c65d]" onClick={() => setContactRetry(value => value + 1)}>Retry</button></div>}
+                  {contactStatus === 'ready' && !canContact && !contactOptions?.whatsappUrl && !contactOptions?.phoneUrl && <p className="text-sm text-white/50">This owner is not accepting enquiries right now.</p>}
                   <p className="pt-2 text-xs leading-5 text-white/35">Never send a deposit before viewing the property. VANTA does not process rental payments.</p>
                 </>}
               </div>
 
-              {showComposer && !isOwner && <div className="mt-5 border-t border-white/[.08] pt-4">
+              {showComposer && !isOwner && canContact && <div className="mt-5 border-t border-white/[.08] pt-4">
                 <label htmlFor="home-enquiry" className="mb-2 block text-xs font-medium text-white/55">Your message</label>
                 <textarea ref={composerRef} id="home-enquiry" value={message} onChange={(event) => setMessage(event.target.value)} rows={3} placeholder="Hi, is this home still available? I'd like to arrange a viewing." className="w-full resize-none rounded-lg border border-white/[.1] bg-white/[.03] px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:border-[#c9a227]/60" />
                 <div className="mt-3 flex flex-wrap items-center gap-2"><Button size="sm" variant="gold" loading={contacting} disabled={message.trim().length === 0} onClick={() => void handleContact(message.trim())}>Send & open chat</Button><Button size="sm" variant="ghost" onClick={() => { setShowComposer(false); setMessage(''); }}>Cancel</Button></div>
@@ -558,10 +566,10 @@ export default function HomeDetailPage() {
           </aside>
         </div>
       </div>
+      </div>
 
       {!isOwner && canContact && !showComposer && <footer className="shrink-0 border-t border-[var(--border)] bg-[var(--background)] px-3 pt-2 pb-[max(8px,env(safe-area-inset-bottom))] lg:hidden"><div className="mx-auto flex max-w-3xl items-center gap-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-[#e4c65d]">{rent}<span className="ml-1 text-xs font-normal text-[var(--text-secondary)]">{periodSuffix}</span></p></div><Button variant="gold" icon={<MessageCircle size={16} />} loading={contacting} onClick={() => setShowComposer(true)}>Message owner</Button></div></footer>}
-    
-      </div>
+
     </main>
   );
 }
