@@ -4,7 +4,7 @@ import BookmarkIcon from '@/components/ui/BookmarkIcon';
 
 import DeleteConfirmDialog from '@/components/ui/DeleteConfirmDialog';
 
-import { useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { createPortal } from 'react-dom';
@@ -48,6 +48,7 @@ import { normalizeGiftCatalog } from '@/lib/giftCatalog';
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
 import { renderTextWithLinks } from '@/lib/linkify';
+import { REEL_TAP_WINDOW_MS, isReelTap, isReelDoubleTap, reelPreload, reelIndexAtScroll, nextReelLike, type ReelTap } from '@/lib/reelPlayback';
 import { feedFromSwipe, settleFeedSwipe, startFeedSwipe, trackFeedSwipe } from '@/lib/feedSwipe';
 
 declare global {
@@ -128,7 +129,12 @@ export default function ReelsPage() {
   const [loadMoreError, setLoadMoreError] = useState(false);
   const [active, setActive] = useState(0);
   const muted = false;
-  const [paused, setPaused] = useState(false);
+  const [manualPlayback, setManualPlayback] = useState<{ id: string; play: boolean } | null>(null);
+  const [blockedId, setBlockedId] = useState<string | null>(null);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const [visiblePage, setVisiblePage] = useState(true);
+  const [feedRevision, setFeedRevision] = useState(0);
+  const { prefs: contentPrefs, hydrated: contentPrefsReady } = useContentPrefs();
   const [commentsFor, setCommentsFor] = useState<Reel | null>(null);
   const [shareFor, setShareFor] = useState<Reel | null>(null);
   const [moreFor, setMoreFor] = useState<Reel | null>(null);
@@ -149,7 +155,6 @@ export default function ReelsPage() {
   const sections = useRef<Record<string, HTMLElement | null>>({});
   const videos = useRef<Record<string, HTMLVideoElement | null>>({});
   const viewed = useRef(new Set<string>());
-  const userInteractedRef = useRef(false);
   const [nextStart, setNextStart] = useState<number | null>(null);
   const feedSeedRef = useRef<string>(`sess-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
   const loadingMoreRef = useRef(false);
@@ -159,6 +164,14 @@ export default function ReelsPage() {
   // Derived feed-mount signal used by the swipe effect below: the touch
   // listeners must attach only once the scroll viewport actually exists.
   const hasReels = reels.length > 0;
+  const activeId = reels[active]?.id;
+  const wantsPlayback = manualPlayback && manualPlayback.id === activeId ? manualPlayback.play : contentPrefsReady && contentPrefs.autoplay;
+  const shouldPlay = !!(activeId && wantsPlayback && visiblePage && !loading);
+  const playbackIntent = useRef({ id: activeId, play: shouldPlay });
+  playbackIntent.current = { id: activeId, play: shouldPlay };
+  const activeIndexRef = useRef(active);
+  activeIndexRef.current = active;
+  const playRequest = useRef(0);
 
   const load = useCallback(async (start = 0, append = false, background = false) => {
     if (!append && !background) Object.values(videos.current).forEach(video => video?.pause());
@@ -188,7 +201,7 @@ export default function ReelsPage() {
         setReels(items);
       }
       setNextStart(Array.isArray(result) ? null : (result?.nextStart ?? null));
-      if (!append) { setActive(0); setPaused(false); }
+      if (!append) { setActive(0); setManualPlayback(null); setBlockedId(null); setPlayingId(null); setFeedRevision(value => value + 1); }
     } catch (reason: any) {
       if (requestId !== loadRequest.current) return;
       // A pull-to-refresh failure surfaces through the gesture (retry hint)
@@ -216,15 +229,19 @@ export default function ReelsPage() {
   // app/page in the background (including mobile app task switching).
   useEffect(() => {
     let wasHidden = document.visibilityState === 'hidden';
+    setVisiblePage(!wasHidden);
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
         wasHidden = true;
+        playbackIntent.current.play = false;
+        setVisiblePage(false);
         Object.values(videos.current).forEach(video => video?.pause());
         return;
       }
       if (wasHidden) {
         wasHidden = false;
-        void refreshReels();
+        setVisiblePage(true);
+        void refreshReels().catch(() => undefined);
       }
     };
     const onPageShow = (event: PageTransitionEvent) => {
@@ -259,86 +276,106 @@ export default function ReelsPage() {
     if (active >= reels.length - 3) void loadMore();
   }, [active, reels.length, loadMore]);
 
-  useEffect(() => {
-    const requested = params.get('reel');
-    const index = reels.findIndex(reel => reel.id === requested);
-    if (index >= 0) window.setTimeout(() => sections.current[reels[index].id]?.scrollIntoView(), 0);
-  }, [params, reels]);
-
+  // Every page is exactly the scrollport height. Choose the nearest snap
+  // position on scroll rather than guessing from partial observer entries.
   useEffect(() => {
     const root = reelsViewport.current;
-    if (!root) return;
-    const observer = new IntersectionObserver(entries => {
-      const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-      if (visible) {
-        const nextActive = Number((visible.target as HTMLElement).dataset.index);
-        setActive(previous => previous === nextActive ? previous : nextActive);
-        setPaused(false);
+    if (!root || loading || !hasReels) return;
+    let frame = 0;
+    const sync = () => {
+      frame = 0;
+      const index = reelIndexAtScroll(root.scrollTop, root.clientHeight, reels.length);
+      if (index !== activeIndexRef.current) {
+        activeIndexRef.current = index;
+        playbackIntent.current.play = false;
+        playRequest.current += 1;
+        Object.values(videos.current).forEach(video => video?.pause());
+        setActive(index);
+        setManualPlayback(null);
+        setBlockedId(null);
+        setPlayingId(null);
       }
-    }, { root, threshold: [0.65, 0.8] });
-    Object.values(sections.current).forEach(node => node && observer.observe(node));
-    return () => observer.disconnect();
-  }, [reels]);
+    };
+    const scroll = () => { if (!frame) frame = window.requestAnimationFrame(sync); };
+    root.addEventListener('scroll', scroll, { passive: true });
+    window.addEventListener('resize', scroll);
+    scroll();
+    return () => { root.removeEventListener('scroll', scroll); window.removeEventListener('resize', scroll); if (frame) cancelAnimationFrame(frame); };
+  }, [loading, hasReels, reels.length]);
 
+  const requestedId = params.get('reel');
+  const requestedIndex = reels.findIndex(reel => reel.id === requestedId);
   useEffect(() => {
-    reels.forEach((reel, index) => {
-      const video = videos.current[reel.id];
-      if (!video) return;
-      video.muted = muted;
-      if (index === active && !paused) {
-        // Calling play here, rather than relying only on the attribute, makes
-        // activation deterministic after an IntersectionObserver transition.
-        void video.play().catch(error => {
-          // Autoplay may be temporarily blocked while the element is mounting;
-          // keep the feed in autoplay mode and retry from media readiness events.
-          if (process.env.NODE_ENV !== 'production') console.warn('[Reels] autoplay deferred', { reelId: reel.id, src: video.currentSrc || video.src, error });
-        });
-      } else {
-        // Explicitly pause every non-active element so a fast swipe can never
-        // leave two videos playing at once.
-        video.pause();
-      }
-    });
-    const reel = reels[active];
-    if (!token || !reel || viewed.current.has(reel.id) || paused) return;
-    const timer = window.setTimeout(() => {
-      viewed.current.add(reel.id);
-      void apiPost<{ counted: boolean; views: number }>(`/api/reels/${reel.id}/views`, { watchTime: 2 }, token)
-        .then(result => setReels(items => items.map(item => item.id === reel.id ? { ...item, views: result.views } : item)))
-        .catch(() => viewed.current.delete(reel.id));
-    }, 2000);
-    return () => window.clearTimeout(timer);
-  }, [active, muted, paused, reels, token]);
+    const root = reelsViewport.current;
+    if (!root || loading) return;
+    root.scrollTo({ top: Math.max(0, requestedIndex) * root.clientHeight, behavior: 'instant' });
+  }, [feedRevision, requestedIndex, loading]);
 
-  useEffect(() => () => {
-    Object.values(videos.current).forEach(video => video?.pause());
+  const tryPlay = useCallback((id: string) => {
+    const video = videos.current[id];
+    if (!video || playbackIntent.current.id !== id || !playbackIntent.current.play || document.hidden) return;
+    // One playback owner. Read current intent, not the render that queued the event.
+    Object.entries(videos.current).forEach(([otherId, other]) => { if (otherId !== id) other?.pause(); });
+    if (!video.paused) return;
+    const request = ++playRequest.current;
+    void video.play().then(() => {
+      if (playbackIntent.current.id !== id || !playbackIntent.current.play || document.hidden) video.pause();
+      else if (request === playRequest.current) setBlockedId(null);
+    }).catch((error: unknown) => {
+      if (request !== playRequest.current || playbackIntent.current.id !== id || !playbackIntent.current.play) return;
+      if (error instanceof DOMException && error.name === 'NotAllowedError') setBlockedId(id);
+    });
   }, []);
 
-  // Graceful autoplay-with-sound handling: some mobile/desktop browsers block
-  // autoplay WITH audio until the user interacts. VANTA never intentionally mutes
-  // Reels — if the active video couldn't start with sound, we retry it as soon as
-  // the user taps/keys, preserving their audio preference (`muted`) for the feed.
   useEffect(() => {
-    const retrySound = () => {
-      if (!userInteractedRef.current) return;
-      const activeVideo = videos.current[reels[active]?.id];
-      if (activeVideo && activeVideo.paused && !paused && !muted) {
-        void activeVideo.play().catch(() => undefined);
-      }
-    };
-    const markInteraction = (event: Event) => {
-      if (!userInteractedRef.current) userInteractedRef.current = true;
-      retrySound();
-    };
-    window.addEventListener('pointerdown', markInteraction);
-    window.addEventListener('touchstart', markInteraction);
-    window.addEventListener('keydown', markInteraction);
-    return () => {
-      window.removeEventListener('pointerdown', markInteraction);
-      window.removeEventListener('touchstart', markInteraction);
-      window.removeEventListener('keydown', markInteraction);
-    };
-  }, [active, muted, paused, reels]);
+    playRequest.current += 1;
+    Object.entries(videos.current).forEach(([id, video]) => {
+      if (id !== activeId || !shouldPlay) video?.pause();
+    });
+    if (activeId && shouldPlay) tryPlay(activeId);
+  }, [activeId, shouldPlay, tryPlay, feedRevision]);
+
+  const togglePlayback = useCallback((id: string) => {
+    if (playbackIntent.current.id !== id || document.hidden) return;
+    const video = videos.current[id];
+    if (!video) return;
+    // An explicit tap on blocked playback is a play request, not a pause.
+    const play = video.paused;
+    playbackIntent.current.play = play;
+    setManualPlayback({ id, play });
+    setBlockedId(null);
+    if (play) tryPlay(id);
+    else { playRequest.current += 1; video.pause(); }
+  }, [tryPlay]);
+
+  const playbackStarted = useCallback((id: string) => {
+    if (playbackIntent.current.id !== id || !playbackIntent.current.play || document.hidden) {
+      videos.current[id]?.pause();
+      return;
+    }
+    setBlockedId(null);
+    setPlayingId(id);
+  }, []);
+  const playbackStopped = useCallback((id: string) => setPlayingId(current => current === id ? null : current), []);
+
+  // Count only real playing time, never a buffering or blocked video.
+  useEffect(() => {
+    if (!token || !activeId || playingId !== activeId || !shouldPlay || viewed.current.has(activeId)) return;
+    const timer = window.setTimeout(() => {
+      const video = videos.current[activeId];
+      if (!video || video.paused || document.hidden || playbackIntent.current.id !== activeId || !playbackIntent.current.play) return;
+      viewed.current.add(activeId);
+      void apiPost<{ counted: boolean; views: number }>(`/api/reels/${activeId}/views`, { watchTime: 2 }, token)
+        .then(result => setReels(items => items.map(item => item.id === activeId ? { ...item, views: result.views } : item)))
+        .catch(() => viewed.current.delete(activeId));
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [activeId, playingId, shouldPlay, token]);
+
+  useEffect(() => () => {
+    playbackIntent.current.play = false;
+    Object.values(videos.current).forEach(video => video?.pause());
+  }, []);
 
   const jump = useCallback((index: number) => {
     const reel = reels[index];
@@ -415,14 +452,14 @@ export default function ReelsPage() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      if (event.defaultPrevented || target.isContentEditable || target.closest('input, textarea, select, button, a, [role="dialog"]')) return;
       if (event.key === 'ArrowDown') { event.preventDefault(); jump(active + 1); }
       if (event.key === 'ArrowUp') { event.preventDefault(); jump(active - 1); }
-      if (event.key === ' ') { event.preventDefault(); setPaused(value => !value); }
+      if (event.key === ' ' && activeId) { event.preventDefault(); togglePlayback(activeId); }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [active, jump]);
+  }, [active, activeId, jump, togglePlayback]);
 
   const patch = useCallback((id: string, changes: Partial<Reel>) => {
     setReels(items => items.map(item => item.id === id ? { ...item, ...changes } : item));
@@ -437,7 +474,7 @@ export default function ReelsPage() {
       setDeleteReelFor(null);
       setReels(items => items.filter(item => item.id !== reel.id));
       setActive(0);
-      setPaused(false);
+      setManualPlayback(null);
       toast.success('Reel deleted');
     } catch (reason: any) {
       toast.error('Reel not deleted', reason?.message);
@@ -446,12 +483,13 @@ export default function ReelsPage() {
     }
   };
 
-  const toggle = async (reel: Reel, action: 'like' | 'save') => {
+  const toggle = async (reel: Reel, action: 'like' | 'save', ensureLike = false) => {
     if (!token) { toast.error('Sign in required'); return; }
     const key = `${action}:${reel.id}`;
     if (pendingActionsRef.current.has(key)) return;
-    pendingActionsRef.current.add(key);
     const was = action === 'like' ? !!reel.isLiked : !!reel.isSaved;
+    if (action === 'like' && nextReelLike(was, ensureLike) === null) return;
+    pendingActionsRef.current.add(key);
     setPending(items => ({ ...items, [key]: true }));
     patch(reel.id, action === 'like' ? { isLiked: !was, likes: Math.max(0, reel.likes + (was ? -1 : 1)) } : { isSaved: !was });
     try {
@@ -685,7 +723,7 @@ export default function ReelsPage() {
   if (!reels.length) return <State title={feed === 'following' ? 'Your Following feed is empty.' : 'Nothing to watch yet.'} copy={feed === 'following' ? 'Follow creators to see their Reels here.' : 'Follow creators or share your first Reel with VANTA.'} action={feed === 'following' ? 'Discover Creators' : 'Create Reel'} secondaryAction={feed === 'following' ? 'Create Reel' : 'Discover Creators'} onAction={feed === 'following' ? () => router.push('/discover') : openReelUploader} onSecondary={feed === 'following' ? openReelUploader : () => router.push('/discover')} />;
 
   return (
-    <div data-dark-surface className="relative h-[100dvh] overflow-hidden bg-[#050505] text-[#f5f5f5] ">
+    <div data-dark-surface className="relative h-[var(--vanta-vh,100dvh)] overflow-hidden bg-[#050505] text-[#f5f5f5] [--reel-page-height:var(--vanta-vh,100dvh)]">
       <header className="pointer-events-none fixed left-0 right-0 top-0 z-30 flex h-14 items-center justify-center bg-black/35 px-16 backdrop-blur-sm">
         <div className="pointer-events-auto flex items-center gap-5" role="tablist" aria-label="Reel feeds">
           {(['for-you', 'following', 'trending'] as Feed[]).map(tab => (
@@ -702,7 +740,7 @@ export default function ReelsPage() {
         scrollRef={reelsViewport}
         onRefresh={refreshReels}
         ariaLabel="VANTA Reels feed"
-        className="h-[100dvh] min-h-[100dvh] w-full flex-none snap-y snap-mandatory touch-pan-y [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="h-full min-h-0 w-full flex-none snap-y snap-mandatory touch-pan-y [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {reels.map((reel, index) => (
           <ReelCard
@@ -711,14 +749,20 @@ export default function ReelsPage() {
             isOwn={Boolean(user && ((user.id && String(reel.author.id) === String(user.id)) || (user.username && reel.author.username?.toLowerCase() === user.username.toLowerCase())))}
             index={index}
             active={active === index}
-            nearby={Math.abs(active - index) <= 1}
+            preload={reelPreload(index, active, contentPrefs.lowerData)}
             muted={muted}
-            paused={paused}
+            shouldPlay={active === index && shouldPlay}
+            blocked={blockedId === reel.id}
+            onReady={tryPlay}
+            onPlaying={playbackStarted}
+            onStopped={playbackStopped}
             videos={videos}
             sections={sections}
             followPending={!!pending[`follow:${reel.author.id}`]}
-            onPlayToggle={() => setPaused(value => !value)}
+            onPlayToggle={() => togglePlayback(reel.id)}
             onLike={() => void toggle(reel, 'like')}
+            onEnsureLike={() => void toggle(reel, 'like', true)}
+            likePending={!!pending[`like:${reel.id}`]}
             onSave={() => void toggle(reel, 'save')}
             onComment={() => void openComments(reel)}
             onGift={() => openGift(reel)}
@@ -768,51 +812,85 @@ export default function ReelsPage() {
   );
 }
 
-function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, sections, followPending, onPlayToggle, onLike, onSave, onComment, onGift, onFollow, onMore, onShare, onCreator }: {
-  reel: Reel; isOwn: boolean; index: number; active: boolean; nearby: boolean; muted: boolean; paused: boolean;
+function ReelCard({ reel, isOwn, index, active, preload, muted, shouldPlay, blocked, onReady, onPlaying, onStopped, videos, sections, followPending, onPlayToggle, onLike, onEnsureLike, likePending, onSave, onComment, onGift, onFollow, onMore, onShare, onCreator }: {
+  reel: Reel; isOwn: boolean; index: number; active: boolean; preload: 'auto' | 'metadata' | null; muted: boolean; shouldPlay: boolean; blocked: boolean;
+  onReady: (id: string) => void; onPlaying: (id: string) => void; onStopped: (id: string) => void;
   videos: MutableRefObject<Record<string, HTMLVideoElement | null>>;
   sections: MutableRefObject<Record<string, HTMLElement | null>>;
-  followPending: boolean; onPlayToggle: () => void; onLike: () => void; onSave: () => void; onComment: () => void; onGift: () => void; onFollow: () => void; onMore: () => void; onShare: () => void; onCreator: () => void;
+  followPending: boolean; onPlayToggle: () => void; onLike: () => void; onEnsureLike: () => void; likePending: boolean; onSave: () => void; onComment: () => void; onGift: () => void; onFollow: () => void; onMore: () => void; onShare: () => void; onCreator: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [videoLoading, setVideoLoading] = useState(true);
   const [videoFailed, setVideoFailed] = useState(false);
   const [videoError, setVideoError] = useState('');
   const [progress, setProgress] = useState(0);
-  const [likedPulse, setLikedPulse] = useState<'like' | 'unlike' | null>(null);
+  const [likedPulse, setLikedPulse] = useState(false);
+  const [hasFrame, setHasFrame] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+  const [posterFailed, setPosterFailed] = useState(false);
   const pulseTimer = useRef<number>();
   const tapTimer = useRef<number>();
-  const lastTap = useRef(0);
+  const lastTap = useRef<ReelTap | null>(null);
+  const pointer = useRef<(ReelTap & { id: number }) | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const followed = !!(reel.author.following || reel.author.isFollowing || reel.isFollowing);
 
-  // Device-local Autoplay preference: when disabled, active reels load but do
-  // not start until the user taps.
-  const { prefs: contentPrefs, hydrated: contentPrefsReady } = useContentPrefs();
-  const autoplayEnabled = contentPrefsReady ? contentPrefs.autoplay : true;
-
-  useEffect(() => () => {
+  const clearTap = useCallback(() => {
     if (tapTimer.current) window.clearTimeout(tapTimer.current);
-    if (pulseTimer.current) window.clearTimeout(pulseTimer.current);
+    tapTimer.current = undefined;
+    lastTap.current = null;
+    pointer.current = null;
   }, []);
+  useEffect(() => {
+    if (!active) {
+      clearTap();
+      if (pulseTimer.current) window.clearTimeout(pulseTimer.current);
+      setLikedPulse(false);
+    }
+    return clearTap;
+  }, [active, clearTap]);
+  useEffect(() => () => { if (pulseTimer.current) window.clearTimeout(pulseTimer.current); }, []);
+  useEffect(() => {
+    setHasFrame(false); setVideoLoading(true); setVideoFailed(false); setVideoError(''); setProgress(0);
+  }, [reel.videoUrl, preload === null, retryKey]);
+  useEffect(() => { setPosterFailed(false); }, [reel.thumbnailUrl]);
 
-  // Double-tap toggles like/unlike through the same handler as the Like button.
-  const likeWithFeedback = () => {
-    setLikedPulse(reel.isLiked ? 'unlike' : 'like');
-    onLike();
-    if (pulseTimer.current) window.clearTimeout(pulseTimer.current);
-    pulseTimer.current = window.setTimeout(() => setLikedPulse(null), 700);
+  const attachVideo = useCallback((node: HTMLVideoElement | null) => {
+    const old = videos.current[reel.id];
+    if (old && old !== node) old.pause();
+    videos.current[reel.id] = node;
+  }, [reel.id, videos]);
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!activeRef.current || !event.isPrimary || event.button !== 0) { clearTap(); return; }
+    pointer.current = { x: event.clientX, y: event.clientY, at: performance.now(), id: event.pointerId };
   };
-
-  const handleTap = () => {
-    const now = Date.now();
-    if (now - lastTap.current < 280) {
-      if (tapTimer.current) window.clearTimeout(tapTimer.current);
-      likeWithFeedback();
-      lastTap.current = 0;
+  const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const start = pointer.current;
+    if (start && (start.id !== event.pointerId || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 14)) clearTap();
+  };
+  const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const start = pointer.current;
+    pointer.current = null;
+    const end = { x: event.clientX, y: event.clientY, at: performance.now() };
+    if (!activeRef.current || !start || start.id !== event.pointerId || !isReelTap(start, end)) { clearTap(); return; }
+    if (isReelDoubleTap(lastTap.current, end)) {
+      clearTap();
+      if (!reel.isLiked && !likePending) onEnsureLike();
+      if (reel.isLiked || !likePending) {
+        setLikedPulse(true);
+        if (pulseTimer.current) window.clearTimeout(pulseTimer.current);
+        pulseTimer.current = window.setTimeout(() => setLikedPulse(false), 650);
+      }
       return;
     }
-    lastTap.current = now;
-    tapTimer.current = window.setTimeout(onPlayToggle, 280);
+    if (tapTimer.current) window.clearTimeout(tapTimer.current);
+    lastTap.current = end;
+    tapTimer.current = window.setTimeout(() => {
+      lastTap.current = null; tapTimer.current = undefined;
+      if (activeRef.current) onPlayToggle();
+    }, REEL_TAP_WINDOW_MS);
   };
 
   const fullscreen = async () => {
@@ -822,41 +900,44 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
   };
 
   const retry = () => {
-    const video = videos.current[reel.id];
+    clearTap();
+    setHasFrame(false);
     setVideoFailed(false);
     setVideoError('');
     setVideoLoading(true);
-    video?.load();
-    if (active && !paused && autoplayEnabled) void video?.play().catch(() => {});
+    setRetryKey(value => value + 1);
   };
 
   return (
-    <section ref={node => { sections.current[reel.id] = node; }} data-index={index} className="relative flex h-[100dvh] min-h-[100dvh] w-full snap-start items-center justify-center bg-[#050505] pt-0">
+    <section ref={node => { sections.current[reel.id] = node; }} data-index={index} className="relative flex h-[var(--reel-page-height,100dvh)] min-h-[var(--reel-page-height,100dvh)] w-full shrink-0 snap-start items-center justify-center bg-[#050505] pt-0">
       <div className="flex h-full min-h-full w-full items-center justify-center">
         <div className="relative h-full w-full overflow-hidden bg-black md:max-w-[480px]">
           {/* Keep the ambient fill as a thumbnail only. A second video decoder
               is unnecessary and can compete with the active Reel on Android. */}
-          {reel.thumbnailUrl ? (
+          {reel.thumbnailUrl && !posterFailed ? (
             <img
               src={resolveMediaUrl(reel.thumbnailUrl)}
               alt=""
               aria-hidden="true"
+              onError={() => setPosterFailed(true)}
               className="pointer-events-none absolute inset-0 z-0 h-full w-full scale-110 object-cover blur-[28px]"
             />
           ) : null}
-          {reel.thumbnailUrl && <img src={resolveMediaUrl(reel.thumbnailUrl)} alt="" className={cn('absolute inset-0 z-0 h-full w-full object-contain transition-opacity duration-300', !videoLoading && !videoFailed && 'opacity-0')} />}
-          {nearby && !videoFailed && (
+          {reel.thumbnailUrl && !posterFailed && <img src={resolveMediaUrl(reel.thumbnailUrl)} alt="" onError={() => setPosterFailed(true)} className={cn('pointer-events-none absolute inset-0 z-[2] h-full w-full object-contain transition-opacity duration-150', hasFrame && !videoFailed && 'opacity-0')} />}
+          {preload && (
             <video
-              ref={node => { videos.current[reel.id] = node; }}
+              key={retryKey}
+              ref={attachVideo}
               src={resolveMediaUrl(reel.videoUrl)}
-              poster={resolveMediaUrl(reel.thumbnailUrl)}
-              preload={active ? 'auto' : 'metadata'}
-              autoPlay={active && !paused && autoplayEnabled}
+              poster={reel.thumbnailUrl && !posterFailed ? reel.thumbnailUrl : 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%221%22 height=%221%22/%3E'}
+              preload={preload}
               loop
               playsInline
               muted={muted}
-              onClick={handleTap}
-              onLoadStart={() => { setVideoLoading(true); setVideoError(''); }}
+              controls={false}
+              disablePictureInPicture
+              disableRemotePlayback
+              onLoadStart={() => { setHasFrame(false); setVideoLoading(true); setVideoError(''); }}
               onError={(event) => {
                 const mediaError = event.currentTarget.error;
                 const code = mediaError?.code;
@@ -866,33 +947,34 @@ function ReelCard({ reel, isOwn, index, active, nearby, muted, paused, videos, s
                 else if (code === 2) message = `The video could not be downloaded (network error)${detail ? `: ${detail}` : ''}.`;
                 else if (code === 3) message = `The video file could not be decoded${detail ? `: ${detail}` : ''}.`;
                 else if (code === 4) message = `The server returned no playable video source${detail ? `: ${detail}` : ''}.`;
+                onStopped(reel.id);
                 setVideoFailed(true);
                 setVideoLoading(false);
                 setVideoError(message);
                 if (process.env.NODE_ENV !== 'production') console.error('[Reels] media load failed', { reelId: reel.id, src: event.currentTarget.currentSrc || reel.videoUrl, mediaError });
               }}
-              onCanPlay={event => {
-                setVideoLoading(false);
-                if (active && !paused) void event.currentTarget.play().catch(() => {});
-              }}
-              onWaiting={() => setVideoLoading(true)}
-              onPlaying={() => setVideoLoading(false)}
+              onLoadedData={() => { setHasFrame(true); setVideoLoading(false); onReady(reel.id); }}
+              onCanPlay={() => { setHasFrame(true); setVideoLoading(false); onReady(reel.id); }}
+              onWaiting={() => { setVideoLoading(true); onStopped(reel.id); }}
+              onPlaying={() => { setHasFrame(true); setVideoLoading(false); onPlaying(reel.id); }}
+              onPause={() => onStopped(reel.id)}
+              onStalled={() => { if (!hasFrame) setVideoLoading(true); }}
               onTimeUpdate={event => { const video = event.currentTarget; setProgress(video.duration ? (video.currentTime / video.duration) * 100 : 0); }}
-              className="absolute inset-0 z-[1] h-full w-full object-contain"
+              className={cn("vanta-reel-video pointer-events-none absolute inset-0 z-[1] h-full w-full object-contain", !hasFrame && "opacity-0")}
               aria-label={`Reel by ${reel.author.username}`}
             />
           )}
           <div className="pointer-events-none absolute inset-0 z-[2] bg-gradient-to-t from-black/90 via-transparent to-black/35" />
 
-          {videoLoading && !videoFailed && <div className="pointer-events-none absolute inset-0 grid place-items-center"><Loader2 className="animate-spin text-white/70" size={28} /></div>}
+          {active && videoLoading && !videoFailed && shouldPlay && !blocked && <div className="pointer-events-none absolute inset-0 z-[3] grid place-items-center"><Loader2 className="animate-spin text-[#dfbd55]" size={24} /></div>}
+          {active && !videoFailed && <button type="button" aria-label={shouldPlay && !blocked ? "Pause Reel" : "Play Reel"} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={clearTap} onPointerLeave={clearTap} onClick={event => { if (event.detail === 0) onPlayToggle(); }} className="absolute inset-0 z-[4] grid touch-pan-y place-items-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#dfbd55]">{(!shouldPlay || blocked) && <span className="grid h-12 w-12 place-items-center rounded-full bg-black/55 text-[#dfbd55]"><Play size={22} fill="currentColor" /></span>}</button>}
           {videoFailed && <div className="absolute inset-0 z-20 grid place-items-center bg-black/75 px-8 text-center"><div><Clapperboard className="mx-auto text-white/40" /><h3 className="mt-4 font-semibold">Unable to load Reel</h3><p className="mt-1 max-w-xs text-xs leading-5 text-white/45">{videoError || 'The video could not be played.'}</p><button type="button" onClick={retry} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-white/15 px-4 py-2 text-sm"><RefreshCw size={15} />Retry</button></div></div>}
 
           <div className="absolute right-3 top-16 z-10 flex gap-2">
             <button type="button" onClick={() => void fullscreen()} className="grid h-9 w-9 place-items-center rounded-full bg-black/45 text-white backdrop-blur" aria-label="Enter fullscreen"><Maximize size={16} /></button>
           </div>
 
-          {active && paused && !videoFailed && <button type="button" onClick={onPlayToggle} className="absolute inset-0 z-10 m-auto grid h-14 w-14 place-items-center rounded-full bg-black/45 backdrop-blur" aria-label="Play Reel"><Play size={23} fill="white" /></button>}
-          <AnimatePresence>{likedPulse && <motion.div key={likedPulse} initial={{ opacity: 0, scale: .5 }} animate={{ opacity: 1, scale: likedPulse === 'like' ? [0.5, 1.2, 1] : 1 }} exit={{ opacity: 0, scale: likedPulse === 'like' ? 1.25 : 0.85 }} className="pointer-events-none absolute inset-0 z-20 grid place-items-center">{likedPulse === 'like' ? <span className="relative"><Heart size={84} fill="#f2c75c" stroke="#c9a227" className="drop-shadow-[0_0_18px_rgba(242,199,92,.9)]" /><motion.span initial={{ opacity: 0, scale: .4, rotate: -20 }} animate={{ opacity: [0, 1, 0], scale: [.4, 1.2, .8], rotate: [-20, 10, 25] }} transition={{ duration: .6 }} className="absolute -right-4 -top-4 text-[#f2c75c]"><Sparkles size={28} /></motion.span><motion.span initial={{ opacity: 0, scale: .4 }} animate={{ opacity: [0, 1, 0], scale: [.4, 1, .7] }} transition={{ duration: .6, delay: .1 }} className="absolute -bottom-3 -left-5 text-[#ffe08a]"><Sparkles size={20} /></motion.span></span> : <Heart size={76} fill="none" stroke="#8a8a8a" className="drop-shadow-2xl" />}</motion.div>}</AnimatePresence>
+          <AnimatePresence>{likedPulse && <motion.div initial={{ opacity: 0, scale: .5 }} animate={{ opacity: 1, scale: [0.5, 1.2, 1] }} exit={{ opacity: 0, scale: 1.25 }} className="pointer-events-none absolute inset-0 z-20 grid place-items-center"><Heart size={84} fill="#f2c75c" stroke="#c9a227" className="drop-shadow-[0_0_18px_rgba(242,199,92,.9)]" /></motion.div>}</AnimatePresence>
 
           <div className="absolute bottom-[calc(1.25rem_+_var(--vanta-native-reel-action-offset,calc(4rem_+_env(safe-area-inset-bottom))))] left-4 right-20 z-10">
             <div className="flex flex-wrap items-center gap-2">
