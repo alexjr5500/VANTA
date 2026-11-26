@@ -4,7 +4,7 @@ import { backupPrefix } from './backup-r2-multipart.mjs';
 const check=(v,m='Invalid backup operations evidence')=>{if(!v)throw Error(m)};
 const safe=n=>Number.isSafeInteger(n)&&n>=0;
 const hash=s=>typeof s==='string'&&/^[a-f0-9]{64}$/.test(s);
-const issueCodes=new Set(['backup_attempt_failed','verified_backup_missing_or_overdue','independent_restore_missing_or_overdue','source_fence_not_verified','schedule_not_approved','retention_inventory_unverified','backup_monitor_evidence_invalid','backup_capacity_warning','backup_capacity_exceeded']);
+const issueCodes=new Set(['backup_attempt_failed','verified_backup_missing_or_overdue','independent_restore_missing_or_overdue','source_fence_not_verified','schedule_not_approved','retention_inventory_unverified','backup_monitor_evidence_invalid','backup_capacity_warning','backup_capacity_exceeded','backup_remote_inventory_invalid']);
 export function productionIdentity(env){
   return env.RAILWAY_PROJECT_ID==='a05242c0-8a26-40b0-a88d-e338e96eec55' &&
     env.RAILWAY_ENVIRONMENT_ID==='4a6d43ce-571f-4d85-8abe-c7c5f19ed920' &&
@@ -40,7 +40,8 @@ export function assessOperations({nowMs,records,receipts={},publicKey,expectedFi
     if(record.state!=='transfer_verified'){failed=true;continue;}
     check(safe(record.capturedAtMs)&&safe(record.verifiedAtMs)&&record.capturedAtMs<=record.verifiedAtMs&&record.verifiedAtMs<=nowMs&&
       record.marker?.key===prefix+'manifest.json.age'&&record.marker.verified===true&&hash(record.marker.sha256)&&safe(record.marker.bytes)&&record.marker.bytes>0);
-    lastVerifiedTransferMs=Math.max(lastVerifiedTransferMs??0,record.verifiedAtMs);
+    // Measure recovery-point age, not time spent uploading the capture.
+    lastVerifiedTransferMs=Math.max(lastVerifiedTransferMs??0,record.capturedAtMs);
     let restored=false;
     if(Object.hasOwn(receipts,record.runId)){
       const time=verifyRestoreReceipt({receipt:receipts[record.runId],publicKey,expectedFingerprint,writerFingerprint,record,nowMs});
@@ -55,7 +56,7 @@ export function assessOperations({nowMs,records,receipts={},publicKey,expectedFi
   if(scheduleApproved!==true)issues.push('schedule_not_approved');
   if(inventoryComplete!==true)issues.push('retention_inventory_unverified');
   // Failed or incomplete inventory is never a reason to prune.
-  const candidates=inventoryComplete===true&&!failed&&health.healthy&&scheduleApproved===true?
+  const candidates=inventoryComplete===true&&!failed&&health.healthy&&scheduleApproved===true&&sourceFenceVerified===true?
     retentionCandidates({nowMs,sets,retainDays,keepAtLeast}):[];
   return {healthy:issues.length===0,scheduleEligible:issues.length===0,issues,retentionReviewCandidates:candidates,
     lastVerifiedTransferMs,lastIndependentRestoreMs};

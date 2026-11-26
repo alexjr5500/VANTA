@@ -106,16 +106,17 @@ export async function openBackupJournal(controlDir) {
 /** Count every object in the bucket. Any unfinished upload blocks a new run;
  * do not guess its bytes or assume a failed multipart upload was removed.
  * Bound pagination and refuse incomplete or nonprogressing inventory. */
-export async function measureR2Inventory({ client, sdk, bucket, maxPages = 100 }) {
+export async function measureR2Inventory({ client, sdk, bucket, maxPages = 100, includeObjects = false }) {
   check(bucket === 'vanta-backups' && Number.isInteger(maxPages) && maxPages >= 1 && maxPages <= 1000, 'Invalid inventory scope');
   const send = cmd => client.send(cmd, { abortSignal: AbortSignal.timeout(30000) });
   let token, storedBytes = 0, objectCount = 0, complete = false;
-  const seen = new Set();
+  const seen = new Set(), objects = new Map();
   for (let page = 0; page < maxPages; page++) {
     const r = await send(new sdk.ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1000, ContinuationToken: token }));
     for (const entry of r.Contents ?? []) {
       check(typeof entry.Key === 'string' && safe(entry.Size) && !seen.has(entry.Key), 'Invalid inventory object');
       seen.add(entry.Key);
+      if(includeObjects) objects.set(entry.Key,entry.Size);
       storedBytes += entry.Size; objectCount++;
       check(safe(storedBytes), 'Inventory byte overflow');
     }
@@ -126,7 +127,7 @@ export async function measureR2Inventory({ client, sdk, bucket, maxPages = 100 }
   check(complete, 'Bucket inventory limit reached');
   const uploads = await send(new sdk.ListMultipartUploadsCommand({ Bucket: bucket, MaxUploads: 1 }));
   check(!uploads.IsTruncated && !(uploads.Uploads ?? []).length, 'Incomplete uploads require reconciliation');
-  return { storedBytes, incompleteUploadBytes: 0, inventoryComplete: true, inventoryAtMs: Date.now(), objectCount };
+  return { storedBytes, incompleteUploadBytes: 0, inventoryComplete: true, inventoryAtMs: Date.now(), objectCount, ...(includeObjects ? {objects} : {}) };
 }
 
 export async function measureScratchFreeBytes(path) {

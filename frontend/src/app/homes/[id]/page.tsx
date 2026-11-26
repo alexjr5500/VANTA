@@ -1,8 +1,10 @@
 'use client';
 
+import { homeLocationLine } from '@/lib/homeLocation';
+
 import BookmarkIcon from '@/components/ui/BookmarkIcon';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
   fetchHome, fetchHomeContactOptions, contactHomeListing, toggleSaveHome, createHomeReport,
@@ -15,7 +17,9 @@ import Skeleton from '@/components/ui/Skeleton';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import { formatDate } from '@/lib/utils';
-import { API_BASE_URL } from '@/lib/api';
+import Avatar from '@/components/ui/Avatar';
+import HomeMediaImage from '@/components/homes/HomeMediaImage';
+import { homeMediaSource, homeImageCandidates, isHomeVideo } from '@/lib/homeMedia';
 import VerificationBadge from '@/components/ui/VerificationBadge';
 import {
   MapPin, Bed, Bath, Home, Play, Share2, Phone, MessageCircle,
@@ -118,14 +122,6 @@ interface MediaFee {
   currency?: string;
 }
 
-function resolveHomeMediaUrl(media: any): string | null {
-  const raw = media?.uploadedFile?.url || media?.url || media?.thumbnailUrl || media?.uploadedFile?.thumbnailUrl;
-  if (typeof raw !== 'string' || !raw.trim()) return null;
-  const value = raw.trim();
-  if (/^(https?:|blob:|data:)/i.test(value)) return value;
-  try { return new URL(value.startsWith('/') ? value : `/${value}`, API_BASE_URL).toString(); } catch { return value; }
-}
-
 function parseJsonArray<T>(raw: unknown): T[] {
   if (Array.isArray(raw)) return raw as T[];
   if (typeof raw !== 'string' || raw.trim() === '') return [];
@@ -135,11 +131,6 @@ function parseJsonArray<T>(raw: unknown): T[] {
   } catch {
     return [];
   }
-}
-
-function locationLine(listing: any): string {
-  const parts = [listing?.area, listing?.city, listing?.state, listing?.country].filter(Boolean);
-  return parts.length > 0 ? parts.join(', ') : 'Location to be confirmed';
 }
 
 const AMENITY_LABEL: Record<string, string> = {
@@ -173,13 +164,18 @@ export default function HomeDetailPage() {
   const { showToast } = useToast();
 
   const [listing, setListing] = useState<any>(null);
-  const [contactOptions, setContactOptions] = useState<ContactOptions | null>(null);
+  const [contactState, setContactState] = useState<{ id: string; status: 'loading' | 'ready' | 'error'; options: ContactOptions | null } | null>(null);
+  const [contactRetry, setContactRetry] = useState(0);
+  const contactOptions = contactState?.id === id ? contactState.options : null;
+  const contactStatus = contactState?.id === id ? contactState.status : 'loading';
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [contacting, setContacting] = useState(false);
   const [showComposer, setShowComposer] = useState(false);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { if (showComposer) composerRef.current?.scrollIntoView({block: 'nearest', behavior: 'smooth'}); }, [showComposer]);
   const [message, setMessage] = useState('');
   const [reportOpen, setReportOpen] = useState(false);
   const [reportType, setReportType] = useState('SCAM');
@@ -188,6 +184,7 @@ export default function HomeDetailPage() {
   const [reporting, setReporting] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [loadedPhoto, setLoadedPhoto] = useState<{id: string; src: string} | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -230,11 +227,14 @@ export default function HomeDetailPage() {
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
+    setContactState({ id, status: 'loading', options: null });
+    setShowComposer(false);
+    setMessage('');
     fetchHomeContactOptions(id)
-      .then((data) => { if (!cancelled) setContactOptions(data || null); })
-      .catch(() => { if (!cancelled) setContactOptions(null); });
+      .then((data) => { if (!cancelled) setContactState({ id, status: 'ready', options: data || null }); })
+      .catch(() => { if (!cancelled) setContactState({ id, status: 'error', options: null }); });
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, contactRetry]);
 
   const media = useMemo<ListingMedia[]>(() => {
     const items: ListingMedia[] = Array.isArray(listing?.media) ? listing.media : [];
@@ -243,7 +243,8 @@ export default function HomeDetailPage() {
 
   const activeIndex = Math.min(viewerIndex, Math.max(media.length - 1, 0));
   const activeMedia = media[activeIndex] || null;
-  const activeSrc = resolveHomeMediaUrl(activeMedia);
+  const activeSrc = homeMediaSource(activeMedia);
+  const activePhoto = loadedPhoto?.id === activeMedia?.id ? loadedPhoto?.src : null;
 
   const amenities = useMemo(() => parseJsonArray<string>(listing?.amenities), [listing]);
   const fees = useMemo<MediaFee[]>(() => parseJsonArray<MediaFee>(listing?.additionalFees), [listing]);
@@ -319,14 +320,14 @@ export default function HomeDetailPage() {
       showToast({ type: 'info', title: 'This is your listing', message: 'Manage enquiries from your Homes dashboard.' });
       return;
     }
-    if (contacting) return;
+    if (contacting || !canContact) return;
     setContacting(true);
     try {
       const result = await contactHomeListing(id, prefill, token);
       const conversationId = result?.conversationId;
       if (conversationId) {
         // Open the conversation through VANTA's single canonical chat route.
-        router.push(`/chat/${encodeURIComponent(conversationId)}`);
+        router.push(`/chat?conversation=${encodeURIComponent(conversationId)}`);
       } else {
         showToast({ type: 'success', title: 'Message sent', message: 'The owner has been notified.' });
         setShowComposer(false);
@@ -414,8 +415,8 @@ export default function HomeDetailPage() {
   }
 
   return (
-    <main className="relative left-1/2 h-[var(--vanta-vh,100dvh)] min-h-0 w-screen max-w-none -translate-x-1/2 overflow-x-clip bg-[#080808] text-white flex flex-col overflow-hidden">
-      <header className="relative z-50 h-14 shrink-0 border-b border-white/[.07] bg-[#1f2630]/95 px-3 backdrop-blur-xl sm:px-5">
+    <main className="relative left-1/2 h-[var(--vanta-vh,100dvh)] min-h-0 w-screen max-w-none -translate-x-1/2 overflow-x-clip bg-[var(--background)] text-white flex flex-col overflow-hidden">
+      <header className="relative z-50 h-14 shrink-0 border-b border-white/[.07] bg-[var(--header-surface)] px-3 backdrop-blur-xl sm:px-5">
         <div className="flex h-full w-full items-center justify-between gap-3">
           <a href="/homes" className="flex min-w-0 items-center gap-2.5" aria-label="VANTA Homes">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#c9a227] text-black"><Building2 size={19} /></span>
@@ -430,7 +431,7 @@ export default function HomeDetailPage() {
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
 
 
-      <div className="mx-auto w-full max-w-[1440px] pb-28 lg:pb-12">
+      <div className="mx-auto w-full max-w-[1440px] pb-4 lg:pb-8">
         <div className="flex min-h-12 items-center justify-between gap-3 px-3 sm:px-5 lg:px-8">
           <button type="button" onClick={() => router.push('/homes')} className="inline-flex min-h-10 items-center gap-2 text-sm text-white/55 transition hover:text-white"><ArrowLeft size={16} /> All homes</button>
           <div className="flex items-center gap-1 sm:gap-2">
@@ -463,16 +464,16 @@ export default function HomeDetailPage() {
 
         {isOwner && listing.availabilityStatus !== 'PUBLISHED' && <div className="mx-3 mb-3 flex items-start gap-2 border-l-2 border-[#c9a227] bg-[#c9a227]/[.06] px-3 py-3 text-sm text-[#e6c65a] sm:mx-5"><AlertCircle size={16} className="mt-0.5 shrink-0" /><span>This listing is <strong>{(listing.availabilityStatus || 'DRAFT').replace(/_/g, ' ').toLowerCase()}</strong> and is only visible to you until it is published.</span></div>}
 
-        <section aria-label="Property photos" className="relative mx-auto w-full overflow-hidden bg-[#111] sm:px-5 lg:px-8">
+        <section aria-label="Property photos" className="relative mx-auto w-full overflow-hidden bg-[var(--background)] sm:px-5 lg:px-8">
           <div className="relative h-[56vw] min-h-[230px] max-h-[560px] overflow-hidden bg-[#10151c] sm:rounded-2xl sm:ring-1 sm:ring-white/[.08] lg:h-[min(58vh,560px)]">
             {activeMedia ? (
-              activeMedia.type === 'VIDEO' || activeMedia.type === 'video' ? (
-                <video key={activeMedia.id} src={activeSrc || undefined} poster={resolveHomeMediaUrl(activeMedia) || undefined} controls playsInline className="h-full w-full bg-[#101010] object-contain" />
+              isHomeVideo(activeMedia) ? (
+                <video key={activeMedia.id} src={activeSrc || undefined} poster={homeImageCandidates(activeMedia, true)[0] || undefined} controls playsInline className="h-full w-full bg-[#101010] object-contain" />
               ) : (
-                <button type="button" onClick={() => setLightboxOpen(true)} className="group relative block h-full w-full" aria-label="Open photo full screen">
-                  <img src={activeSrc || undefined} alt={listing.title || 'Property photo'} className="h-full w-full bg-[#101010] object-cover" />
+                <button type="button" disabled={!activePhoto} onClick={() => setLightboxOpen(true)} className="group relative block h-full w-full disabled:cursor-default" aria-label="Open photo full screen">
+                  <HomeMediaImage key={activeMedia.id} media={activeMedia} alt={listing.title || "Property photo"} onReady={src => setLoadedPhoto({id: activeMedia.id, src})} />
                   <span className="absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-black/10" />
-                  <span className="absolute bottom-4 right-4 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-2 text-xs text-white backdrop-blur-sm"><Maximize2 size={13} /> View photo</span>
+                  {activePhoto && <span className="absolute bottom-4 right-4 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-2 text-xs text-white backdrop-blur-sm"><Maximize2 size={13} /> View photo</span>}
                 </button>
               )
             ) : <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-white/25"><Home size={42} strokeWidth={1.2} /><span className="text-xs">Photos coming soon</span></div>}
@@ -485,17 +486,16 @@ export default function HomeDetailPage() {
           </div>
           {media.length > 1 && <div className="mx-auto flex max-w-[1440px] gap-2 overflow-x-auto px-3 py-2.5 sm:px-5 lg:px-8">
             {media.map((item, index) => {
-              const thumb = resolveHomeMediaUrl(item) || '';
               const isActive = index === activeIndex;
               return <button key={item.id} type="button" onClick={() => setViewerIndex(index)} className={"relative h-14 w-20 shrink-0 overflow-hidden rounded-md transition sm:h-16 sm:w-24 " + (isActive ? "ring-2 ring-[#c9a227] ring-offset-1 ring-offset-[#080808]" : "opacity-55 hover:opacity-100")} aria-label={"View media " + (index + 1)} aria-current={isActive}>
-                {thumb ? <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" /> : <span className="flex h-full w-full items-center justify-center bg-white/[.04]"><Home size={15} /></span>}
+                <HomeMediaImage media={item} alt={`Property media ${index + 1}`} thumbnailFirst />
                 {['VIDEO', 'video'].includes(item.type) && <span className="absolute inset-0 flex items-center justify-center bg-black/40"><Play size={15} className="text-white" fill="currentColor" /></span>}
               </button>;
             })}
           </div>}
         </section>
 
-        <ImageViewer src={lightboxOpen && activeMedia && !['VIDEO', 'video'].includes(activeMedia.type) ? activeSrc : null} alt={listing.title} onClose={() => setLightboxOpen(false)} />
+        <ImageViewer src={lightboxOpen && activeMedia && !isHomeVideo(activeMedia) ? activePhoto || null : null} alt={listing.title} onClose={() => setLightboxOpen(false)} />
 
         <div className="mx-auto grid w-full max-w-[1440px] grid-cols-1 gap-0 lg:grid-cols-[minmax(0,1fr)_340px] lg:px-8">
           <div className="min-w-0 px-4 sm:px-6 lg:px-8">
@@ -504,7 +504,7 @@ export default function HomeDetailPage() {
                 <div className="min-w-0 flex-1">
                   <p className="mb-2 text-[10px] font-semibold uppercase tracking-[.2em] text-[#c9a227]">{typeLabel}{listing.furnished ? ' · Furnished' : ''}</p>
                   <h1 className="text-2xl font-semibold leading-tight tracking-tight text-white sm:text-3xl lg:text-4xl">{listing.title}</h1>
-                  <p className="mt-2 flex items-start gap-1.5 text-sm leading-5 text-white/55"><MapPin size={15} className="mt-0.5 shrink-0" />{locationLine(listing)}</p>
+                  <p className="mt-2 flex items-start gap-1.5 text-sm leading-5 text-white/55"><MapPin size={15} className="mt-0.5 shrink-0" />{homeLocationLine(listing)}</p>
                 </div>
                 <div className="shrink-0 text-right"><p className="text-xl font-bold tabular-nums text-[#e4c65d] sm:text-2xl">{rent}</p><p className="mt-1 text-xs text-white/45">{periodSuffix}</p></div>
               </div>
@@ -535,39 +535,41 @@ export default function HomeDetailPage() {
           </div>
 
           <aside className="min-w-0 border-t border-white/[.08] bg-white/[.015] px-4 sm:px-6 lg:sticky lg:top-0 lg:self-start lg:border-l lg:border-t-0 lg:px-6 lg:py-7">
-            <section className="py-5 lg:sticky lg:top-[4.5rem]">
+            <section className="py-3 lg:sticky lg:top-[4.5rem]">
               <h2 className="text-xs font-semibold uppercase tracking-[.16em] text-white/40">Property contact</h2>
-              <div className="mt-4 flex items-center gap-3">
+              <div className="mt-2 flex items-center gap-3">
                 <button type="button" onClick={() => owner?.username && router.push('/profile/' + owner.username)} disabled={!owner?.username} className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full bg-white/[.06] disabled:cursor-default" aria-label={owner?.username ? "View " + ownerName + "'s profile" : 'Property owner'}>
-                  {owner?.avatar ? <img src={owner.avatar} alt="" className="h-full w-full object-cover" /> : <span className="flex h-full w-full items-center justify-center text-white/40"><User size={22} /></span>}
+                  <Avatar src={owner?.avatar} alt={ownerName} size="lg" />
                 </button>
                 <div className="min-w-0"><div className="flex items-center gap-1.5"><p className="truncate text-sm font-semibold text-white">{ownerName}</p>{verif.type !== 'NONE' && <VerificationBadge type={verif.type} verified size="sm" showTooltip />}</div><p className="mt-1 text-xs text-white/45">{verif.label}</p></div>
               </div>
-              {verif.type === 'NONE' && <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-white/45"><Shield size={14} className="mt-0.5 shrink-0 text-[#c9a227]" /><span>This owner has not completed VANTA verification. View the property before sending money and keep communications on VANTA where possible.</span></p>}
+              {verif.type === 'NONE' && <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-[var(--text-secondary)]"><Shield size={14} className="mt-0.5 shrink-0 text-[#c9a227]" /><span>Owner not verified. View the property before paying; keep enquiries on VANTA.</span></p>}
 
-              <div className="mt-5 space-y-2.5 border-t border-white/[.08] pt-5">
+              <div className="mt-3 space-y-2 border-t border-white/[.08] pt-3">
                 {isOwner ? <><p className="text-sm leading-6 text-white/55">This is your listing. Manage it or review enquiries from your dashboard.</p><Button variant="gold" fullWidth onClick={() => router.push('/homes/manage')}>Manage this listing</Button></> : <>
-                  {canContact && <Button variant="gold" fullWidth icon={<MessageCircle size={17} />} loading={contacting} onClick={() => (message.trim() ? void handleContact(message.trim()) : setShowComposer(true))}>Message on VANTA</Button>}
+                  {canContact && !showComposer && <div className="hidden lg:block"><Button variant="gold" fullWidth icon={<MessageCircle size={17} />} loading={contacting} onClick={() => setShowComposer(true)}>Message owner</Button></div>}
                   {contactOptions?.whatsappUrl && <a href={contactOptions.whatsappUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/25 px-4 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/[.08]"><WhatsAppGlyph size={17} /> Chat on WhatsApp</a>}
                   {contactOptions?.phoneUrl && <a href={contactOptions.phoneUrl} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-white/[.1] px-4 text-sm font-semibold text-white/75 transition hover:bg-white/[.04]"><Phone size={16} /> {contactOptions.phone || 'Call owner'}</a>}
-                  {!canContact && !contactOptions?.whatsappUrl && !contactOptions?.phoneUrl && <p className="text-sm text-white/50">This owner is not accepting enquiries right now.</p>}
+                  {contactStatus === 'loading' && <p role="status" className="text-sm text-[var(--text-secondary)]">Loading contact options…</p>}
+                  {contactStatus === 'error' && <div role="alert" className="flex items-center justify-between gap-2 text-xs text-[var(--text-secondary)]"><span>Could not load contact options.</span><button type="button" className="shrink-0 text-[#e4c65d]" onClick={() => setContactRetry(value => value + 1)}>Retry</button></div>}
+                  {contactStatus === 'ready' && !canContact && !contactOptions?.whatsappUrl && !contactOptions?.phoneUrl && <p className="text-sm text-white/50">This owner is not accepting enquiries right now.</p>}
                   <p className="pt-2 text-xs leading-5 text-white/35">Never send a deposit before viewing the property. VANTA does not process rental payments.</p>
                 </>}
               </div>
 
-              {showComposer && !isOwner && <div className="mt-5 border-t border-white/[.08] pt-4">
+              {showComposer && !isOwner && canContact && <div className="mt-5 border-t border-white/[.08] pt-4">
                 <label htmlFor="home-enquiry" className="mb-2 block text-xs font-medium text-white/55">Your message</label>
-                <textarea id="home-enquiry" value={message} onChange={(event) => setMessage(event.target.value)} rows={3} placeholder="Hi, is this home still available? I'd like to arrange a viewing." className="w-full resize-none rounded-lg border border-white/[.1] bg-white/[.03] px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:border-[#c9a227]/60" />
+                <textarea ref={composerRef} id="home-enquiry" value={message} onChange={(event) => setMessage(event.target.value)} rows={3} placeholder="Hi, is this home still available? I'd like to arrange a viewing." className="w-full resize-none rounded-lg border border-white/[.1] bg-white/[.03] px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:border-[#c9a227]/60" />
                 <div className="mt-3 flex flex-wrap items-center gap-2"><Button size="sm" variant="gold" loading={contacting} disabled={message.trim().length === 0} onClick={() => void handleContact(message.trim())}>Send & open chat</Button><Button size="sm" variant="ghost" onClick={() => { setShowComposer(false); setMessage(''); }}>Cancel</Button></div>
               </div>}
             </section>
           </aside>
         </div>
       </div>
-
-      {!isOwner && <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/[.08] bg-[#080808]/95 px-3 py-3 backdrop-blur-xl lg:hidden"><div className="mx-auto flex max-w-3xl items-center gap-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-[#e4c65d]">{rent}<span className="ml-1 text-xs font-normal text-white/45">{periodSuffix}</span></p><p className="truncate text-[11px] text-white/45">{listing.title}</p></div>{canContact && <Button variant="gold" icon={<MessageCircle size={16} />} loading={contacting} onClick={() => (message.trim() ? void handleContact(message.trim()) : setShowComposer(true))}>Message owner</Button>}</div></div>}
-    
       </div>
+
+      {!isOwner && canContact && !showComposer && <footer className="shrink-0 border-t border-[var(--border)] bg-[var(--background)] px-3 pt-2 pb-[max(8px,env(safe-area-inset-bottom))] lg:hidden"><div className="mx-auto flex max-w-3xl items-center gap-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-[#e4c65d]">{rent}<span className="ml-1 text-xs font-normal text-[var(--text-secondary)]">{periodSuffix}</span></p></div><Button variant="gold" icon={<MessageCircle size={16} />} loading={contacting} onClick={() => setShowComposer(true)}>Message owner</Button></div></footer>}
+
     </main>
   );
 }

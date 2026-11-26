@@ -10,6 +10,7 @@ import { runBackupSet, signBackupManifest } from './backup-orchestrator.mjs';
 import { captureEncryptedArtifact } from './backup-bounded-capture.mjs';
 import { uploadEncryptedArtifact, backupPrefix } from './backup-r2-multipart.mjs';
 import { alertConfig, sendBackupAlert, productionIdentity } from './backup-operations.mjs';
+import { verifyDailyPermit, checkDailySlot } from './backup-daily-window.mjs';
 
 const check = (value, reason) => { if (!value) throw Error(reason || 'offline backup guard failed'); };
 const fixed = { project:'a05242c0-8a26-40b0-a88d-e338e96eec55', environment:'4a6d43ce-571f-4d85-8abe-c7c5f19ed920',
@@ -74,6 +75,10 @@ async function main() {
   const env = process.env, cfg = checkOfflineConfig(env, process.pid);
   // Validate opted-in notification transport before any source access.
   alertConfig(env);
+  const dailyPermit=env.VANTA_BACKUP_SCHEDULED_CAPTURE==='yes' ? verifyDailyPermit({
+    envelope:JSON.parse(env.VANTA_BACKUP_DAILY_PERMIT||'null'),publicKey:env.VANTA_BACKUP_DAILY_APPROVER_PUBLIC_KEY,
+    fingerprint:env.VANTA_BACKUP_DAILY_APPROVER_FINGERPRINT,writerFingerprint:env.VANTA_BACKUP_SIGNING_PUBLIC_FINGERPRINT,
+    runId:cfg.runId,revision:env.VANTA_BACKUP_EXPECTED_SHA,nowMs:Date.now()}) : null;
   const mountInfo = await readFile('/proc/self/mountinfo','utf8');
   check(mountInfo.split('\n').some(line=>line.split(' ')[4]===mediaRoot),'Existing /data mount required');
   const require = createRequire(new URL('../backup-runtime/package.json',import.meta.url));
@@ -110,7 +115,10 @@ async function main() {
         acquireExclusiveWriter:()=>journal.acquireExclusiveWriter(),
         measureCapacity:async()=>({...await measureR2Inventory({client,sdk,bucket:'vanta-backups'}),
           nowMs:Date.now(),scratchFreeBytes:await measureScratchFreeBytes(scratch),unresolvedAttempt:await journal.unresolvedAttempt()}),
-        beginAttempt:args=>journal.beginAttempt(args),
+        beginAttempt:async args=>{
+          if(dailyPermit)checkDailySlot({permit:dailyPermit,previous:await journal.readCurrent(),nowMs:Date.now()});
+          return journal.beginAttempt(args);
+        },
         fenceSources:async()=>{
           // External stopped-writer maintenance window is mandatory. Table
           // SHARE locks protect existing relations against ordinary DML/DDL,

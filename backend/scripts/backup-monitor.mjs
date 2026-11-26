@@ -3,6 +3,7 @@ import { open, lstat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { assessOperations, alertConfig, sendBackupAlert } from './backup-operations.mjs';
+import { readOnlyR2Audit } from './backup-remote-audit.mjs';
 const check=(v,m='Invalid backup monitor evidence')=>{if(!v)throw Error(m)};
 const safe=n=>Number.isSafeInteger(n)&&n>=0;
 const hour=3600000;
@@ -46,7 +47,7 @@ async function readEvidence(path){
     return JSON.parse(b.subarray(0,n).toString('utf8'));
   }finally{await fd.close();}
 }
-export async function runMonitor({env,read=readEvidence,nowMs=Date.now(),notify=sendBackupAlert}){
+export async function runMonitor({env,read=readEvidence,nowMs=Date.now(),notify=sendBackupAlert,remoteAudit=readOnlyR2Audit}){
   // No production database, R2 write credentials or age identity is required.
   // No activation from ordinary app startup. Separate monitor service only.
   check(env.VANTA_BACKUP_MONITOR_ENABLED==='yes','Backup monitor not enabled');
@@ -54,10 +55,23 @@ export async function runMonitor({env,read=readEvidence,nowMs=Date.now(),notify=
   check(config,'Backup monitor requires alert configuration');
   let result;
   try{
-    result=evaluateMonitor({nowMs,envelope:await read(env.VANTA_BACKUP_MONITOR_EVIDENCE_PATH),
-      observerPublicKey:env.VANTA_BACKUP_OBSERVER_PUBLIC_KEY,observerFingerprint:env.VANTA_BACKUP_OBSERVER_FINGERPRINT,
+    const envelope=await read(env.VANTA_BACKUP_MONITOR_EVIDENCE_PATH);
+    const args={nowMs,envelope,observerPublicKey:env.VANTA_BACKUP_OBSERVER_PUBLIC_KEY,observerFingerprint:env.VANTA_BACKUP_OBSERVER_FINGERPRINT,
       writerFingerprint:env.VANTA_BACKUP_SIGNING_PUBLIC_FINGERPRINT,recoveryPublicKey:env.VANTA_BACKUP_RECOVERY_PUBLIC_KEY,
-      recoveryFingerprint:env.VANTA_BACKUP_RECOVERY_FINGERPRINT});
+      recoveryFingerprint:env.VANTA_BACKUP_RECOVERY_FINGERPRINT};
+    const observation=verifyObservation(args);
+    result=evaluateMonitor(args);
+    try{
+      const live=await remoteAudit({env,records:observation.records});
+      check(live.inventoryComplete===true&&safe(live.storedBytes));
+      const issues=new Set(result.issues);
+      if(live.storedBytes>=observation.budgetBytes)issues.add('backup_capacity_exceeded');
+      else if(BigInt(live.storedBytes)*100n>=BigInt(observation.budgetBytes)*80n)issues.add('backup_capacity_warning');
+      result={...result,healthy:issues.size===0,scheduleEligible:result.scheduleEligible&&issues.size===0,
+        issues:[...issues],retentionReviewCandidates:issues.size===0?result.retentionReviewCandidates:[]};
+    }catch{
+      result={...result,healthy:false,scheduleEligible:false,issues:[...new Set([...result.issues,'backup_remote_inventory_invalid'])],retentionReviewCandidates:[]};
+    }
   }catch{result={healthy:false,scheduleEligible:false,issues:['backup_monitor_evidence_invalid'],retentionReviewCandidates:[]};}
   if(!result.healthy)await notify({config,issues:result.issues});
   return result;
