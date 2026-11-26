@@ -367,8 +367,8 @@ function CreateHomeContent() {
     { title: 'Photos & features', subtitle: 'Show off the property', icon: ImagePlus },
     { title: 'Contact & review', subtitle: 'Choose how people reach you', icon: ShieldCheck },
   ];
-  const fieldClass = 'mt-1.5 w-full rounded-lg border border-white/[.09] bg-[#171d25] px-3.5 py-3 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#c9a227]/70 focus:ring-2 focus:ring-[#c9a227]/10';
-  const labelClass = 'block text-xs font-semibold tracking-wide text-white/65';
+  const fieldClass = 'mt-1.5 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3.5 py-3 text-sm text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-muted)] focus:border-[#c9a227]/70 focus:ring-2 focus:ring-[#c9a227]/10';
+  const labelClass = 'block text-xs font-semibold text-[var(--text-secondary)]';
   const setField = (key: keyof FormState, value: any) => setForm(prev => ({ ...prev, [key]: value }));
   const advance = () => {
     setFormError(null);
@@ -376,7 +376,7 @@ function CreateHomeContent() {
       setFormError('Add a clear title and a description of at least 10 characters.');
       return;
     }
-    if (step === 1 && (!form.country.trim() || !form.city.trim() || !form.rentAmount.trim() || Number(form.rentAmount) < 0)) {
+    if (step === 1 && (!form.country.trim() || !form.city.trim() || !form.rentAmount.trim() || !Number.isFinite(Number(form.rentAmount)) || Number(form.rentAmount) < 0)) {
       setFormError('Add a valid price, country and city before continuing.');
       return;
     }
@@ -384,8 +384,8 @@ function CreateHomeContent() {
   };
 
   return (
-    <main className="relative left-1/2 h-[var(--vanta-vh,100dvh)] min-h-0 w-screen max-w-none -translate-x-1/2 overflow-x-clip bg-[var(--background)] pb-36 text-white flex flex-col overflow-hidden">
-      <header className="relative z-50 h-14 shrink-0 border-b border-white/[.06] bg-[#1f2630] px-4">
+    <main className="relative left-1/2 h-[var(--vanta-vh,100dvh)] min-h-0 w-screen max-w-none -translate-x-1/2 overflow-x-clip bg-[var(--background)] text-[var(--text-primary)] flex flex-col overflow-hidden">
+      <header className="relative z-50 h-14 shrink-0 border-b border-white/[.06] bg-[var(--header-surface)] px-4">
         <div className="flex h-full w-full items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
             <button type="button" onClick={() => router.push(isEdit ? '/homes/manage' : '/homes')} aria-label="Back to Homes" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-white/60 transition hover:bg-white/[.06] hover:text-white">
@@ -403,37 +403,24 @@ function CreateHomeContent() {
 
 
       <div className="mx-auto w-full max-w-[1180px] px-0 pt-3 sm:pt-4">
-        <section className="border-b border-white/[.07] px-4 pb-5 pt-2 sm:px-6 lg:px-8">
-          <p className="text-[11px] font-semibold uppercase tracking-[.2em] text-[#c9a227]">{isEdit ? 'Manage your listing' : 'List a property'}</p>
-          <h1 className="mt-2 max-w-2xl text-[25px] font-semibold tracking-tight sm:text-3xl">{isEdit ? 'Update your property' : 'Add your property to VANTA Homes.'}</h1>
-          <p className="mt-2 max-w-2xl text-[13px] leading-5 text-white/55 sm:text-sm sm:leading-6">{isEdit ? 'Review your details and resubmit if changes are needed.' : 'Enter accurate details, add clear photos, then send your listing to the VANTA team for review before it goes live.'}</p>
-          <p className="mt-3 text-xs text-white/40">Up to {MAX_PHOTOS} photos <span className="mx-2 text-white/20">·</span> Admin review before publication <span className="mx-2 text-white/20">·</span> You control contact details</p>
+        <section className="px-4 pb-2 pt-1 sm:px-6">
+          <h1 className="text-xl font-semibold tracking-tight">{isEdit ? 'Edit property' : 'List a property'}</h1>
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">Listings are reviewed before publication.</p>
         </section>
 
         {(existingStatus === 'PENDING_REVIEW' || existingStatus === 'REJECTED') && <div className={`mt-4 rounded-xl border px-4 py-3 text-sm ${existingStatus === 'REJECTED' ? 'border-red-400/25 bg-red-500/[.07] text-red-300' : 'border-amber-400/25 bg-amber-500/[.07] text-amber-200'}`}>{existingStatus === 'REJECTED' ? 'This listing was rejected. Update the details and submit it again for review.' : 'This listing is under review. Your edits may require another review.'}</div>}
 
-        <div className="mt-4 grid gap-4 px-3 sm:px-5 lg:grid-cols-[190px_minmax(0,1fr)] lg:gap-6">
-          <aside className="h-fit border-b border-white/[.08] pb-3 lg:sticky lg:top-16 lg:border-b-0 lg:pb-0">
-            <p className="px-3 pb-2 pt-1 text-[10px] font-bold uppercase tracking-[.18em] text-white/35">Your progress</p>
-            <div className="grid grid-cols-4 gap-1.5 lg:grid-cols-1 lg:gap-2">
-              {steps.map((item, index) => {
-                const Icon = item.icon;
-                const active = step === index;
-                const complete = index < step;
-                return <button key={item.title} type="button" onClick={() => { setFormError(null); setStep(index); }} className={`flex min-w-0 items-center gap-3 rounded-lg border p-2.5 text-left transition sm:p-3 ${active ? 'border-[#c9a227]/40 bg-[#c9a227]/[.09]' : 'border-transparent hover:bg-white/[.035]'}`}>
-                  <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${active || complete ? 'bg-[#c9a227] text-black' : 'bg-white/[.05] text-white/40'}`}>{complete ? <Check size={16}/> : <Icon size={16}/>}</span>
-                  <span className="hidden min-w-0 lg:block"><span className={`block text-sm font-semibold ${active ? 'text-[#f0d36a]' : 'text-white/75'}`}>{item.title}</span><span className="mt-0.5 block text-[11px] text-white/35">{item.subtitle}</span></span>
-                  <span className="sr-only lg:hidden">{item.title}</span>
-                </button>;
-              })}
-            </div>
-            <div className="mt-3 hidden rounded-xl bg-white/[.025] p-3 lg:block"><p className="text-xs font-semibold text-white/70">A quick tip</p><p className="mt-1 text-xs leading-5 text-white/40">Use bright, clear photos and accurate details. Your full street address is not shown publicly.</p></div>
-          </aside>
+        <div className="mx-auto mt-3 w-full max-w-3xl px-3 sm:px-5">
+          <nav aria-label="Listing steps" className="mb-3 grid grid-cols-4 gap-1.5">
+            {steps.map((item, index) => <button key={item.title} type="button" disabled={index > step || saving || uploading || loadingExisting} onClick={() => { setFormError(null); setStep(index); }} aria-current={index === step ? 'step' : undefined} aria-label={item.title} className="min-w-0 py-1 text-left disabled:cursor-default">
+              <span className={`block h-1.5 rounded-full ${index <= step ? 'bg-[var(--vanta-gold)]' : 'bg-[var(--surface-secondary)]'}`} />
+              <span className={`mt-1.5 block truncate text-[10px] font-medium ${index === step ? 'text-[var(--vanta-gold-bright)]' : 'text-[var(--text-secondary)]'}`}>{['Details','Location','Photos','Review'][index]}</span>
+            </button>)}
+          </nav>
 
           <section className="min-w-0">
             {loadingExisting ? <div className="space-y-3"><div className="h-24 animate-pulse rounded-2xl bg-white/[.04]"/><div className="h-56 animate-pulse rounded-2xl bg-white/[.04]"/></div> : <>
-              <div className="mb-3 flex items-center justify-between"><div><p className="text-xs font-semibold text-[#c9a227]">STEP {step + 1} OF {steps.length}</p><h2 className="mt-1 text-lg font-semibold tracking-tight">{steps[step].title}</h2><p className="mt-1 text-xs text-white/40">{steps[step].subtitle}</p></div><span className="rounded-full border border-white/10 px-3 py-1.5 text-[11px] text-white/45">{Math.round(((step + 1) / steps.length) * 100)}%</span></div>
-              <div className="mb-5 h-1 overflow-hidden rounded-full bg-white/[.07]"><div className="h-full rounded-full bg-[#c9a227] transition-all" style={{width:`${((step + 1) / steps.length) * 100}%`}}/></div>
+              <h2 className="mb-3 text-base font-semibold">{steps[step].title}</h2>
 
               {step === 0 && <div className="space-y-4 border-t border-white/[.08] py-4 sm:py-5">
                 <div><label className={labelClass} htmlFor="home-title">Listing title</label><input id="home-title" className={fieldClass} value={form.title} onChange={e => setField('title',e.target.value)} maxLength={120} placeholder="e.g. Spacious 2-bedroom apartment in Lekki"/></div>
@@ -457,7 +444,7 @@ function CreateHomeContent() {
                 </div>
                 {photos.length>0 && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{photos.map(photo=>{const src=getHomePhotoSrc(photo);return <div key={photo.id} className="group relative aspect-[4/3] overflow-hidden rounded-xl bg-white/[.03]"><HomePhotoImage src={src} alt="Selected property photo preview" />{photo.isLocalPreview&&<span className="absolute left-2 top-2 rounded bg-black/75 px-2 py-1 text-[10px] font-semibold text-white">Preview</span>}{photo.isCover&&<span className="absolute left-2 top-2 rounded-full bg-[#c9a227] px-2 py-1 text-[10px] font-bold text-black">COVER</span>}{!photo.isLocalPreview&&<button type="button" onClick={()=>void removePhoto(photo.id)} aria-label="Remove photo" className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/75 text-white hover:bg-red-500"><Trash2 size={14}/></button>}</div>})}</div>}
                 <div className="rounded-xl border border-white/[.07] bg-black/20 p-3"><p className="text-xs leading-5 text-white/45">Photos help renters understand the space. Only upload images you have permission to share. You can save your draft and finish later.</p></div>
-                <div><h3 className="mb-3 text-sm font-semibold">Amenities</h3><div className="flex flex-wrap gap-2">{AMENITIES.map(amenity=>{const active=form.amenities.includes(amenity);return <button key={amenity} type="button" onClick={()=>toggleAmenity(amenity)} aria-pressed={active} className={`rounded-full border px-3 py-2 text-xs transition ${active?'border-[#c9a227]/50 bg-[#c9a227]/[.09] text-[#e4c65d]':'border-white/10 bg-white/[.025] text-white/55 hover:text-white'}`}>{active&&<Check size={11} className="mr-1 inline"/>}{AMENITY_LABEL[amenity] || amenity}</button>})}</div></div>
+                <div><h3 className="mb-3 text-sm font-semibold">Amenities</h3><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{AMENITIES.map(amenity=>{const active=form.amenities.includes(amenity);return <button key={amenity} type="button" onClick={()=>toggleAmenity(amenity)} aria-pressed={active} className={`flex min-h-11 items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-xs transition ${active?'border-[#c9a227]/50 bg-[#c9a227]/[.09] text-[#e4c65d]':'border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)]'}`}><span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${active ? 'border-[#c9a227] bg-[#c9a227] text-black' : 'border-[var(--border-strong)]'}`}>{active && <Check size={12}/>}</span>{AMENITY_LABEL[amenity] || amenity}</button>})}</div></div>
               </div>}
 
               {step === 3 && <div className="space-y-4 border-t border-white/[.08] py-4 sm:py-5">
@@ -469,7 +456,7 @@ function CreateHomeContent() {
               </div>}
 
               {formError && <div role="alert" className="mt-4 rounded-xl border border-red-400/25 bg-red-500/[.07] px-4 py-3 text-sm text-red-300">{formError}</div>}
-              <div className="mt-5 flex items-center justify-between gap-3"><button type="button" disabled={step===0} onClick={()=>{setFormError(null);setStep(value=>Math.max(0,value-1));}} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-white/10 px-4 text-sm text-white/65 transition hover:bg-white/[.04] disabled:opacity-25"><ChevronLeft size={16}/>Back</button><div className="flex gap-2"><button type="button" disabled={saving||uploading} onClick={()=>void handleSave()} className="min-h-11 rounded-xl border border-white/10 px-3 text-xs font-semibold text-white/65 transition hover:bg-white/[.04] disabled:opacity-40 sm:px-4 sm:text-sm">Save draft</button>{step<3?<button type="button" onClick={advance} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#c9a227] px-4 text-sm font-bold text-black transition hover:bg-[#e0bd46]">Continue<ChevronRight size={16}/></button>:<button type="button" disabled={saving||uploading||photos.length===0} onClick={()=>void handleSubmitForReview()} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-[#c9a227] px-4 text-sm font-bold text-black transition hover:bg-[#e0bd46] disabled:opacity-40">{saving?'Submitting…':'Submit for review'}<Check size={16}/></button>}</div></div>
+
               {step===3 && photos.length===0 && <p className="mt-3 text-right text-[11px] text-amber-200/70">Add at least one property photo in the previous step before submitting.</p>}
             </>}
           </section>
@@ -477,6 +464,13 @@ function CreateHomeContent() {
       </div>
     
       </div>
+      {!loadingExisting && <footer className="shrink-0 border-t border-[var(--border)] bg-[var(--background)] px-3 pt-2 pb-[max(8px,env(safe-area-inset-bottom))]">
+        <div className="mx-auto flex max-w-3xl items-center gap-2">
+          <button type="button" disabled={step===0 || saving || uploading} onClick={()=>{setFormError(null);setStep(value=>Math.max(0,value-1));}} aria-label="Previous step" className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-[var(--border)] text-[var(--text-secondary)] disabled:opacity-30"><ChevronLeft size={20}/></button>
+          <button type="button" disabled={saving||uploading} onClick={()=>void handleSave()} className="min-h-11 shrink-0 rounded-lg border border-[var(--border)] px-3 text-xs font-semibold text-[var(--text-secondary)] disabled:opacity-40">Save draft</button>
+          {step<3 ? <button type="button" disabled={saving || uploading} onClick={advance} className="flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--vanta-gold)] px-2 text-sm font-semibold text-black disabled:opacity-40">Continue<ChevronRight size={15}/></button> : <button type="button" disabled={saving||uploading||photos.length===0} onClick={()=>void handleSubmitForReview()} className="min-h-11 flex-1 rounded-lg bg-[var(--vanta-gold)] px-2 text-xs font-semibold text-black disabled:opacity-40 sm:text-sm">{saving?'Submitting…':'Submit for review'}</button>}
+        </div>
+      </footer>}
     </main>
   );
 }
