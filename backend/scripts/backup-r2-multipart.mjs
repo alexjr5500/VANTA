@@ -14,7 +14,7 @@ const validId = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-
 // Still acceptance-only until production source and recovery gates are met.
 export async function uploadEncryptedArtifact({ client, sdk, bucket, runId, kind, file, maxBytes }) {
   if (bucket !== 'vanta-backups' || !validId(runId) ||
-      !['database.dump.age', 'media.tar.age', 'fixture.age'].includes(kind) ||
+      !['database.dump.age', 'media.tar.age', 'fixture.age', 'manifest.json.age'].includes(kind) ||
       !Number.isSafeInteger(maxBytes) || maxBytes < HEADER.length || maxBytes > MAX_ARTIFACT_BYTES) {
     fail('Invalid acceptance backup parameters');
   }
@@ -112,4 +112,39 @@ export function verifiedBackupSet(database, media, runId) {
   // This is a local manifest candidate, not proof of source consistency or
   // recoverability. It must be independently restored before release approval.
   return { version: 1, runId, artifacts: [database, media].map(({ key, bytes, sha256 }) => ({ key, bytes, sha256 })) };
+}
+
+/** Publish a commit marker only after both encrypted data artifacts have passed
+ * full remote checksum verification. The injected encryptManifest must be the
+ * trusted age writer; the injected uploader must be the verified uploader.
+ * No plaintext manifest is uploaded. A failed marker transfer is not success.
+ */
+export async function publishEncryptedBackupSet({ database, media, runId, encryptManifest, uploadManifest }) {
+  const manifest = verifiedBackupSet(database, media, runId);
+  const plaintext = Buffer.from(JSON.stringify(manifest) + '\n', 'utf8');
+  const encryptedFile = await encryptManifest(plaintext);
+  const marker = await uploadManifest({ runId, kind: 'manifest.json.age', file: encryptedFile });
+  if (marker?.verified !== true || marker.key !== 'acceptance/pr-282/' + runId + '/manifest.json.age' ||
+      !Number.isSafeInteger(marker.bytes) || marker.bytes <= HEADER.length ||
+      marker.bytes > 64 * 1024 || !validDigest(marker.sha256)) fail('Unverified encrypted manifest');
+  return Object.freeze({ manifest, marker, transferVerified: true });
+}
+
+/** Validate a decrypted marker before selecting recovery objects. This checks
+ * structure and binds the pair to the expected run. It does not authenticate
+ * the writer: the age public recipient is not a signing key. */
+export function parseBackupManifest(bytes, expectedRunId) {
+  if (!Buffer.isBuffer(bytes) || bytes.length === 0 || bytes.length > 16 * 1024 ||
+      !validId(expectedRunId)) fail('Invalid backup manifest input');
+  let value;
+  try { value = JSON.parse(bytes.toString('utf8')); } catch { fail('Invalid backup manifest JSON'); }
+  if (!value || value.version !== 1 || value.runId !== expectedRunId ||
+      Object.keys(value).length !== 3 || !Array.isArray(value.artifacts) ||
+      value.artifacts.length !== 2) fail('Invalid backup manifest shape');
+  const artifacts = value.artifacts.map(a => {
+    if (!a || typeof a !== 'object' || Object.keys(a).length !== 3 ||
+        !Object.hasOwn(a, 'key') || !Object.hasOwn(a, 'bytes') || !Object.hasOwn(a, 'sha256')) fail('Invalid manifest artifact shape');
+    return { ...a, verified: true };
+  });
+  return verifiedBackupSet(artifacts[0], artifacts[1], expectedRunId);
 }

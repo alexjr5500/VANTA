@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createHash, randomUUID } from 'node:crypto';
-import { uploadEncryptedArtifact, verifiedBackupSet, PART_BYTES } from './backup-r2-multipart.mjs';
+import { uploadEncryptedArtifact, verifiedBackupSet, publishEncryptedBackupSet, parseBackupManifest, PART_BYTES } from './backup-r2-multipart.mjs';
 
 const names = ['CreateMultipartUpload', 'UploadPart', 'CompleteMultipartUpload', 'GetObject', 'AbortMultipartUpload'];
 const sdk = Object.fromEntries(names.map(name => [name + 'Command', class { constructor(input) { this.name = name; this.input = input; } }]));
@@ -65,4 +65,24 @@ test('rejects non-acceptance targets, excessive size and symlinks without networ
   await writeFile(args.file, 'not an encrypted archive but long enough');
   await assert.rejects(uploadEncryptedArtifact(args));
   assert.deepEqual(calls, []);
+});
+
+test('encrypted marker published last, binds exact pair to expected run', async t => {
+  const { args } = await fixture(t);
+  const database = await uploadEncryptedArtifact(args);
+  const media = { ...database, key: database.key.replace('database.dump.age','media.tar.age') };
+  let plain; const order = [];
+  const publish = { database, media, runId: args.runId,
+    encryptManifest: async bytes => { order.push('encrypt'); plain = bytes; return '/private/manifest.json.age'; },
+    uploadManifest: async input => { order.push('upload'); assert.equal(input.kind, 'manifest.json.age'); assert.equal(input.file, '/private/manifest.json.age'); return { key: 'acceptance/pr-282/' + args.runId + '/manifest.json.age', bytes: 512, sha256: database.sha256, verified: true }; } };
+  const result = await publishEncryptedBackupSet(publish);
+  assert.deepEqual(order, ['encrypt','upload']);
+  assert.deepEqual(parseBackupManifest(plain, args.runId), result.manifest);
+  assert.throws(() => parseBackupManifest(plain, randomUUID()));
+  const mutated = JSON.parse(plain); mutated.artifacts[1].key = database.key;
+  assert.throws(() => parseBackupManifest(Buffer.from(JSON.stringify(mutated)), args.runId));
+  await assert.rejects(publishEncryptedBackupSet({ ...publish, media: { ...media, verified: false } }));
+  assert.deepEqual(order, ['encrypt','upload']);
+  await assert.rejects(publishEncryptedBackupSet({ ...publish, uploadManifest: async () => { throw Error('marker failed'); } }));
+  await assert.rejects(publishEncryptedBackupSet({ ...publish, uploadManifest: async () => ({ verified: false }) }));
 });
