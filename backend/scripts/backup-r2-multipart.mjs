@@ -11,14 +11,15 @@ const validId = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-
 
 // No environment reads, network client construction or scheduler. Callers must
 // supply an approved bucket-scoped SDK client and an already encrypted file.
-// Still acceptance-only until production source and recovery gates are met.
-export async function uploadEncryptedArtifact({ client, sdk, bucket, runId, kind, file, maxBytes }) {
-  if (bucket !== 'vanta-backups' || !validId(runId) ||
+// Production scope is an explicit operator-only namespace, not activation.
+// This low-level primitive does not establish source fencing or authorization.
+export async function uploadEncryptedArtifact({ client, sdk, bucket, runId, kind, file, maxBytes, scope = 'acceptance' }) {
+  if (bucket !== 'vanta-backups' || !validId(runId) || !['acceptance', 'production'].includes(scope) ||
       !['database.dump.age', 'media.tar.age', 'fixture.age', 'manifest.json.age'].includes(kind) ||
       !Number.isSafeInteger(maxBytes) || maxBytes < HEADER.length || maxBytes > MAX_ARTIFACT_BYTES) {
     fail('Invalid acceptance backup parameters');
   }
-  const key = 'acceptance/pr-282/' + runId + '/' + kind;
+  const key = backupPrefix(scope, runId) + kind;
   const send = command => client.send(command, { abortSignal: AbortSignal.timeout(60000) });
   // Reject symlinked files; caller must own the trusted private scratch directory.
   const fd = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -101,9 +102,14 @@ export async function uploadEncryptedArtifact({ client, sdk, bucket, runId, kind
   } finally { await fd.close(); }
 }
 
-export function verifiedBackupSet(database, media, runId) {
+export function backupPrefix(scope, runId) {
+  if (!validId(runId) || !['acceptance', 'production'].includes(scope)) fail('Invalid backup scope');
+  return (scope === 'production' ? 'production/v1/' : 'acceptance/pr-282/') + runId + '/';
+}
+
+export function verifiedBackupSet(database, media, runId, scope = 'acceptance') {
   if (!validId(runId)) fail('Invalid backup set identity');
-  const prefix = 'acceptance/pr-282/' + runId + '/';
+  const prefix = backupPrefix(scope, runId);
   for (const [artifact, kind] of [[database, 'database.dump.age'], [media, 'media.tar.age']]) {
     if (artifact?.verified !== true || artifact.key !== prefix + kind ||
         !Number.isSafeInteger(artifact.bytes) || artifact.bytes <= HEADER.length ||
@@ -119,12 +125,12 @@ export function verifiedBackupSet(database, media, runId) {
  * trusted age writer; the injected uploader must be the verified uploader.
  * No plaintext manifest is uploaded. A failed marker transfer is not success.
  */
-export async function publishEncryptedBackupSet({ database, media, runId, encryptManifest, uploadManifest }) {
-  const manifest = verifiedBackupSet(database, media, runId);
+export async function publishEncryptedBackupSet({ database, media, runId, encryptManifest, uploadManifest, scope = 'acceptance' }) {
+  const manifest = verifiedBackupSet(database, media, runId, scope);
   const plaintext = Buffer.from(JSON.stringify(manifest) + '\n', 'utf8');
   const encryptedFile = await encryptManifest(plaintext);
   const marker = await uploadManifest({ runId, kind: 'manifest.json.age', file: encryptedFile });
-  if (marker?.verified !== true || marker.key !== 'acceptance/pr-282/' + runId + '/manifest.json.age' ||
+  if (marker?.verified !== true || marker.key !== backupPrefix(scope, runId) + 'manifest.json.age' ||
       !Number.isSafeInteger(marker.bytes) || marker.bytes <= HEADER.length ||
       marker.bytes > 64 * 1024 || !validDigest(marker.sha256)) fail('Unverified encrypted manifest');
   return Object.freeze({ manifest, marker, transferVerified: true });
@@ -133,7 +139,7 @@ export async function publishEncryptedBackupSet({ database, media, runId, encryp
 /** Validate a decrypted marker before selecting recovery objects. This checks
  * structure and binds the pair to the expected run. It does not authenticate
  * the writer: the age public recipient is not a signing key. */
-export function parseBackupManifest(bytes, expectedRunId) {
+export function parseBackupManifest(bytes, expectedRunId, scope = 'acceptance') {
   if (!Buffer.isBuffer(bytes) || bytes.length === 0 || bytes.length > 16 * 1024 ||
       !validId(expectedRunId)) fail('Invalid backup manifest input');
   let value;
@@ -146,5 +152,5 @@ export function parseBackupManifest(bytes, expectedRunId) {
         !Object.hasOwn(a, 'key') || !Object.hasOwn(a, 'bytes') || !Object.hasOwn(a, 'sha256')) fail('Invalid manifest artifact shape');
     return { ...a, verified: true };
   });
-  return verifiedBackupSet(artifacts[0], artifacts[1], expectedRunId);
+  return verifiedBackupSet(artifacts[0], artifacts[1], expectedRunId, scope);
 }
