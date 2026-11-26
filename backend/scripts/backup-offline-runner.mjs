@@ -9,6 +9,7 @@ import { openBackupJournal, measureR2Inventory, measureScratchFreeBytes } from '
 import { runBackupSet, signBackupManifest } from './backup-orchestrator.mjs';
 import { captureEncryptedArtifact } from './backup-bounded-capture.mjs';
 import { uploadEncryptedArtifact, backupPrefix } from './backup-r2-multipart.mjs';
+import { alertConfig, sendBackupAlert, productionIdentity } from './backup-operations.mjs';
 
 const check = (value, reason) => { if (!value) throw Error(reason || 'offline backup guard failed'); };
 const fixed = { project:'a05242c0-8a26-40b0-a88d-e338e96eec55', environment:'4a6d43ce-571f-4d85-8abe-c7c5f19ed920',
@@ -71,6 +72,8 @@ async function mediaInventory() {
 
 async function main() {
   const env = process.env, cfg = checkOfflineConfig(env, process.pid);
+  // Validate opted-in notification transport before any source access.
+  alertConfig(env);
   const mountInfo = await readFile('/proc/self/mountinfo','utf8');
   check(mountInfo.split('\n').some(line=>line.split(' ')[4]===mediaRoot),'Existing /data mount required');
   const require = createRequire(new URL('../backup-runtime/package.json',import.meta.url));
@@ -113,12 +116,14 @@ async function main() {
           // SHARE locks protect existing relations against ordinary DML/DDL,
           // not all possible privileged clients or sequence activity.
           const conn = new Client({connectionString:env.DATABASE_URL,connectionTimeoutMillis:5000,query_timeout:10000,keepAlive:true});
-          let lost=false; conn.on('error',()=>{lost=true}); conn.on('end',()=>{lost=true});
+          let lost=false, lockedTables; const lockDeadline=Date.now()+60000;
+          conn.on('error',()=>{lost=true}); conn.on('end',()=>{lost=true});
+          const tableInventory=async()=> (await conn.query("SELECT format('%I.%I',n.nspname,c.relname) AS name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p') AND n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' ORDER BY 1")).rows.map(row=>row.name);
           const healthy=async()=>{
             if(lost)return false;
             try{
               const q=await conn.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND backend_type='client backend' AND pid<>pg_backend_pid()");
-              return !lost && q.rows[0]?.n===0;
+              return !lost && q.rows[0]?.n===0 && (!lockedTables || JSON.stringify(await tableInventory())===JSON.stringify(lockedTables));
             }catch{return false;}
           };
           try{
@@ -126,9 +131,13 @@ async function main() {
             const q=await conn.query("SELECT current_database() AS db,current_setting('server_version_num')::int AS version,pg_is_in_recovery() AS standby");
             check(q.rows[0]?.db===database&&Math.floor(q.rows[0]?.version/10000)===18&&!q.rows[0]?.standby&&await healthy(),'Unexpected database or other client present');
             await conn.query('BEGIN'); await conn.query("SET LOCAL lock_timeout='3s'");
-            const tables=await conn.query("SELECT format('%I.%I',n.nspname,c.relname) AS name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p') AND n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' ORDER BY 1");
-            check(tables.rows.length>0&&tables.rows.length<=10000,'Unexpected database table inventory');
-            for(const table of tables.rows) await conn.query('LOCK TABLE ONLY '+table.name+' IN SHARE MODE');
+            const tables=await tableInventory();
+            check(tables.length>0&&tables.length<=10000,'Unexpected database table inventory');
+            for(const table of tables){
+              check(Date.now()<lockDeadline,'Source lock acquisition deadline exceeded');
+              await conn.query('LOCK TABLE ONLY '+table+' IN SHARE MODE');
+            }
+            lockedTables=tables;
             check(await healthy(),'Source clients appeared');
             beforeMedia=await mediaInventory();
             return {healthy,release:async()=>{try{await conn.query('ROLLBACK')}finally{await conn.end()}}};
@@ -162,5 +171,14 @@ async function main() {
 }
 
 if(process.argv[1] && import.meta.url===pathToFileURL(process.argv[1]).href) {
-  try{await main()}catch{console.error('[VANTA OFFLINE BACKUP] '+JSON.stringify({transferVerified:false,reconcileBeforeRetry:true}));process.exitCode=1;}
+  try{await main()}catch{
+    console.error('[VANTA OFFLINE BACKUP] '+JSON.stringify({transferVerified:false,reconcileBeforeRetry:true}));
+    process.exitCode=1;
+    if(productionIdentity(process.env) && process.env.VANTA_BACKUP_ALERTS_ENABLED==='yes'){
+      try{
+        await sendBackupAlert({config:alertConfig(process.env),issues:['backup_attempt_failed']});
+        console.error('[VANTA BACKUP ALERT] deliveryAccepted');
+      }catch{console.error('[VANTA BACKUP ALERT] deliveryFailed');}
+    }
+  }
 }

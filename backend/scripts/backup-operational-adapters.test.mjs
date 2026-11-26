@@ -47,3 +47,16 @@ test('counts all pages and blocks incomplete upload, duplicate keys and truncate
   await assert.rejects(measureR2Inventory({...args,client:{send:async c=>c.name==='uploads'?{Uploads:[{Key:'x'}]}:{Contents:[]}}}));
   await assert.rejects(measureR2Inventory({...args,client:{send:async c=>c.name==='uploads'?{}:{Contents:[{Key:'a',Size:1},{Key:'a',Size:1}]}}}));
 });
+
+test('historic run IDs and cross-scope attempts are rejected before new capture', async t => {
+  const dir=await fixture(t), j=await openBackupJournal(dir), lock=await j.acquireExclusiveWriter();
+  const a=randomUUID(), b=randomUUID();
+  for(const runId of [a,b]){
+    await j.beginAttempt({scope:'production',runId});
+    await j.recordVerifiedTransfer({scope:'production',runId,capturedAtMs:Date.now(),marker:{verified:true},manifest:{runId}});
+  }
+  await assert.rejects(j.beginAttempt({scope:'production',runId:a}), /already used/);
+  await assert.rejects(j.beginAttempt({scope:'acceptance',runId:randomUUID()}), /scope/);
+  assert.equal((await j.readCurrent()).runId,b);
+  await lock.release();
+});

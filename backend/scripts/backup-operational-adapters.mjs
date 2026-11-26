@@ -72,6 +72,10 @@ export async function openBackupJournal(controlDir) {
       check(!await this.unresolvedAttempt(), 'Prior attempt requires reconciliation');
       const previous = await readCurrent();
       check(previous?.runId !== runId, 'Backup run ID already used');
+      check(!previous || previous.scope === scope, 'Backup journal scope cannot change');
+      // Historical IDs are never reusable, even after the current record advances.
+      try { await lstat(join(controlDir, runId + '.json')); throw Error('Backup run ID already used'); }
+      catch (e) { if (e?.code !== 'ENOENT') throw e; }
       if (previous) {
         // Immutable history keeps the prior verified-transfer evidence.
         await createRecord(join(controlDir, previous.runId + '.json'), previous);
