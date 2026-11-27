@@ -249,6 +249,13 @@ describe('processPaymentWebhook (LIVE payments)', () => {
     expect(prisma.verificationBadge.create).not.toHaveBeenCalled();
   });
 
+  test.each(['eventId', 'orderId', 'txHash', 'network', 'asset', 'amount', 'status', 'recipient'] as const)('rejects unsigned override of %s before processing', async (key) => {
+    const body = eventBody();
+    const input = { ...body, rawBody: JSON.stringify(body), signature: sign(body), [key]: 'unsigned-override' };
+    await expect(verificationPaymentService.processPaymentWebhook(input)).rejects.toThrow('Webhook fields do not match authenticated body');
+    expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
+  });
+
   test('rejects a webhook with an invalid signature', async () => {
     const body = eventBody();
     await expect(verificationPaymentService.processPaymentWebhook({
@@ -320,7 +327,7 @@ describe('processPaymentWebhook (LIVE payments)', () => {
   });
 
   test('a recipient that is not the official wallet blocks activation', async () => {
-    const body = { ...eventBody(), eventId: 'evt-recipient' };
+    const body = { ...eventBody(), eventId: 'evt-recipient', recipient: '0x' + 'e'.repeat(40) };
     const result = await verificationPaymentService.processPaymentWebhook({
       rawBody: JSON.stringify(body), signature: sign(body), eventId: body.eventId, orderId: body.orderId,
       txHash: body.txHash, network: body.network, asset: body.asset, amount: body.amount, status: body.status,

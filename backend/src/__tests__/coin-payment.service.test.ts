@@ -303,6 +303,13 @@ describe('CoinPaymentService.processPaymentWebhook', () => {
     expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
   });
 
+  test.each(['eventId', 'orderId', 'txHash', 'network', 'asset', 'amount', 'status', 'recipient'] as const)('rejects unsigned override of %s before processing', async (key) => {
+    const body = eventBody();
+    const input = { ...body, rawBody: JSON.stringify(body), signature: sign(body), [key]: 'unsigned-override' };
+    await expect(coinPaymentService.processPaymentWebhook(input)).rejects.toThrow('Webhook fields do not match authenticated body');
+    expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
+  });
+
   test('rejects a webhook with an invalid signature', async () => {
     const body = eventBody();
     await expect(coinPaymentService.processPaymentWebhook({
@@ -342,7 +349,7 @@ describe('CoinPaymentService.processPaymentWebhook', () => {
   });
 
   test('a verified tx can credit only once even when a distinct webhook event replays it', async () => {
-    const body = eventBody();
+    const body = { ...eventBody(), eventId: 'evt-duplicate-hash' };
     (walletService.completeCoinPurchase as jest.Mock).mockRejectedValueOnce({ code: 'P2002' });
     const result = await coinPaymentService.processPaymentWebhook({
       rawBody: JSON.stringify(body), signature: sign(body),
@@ -389,13 +396,9 @@ describe('CoinPaymentService.processPaymentWebhook', () => {
   });
 
   test('a recipient that is not the official wallet blocks crediting', async () => {
-    const body = eventBody();
+    const body = { ...eventBody(), recipient: '0x' + 'd'.repeat(40) };
     const result = await coinPaymentService.processPaymentWebhook({
-      rawBody: JSON.stringify(body),
-      signature: sign(body),
-      eventId: body.eventId, orderId: body.orderId, txHash: body.txHash, network: body.network,
-      asset: body.asset, amount: body.amount, status: body.status,
-      recipient: '0x' + 'd'.repeat(40), // attacker-controlled recipient
+      ...body, rawBody: JSON.stringify(body), signature: sign(body),
     });
 
     expect(result.result).toBe('failed');
