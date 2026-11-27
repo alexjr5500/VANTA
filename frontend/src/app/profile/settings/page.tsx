@@ -31,6 +31,7 @@ const searchable = [
   { title: 'Payments and wallet security', href: '/settings/payments', icon: LockKeyhole },
   { title: 'Verified Badge', href: '/verification/badge', icon: ShieldCheck },
   { title: 'Change password, email and two-factor authentication', href: '/settings/security', icon: LockKeyhole },
+  { title: 'Delegated access and invitations', href: '/settings/security/delegation', icon: LockKeyhole },
   { title: 'Connected sign-in accounts', href: '/settings/security/connected', icon: LockKeyhole },
   { title: 'Two-factor recovery codes', href: '/settings/security/recovery', icon: LockKeyhole },
   { title: 'Trusted devices', href: '/settings/security/trusted', icon: LockKeyhole },

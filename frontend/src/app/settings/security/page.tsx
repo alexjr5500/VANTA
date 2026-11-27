@@ -331,6 +331,7 @@ export default function SecuritySettingsPage() {
       ) : (
         <>
           <SettingsGroup title="Apps and account access">
+            <SettingsLink href="/settings/security/delegation" title="Delegated access" description="Invite trusted people to view your content analytics" />
             <SettingsLink href="/settings/security/recovery" title="Recovery codes" description="Check remaining codes or generate a fresh set" />
             <SettingsLink href="/settings/security/connected" title="Connected sign-in accounts" description="Review verified external sign-in identities" />
             <SettingsLink href="/settings/security/trusted" title="Trusted devices" description="Review and remove trusted-device records" />

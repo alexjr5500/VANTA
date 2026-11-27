@@ -62,6 +62,8 @@ model User {
   // [provider, providerAccountId] constraint below).
   providerAccounts ProviderAccount[]
 
+  delegationGrants AccountDelegation[] @relation("DelegationOwner")
+  delegatedAccess AccountDelegation[] @relation("DelegationRecipient")
   sentChatRequests  ChatContactRequest[] @relation("ChatRequestSender")
   receivedChatRequests ChatContactRequest[] @relation("ChatRequestRecipient")
   profile           Profile?
@@ -878,6 +880,25 @@ model PostCommentLike {
   @@unique([userId, commentId])
   @@index([commentId, createdAt])
   @@index([userId, createdAt])
+}
+
+model AccountDelegation {
+  id String @id @default(cuid())
+  ownerId String
+  delegateId String
+  owner User @relation("DelegationOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  delegate User @relation("DelegationRecipient", fields: [delegateId], references: [id], onDelete: Cascade)
+  scope String @default("CONTENT_ANALYTICS")
+  status String @default("PENDING")
+  createdAt DateTime @default(now())
+  invitationExpiresAt DateTime
+  acceptedAt DateTime?
+  expiresAt DateTime?
+  endedAt DateTime?
+
+  @@index([ownerId, status, createdAt])
+  @@index([delegateId, status, createdAt])
+  @@index([ownerId, delegateId, status])
 }
 
 model ChatContactRequest {

@@ -9,6 +9,7 @@ export function notificationDestination(notification: Target): string | null {
   const data = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
   const entity = notification.entityType?.toLowerCase();
   const type = notification.type?.trim().toLowerCase() || '';
+  if (type === 'delegation_invite' || entity === 'account_delegation') return '/settings/security/delegation';
   if (type === 'chat_request' || entity === 'chat_request') return '/chat/requests';
   const reel = id(data.reelId) || id(data.videoId) || (entity === 'reel' || entity === 'video' ? id(notification.entityId) : null);
   const post = id(data.postId) || (entity === 'post' ? id(notification.entityId) : null);
