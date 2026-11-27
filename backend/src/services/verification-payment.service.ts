@@ -1,4 +1,5 @@
 import { shopCoinBadgeEnabled, badgeCoinCost } from '../config/shop-coin-badge.config';
+import { shopCryptoNetworks, shopLiveCryptoEnabled } from '../config/shop-crypto.config';
 import { shopCardEnabled } from '../config/shop-card.config';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 import { prisma } from '../prisma';
@@ -125,14 +126,15 @@ export class VerificationPaymentService {
     planId: unknown,
     network: unknown,
     ipAddress?: string,
-    recipientId?: unknown
+    recipientId?: unknown,
+    dedicatedInvoice = false
   ): Promise<Record<string, unknown>> {
     if (!userId) throw new Error('Unauthorized');
     if (typeof planId !== 'string' || !planId.trim()) {
       throw new Error('planId is required');
     }
-    if (typeof network !== 'string' || !SUPPORTED_COIN_PAYMENT_NETWORKS.includes(network)) {
-      throw new Error('Unsupported payment network. Choose USDT (BEP-20) or USDC (Base).');
+    if (typeof network !== 'string' || !SUPPORTED_COIN_PAYMENT_NETWORKS.includes(network) && !(dedicatedInvoice && shopLiveCryptoEnabled() && shopCryptoNetworks().includes(network))) {
+      throw new Error('Unsupported payment network.');
     }
 
     const recipientUserId = await resolveShopGiftRecipient(userId, recipientId);
