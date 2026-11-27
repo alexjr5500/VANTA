@@ -2,7 +2,7 @@
 
 This branch does not enable production checkout. Existing shared receiving-wallet routes and the old amount/time matching watcher remain disabled. No purchase bonus is added.
 
-The new checkout uses one permanently reserved deposit address per invoice, exact token atomic units, canonical chain block and invoice time checks, persisted scan progress, server-confirmed fulfillment and a payer-scoped recovery API. USDT BNB Smart Chain and USDC Base are the currently implemented networks. The address pool is not a treasury change; it must consist of fresh, operator-controlled receiving addresses with an approved custody and sweep/reconciliation process.
+The new checkout uses one permanently reserved deposit address per invoice, exact token atomic units, canonical chain block and invoice time checks, persisted scan progress, server-confirmed fulfillment and a payer-scoped recovery API. USDT BNB Smart Chain, USDC Base, USDT Ethereum ERC-20 and native ETH on Ethereum are implemented, behind separate opt-ins. The address pool is not a treasury change; it must consist of fresh, operator-controlled receiving addresses with an approved custody and sweep/reconciliation process.
 
 ## Before enabling
 
@@ -15,3 +15,11 @@ The new checkout uses one permanently reserved deposit address per invoice, exac
 - Live gifts, additional networks, hosted card checkout, recurring billing, coin-funded badge purchases and Android Play Billing are outside this change and remain blocked until separately implemented and verified.
 
 A sandbox can still exercise no-bonus gift and self-purchase confirmation using isolated non-production data and the existing sandbox flags.
+
+## Ethereum expansion
+- `VANTA_ETHEREUM_RPC_URL`: explicit trusted HTTPS Ethereum mainnet RPC with finalized-block support, configured before server startup.
+- `VANTA_SHOP_ERC20_ENABLED=true`: enable USDT ERC-20 in the dedicated invoice flow only. Contract 0xdac17f958d2ee523a2206206994597c13d831ec7, 6 decimals (Tether supported protocols).
+- `VANTA_SHOP_NATIVE_ETH_ENABLED=true`: enable native ETH only after review of price-feed and custody risk. Uses the Ethereum mainnet Chainlink ETH/USD feed, verifies 8 decimals and fresh positive round data, saves exact wei quote and rejects stale or invalid prices. EIP-681 native payment URI carries the exact wei amount.
+- Both Ethereum rails require finalized blocks and independent receipt verification. Native ETH discovery scans bounded finalized blocks for direct transfers; contract-internal transfers and batch transfers are not supported. Ethereum finality can arrive after the 30-minute order window; operators must reconcile these payments without automatically treating them as successful. Gas is paid separately.
+- Use unique custody-controlled receiving addresses, never reuse them, and test real wallets on an isolated controlled environment before enabling either flag. Rate, quote expiry, finality, throughput, provider outage, underpayments and fund sweeping require operational validation. No production settings were changed.
+- TRON TRC-20 and TON/GRAM remain disabled; they need separate address formats, chain identity checks, finalized transaction validation, QR/deep links and custody. Google Play Billing remains deferred.
