@@ -36,6 +36,9 @@ interface PrivacySettings {
   privacyFollows: string;
   activityStatus: boolean;
   readReceipts: boolean;
+  onlineStatus?: string;
+  lastSeen?: string;
+  privacyReadReceipts?: string;
 }
 
 const PRIVACY_DEFAULTS: PrivacySettings = {
@@ -114,8 +117,8 @@ export default function PrivacySettingsPage() {
     pendingKeys.current.add(key);
     setSaving((prev) => [...prev, key]);
     try {
-      await apiPut('/api/settings/privacy', { [key]: value }, token);
-      setPrivacy((prev) => ({ ...prev, [key]: value }));
+      const result = await apiPut<{settings?: Partial<PrivacySettings>}>('/api/settings/privacy', { [key]: value }, token);
+      setPrivacy((prev) => ({ ...prev, ...(result.settings || { [key]: value }) }));
       flagSaved(key);
     } catch {
       toast.error('Could not save', 'Please try again.');
@@ -260,7 +263,7 @@ return (
 
           <SettingsGroup title="Privacy and data">
             <SettingsLink href="/settings/privacy/audience" icon={Users} title="Audience, invitations and discoverability" description="Manage mentions, calls, stories, invites, presence and receipts" />
-            <SettingsLink href="/settings/content" icon={Eye} title="Content you see" description="Media and sensitive-content preferences" />
+            <SettingsLink href="/settings/content" icon={Eye} title="Content you see" description="Media playback and data preferences" />
             <SettingsLink href="/privacy-center?tab=consent" icon={Lock} title="Data sharing and consent" description="Manage and review your consent preferences" />
           </SettingsGroup>
           {loadError && <p role="alert" className="text-sm text-red-400">Could not load privacy settings. Return and try again before making changes.</p>}
@@ -269,18 +272,18 @@ return (
           <SettingsGroup icon={Users} title="Presence" description="How you appear to others">
             <ToggleRow
               icon={Eye}
-              title="Activity status"
+              title="Public activity status"
               description="Allow online and last active visibility for everyone. For a narrower audience, open Audience settings."
-              checked={privacy.activityStatus}
+              checked={privacy.onlineStatus !== undefined && privacy.lastSeen !== undefined ? privacy.onlineStatus === 'everyone' && privacy.lastSeen === 'everyone' : privacy.activityStatus}
               onChange={(v) => updatePrivacy('activityStatus', v)}
               disabled={loadError || saving.includes('activityStatus')}
               saved={savedKey === 'activityStatus'}
             />
             <ToggleRow
               icon={EyeOff}
-              title="Read receipts"
+              title="Public read receipts"
               description="Allow read receipts for everyone. Use Audience settings for follower-only receipts."
-              checked={privacy.readReceipts}
+              checked={privacy.privacyReadReceipts !== undefined ? privacy.readReceipts && privacy.privacyReadReceipts === 'everyone' : privacy.readReceipts}
               onChange={(v) => updatePrivacy('readReceipts', v)}
               disabled={loadError || saving.includes('readReceipts')}
               saved={savedKey === 'readReceipts'}

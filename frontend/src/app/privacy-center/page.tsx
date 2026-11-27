@@ -436,6 +436,7 @@ export default function PrivacyCenterPage() {
           ]},
           { label: 'Message Permissions', key: 'messagePermissions', type: 'select', options: [
             { value: 'everyone', label: 'Everyone' },
+            { value: 'following', label: 'People I follow' },
             { value: 'followers', label: 'Followers Only' },
             { value: 'nobody', label: 'Nobody' },
           ]},

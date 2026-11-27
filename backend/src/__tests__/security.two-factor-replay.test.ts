@@ -73,6 +73,14 @@ describe('TOTP replay protection', () => {
     expect(prisma.user.updateMany).not.toHaveBeenCalled();
   });
 
+  test('recovery code rotation refuses missing, invalid or replayed authenticator tokens', async () => {
+    await expect(twoFactorAuth.regenerateBackupCodes('user1')).rejects.toThrow('fresh authenticator code');
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+    (prisma.user.updateMany as jest.Mock).mockResolvedValueOnce({count:0});
+    await expect(twoFactorAuth.regenerateBackupCodes('user1','123456')).rejects.toThrow('fresh authenticator code');
+    expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
+  });
+
   test('backup codes are consumed with compare-and-swap', async () => {
     const backupCodes = JSON.stringify(['hash:RECOVERY1', 'hash:RECOVERY2']);
     (prisma.user.findUnique as jest.Mock).mockResolvedValue({
@@ -99,8 +107,8 @@ describe('TOTP replay protection', () => {
     });
     const result = await twoFactorAuth.enable('user1', '123456');
     expect(result).toEqual({ success: true });
-    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'user1' },
+    expect(prisma.user.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'user1', twoFactorEnabled: false, twoFactorSecret: 'BASE32SECRET' },
       data: { twoFactorEnabled: true },
     }));
     expect(prisma.user.updateMany).toHaveBeenCalled();

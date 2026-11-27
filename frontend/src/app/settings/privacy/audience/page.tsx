@@ -51,7 +51,7 @@ export default function AudiencePage() {
         <SettingsGroup title="Visibility and invitations">
           <SelectRow icon={Eye} title="Who can view your stories" value={prefs.storyVisibility} options={options} disabled={busy} onSelect={value => void save({storyVisibility: value as Mode})} />
           <SelectRow icon={Users} title="Who can invite you to groups" value={prefs.groupInvites} options={options} disabled={busy} onSelect={value => void save({groupInvites: value as Mode})} />
-          <SelectRow icon={Users} title="Who can invite you to channels" value={prefs.communityInvites} options={options} disabled={busy} onSelect={value => void save({communityInvites: value as Mode})} />
+          <SelectRow icon={Users} title="Who can invite you to channels and communities" value={prefs.communityInvites} options={options} disabled={busy} onSelect={value => void save({communityInvites: value as Mode})} />
         </SettingsGroup>
         <SettingsGroup title="Presence and receipts">
           <SelectRow icon={Eye} title="Who can see your online status" value={prefs.onlineStatus} options={options} disabled={busy} onSelect={value => void save({onlineStatus: value as Mode})} />

@@ -834,7 +834,7 @@ export class UserService {
         throw new Error('Message privacy must be everyone, followers, following, or noone');
       }
       settings.privacyMessages = value;
-      settings.messagePermissions = value === 'noone' ? 'nobody' : value === 'following' ? 'followers' : value;
+      settings.messagePermissions = value === 'noone' ? 'nobody' : value;
     }
 
     if (data.privacyFollows !== undefined) {
