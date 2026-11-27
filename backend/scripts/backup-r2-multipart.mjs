@@ -14,7 +14,8 @@ const validId = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-
 // Production scope is an explicit operator-only namespace, not activation.
 // This low-level primitive does not establish source fencing or authorization.
 export async function uploadEncryptedArtifact({ client, sdk, bucket, runId, kind, file, maxBytes, scope = 'acceptance' }) {
-  if (bucket !== 'vanta-backups' || !validId(runId) || !['acceptance', 'production'].includes(scope) ||
+  if (bucket !== 'vanta-backups' || !validId(runId) || !['acceptance', 'production', 'production-db'].includes(scope) ||
+      (scope === 'production-db' && !['database.dump.age', 'manifest.json.age'].includes(kind)) ||
       !['database.dump.age', 'media.tar.age', 'fixture.age', 'manifest.json.age'].includes(kind) ||
       !Number.isSafeInteger(maxBytes) || maxBytes < HEADER.length || maxBytes > MAX_ARTIFACT_BYTES) {
     fail('Invalid acceptance backup parameters');
@@ -103,12 +104,12 @@ export async function uploadEncryptedArtifact({ client, sdk, bucket, runId, kind
 }
 
 export function backupPrefix(scope, runId) {
-  if (!validId(runId) || !['acceptance', 'production'].includes(scope)) fail('Invalid backup scope');
-  return (scope === 'production' ? 'production/v1/' : 'acceptance/pr-282/') + runId + '/';
+  if (!validId(runId) || !['acceptance', 'production', 'production-db'].includes(scope)) fail('Invalid backup scope');
+  return (scope === 'production-db' ? 'production-db/v1/' : scope === 'production' ? 'production/v1/' : 'acceptance/pr-282/') + runId + '/';
 }
 
 export function verifiedBackupSet(database, media, runId, scope = 'acceptance') {
-  if (!validId(runId)) fail('Invalid backup set identity');
+  if (!validId(runId) || !['acceptance','production'].includes(scope)) fail('Invalid backup set identity');
   const prefix = backupPrefix(scope, runId);
   for (const [artifact, kind] of [[database, 'database.dump.age'], [media, 'media.tar.age']]) {
     if (artifact?.verified !== true || artifact.key !== prefix + kind ||
