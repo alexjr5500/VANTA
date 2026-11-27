@@ -13,6 +13,8 @@ import {
 import { authenticateJWT } from '../middleware/auth.middleware';
 import { rateLimiter } from '../security/rateLimiter';
 
+import { shopLiveCryptoEnabled } from '../config/shop-crypto.config';
+import { createShopCryptoInvoice, resumeShopCryptoInvoice, checkShopCryptoInvoice } from '../services/shop-crypto.service';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 
 const router = Router();
@@ -64,9 +66,29 @@ router.post('/address', saveWalletAddress);
 
 // Coin packages (Buy Coins flow)
 router.get('/packages', getCoinPackages);
-router.get('/shop-capabilities', (_req, res) => res.json({ sandbox: shopSandboxEnabled() }));
+router.get('/shop-capabilities', (_req, res) => res.json({ sandbox: shopSandboxEnabled(), liveCrypto: shopLiveCryptoEnabled() }));
 router.post('/payment-address', rateLimiter.otp, (req, res) => shopSandboxEnabled() ? getPaymentAddress(req, res) : purchasesUnderMaintenance(req, res));
 router.post('/verify-payment', rateLimiter.otp, (req, res) => shopSandboxEnabled() ? verifyPayment(req, res) : purchasesUnderMaintenance(req, res));
+// Dedicated invoice route; legacy shared-wallet live endpoints remain blocked.
+router.post('/shop/crypto/invoices', rateLimiter.otp, async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
+  if (!shopLiveCryptoEnabled()) { purchasesUnderMaintenance(req, res); return; }
+  if (!req.user?.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  try { res.status(201).json(await createShopCryptoInvoice(req.user.userId, req.body || {})); }
+  catch (e) { console.warn('[SHOP-CRYPTO] Invoice creation failed'); res.status(400).json({ error: 'Could not create payment invoice. Check the selection or try again later.' }); }
+});
+router.get('/shop/crypto/invoices/:orderId', async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
+  if (!shopLiveCryptoEnabled()) { purchasesUnderMaintenance(req, res); return; }
+  if (!req.user?.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(await resumeShopCryptoInvoice(req.user.userId, req.params.orderId)); }
+  catch { res.status(404).json({ error: 'Invoice unavailable' }); }
+});
+router.post('/shop/crypto/invoices/:orderId/check', rateLimiter.otp, async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
+  if (!shopLiveCryptoEnabled()) { purchasesUnderMaintenance(req, res); return; }
+  if (!req.user?.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  try { res.json(await checkShopCryptoInvoice(req.user.userId, req.params.orderId, typeof req.body?.txHash === 'string' ? req.body.txHash.trim() : undefined)); }
+  catch { res.status(400).json({ error: 'Could not verify payment. Check the transaction hash or try again shortly.' }); }
+});
 // Coin purchase history for the authenticated user
 router.get('/purchases', getCoinPurchases);
 
