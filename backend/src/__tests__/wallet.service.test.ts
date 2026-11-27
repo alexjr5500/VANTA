@@ -15,6 +15,7 @@ jest.mock('../prisma', () => ({
     },
     walletPIN: {
       findUnique: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     walletTransaction: {
       create: jest.fn(),

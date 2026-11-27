@@ -205,7 +205,7 @@ describe('WalletService.transferCoins — OTP challenge (Phase 5)', () => {
     tx.transferOtpChallenge.findUnique.mockResolvedValue(challenge);
     (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
     await transferWithPin('user1', 'user2', 2000, undefined, '123456', '127.0.0.1', undefined, undefined, 'challenge1', 'session1', '654321');
-    expect(twoFactorAuth.verifyLogin).toHaveBeenCalledWith('user1', '654321');
+    expect(twoFactorAuth.verifyLogin).toHaveBeenCalledWith('user1', '654321', true);
   });
 
   test('rejects an invalid OTP inside the transaction and aborts the transfer', async () => {
@@ -441,7 +441,7 @@ describe('Wallet PIN transfer authorization and concurrent lockout', () => {
     });
     expect(verifySpy).toHaveBeenCalledWith('user1', '1234');
     expect(prisma.walletPIN.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'pin1', pinHash: 'hashed_pin' },
+      where: { id: 'pin1', pinHash: 'hashed_pin', failedAttempts: 0, lockedUntil: null },
       data: expect.objectContaining({ failedAttempts: 0, lockedUntil: null }),
     }));
     verifySpy.mockRestore();
@@ -464,4 +464,10 @@ describe('Wallet PIN transfer authorization and concurrent lockout', () => {
     expect(lockedUntil).toBeInstanceOf(Date);
     await expect(walletService.verifyPin('user1', '1234')).rejects.toThrow('PIN is locked');
   });
+});
+
+test('valid PIN cannot authorize against a concurrently changed security snapshot', async () => {
+  (prisma.walletPIN.updateMany as jest.Mock).mockResolvedValueOnce({ count: 0 });
+  await expect(walletService.verifyPin('user1', '1234')).rejects.toThrow('PIN security state changed');
+  expect(prisma.walletPIN.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ pinHash: 'hashed_pin', failedAttempts: 0, lockedUntil: null }) }));
 });

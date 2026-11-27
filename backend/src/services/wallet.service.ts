@@ -780,7 +780,7 @@ export class WalletService {
   private async verifyWalletTwoFactor(userId: string, token: string | undefined, action: string): Promise<void> {
     if (!(await this.isTwoFactorEnabled(userId))) return;
     if (typeof token !== 'string' || !token.trim()) throw new Error('Authenticator 2FA code is required for this wallet action');
-    const result = await twoFactorAuth.verifyLogin(userId, token.trim());
+    const result = await twoFactorAuth.verifyLogin(userId, token.trim(), true);
     if (!result.valid) throw new Error('Invalid authenticator 2FA code');
     await this.logAudit(userId, 'WALLET_2FA_VERIFIED', { action, isBackupCode: result.isBackupCode });
   }
@@ -1472,7 +1472,7 @@ export class WalletService {
     const updated = await prisma.walletPIN.updateMany({
       // Compare-and-swap prevents two concurrent PIN changes from both
       // succeeding against the same previously verified PIN.
-      where: { id: pinRecord.id, pinHash: pinRecord.pinHash },
+      where: { id: pinRecord.id, pinHash: pinRecord.pinHash, failedAttempts: 0, lockedUntil: null },
       data: { pinHash: newPinHash, failedAttempts: 0, lockedUntil: null },
     });
     if (updated.count !== 1) {
@@ -1498,7 +1498,7 @@ export class WalletService {
         SET "failedAttempts" = CASE WHEN "lockedUntil" IS NOT NULL AND "lockedUntil" <= NOW() THEN 1 ELSE "failedAttempts" + 1 END,
             "lockedUntil" = CASE WHEN (CASE WHEN "lockedUntil" IS NOT NULL AND "lockedUntil" <= NOW() THEN 0 ELSE "failedAttempts" END) + 1 >= 5
               THEN NOW() + INTERVAL '15 minutes' ELSE NULL END
-        WHERE "id" = ${pinRecord.id} AND ("lockedUntil" IS NULL OR "lockedUntil" <= NOW())
+        WHERE "id" = ${pinRecord.id} AND "pinHash" = ${pinRecord.pinHash} AND ("lockedUntil" IS NULL OR "lockedUntil" <= NOW())
         RETURNING "failedAttempts", "lockedUntil"
       `;
       const attempt = attempts[0];
@@ -1507,12 +1507,14 @@ export class WalletService {
       if (attempt.lockedUntil) throw new Error("PIN locked after 5 failed attempts. Please try again in 15 minutes.");
       throw new Error(`Invalid PIN. ${5 - attempt.failedAttempts} attempts remaining.`);
     }
-    if (pinRecord.failedAttempts > 0 || pinRecord.lockedUntil) {
-      await prisma.walletPIN.updateMany({
-        where: { id: pinRecord.id, failedAttempts: pinRecord.failedAttempts, lockedUntil: pinRecord.lockedUntil },
-        data: { failedAttempts: 0, lockedUntil: null },
-      });
-    }
+    // Always compare-and-swap the verified hash and lockout snapshot,
+    // including a clean initial counter. A concurrent reset/lock/change
+    // must invalidate this authentication attempt rather than succeed stale.
+    const verified = await prisma.walletPIN.updateMany({
+      where: { id: pinRecord.id, pinHash: pinRecord.pinHash, failedAttempts: pinRecord.failedAttempts, lockedUntil: pinRecord.lockedUntil },
+      data: { failedAttempts: 0, lockedUntil: null },
+    });
+    if (verified.count !== 1) throw new Error("PIN security state changed. Please try again.");
     await this.logAudit(userId, "PIN_VERIFY", { walletId: wallet.id });
     return { success: true, message: "PIN verified" };
   }
@@ -1705,7 +1707,10 @@ export class WalletService {
 
     const result = await prisma.$transaction(async (tx) => {
       const claim = await tx.withdrawal.updateMany({
-        where: { id: withdrawalId, status: 'PENDING', transactionHash: null },
+        where: { id: withdrawalId, status: 'PENDING', transactionHash: null,
+          userId: withdrawal.userId, amount: withdrawal.amount, fee: withdrawal.fee,
+          netAmount: withdrawal.netAmount, walletAddress: withdrawal.walletAddress,
+          method: withdrawal.method, currency: withdrawal.currency, cryptoNetwork: withdrawal.cryptoNetwork },
         data: {
           status: 'COMPLETED',
           transactionHash: normalizedHash,

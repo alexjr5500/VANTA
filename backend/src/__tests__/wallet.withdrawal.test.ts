@@ -73,6 +73,7 @@ beforeEach(() => {
   (prisma.wallet.findUnique as jest.Mock).mockResolvedValue(walletRow);
   (prisma.user.findUnique as jest.Mock).mockResolvedValue({ twoFactorEnabled: false });
   (twoFactorAuth.verifyLogin as jest.Mock).mockResolvedValue({ valid: true, isBackupCode: false });
+  (prisma.walletPIN.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
   (prisma.walletPIN.findUnique as jest.Mock).mockResolvedValue({ id: 'pin1', walletId: 'wallet1', pinHash: 'hash', failedAttempts: 0, lockedUntil: null });
   (blockchainTxVerifier.verifyTransaction as jest.Mock).mockResolvedValue({ verified: true, txHash: validTxHash, network: 'usdt-bep20', chainId: 56, chainName: 'BNB Smart Chain', asset: 'USDT', tokenContract: '0x' + 'b'.repeat(40), recipient: validAddress, sender: payoutSender, amount: 90, confirmations: 12, blockNumber: 100, blockHash: null, verifiedAt: new Date().toISOString() });
   (prisma.withdrawal.findUnique as jest.Mock).mockResolvedValue(pendingWithdrawal);
@@ -111,7 +112,7 @@ describe('WalletService.requestWithdrawal', () => {
     const tx = txMock();
     (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
     await walletService.requestWithdrawal('user1', 100, validAddress, '1234', '123456');
-    expect(twoFactorAuth.verifyLogin).toHaveBeenCalledWith('user1', '123456');
+    expect(twoFactorAuth.verifyLogin).toHaveBeenCalledWith('user1', '123456', true);
   });
 
   test('aborts when the earnings balance cannot cover the amount (CAS count 0)', async () => {
@@ -219,7 +220,7 @@ describe('WalletService.processWithdrawal on-chain verification', () => {
       expectedSender: payoutSender,
     }));
     expect(tx.withdrawal.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ id: 'wd1', status: 'PENDING', transactionHash: null }),
+      where: expect.objectContaining({ id: 'wd1', status: 'PENDING', transactionHash: null, userId: 'user1', amount: 100, fee: 10, netAmount: 90, walletAddress: validAddress }),
       data: expect.objectContaining({ status: 'COMPLETED', transactionHash: validTxHash }),
     }));
     expect(tx.walletTransaction.updateMany).toHaveBeenCalledWith(expect.objectContaining({
