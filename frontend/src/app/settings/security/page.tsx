@@ -22,7 +22,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import { useAuth } from '@/context/AuthContext';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/apiClient';
 import { useToast } from '@/components/ui/Toast';
-import { SettingsGroup } from '@/components/settings/SettingsUI';
+import { SettingsGroup, SettingsLink } from '@/components/settings/SettingsUI';
 import { cn } from '@/lib/utils';
 
 interface SessionItem {
@@ -30,6 +30,8 @@ interface SessionItem {
   userAgent?: string | null;
   ipAddress?: string | null;
   createdAt: string;
+  lastActiveAt?: string | null;
+  isCurrent: boolean;
 }
 
 interface SecurityLog {
@@ -41,6 +43,7 @@ interface SecurityLog {
 interface TwoFactorSetup {
   secret: string;
   qrCodeUrl: string;
+  qrCodeImage?: string;
   backupCodes: string[];
 }
 
@@ -71,12 +74,17 @@ const displayNetwork = (ip?: string | null): string => {
 };
 
 const isLoginActivity = (action: string): boolean =>
-  /^(LOGIN|LOGOUT|SESSION_CREATED|SESSION_REVOKED|SESSION_REMOVED_OLDEST|LOGIN_FAILED|LOGIN_SUSPENDED_SESSION|PASSWORD_CHANGED|TWO_FACTOR_ENABLED|TWO_FACTOR_DISABLED)(_|$)/i.test(action);
+  /^(LOGIN|LOGOUT|SESSION_CREATED|SESSION_REVOKED|OAUTH_ACCOUNT_LINKED|TRUSTED_DEVICE_REMOVED|SESSION_REMOVED_OLDEST|LOGIN_FAILED|LOGIN_SUSPENDED_SESSION|PASSWORD_CHANGED|TWO_FACTOR_ENABLED|TWO_FACTOR_DISABLED|2FA_ENABLED|2FA_DISABLED)(_|$)/i.test(action);
 
 const describeActivity = (action: string): string => ({
   LOGIN: 'Signed in',
   SESSION_CREATED: 'New session started',
   SESSION_REVOKED: 'Session ended',
+  SESSION_REVOKED_OTHERS: 'Other sessions ended',
+  OAUTH_ACCOUNT_LINKED: 'External sign-in account connected',
+  TRUSTED_DEVICE_REMOVED: 'Trusted device removed',
+  '2FA_ENABLED': 'Two-factor authentication enabled',
+  '2FA_DISABLED': 'Two-factor authentication disabled',
   SESSION_REMOVED_OLDEST: 'Older session ended automatically',
   LOGIN_FAILED: 'Failed sign-in attempt',
   LOGIN_SUSPENDED_SESSION: 'Sign-in restricted',
@@ -154,7 +162,9 @@ export default function SecuritySettingsPage() {
   };
 
   /* ── Real 2FA state (backend authoritative) ── */
-  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState<boolean | null>(null);
+  const [sessionsError, setSessionsError] = useState(false);
+  const [logsError, setLogsError] = useState(false);
   const [setup, setSetup] = useState<TwoFactorSetup | null>(null);
   const [verifyCode, setVerifyCode] = useState('');
   const [disablePassword, setDisablePassword] = useState('');
@@ -164,16 +174,18 @@ export default function SecuritySettingsPage() {
     if (!token) return;
     let cancel = false;
     Promise.all([
-      apiGet<{ sessions: SessionItem[] }>('/api/settings/sessions', token),
-      apiGet<{ logs: SecurityLog[] }>('/api/settings/security-logs', token).catch(() => ({ logs: [] })),
-      apiGet<{ enabled: boolean }>('/api/auth/2fa/status', token).catch(() => ({ enabled: false })),
+      apiGet<{ sessions: SessionItem[] }>('/api/settings/sessions', token, { skipCache: true }).catch(() => null),
+      apiGet<{ logs: SecurityLog[] }>('/api/settings/security-logs', token, { skipCache: true }).catch(() => null),
+      apiGet<{ enabled: boolean }>('/api/auth/2fa/status', token, { skipCache: true }).catch(() => null),
       apiGet<{ email?: string | null }>('/api/profiles/me', token).catch(() => ({ email: '' })),
     ])
       .then(([s, l, tfa, profile]) => {
         if (cancel) return;
         setSessions(s?.sessions || []);
         setLogs(l?.logs || []);
-        setTwoFactorEnabled(Boolean(tfa?.enabled));
+        setSessionsError(!s);
+        setLogsError(!l);
+        setTwoFactorEnabled(tfa?.enabled ?? null);
         setCurrentEmail(profile?.email || '');
       })
       .catch(() => {
@@ -214,10 +226,10 @@ export default function SecuritySettingsPage() {
 
   /* ── 2FA setup: fetch a fresh secret + backup codes ── */
   const startTwoFactorSetup = async () => {
-    if (!token) return;
+    if (!token || twoFactorEnabled !== false) return;
     setBusy('2fa-setup');
     try {
-      const data = await apiGet<TwoFactorSetup>('/api/auth/2fa/setup', token);
+      const data = await apiPost<TwoFactorSetup>('/api/auth/2fa/setup', {}, token);
       setSetup(data);
       setVerifyCode('');
       setShowBackupCodes(true);
@@ -290,8 +302,8 @@ export default function SecuritySettingsPage() {
     setBusy('all');
     try {
       await apiDelete('/api/settings/sessions', token);
-      setSessions([]);
-      toast.success('All sessions ended');
+      setSessions(prev => prev.filter(session => session.isCurrent));
+      toast.success('Other sessions ended');
     } catch {
       toast.error('Could not end sessions', 'Please try again.');
     } finally {
@@ -309,7 +321,7 @@ export default function SecuritySettingsPage() {
 
   return (
     <div className="space-y-8 pb-24">
-      <PageHeader sticky bleed title="Security" back="/settings" />
+      <PageHeader sticky bleed title="Security and access" back="/settings" />
 
       {loading ? (
         <div className="space-y-4">
@@ -318,6 +330,10 @@ export default function SecuritySettingsPage() {
         </div>
       ) : (
         <>
+          <SettingsGroup title="Apps and account access">
+            <SettingsLink href="/settings/security/connected" title="Connected sign-in accounts" description="Review verified external sign-in identities" />
+            <SettingsLink href="/settings/security/trusted" title="Trusted devices" description="Review and remove trusted-device records" />
+          </SettingsGroup>
           {/* ── Verified email address ── */}
           <SettingsGroup
             icon={Mail}
@@ -378,9 +394,7 @@ export default function SecuritySettingsPage() {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-white">Authenticator app</p>
                 <p className="mt-0.5 text-xs text-white/30">
-                  {twoFactorEnabled
-                    ? 'ON — a code is required at every sign-in.'
-                    : 'OFF — set up with Google Authenticator, 1Password or similar.'}
+                  {twoFactorEnabled === null ? 'Status unavailable. Reopen settings to retry.' : twoFactorEnabled ? 'ON — authenticator protection is enabled.' : 'OFF — set up with an authenticator app.'}
                 </p>
               </div>
               <span
@@ -390,11 +404,11 @@ export default function SecuritySettingsPage() {
                 )}
               >
                 <span className={cn('h-1.5 w-1.5 rounded-full', twoFactorEnabled ? 'bg-emerald-400' : 'bg-white/30')} />
-                {twoFactorEnabled ? 'ON' : 'OFF'}
+                {twoFactorEnabled === null ? 'Unknown' : twoFactorEnabled ? 'ON' : 'OFF'}
               </span>
             </div>
 
-            {!twoFactorEnabled && !setup && (
+            {twoFactorEnabled === false && !setup && (
               <div className="px-4 pb-4">
                 <button
                   type="button"
@@ -425,9 +439,10 @@ export default function SecuritySettingsPage() {
                     Copy
                   </button>
                 </div>
-                <p className="break-all rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 font-mono text-[10px] leading-relaxed text-white/30">
-                  {setup.qrCodeUrl}
-                </p>
+                {setup.qrCodeImage && /^data:image\/png;base64,/.test(setup.qrCodeImage) && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={setup.qrCodeImage} alt="Scan with your authenticator app" width={220} height={220} className="mx-auto rounded-lg bg-white p-2" />
+                )}
                 {showBackupCodes && setup.backupCodes.length > 0 && (
                   <div className="rounded-xl border border-[var(--settings-accent-border)] bg-[var(--settings-accent-soft)] p-3">
                     <p className="mb-2 text-xs font-medium text-white/70">Save these backup codes — they are shown once.</p>
@@ -534,7 +549,7 @@ export default function SecuritySettingsPage() {
             title="Active Sessions"
             description="Where you are signed in"
             right={
-              sessions.length > 1 ? (
+              sessions.some(session => !session.isCurrent) ? (
                 <button
                   type="button"
                   onClick={reviveAll}
@@ -542,15 +557,15 @@ export default function SecuritySettingsPage() {
                   className="shrink-0 rounded-[10px] border border-white/[0.08] px-3 py-1.5 text-xs text-white/45 transition-colors hover:bg-white/[0.05] hover:text-white disabled:opacity-40"
                 >
                   {busy === 'all' ? <Loader2 size={11} className="animate-spin" /> : <LogOut size={11} aria-hidden="true" />}
-                  Sign out all
+                  Sign out others
                 </button>
               ) : undefined
             }
           >
-            {sessions.length === 0 ? (
+            {sessionsError ? <p role="alert" className="px-4 py-4 text-sm text-red-400">Could not load sessions. Reopen settings to retry.</p> : sessions.length === 0 ? (
               <p className="px-4 py-4 text-sm text-white/30">No active sessions.</p>
             ) : (
-              sessions.map((session, index) => (
+              sessions.map((session) => (
                 <div key={session.id} className="flex items-center gap-3.5 px-4 py-3">
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-white/[0.06] bg-white/[0.03] text-white/40">
                     <Laptop size={17} strokeWidth={1.9} />
@@ -561,15 +576,15 @@ export default function SecuritySettingsPage() {
                   </div>
                   <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] font-medium text-emerald-300">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                    Active
+                    {session.isCurrent ? 'This device' : 'Active'}
                   </span>
                   <button
                     type="button"
                     onClick={() => revive(session.id)}
-                    disabled={busy === `session-${session.id}`}
+                    disabled={session.isCurrent || busy !== null}
                     className="shrink-0 rounded-[10px] border border-white/[0.08] px-3 py-1.5 text-xs text-white/45 transition-colors hover:bg-white/[0.05] hover:text-white disabled:opacity-40"
                   >
-                    {busy === `session-${session.id}` ? 'Ending…' : 'End'}
+                    {session.isCurrent ? 'Current' : busy === `session-${session.id}` ? 'Ending…' : 'End'}
                   </button>
                 </div>
               ))
@@ -578,7 +593,7 @@ export default function SecuritySettingsPage() {
 
           {/* ── Login activity ── */}
           <SettingsGroup icon={Eye} title="Login Activity" description="Recent sign-ins to your account">
-            {logs.length === 0 ? (
+            {logsError ? <p role="alert" className="px-4 py-4 text-sm text-red-400">Could not load login activity.</p> : logs.filter(log => isLoginActivity(log.action)).length === 0 ? (
               <p className="px-4 py-4 text-sm text-white/30">No recent login activity.</p>
             ) : (
               logs.filter((log) => isLoginActivity(log.action)).slice(0, 10).map((log) => (
@@ -587,7 +602,7 @@ export default function SecuritySettingsPage() {
                     <EyeOff size={17} strokeWidth={1.9} />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-white/80">{log.action}</p>
+                    <p className="truncate text-sm text-white/80">{describeActivity(log.action)}</p>
                   </div>
                   <span className="shrink-0 text-xs text-white/25">{formatDate(log.createdAt)}</span>
                 </div>

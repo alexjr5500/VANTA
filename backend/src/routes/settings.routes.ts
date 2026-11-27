@@ -19,11 +19,13 @@ import {
   unmuteUser,
   getSecurityLogs,
 } from '../controllers/settings.controller';
+import { accountAccessRoutes } from './account-access.routes';
 import { authenticateJWT } from '../middleware/auth.middleware';
 
 const router = Router();
 
 router.use(authenticateJWT);
+router.use(accountAccessRoutes);
 
 router.get('/privacy', getPrivacySettings);
 router.put('/privacy', updatePrivacySettings);

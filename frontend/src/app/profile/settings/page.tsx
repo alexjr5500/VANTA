@@ -31,6 +31,8 @@ const searchable = [
   { title: 'Payments and wallet security', href: '/settings/payments', icon: LockKeyhole },
   { title: 'Verified Badge', href: '/verification/badge', icon: ShieldCheck },
   { title: 'Change password, email and two-factor authentication', href: '/settings/security', icon: LockKeyhole },
+  { title: 'Connected sign-in accounts', href: '/settings/security/connected', icon: LockKeyhole },
+  { title: 'Trusted devices', href: '/settings/security/trusted', icon: LockKeyhole },
   { title: 'Active sessions and login activity', href: '/settings/security', icon: LockKeyhole },
   { title: 'Blocked and muted accounts', href: '/settings/privacy', icon: ShieldCheck },
   { title: 'Account privacy, messaging, follows and read receipts', href: '/settings/privacy', icon: ShieldCheck },

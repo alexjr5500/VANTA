@@ -27,6 +27,7 @@ try {
 export interface TwoFactorSetupResult {
   secret: string;
   qrCodeUrl: string;
+  qrCodeImage?: string;
   backupCodes: string[];
 }
 
@@ -91,8 +92,8 @@ export class TwoFactorAuth {
     }
 
     // Store secret and hashed backup codes
-    await prisma.user.update({
-      where: { id: userId },
+    const saved = await prisma.user.updateMany({
+      where: { id: userId, twoFactorEnabled: false },
       data: {
         twoFactorSecret: secret.base32,
         backupCodes: JSON.stringify(hashedBackupCodes),
@@ -100,6 +101,8 @@ export class TwoFactorAuth {
         twoFactorLastUsedStep: null,
       },
     });
+
+    if (!saved.count) throw new Error('Two-factor authentication is already enabled.');
 
     // Generate QR code URL
     const qrCodeUrl = secret.otpauth_url || 
@@ -115,6 +118,7 @@ export class TwoFactorAuth {
     return {
       secret: secret.base32,
       qrCodeUrl,
+      qrCodeImage: QRCode ? await QRCode.toDataURL(qrCodeUrl).catch(() => undefined) : undefined,
       backupCodes,
     };
   }
@@ -143,11 +147,12 @@ export class TwoFactorAuth {
       return { success: false, error: 'Invalid verification code' };
     }
 
-    // Enable 2FA
-    await prisma.user.update({
-      where: { id: userId },
+    // Do not enable a replacement setup secret that was not verified.
+    const enabled = await prisma.user.updateMany({
+      where: { id: userId, twoFactorEnabled: false, twoFactorSecret: user.twoFactorSecret },
       data: { twoFactorEnabled: true },
     });
+    if (!enabled.count) return { success: false, error: 'Setup changed. Start again.' };
 
     auditLog.log({
       userId,

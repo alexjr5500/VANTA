@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { authService, userService } from '../services';
 import { prisma } from '../prisma';
+import { auditLog } from '../security/auditLog';
+import { activeAccountSessions, revokeOtherAccountSessions } from '../services/account-access.service';
 
 const handleUnauthorized = (res: Response): void => {
   res.status(401).json({ error: 'Unauthorized' });
@@ -59,7 +61,8 @@ export const getActiveSessions = async (req: AuthRequest, res: Response): Promis
   try {
     const userId = req.user?.userId;
     if (!userId) return handleUnauthorized(res);
-    const sessions = await authService.getUserSessions(userId);
+    const sessions = await activeAccountSessions(userId, req.user!.sessionId);
+    res.set('Cache-Control', 'private, no-store');
     res.status(200).json({ sessions });
   } catch (error) {
     handleError(res, error);
@@ -75,7 +78,9 @@ export const revokeSession = async (req: AuthRequest, res: Response): Promise<vo
       res.status(400).json({ error: 'Session id is required' });
       return;
     }
+    if (sessionId === req.user!.sessionId) { res.status(400).json({ error: 'Use Log out to end your current session' }); return; }
     await authService.revokeSession(userId, sessionId);
+    await auditLog.log({ userId, action: 'SESSION_REVOKED', metadata: { sessionId } });
     res.status(200).json({ message: 'Session revoked successfully' });
   } catch (error) {
     handleError(res, error);
@@ -86,8 +91,9 @@ export const revokeAllSessions = async (req: AuthRequest, res: Response): Promis
   try {
     const userId = req.user?.userId;
     if (!userId) return handleUnauthorized(res);
-    await authService.revokeAllSessions(userId);
-    res.status(200).json({ message: 'All sessions have been revoked' });
+    const count = await revokeOtherAccountSessions(userId, req.user!.sessionId);
+    await auditLog.log({ userId, action: 'SESSION_REVOKED_OTHERS', metadata: { count } });
+    res.status(200).json({ message: 'Other sessions revoked', count });
   } catch (error) {
     handleError(res, error);
   }

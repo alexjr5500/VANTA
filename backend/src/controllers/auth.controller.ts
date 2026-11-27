@@ -772,7 +772,8 @@ export const setup2FA = async (req: AuthenticatedRequest, res: Response): Promis
     const user = await prisma.user.findUnique({ where: { id: req.user.userId }, select: { email: true } });
     if (!user) { res.status(404).json({ error: 'User not found' }); return; }
     const result = await twoFactorAuth.setup(req.user.userId, user.email!);
-    res.status(200).json({ secret: result.secret, qrCodeUrl: result.qrCodeUrl, backupCodes: result.backupCodes });
+    res.set('Cache-Control', 'private, no-store');
+    res.status(200).json({ secret: result.secret, qrCodeUrl: result.qrCodeUrl, qrCodeImage: result.qrCodeImage, backupCodes: result.backupCodes });
   } catch (error) {
     res.status(400).json({ error: 'Failed to setup 2FA' });
   }

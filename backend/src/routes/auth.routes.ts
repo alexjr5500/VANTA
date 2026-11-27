@@ -81,7 +81,7 @@ router.post('/sessions/revoke-all', authenticate, revokeAllSessions);
 router.post('/change-password', authenticate, changePassword);
 
 // 2FA Management
-router.get('/2fa/setup', authenticate, setup2FA);
+router.post('/2fa/setup', authenticate, rateLimiter.login2fa, setup2FA);
 router.post('/2fa/enable', authenticate, enable2FA);
 router.post('/2fa/verify', authenticate, rateLimiter.login2fa, verify2FA);
 router.post('/2fa/disable', authenticate, disable2FA);
