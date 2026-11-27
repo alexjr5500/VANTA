@@ -609,12 +609,6 @@ export const redeemExchangeCode = async (code: unknown, req: Request) => {
   if (!session || !session.oauthExchangeExpiresAt || session.oauthExchangeExpiresAt < new Date() || !session.token) {
     throw new OAuthError('expired-code', 'This sign-in link has expired. Please try again.');
   }
-  // Single use: redeem immediately nulls the code so it can never be replayed.
-  await prisma.session.update({
-    where: { id: session.id },
-    data: { oauthExchangeCode: null, oauthExchangeExpiresAt: null },
-  });
-
   const user = await prisma.user.findUnique({
     where: { id: session.userId },
     include: {
@@ -631,6 +625,26 @@ export const redeemExchangeCode = async (code: unknown, req: Request) => {
     throw new OAuthError('account-restricted', user.status === 'SUSPENDED' ? 'Account suspended' : 'Account restricted');
   }
 
+  if (user.lockedUntil && user.lockedUntil > new Date()) throw new OAuthError('account-restricted', 'Account temporarily locked.');
+  // A verified provider is the first authentication factor, not a substitute
+  // for the authenticator. Exchange is compare-and-swap, including concurrent
+  // redemption. No access or refresh credentials leave this function for 2FA.
+  if (user.twoFactorEnabled) {
+    const challenge = crypto.randomBytes(32).toString('hex');
+    await prisma.$transaction(async tx => {
+      const claimed = await tx.session.deleteMany({ where: { id: session.id, userId: user.id, oauthExchangeCode: code, oauthExchangeExpiresAt: { gt: new Date() } } });
+      if (claimed.count !== 1) throw new OAuthError('expired-code', 'Sign-in code already used.');
+      await tx.twoFactorLoginChallenge.create({ data: {
+        userId: user.id, tokenHash: sha256(challenge).toString('hex'), expiresAt: new Date(Date.now() + 5 * 60_000),
+      } });
+    });
+    return { requiresTwoFactor: true as const, userId: user.id, twoFactorChallenge: challenge };
+  }
+  const claimed = await prisma.session.updateMany({
+    where: { id: session.id, userId: user.id, oauthExchangeCode: code, oauthExchangeExpiresAt: { gt: new Date() } },
+    data: { oauthExchangeCode: null, oauthExchangeExpiresAt: null },
+  });
+  if (claimed.count !== 1) throw new OAuthError('expired-code', 'Sign-in code already used.');
   return {
     user: sanitizeUserShape(user),
     token: session.token,

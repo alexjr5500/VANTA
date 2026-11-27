@@ -20,9 +20,11 @@ jest.mock('../prisma', () => ({
     session: {
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
       findUnique: jest.fn(),
       deleteMany: jest.fn(),
     },
+    twoFactorLoginChallenge: { create: jest.fn() },
     providerAccount: {
       findUnique: jest.fn(),
       create: jest.fn(),
@@ -167,6 +169,9 @@ beforeEach(() => {
   globalThis.fetch = jest.fn().mockResolvedValue(mockFetchJson({ keys: [publicJwk] }));
   (prisma.session.create as jest.Mock).mockResolvedValue({ id: 'session-1' });
   (prisma.session.update as jest.Mock).mockResolvedValue({ id: 'session-1' });
+  (prisma.session.updateMany as jest.Mock).mockResolvedValue({count:1});
+  (prisma.session.deleteMany as jest.Mock).mockResolvedValue({count:1});
+  (prisma.twoFactorLoginChallenge.create as jest.Mock).mockResolvedValue({});
   (prisma.securityLog.create as jest.Mock).mockResolvedValue({});
   (prisma.providerAccount.findUnique as jest.Mock).mockResolvedValue(null);
   (prisma.user.findFirst as jest.Mock).mockResolvedValue(null);
@@ -515,11 +520,28 @@ describe('handleProviderCallback', () => {
       (prisma.user.findUnique as jest.Mock).mockResolvedValue(mockUser());
       const result = await redeemExchangeCode('exchange-code', requestLike() as any);
       expect(result.token).toBe('access-token');
-      expect(result.user.id).toBe('user-1');
-      const updateCall = (prisma.session.update as jest.Mock).mock.calls[0];
+      expect(result.user?.id).toBe('user-1');
+      const updateCall = (prisma.session.updateMany as jest.Mock).mock.calls[0];
       expect(updateCall[0].data.oauthExchangeCode).toBeNull();
     });
 
+    test('OAuth accounts with 2FA get only a single-use login challenge, never tokens', async () => {
+      const { redeemExchangeCode } = await import('../services/oauth.service');
+      (prisma.session.findUnique as jest.Mock).mockResolvedValue({ id:'session-1', userId:'user-1', token:'access-token', refreshToken:'refresh-token', oauthExchangeExpiresAt:new Date(Date.now()+60000) });
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue({...mockUser(),twoFactorEnabled:true});
+      const result = await redeemExchangeCode('exchange-code',requestLike() as any);
+      expect(result).toMatchObject({requiresTwoFactor:true,userId:'user-1',twoFactorChallenge:expect.any(String)});
+      expect(result.token).toBeUndefined();
+      expect(result.refreshToken).toBeUndefined();
+      expect(prisma.session.deleteMany).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({id:'session-1',oauthExchangeCode:'exchange-code'})}));
+      expect(prisma.twoFactorLoginChallenge.create).toHaveBeenCalledWith({data:expect.objectContaining({userId:'user-1',tokenHash:expect.any(String)})});
+    });
+    test('rejects concurrently consumed exchange codes', async () => {
+      const { redeemExchangeCode } = await import('../services/oauth.service');
+      (prisma.session.findUnique as jest.Mock).mockResolvedValue({id:'session-1',userId:'user-1',token:'access-token',oauthExchangeExpiresAt:new Date(Date.now()+60000)});
+      (prisma.session.updateMany as jest.Mock).mockResolvedValueOnce({count:0});
+      await expect(redeemExchangeCode('exchange-code',requestLike() as any)).rejects.toBeInstanceOf(OAuthError);
+    });
     test('rejects an expired exchange code', async () => {
       const { redeemExchangeCode, OAuthError: OAuthErrorRef } = await import('../services/oauth.service');
       (prisma.session.findUnique as jest.Mock).mockResolvedValue({

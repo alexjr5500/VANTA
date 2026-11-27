@@ -148,6 +148,8 @@ export const exchange = async (req: Request, res: Response): Promise<void> => {
   }
   try {
     const result = await redeemExchangeCode(code, req);
+    res.set('Cache-Control', 'private, no-store');
+    if (result.requiresTwoFactor) { res.status(200).json(result); return; }
     res.status(200).json({
       message: 'Signed in successfully',
       token: result.token,
