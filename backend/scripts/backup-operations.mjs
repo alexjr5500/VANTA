@@ -4,7 +4,7 @@ import { backupPrefix } from './backup-r2-multipart.mjs';
 const check=(v,m='Invalid backup operations evidence')=>{if(!v)throw Error(m)};
 const safe=n=>Number.isSafeInteger(n)&&n>=0;
 const hash=s=>typeof s==='string'&&/^[a-f0-9]{64}$/.test(s);
-const issueCodes=new Set(['backup_attempt_failed','verified_backup_missing_or_overdue','independent_restore_missing_or_overdue','source_fence_not_verified','schedule_not_approved','retention_inventory_unverified','backup_monitor_evidence_invalid','backup_capacity_warning','backup_capacity_exceeded','backup_remote_inventory_invalid']);
+const issueCodes=new Set(['backup_attempt_failed','verified_backup_missing_or_overdue','database_backup_missing_or_overdue','independent_restore_missing_or_overdue','source_fence_not_verified','schedule_not_approved','retention_inventory_unverified','backup_monitor_evidence_invalid','backup_capacity_warning','backup_capacity_exceeded','backup_remote_inventory_invalid']);
 export function productionIdentity(env){
   return env.RAILWAY_PROJECT_ID==='a05242c0-8a26-40b0-a88d-e338e96eec55' &&
     env.RAILWAY_ENVIRONMENT_ID==='4a6d43ce-571f-4d85-8abe-c7c5f19ed920' &&

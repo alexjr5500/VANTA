@@ -1,20 +1,23 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {dailyRunId} from './backup-database-daily.mjs';
 import {inspectTransfers,runTransferWatch} from './backup-transfer-watch.mjs';
 const id='61f85a7f-7789-4a79-9063-d7351db8fbcd',prefix='production/v1/'+id+'/',now=1800000000000;
 const marker=Buffer.from('age-encryption.org/v1\nfixture');
 const sha=createHash('sha256').update(marker).digest('hex');
 const sdk=Object.fromEntries(['ListObjectsV2Command','ListMultipartUploadsCommand','HeadObjectCommand','GetObjectCommand'].map(k=>[k,class{constructor(input){this.kind=k;this.input=input}}]));
-function fixture({missing=false,corrupt=false,stale=false,partial=false,budget=0}={}){
+function fixture({missing=false,corrupt=false,stale=false,partial=false,budget=0,db=false,dbMissing=false,fullStale=false}={}){
  const entries=[{Key:prefix+'database.dump.age',Size:1000},{Key:prefix+'media.tar.age',Size:2000},{Key:prefix+'manifest.json.age',Size:marker.length}].filter(e=>!missing||!e.Key.endsWith('media.tar.age'));
+ const dbId=dailyRunId(now-1000),dbPrefix='production-db/v1/'+dbId+'/';
+ if(db){entries.push({Key:dbPrefix+'database.dump.age',Size:1000});if(!dbMissing)entries.push({Key:dbPrefix+'manifest.json.age',Size:marker.length});}
  if(budget)entries.push({Key:'acceptance/fixture',Size:budget});
- const metadata={'test-id':id,sha256:sha};
+ const metadata=key=>({'test-id':key.startsWith(dbPrefix)?dbId:id,sha256:sha});
  const client={async send(c){
   if(c.kind==='ListObjectsV2Command')return {Contents:entries,IsTruncated:false};
   if(c.kind==='ListMultipartUploadsCommand')return {Uploads:partial?[{Key:'x'}]:[]};
-  if(c.kind==='HeadObjectCommand')return {ContentLength:entries.find(e=>e.Key===c.input.Key).Size,Metadata:metadata,LastModified:new Date(now-(stale?27*3600000:1000))};
-  if(c.kind==='GetObjectCommand')return {ContentLength:marker.length,Metadata:metadata,Body:[corrupt?Buffer.alloc(marker.length):marker]};
+  if(c.kind==='HeadObjectCommand')return {ContentLength:entries.find(e=>e.Key===c.input.Key).Size,Metadata:metadata(c.input.Key),LastModified:new Date(now-((stale||fullStale&&!c.input.Key.startsWith(dbPrefix))?27*3600000:1000))};
+  if(c.kind==='GetObjectCommand')return {ContentLength:marker.length,Metadata:metadata(c.input.Key),Body:[corrupt?Buffer.alloc(marker.length):marker]};
   throw Error('unexpected command');
  }};
  return {client,sdk,baselineRunId:id,nowMs:now};
@@ -24,3 +27,5 @@ test('missing, corrupt, partial and unexpected baseline fail closed',async()=>{f
 test('overdue and capacity thresholds alert',async()=>{const r=await inspectTransfers(fixture({stale:true,budget:6500000000}));assert.deepEqual(r.issues,['verified_backup_missing_or_overdue','backup_capacity_warning']);});
 const env={VANTA_BACKUP_TRANSFER_WATCH_ENABLED:'yes',VANTA_BACKUP_R2_BUCKET:'vanta-backups',VANTA_BACKUP_R2_ENDPOINT:'https://'+('a'.repeat(32))+'.r2.cloudflarestorage.com',VANTA_BACKUP_MONITOR_R2_ACCESS_KEY_ID:'test',VANTA_BACKUP_MONITOR_R2_SECRET_ACCESS_KEY:'test',VANTA_BACKUP_ALERTS_ENABLED:'yes',VANTA_BACKUP_ALERT_SENDGRID_KEY:'SG.fixture',VANTA_BACKUP_ALERT_FROM:'from@example.com',VANTA_BACKUP_ALERT_TO:'to@example.com',VANTA_BACKUP_BASELINE_RUN_ID:id};
 test('provider failure sends sanitized alert and releases client; writer/db credentials rejected',async()=>{let sent,destroyed=false;const r=await runTransferWatch({env,inspect:async()=>{throw Error('private')},makeClient:()=>({client:{destroy(){destroyed=true}},sdk}),notify:async x=>{sent=x.issues}});assert.equal(destroyed,true);assert.equal(r.available,false);assert.deepEqual(sent,['backup_remote_inventory_invalid']);await assert.rejects(runTransferWatch({env:{...env,DATABASE_URL:'forbidden'}}));await assert.rejects(runTransferWatch({env:{...env,VANTA_BACKUP_R2_SECRET_ACCESS_KEY:'forbidden'}}));});
+
+test('database-only watch is opt-in and cannot conceal missing full backups',async()=>{const f=fixture({db:true,fullStale:true});const r=await inspectTransfers({...f,watchDatabase:true});assert.equal(r.databaseSets,1);assert.deepEqual(r.issues,['verified_backup_missing_or_overdue']);assert.equal(r.scheduleEligible,false);assert.equal(r.independentRestoreVerified,false);const none=await inspectTransfers({...fixture(),watchDatabase:true});assert.deepEqual(none.issues,['database_backup_missing_or_overdue']);await assert.rejects(inspectTransfers({...fixture({db:true,dbMissing:true}),watchDatabase:true}));assert.equal((await inspectTransfers(fixture({db:true,dbMissing:true}))).available,true);});
