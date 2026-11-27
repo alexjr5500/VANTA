@@ -3870,7 +3870,11 @@ model ShopCryptoInvoice {
   expiresAt     DateTime
   transactionHash String?
   startBlock Int
+  scanCursor Int
+  lastCheckedAt DateTime?
+  settledAt DateTime?
   @@unique([network, transactionHash])
   @@index([payerId, createdAt])
   @@index([network, expiresAt])
+  @@index([settledAt, lastCheckedAt])
 }
