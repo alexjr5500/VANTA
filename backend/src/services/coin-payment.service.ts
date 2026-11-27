@@ -1,4 +1,6 @@
 import { prisma } from '../prisma';
+import { shopSandboxEnabled } from '../config/shop-sandbox.config';
+import { coinsToUsd } from '../config/wallet.config';
 import { walletService } from './wallet.service';
 import { auditLog } from '../security/auditLog';
 import { CryptoUtils } from '../security/crypto';
@@ -107,7 +109,8 @@ export class CoinPaymentService {
     userId: string,
     packageId: unknown,
     network: unknown,
-    ipAddress?: string
+    ipAddress?: string,
+    customCoins?: unknown
   ) {
     if (!userId) throw new Error('Unauthorized');
 
@@ -118,7 +121,13 @@ export class CoinPaymentService {
       throw new Error('Unsupported payment network. Choose USDT (BEP-20) or USDC (Base).');
     }
 
-    const pkg = await findDbPackage(packageId);
+    const isCustom = packageId === 'custom';
+    if (isCustom && (!shopSandboxEnabled() || typeof customCoins !== 'number' || !Number.isSafeInteger(customCoins) || customCoins < 100 || customCoins > 100000)) {
+      throw new Error('Custom quantity must be a whole number from 100 to 100,000 in the isolated sandbox.');
+    }
+    const pkg = isCustom
+      ? { id: null, name: 'Custom amount', coins: customCoins as number, price: coinsToUsd(customCoins as number), isActive: true }
+      : await findDbPackage(packageId);
     if (!pkg || !pkg.isActive) {
       // Clean application-level 404 (mapped by the controller). NEVER let a
       // non-existent package reach `purchaseOrder.create()` — that would raise
