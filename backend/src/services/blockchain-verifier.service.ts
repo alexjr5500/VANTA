@@ -193,6 +193,7 @@ export class BlockchainTxVerifier {
     expectedAtomicAmount?: string;
     notBefore?: Date;
     notAfter?: Date;
+    minBlock?: number;
   }): Promise<BlockchainVerificationResult> {
     const txHash = typeof options.txHash === 'string' ? options.txHash.trim() : '';
     if (!isValidTransactionHash(txHash)) {
@@ -439,7 +440,7 @@ const logAddress = String(transferLog.address || '').toLowerCase();
         throw new BlockchainTxVerificationError(BLOCKCHAIN_VERIFICATION_ERROR_CODES.RPC_ERROR, 'Cannot establish canonical invoice payment block.', true);
       }
       const timestamp = blockTime * 1000;
-      if (timestamp < options.notBefore!.getTime() || timestamp > options.notAfter!.getTime()) {
+      if (timestamp < options.notBefore!.getTime() || timestamp > options.notAfter!.getTime() || (options.minBlock !== undefined && txBlock < options.minBlock)) {
         throw new BlockchainTxVerificationError(BLOCKCHAIN_VERIFICATION_ERROR_CODES.TRANSACTION_FAILED, 'Payment falls outside the invoice validity window.');
       }
     }
