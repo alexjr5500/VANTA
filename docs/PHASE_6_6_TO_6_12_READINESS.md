@@ -73,3 +73,6 @@ This checklist is **not** a claim of completion. The phases must be implemented 
 - [x] Add offline comparison evaluator, sample validation, matched-condition gates, error accounting and synthetic CI tests.
 - [ ] Compare equivalent flows against competing apps on the same device/network; record methodology, versions, sample size and variance. Never claim superiority without comparable measurements.
 - [ ] Verify performance and reliability budgets in staging before release; repeat against a controlled post-release baseline only after approval.
+
+## Consolidated release gate reconciliation (2026-11-27)
+See `docs/PHASE_6_RELEASE_HANDOFF.md` for current evidence, blockers, and final staging/mobile release sequencing. The original checklist above is retained for traceability; checked source implementation is not equivalent to operational acceptance. Payment work is paused; existing live-payment gates remain unchanged.
