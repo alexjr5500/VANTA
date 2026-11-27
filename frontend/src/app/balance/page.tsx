@@ -137,6 +137,9 @@ export default function BalancePage() {
   const historyVersion = useRef(0);
   const [activeTab, setActiveTab] = useState<BalanceTab>('overview');
   const [showBuyModal, setShowBuyModal] = useState(false);
+  useEffect(() => {
+    if (token && new URL(window.location.href).searchParams.has('shopCard')) setShowBuyModal(true);
+  }, [token]);
   const [showSendModal, setShowSendModal] = useState(false);
   const [showReceiveModal, setShowReceiveModal] = useState(false);
   const [initialRecipientId, setInitialRecipientId] = useState<string | null>(null);

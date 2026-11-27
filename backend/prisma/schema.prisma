@@ -1536,6 +1536,8 @@ model SparkCoinPackage {
 model PurchaseOrder {
   id              String            @id @default(cuid())
   userId          String
+  // Payer is userId; gift target is fixed at order creation. Null means self.
+  recipientUserId String?
   packageId       String?
   coins           Int
   amount          Float
@@ -3355,6 +3357,8 @@ model VerificationBadge {
 model VerificationPurchase {
   id                String           @id @default(cuid())
   userId            String
+  // Payer is userId; gift target is fixed at order creation. Null means self.
+  recipientUserId String?
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   planId            String
   plan              SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
@@ -3851,4 +3855,75 @@ model TwoFactorLoginChallenge {
 
   @@index([userId, expiresAt])
   @@index([expiresAt])
+}
+
+ // One-time deposit address reservation. Never delete/recycle these records.
+model ShopCryptoInvoice {
+  id            String   @id @default(cuid())
+  product       String
+  orderId       String   @unique
+  payerId       String
+  network       String
+  address       String   @unique
+  amountAtomic  String
+  quotePrice8 String?
+  quoteUpdatedAt DateTime?
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  transactionHash String?
+  startBlock Int
+  scanCursor Int
+  lastCheckedAt DateTime?
+  settledAt DateTime?
+  treasuryTransfer ShopTreasuryTransfer?
+  @@unique([network, transactionHash])
+  @@index([payerId, createdAt])
+  @@index([network, expiresAt])
+  @@index([settledAt, lastCheckedAt])
+}
+
+model ShopCardCheckout {
+  id String @id @default(cuid())
+  orderId String @unique
+  payerId String
+  product String
+  amountCents Int
+  sessionId String? @unique
+  paymentIntentId String? @unique
+  paidAt DateTime?
+  settledAt DateTime?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([payerId, createdAt])
+}
+
+model ShopTreasuryTransfer {
+  id String @id @default(cuid())
+  invoiceId String @unique
+  invoice ShopCryptoInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  network String
+  source String
+  destination String
+  amountAtomic String
+  status String @default("AUTHORIZED")
+  authorizedBy String
+  authorizedAt DateTime @default(now())
+  automation Boolean @default(false)
+  maxFeeAtomic String?
+  signerRequestId String? @unique
+  signerPolicyId String?
+  orderAmountCents Int?
+  dispatchStartedAt DateTime?
+  dispatchDeadline DateTime?
+  nextAttemptAt DateTime?
+  lastFailure String?
+  leaseToken String?
+  leaseUntil DateTime?
+  transactionHash String?
+  submittedAt DateTime?
+  verifiedAt DateTime?
+  updatedAt DateTime @updatedAt
+  @@unique([network, transactionHash])
+  @@index([status, authorizedAt])
+  @@index([automation, status, nextAttemptAt])
 }

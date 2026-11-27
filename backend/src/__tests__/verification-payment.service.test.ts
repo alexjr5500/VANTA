@@ -11,7 +11,7 @@ jest.mock('../prisma', () => ({
     creatorMembership: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
     verificationHistory: { create: jest.fn() },
     webhookEvent: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
-    user: { findUnique: jest.fn() },
+    user: { findUnique: jest.fn(), updateMany: jest.fn(), findFirst: jest.fn() },
     $transaction: jest.fn((fn: any) => fn({ ...prisma })),
   },
 }));
@@ -412,5 +412,36 @@ describe('maintenance & refunds', () => {
     const result = await verificationPaymentService.refundPurchase('admin1', 'order_1', 'double charge');
     expect(result.success).toBe(true);
     expect(prisma.verificationBadge.update).toHaveBeenCalled();
+  });
+});
+describe('sandbox badge gift fulfillment', () => {
+  const old = { ...process.env };
+  beforeEach(() => {
+    jest.clearAllMocks();
+    setMode('test');
+    process.env.VANTA_SHOP_SANDBOX_ENABLED = 'true';
+  });
+  afterEach(() => { process.env = { ...old }; });
+  test('activates the stored gift recipient, not the payer', async () => {
+    const order = { ...PENDING_ORDER, recipientUserId: 'friend', expiresAt: new Date(Date.now() + 60000) };
+    (prisma.verificationPurchase.findFirst as jest.Mock).mockResolvedValue(order);
+    (prisma.verificationPurchase.findUnique as jest.Mock).mockResolvedValue(order);
+    (prisma.subscriptionPlan.findUnique as jest.Mock).mockResolvedValue(BLUE_1M_PLAN);
+    (prisma.verificationPurchase.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+    (prisma.user.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+    (prisma.verificationBadge.findUnique as jest.Mock).mockResolvedValue(null);
+    (prisma.verificationBadge.create as jest.Mock).mockResolvedValue({ id: 'badge1' });
+    const result = await verificationPaymentService.completeTestPurchase('user1', order.id, { simulateToken: createCoinPaymentSimulateToken(order) });
+    expect(result.alreadyCompleted).toBe(false);
+    expect(result.badge).toBeUndefined();
+    expect(prisma.verificationBadge.create).toHaveBeenCalledWith({ data: expect.objectContaining({ userId: 'friend', sourcePurchaseId: order.id }) });
+    expect(prisma.verificationHistory.create).toHaveBeenCalledWith({ data: expect.objectContaining({ userId: 'friend' }) });
+  });
+  test('refund revokes the gifted badge only if sourced from this order', async () => {
+    (prisma.verificationPurchase.findUnique as jest.Mock).mockResolvedValue({ ...PENDING_ORDER, status: 'COMPLETED', recipientUserId: 'friend' });
+    (prisma.verificationPurchase.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+    (prisma.verificationBadge.findUnique as jest.Mock).mockResolvedValue({ status: 'ACTIVE', badgeType: 'BLUE', sourcePurchaseId: PENDING_ORDER.id });
+    await verificationPaymentService.refundPurchase('admin1', PENDING_ORDER.id, 'test refund');
+    expect(prisma.verificationBadge.update).toHaveBeenCalledWith({ where: { userId: 'friend' }, data: expect.objectContaining({ status: 'REVOKED' }) });
   });
 });

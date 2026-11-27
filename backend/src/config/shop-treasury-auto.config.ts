@@ -1,0 +1,54 @@
+import { getCoinPaymentMode } from './coin-payments.config';
+import { treasuryAddress } from './shop-treasury.config';
+import { getBlockchainNetwork } from './blockchain-networks.config';
+
+// All transfers preserve the full invoice amount. Native fees require a separate reserve.
+export const AUTO_TREASURY_NETWORKS = ['usdt-bep20', 'usdc-base', 'usdt-erc20', 'eth-erc20', 'usdt-trc20', 'gram-ton'] as const;
+export type AutoNetwork = typeof AUTO_TREASURY_NETWORKS[number];
+export function isAutoNetwork(network: string): network is AutoNetwork {
+  return AUTO_TREASURY_NETWORKS.some(n => n === network);
+}
+export function positiveAtomic(value: unknown): value is string {
+  return typeof value === 'string' && /^[1-9][0-9]{0,77}$/.test(value) && BigInt(value) < BigInt(2) ** BigInt(256);
+}
+const maxFeeKeys: Record<AutoNetwork, string> = {
+  'usdt-bep20': 'VANTA_TREASURY_BSC_MAX_FEE_WEI',
+  'usdc-base': 'VANTA_TREASURY_BASE_MAX_FEE_WEI',
+  'usdt-erc20': 'VANTA_TREASURY_ETHEREUM_MAX_FEE_WEI',
+  'eth-erc20': 'VANTA_TREASURY_ETHEREUM_MAX_FEE_WEI',
+  'usdt-trc20': 'VANTA_TREASURY_TRON_MAX_FEE_SUN',
+  'gram-ton': 'VANTA_TREASURY_TON_MAX_FEE_NANO',
+};
+export function automaticTreasuryConfig() {
+  if (process.env.VANTA_TREASURY_AUTO_ENABLED !== 'true' || getCoinPaymentMode() !== 'live') return null;
+  if (process.env.VANTA_TREASURY_CUSTODY_VERIFIED !== 'true') return null;
+  const start = process.env.VANTA_TREASURY_AUTO_NOT_BEFORE || '';
+  if (!start || !Number.isFinite(Date.parse(start)) || Date.parse(start) > Date.now()) return null;
+  const policyId = process.env.VANTA_TREASURY_SIGNER_POLICY_ID || '';
+  const secret = process.env.VANTA_TREASURY_SIGNER_HMAC_SECRET || '';
+  const raw = process.env.VANTA_TREASURY_SIGNER_URL || '';
+  const maxOrderCents = Number(process.env.VANTA_TREASURY_AUTO_MAX_ORDER_CENTS || '');
+  const dailyCapCents = Number(process.env.VANTA_TREASURY_AUTO_DAILY_CAP_CENTS || '');
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(policyId) || secret.length < 32 || !Number.isSafeInteger(maxOrderCents) || maxOrderCents <= 0 || !Number.isSafeInteger(dailyCapCents) || dailyCapCents < maxOrderCents || dailyCapCents > 2147483647) return null;
+  let url: URL;
+  try { url = new URL(raw); } catch { return null; }
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/' || url.hostname === 'localhost' || !url.hostname.includes('.')) return null;
+  const enabled = (process.env.VANTA_TREASURY_AUTO_NETWORKS || '').split(',').map(n => n.trim()).filter(Boolean);
+  if (!enabled.length || enabled.some(n => !isAutoNetwork(n))) return null;
+  const networks: { network: AutoNetwork; destination: string; maxFeeAtomic: string }[] = [];
+  for (const network of [...new Set(enabled)] as AutoNetwork[]) {
+    const destination = treasuryAddress(network);
+    const maxFeeAtomic = process.env[maxFeeKeys[network]];
+    if (!destination || !positiveAtomic(maxFeeAtomic) || !getBlockchainNetwork(network)?.rpcUrl) return null;
+    // Additional rail-specific review is mandatory; no inherited opt-in.
+    if (network === 'eth-erc20' && process.env.VANTA_TREASURY_NATIVE_ETH_REVIEWED !== 'true') return null;
+    if (network === 'usdt-trc20' && (process.env.VANTA_TREASURY_TRON_REVIEWED !== 'true' || !process.env.VANTA_TRONGRID_API_KEY)) return null;
+    if (network === 'gram-ton' && (process.env.VANTA_TREASURY_TON_REVIEWED !== 'true' || !process.env.VANTA_TONCENTER_API_KEY)) return null;
+    networks.push({ network, destination, maxFeeAtomic });
+  }
+  return { origin: url.origin, policyId, secret, maxOrderCents, dailyCapCents, networks };
+}
+export function automaticTreasuryPublicStatus() {
+  const config = automaticTreasuryConfig();
+  return { enabled: !!config, networks: config?.networks.map(n => n.network) || [], policyId: config?.policyId || null, automaticBroadcast: !!config };
+}

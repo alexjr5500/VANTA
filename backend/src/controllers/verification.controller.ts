@@ -230,7 +230,8 @@ export const initializeVerificationPurchase = async (req: AuthenticatedRequest, 
       req.user!.userId,
       planId,
       network,
-      req.ip
+      req.ip,
+      req.body?.recipientId
     );
     res.status(201).json(payload);
   } catch (error) {
@@ -261,6 +262,7 @@ export const verifyVerificationPurchase = async (req: AuthenticatedRequest, res:
       res.status(404).json({ error: 'Purchase order not found.' });
       return;
     }
+    if (order.network === 'stripe-card') { res.status(400).json({ error: 'Use the card checkout status endpoint.' }); return; }
     if (order.status === 'COMPLETED') {
       res.status(200).json({ success: true, message: 'Purchase already confirmed. Your badge is active.', alreadyCompleted: true });
       return;

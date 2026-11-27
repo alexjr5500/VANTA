@@ -1,4 +1,8 @@
 import { prisma } from '../prisma';
+import { resolveShopGiftRecipient } from './shop-gift.service';
+import { shopCryptoNetworks, shopLiveCryptoEnabled } from '../config/shop-crypto.config';
+import { shopSandboxEnabled } from '../config/shop-sandbox.config';
+import { coinsToUsd } from '../config/wallet.config';
 import { walletService } from './wallet.service';
 import { auditLog } from '../security/auditLog';
 import { CryptoUtils } from '../security/crypto';
@@ -107,18 +111,28 @@ export class CoinPaymentService {
     userId: string,
     packageId: unknown,
     network: unknown,
-    ipAddress?: string
+    ipAddress?: string,
+    customCoins?: unknown,
+    recipientId?: unknown,
+    dedicatedInvoice = false
   ) {
     if (!userId) throw new Error('Unauthorized');
 
     if (typeof packageId !== 'string' || !packageId.trim()) {
       throw new Error('packageId is required');
     }
-    if (typeof network !== 'string' || !SUPPORTED_COIN_PAYMENT_NETWORKS.includes(network)) {
-      throw new Error('Unsupported payment network. Choose USDT (BEP-20) or USDC (Base).');
+    if (typeof network !== 'string' || !SUPPORTED_COIN_PAYMENT_NETWORKS.includes(network) && !(dedicatedInvoice && shopLiveCryptoEnabled() && shopCryptoNetworks().includes(network))) {
+      throw new Error('Unsupported payment network.');
     }
 
-    const pkg = await findDbPackage(packageId);
+    const recipientUserId = await resolveShopGiftRecipient(userId, recipientId);
+    const isCustom = packageId === 'custom';
+    if (isCustom && ((!shopSandboxEnabled() && !shopLiveCryptoEnabled()) || typeof customCoins !== 'number' || !Number.isSafeInteger(customCoins) || customCoins < 100 || customCoins > 100000)) {
+      throw new Error('Custom quantity must be a whole number from 100 to 100,000 in an enabled checkout.');
+    }
+    const pkg = isCustom
+      ? { id: null, name: 'Custom amount', coins: customCoins as number, price: coinsToUsd(customCoins as number), isActive: true }
+      : await findDbPackage(packageId);
     if (!pkg || !pkg.isActive) {
       // Clean application-level 404 (mapped by the controller). NEVER let a
       // non-existent package reach `purchaseOrder.create()` — that would raise
@@ -161,6 +175,7 @@ export class CoinPaymentService {
     const order = await prisma.purchaseOrder.create({
       data: {
         userId,
+        ...(recipientUserId ? { recipientUserId } : {}),
         coins,
         amount,
         currency: 'USD',
@@ -177,6 +192,7 @@ export class CoinPaymentService {
     const payload: Record<string, unknown> = {
       address,
       orderId: order.id,
+      recipientUserId,
       network,
       amount,
       coins,

@@ -190,6 +190,10 @@ export class BlockchainTxVerifier {
     /** Optional treasury/source wallet required for platform withdrawal verification. */
     expectedSender?: string;
     minConfirmations?: number;
+    expectedAtomicAmount?: string;
+    notBefore?: Date;
+    notAfter?: Date;
+    minBlock?: number;
   }): Promise<BlockchainVerificationResult> {
     const txHash = typeof options.txHash === 'string' ? options.txHash.trim() : '';
     if (!isValidTransactionHash(txHash)) {
@@ -199,7 +203,7 @@ export class BlockchainTxVerifier {
       );
     }
     const network = getBlockchainNetwork(options.network);
-    if (!network) {
+    if (!network || network.native || network.tron || network.ton) {
       throw new BlockchainTxVerificationError(
         BLOCKCHAIN_VERIFICATION_ERROR_CODES.UNSUPPORTED_NETWORK,
         `Unsupported blockchain network: ${String(options.network)}`
@@ -227,6 +231,13 @@ export class BlockchainTxVerifier {
         : getMinBlockchainConfirmations()
     );
     const tolerance = getBlockchainAmountToleranceUsd();
+    const exact = options.expectedAtomicAmount;
+    if (exact !== undefined && (!/^[1-9]\d*$/.test(exact) || !options.notBefore || !options.notAfter)) {
+      throw new BlockchainTxVerificationError(BLOCKCHAIN_VERIFICATION_ERROR_CODES.AMOUNT_MISMATCH, 'Invalid invoice verification constraints.');
+    }
+    const amountMatches = (raw: string, numeric: number) => exact !== undefined
+      ? /^0x[0-9a-f]+$/i.test(raw) && BigInt(raw) === BigInt(exact)
+      : Number.isFinite(numeric) && numeric > 0 && Math.abs(numeric - options.expectedAmountUsd) <= tolerance;
     const timeoutMs = getBlockchainRpcTimeoutMs();
     const identityChainId = hexToNumber(await rpcCall(network, 'eth_chainId', [], Math.min(timeoutMs, 4000)));
     if (identityChainId === null) {
@@ -277,7 +288,7 @@ export class BlockchainTxVerifier {
           'Unmined transaction is not directed to the official receiving wallet.'
         );
       }
-      if (!Number.isFinite(pendingAmount) || pendingAmount <= 0 || Math.abs(pendingAmount - options.expectedAmountUsd) > tolerance) {
+      if (!amountMatches('0x' + input.slice(74), pendingAmount)) {
         throw new BlockchainTxVerificationError(
           BLOCKCHAIN_VERIFICATION_ERROR_CODES.AMOUNT_MISMATCH,
           `Unmined transaction amount does not match the order amount ${options.expectedAmountUsd}.`
@@ -387,7 +398,7 @@ const logAddress = String(transferLog.address || '').toLowerCase();
         `Could not parse the transferred ${network.tokenName} amount from transaction ${txHash}.`
       );
     }
-    if (Math.abs(amount - options.expectedAmountUsd) > tolerance) {
+    if (!amountMatches(rawAmount, amount)) {
       throw new BlockchainTxVerificationError(
         BLOCKCHAIN_VERIFICATION_ERROR_CODES.AMOUNT_MISMATCH,
         `On-chain ${network.tokenName} amount ${amount} does not match the order amount ${options.expectedAmountUsd} ` +
@@ -421,6 +432,23 @@ const logAddress = String(transferLog.address || '').toLowerCase();
       );
     }
 
+    if (exact !== undefined) {
+      if (network.chainId === 1) {
+        const finalized = await rpcCall(network, 'eth_getBlockByNumber', ['finalized', false], timeoutMs);
+        const height = finalized && typeof finalized === 'object' ? hexToNumber((finalized as Record<string, unknown>).number) : null;
+        if (height === null || height < txBlock) throw new BlockchainTxVerificationError(BLOCKCHAIN_VERIFICATION_ERROR_CODES.LOW_CONFIRMATIONS, 'Waiting for Ethereum finality.', true);
+      }
+      const block = await rpcCall(network, 'eth_getBlockByNumber', ['0x' + txBlock.toString(16), false], timeoutMs);
+      const canonical = block && typeof block === 'object' ? block as Record<string, unknown> : null;
+      const blockTime = hexToNumber(canonical?.timestamp);
+      if (!canonical || typeof canonical.hash !== 'string' || typeof receiptObj.blockHash !== 'string' || canonical.hash.toLowerCase() !== receiptObj.blockHash.toLowerCase() || blockTime === null) {
+        throw new BlockchainTxVerificationError(BLOCKCHAIN_VERIFICATION_ERROR_CODES.RPC_ERROR, 'Cannot establish canonical invoice payment block.', true);
+      }
+      const timestamp = blockTime * 1000;
+      if (timestamp < options.notBefore!.getTime() || timestamp > options.notAfter!.getTime() || (options.minBlock !== undefined && txBlock < options.minBlock)) {
+        throw new BlockchainTxVerificationError(BLOCKCHAIN_VERIFICATION_ERROR_CODES.TRANSACTION_FAILED, 'Payment falls outside the invoice validity window.');
+      }
+    }
     return {
       verified: true,
       txHash,

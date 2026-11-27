@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { rateLimiter, AuthenticatedRequest } from '../security';
+import { treasuryDashboard, authorizeTreasuryTransfer, recordTreasuryBroadcast, verifyTreasuryTransfer } from '../services/shop-treasury.service';
 import {
   getDashboardStats,
   getUsers,
@@ -87,6 +89,25 @@ const router = Router();
 router.use(authenticate);
 router.use(requireRole(Role.ADMIN, Role.CEO, Role.SUPER_ADMIN, Role.MODERATOR));
 router.use(requireAdminTwoFactorVerified);
+const treasuryRole = requireRole(Role.CEO, Role.SUPER_ADMIN);
+router.get('/treasury', treasuryRole, requirePermission(Permission.VIEW_WALLET), async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(await treasuryDashboard(typeof req.query.cursor === 'string' ? req.query.cursor : undefined)); }
+  catch { res.status(503).json({ error: 'Treasury data unavailable' }); }
+});
+router.post('/treasury/authorize', treasuryRole, requirePermission(Permission.MANAGE_PAYMENTS), rateLimiter.otp, async (req: AuthenticatedRequest, res) => {
+  try { res.status(201).json(await authorizeTreasuryTransfer(req.user!.userId, req.body || {})); }
+  catch (e) { res.status(400).json({ error: e instanceof Error && e.message.length < 160 && !/prisma|database|constraint/i.test(e.message) ? e.message : 'Treasury authorization failed' }); }
+});
+router.post('/treasury/:id/broadcast', treasuryRole, requirePermission(Permission.MANAGE_PAYMENTS), rateLimiter.otp, async (req: AuthenticatedRequest, res) => {
+  try { res.json(await recordTreasuryBroadcast(req.user!.userId, req.params.id, req.body || {})); }
+  catch (e) { res.status(400).json({ error: e instanceof Error && e.message.length < 160 && !/prisma|database|constraint/i.test(e.message) ? e.message : 'Broadcast record failed' }); }
+});
+router.post('/treasury/:id/verify', treasuryRole, requirePermission(Permission.MANAGE_PAYMENTS), rateLimiter.otp, async (req: AuthenticatedRequest, res) => {
+  try { res.json(await verifyTreasuryTransfer(req.user!.userId, req.params.id)); }
+  catch { res.status(400).json({ error: 'Transfer not independently verified. Retry or reconcile externally.' }); }
+});
+
 
 // One-time migration: convert legacy public message assets to authenticated Cloudinary assets.
 router.post('/security/secure-private-media', requirePermission(Permission.SYSTEM_MAINTENANCE), async (_req, res, next) => {

@@ -7,6 +7,7 @@ import {
   checkStudioAccess,
   expireOverdue,
   getBadgePurchasePlans,
+  initializeVerificationPurchase, verifyVerificationPurchase,
   getVerificationPurchases,
   adminGetAllBadges,
   adminGetAllMemberships,
@@ -24,6 +25,8 @@ import {
 } from '../controllers/verification.controller';
 import { authenticate, requireRole, requirePermission, requireAdminTwoFactorVerified, Permission, Role } from '../security';
 import { rateLimiter } from '../security/rateLimiter';
+
+import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 
 const router = Router();
 
@@ -75,10 +78,10 @@ router.get('/studio-access', checkStudioAccess);
 // ============================================================================
 
 // Start a Verified Badge purchase (PENDING — never activates anything)
-router.post('/purchase/init', verificationUnderMaintenance);
+router.post('/purchase/init', rateLimiter.otp, (req, res) => shopSandboxEnabled() ? initializeVerificationPurchase(req, res) : verificationUnderMaintenance(req, res));
 
 // Confirm / check a Verified Badge purchase payment
-router.post('/purchase/verify', verificationUnderMaintenance);
+router.post('/purchase/verify', rateLimiter.otp, (req, res) => shopSandboxEnabled() ? verifyVerificationPurchase(req, res) : verificationUnderMaintenance(req, res));
 
 // The authenticated user's Verified Badge purchase history
 router.get('/purchases', getVerificationPurchases);

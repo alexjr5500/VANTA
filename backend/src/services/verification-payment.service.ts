@@ -1,4 +1,9 @@
+import { shopCoinBadgeEnabled, badgeCoinCost } from '../config/shop-coin-badge.config';
+import { shopCryptoNetworks, shopLiveCryptoEnabled } from '../config/shop-crypto.config';
+import { shopCardEnabled } from '../config/shop-card.config';
+import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 import { prisma } from '../prisma';
+import { resolveShopGiftRecipient } from './shop-gift.service';
 import { auditLog } from '../security/auditLog';
 import { CryptoUtils } from '../security/crypto';
 import {
@@ -120,16 +125,19 @@ export class VerificationPaymentService {
     userId: string,
     planId: unknown,
     network: unknown,
-    ipAddress?: string
+    ipAddress?: string,
+    recipientId?: unknown,
+    dedicatedInvoice = false
   ): Promise<Record<string, unknown>> {
     if (!userId) throw new Error('Unauthorized');
     if (typeof planId !== 'string' || !planId.trim()) {
       throw new Error('planId is required');
     }
-    if (typeof network !== 'string' || !SUPPORTED_COIN_PAYMENT_NETWORKS.includes(network)) {
-      throw new Error('Unsupported payment network. Choose USDT (BEP-20) or USDC (Base).');
+    if (typeof network !== 'string' || !SUPPORTED_COIN_PAYMENT_NETWORKS.includes(network) && !(dedicatedInvoice && shopLiveCryptoEnabled() && shopCryptoNetworks().includes(network))) {
+      throw new Error('Unsupported payment network.');
     }
 
+    const recipientUserId = await resolveShopGiftRecipient(userId, recipientId);
     const catalogPlan = BADGE_PLAN_BY_ID.get(planId);
     if (!catalogPlan) throw new Error('Invalid verification plan');
 
@@ -187,6 +195,7 @@ export class VerificationPaymentService {
     const order = await prisma.verificationPurchase.create({
       data: {
         userId,
+        ...(recipientUserId ? { recipientUserId } : {}),
         planId: catalogPlan.id,
         amount,
         currency: 'USD',
@@ -200,6 +209,7 @@ export class VerificationPaymentService {
     const payload: Record<string, unknown> = {
       address,
       orderId: order.id,
+      recipientUserId,
       network,
       amount,
       currency: 'USD',
@@ -292,6 +302,11 @@ export class VerificationPaymentService {
       throw new Error('This payment session has expired. Please start a new purchase.');
     }
 
+    if (existingAttempt.network === 'vanta-coins') throw new Error('Coin-funded badge activation requires atomic wallet checkout.');
+    if (existingAttempt.network === 'stripe-card') {
+      const paid = await prisma.shopCardCheckout.findFirst({ where: { orderId: existingAttempt.id, payerId: userId, product: 'badge', paidAt: { not: null }, paymentIntentId: { not: null } } });
+      if (!shopCardEnabled() || options.mode !== 'test' || !paid || paid.amountCents !== Math.round(existingAttempt.amount * 100)) throw new Error('Card payment has not been verified.');
+    }
     const plan = await prisma.subscriptionPlan.findUnique({ where: { id: existingAttempt.planId } });
     if (!plan || !plan.isActive) {
       throw new Error('The purchased verification plan is no longer available.');
@@ -299,6 +314,8 @@ export class VerificationPaymentService {
     const badgeType: 'BLUE' | 'GOLD' = plan.badgeType === 'BLUE' ? 'BLUE' : 'GOLD';
 
     const mode = options.mode || existingAttempt.paymentMode || COIN_PAYMENT_MODE.LIVE;
+    const recipientId = existingAttempt.recipientUserId || userId;
+    if (existingAttempt.recipientUserId && (mode !== 'test' || existingAttempt.paymentMode !== 'test' || !shopSandboxEnabled())) throw new Error('Gift purchases require the isolated sandbox.');
     const providerRef = (options.providerReference || existingAttempt.providerReference || '').trim();
     const providerOrderId = resolveProviderOrderId(mode, existingAttempt.id, providerRef);
     const now = new Date();
@@ -333,20 +350,26 @@ export class VerificationPaymentService {
         throw new Error('This purchase was already processed.');
       }
 
+      if (existingAttempt.recipientUserId) {
+        // Serialize gift activation for the target and fail closed if the account is no longer active.
+        const active = await tx.user.updateMany({ where: { id: recipientId, status: 'ACTIVE' }, data: { status: 'ACTIVE' } });
+        if (active.count !== 1) throw new Error('Gift recipient unavailable.');
+      }
       // ---- entitlement date computation (renewal-aware, never shortening) ----
-      const existingBadge = await tx.verificationBadge.findUnique({ where: { userId } });
+      const existingBadge = await tx.verificationBadge.findUnique({ where: { userId: recipientId } });
       const hasActiveBadge =
         existingBadge?.status === 'ACTIVE' &&
         existingBadge.expiresAt &&
         new Date(existingBadge.expiresAt).getTime() > now.getTime();
 
+      if (existingAttempt.recipientUserId && existingBadge?.status === 'ACTIVE') throw new Error('Recipient already has an active badge. Choose another recipient.');
       const startDate = hasActiveBadge && existingBadge?.expiresAt ? new Date(existingBadge.expiresAt) : now;
       const endDate = addMonths(startDate, plan.durationMonths);
 
       let badge;
       if (existingBadge) {
         badge = await tx.verificationBadge.update({
-          where: { userId },
+          where: { userId: recipientId },
           data: {
             badgeType,
             status: 'ACTIVE',
@@ -364,7 +387,7 @@ export class VerificationPaymentService {
       } else {
         badge = await tx.verificationBadge.create({
           data: {
-            userId,
+            userId: recipientId,
             badgeType,
             status: 'ACTIVE',
             grantedAt: startDate,
@@ -379,7 +402,7 @@ export class VerificationPaymentService {
       // BLUE badges never touch the membership record.
       let membership: any = null;
       if (badgeType === 'GOLD') {
-        const existingMembership = await tx.creatorMembership.findUnique({ where: { userId } });
+        const existingMembership = await tx.creatorMembership.findUnique({ where: { userId: recipientId } });
         const membershipActive =
           existingMembership?.status === 'ACTIVE' &&
           existingMembership.endDate &&
@@ -391,7 +414,7 @@ export class VerificationPaymentService {
 
         if (existingMembership) {
           membership = await tx.creatorMembership.update({
-            where: { userId },
+            where: { userId: recipientId },
             data: {
               planId: plan.id,
               status: 'ACTIVE',
@@ -408,7 +431,7 @@ export class VerificationPaymentService {
         } else {
           membership = await tx.creatorMembership.create({
             data: {
-              userId,
+              userId: recipientId,
               planId: plan.id,
               status: 'ACTIVE',
               startDate: membershipStart,
@@ -424,9 +447,10 @@ export class VerificationPaymentService {
 
       await tx.verificationHistory.create({
         data: {
-          userId,
+          userId: recipientId,
           action: 'BADGE_ACTIVATED',
           details: JSON.stringify({
+            ...(existingAttempt.recipientUserId ? { payerId: userId } : {}),
             badgeType,
             planId: plan.id,
             planName: plan.name,
@@ -444,8 +468,7 @@ export class VerificationPaymentService {
       return {
         alreadyCompleted: false,
         order: { ...existingAttempt, status: VERIFICATION_PURCHASE_STATUS.COMPLETED },
-        badge,
-        membership,
+        ...(existingAttempt.recipientUserId ? {} : { badge, membership }),
       };
     });
 
@@ -896,6 +919,7 @@ export class VerificationPaymentService {
       throw new Error('Only completed purchases can be refunded');
     }
 
+    const recipientId = order.recipientUserId || order.userId;
     await prisma.$transaction(async (tx) => {
       const claimed = await tx.verificationPurchase.updateMany({
         where: { id: purchaseId, status: VERIFICATION_PURCHASE_STATUS.COMPLETED },
@@ -915,12 +939,30 @@ export class VerificationPaymentService {
         throw new Error('This purchase cannot be refunded');
       }
 
+      if (order.network === 'vanta-coins') {
+        if (!shopCoinBadgeEnabled() || order.paymentMode !== 'test') throw new Error('Coin badge refund unavailable');
+        const badge = await tx.verificationBadge.findUnique({ where: { userId: recipientId } });
+        if (!badge || badge.status !== 'ACTIVE' || badge.sourcePurchaseId !== purchaseId || !badge.expiresAt || badge.expiresAt <= new Date()) throw new Error('Badge changed or expired; manual reconciliation required');
+        const locked = await tx.user.updateMany({ where: { id: recipientId, status: 'ACTIVE' }, data: { status: 'ACTIVE' } });
+        if (locked.count !== 1) throw new Error('Recipient unavailable');
+        const current = await tx.verificationBadge.findUnique({ where: { userId: recipientId } });
+        if (current?.sourcePurchaseId !== purchaseId || current.status !== 'ACTIVE') throw new Error('Badge changed; manual reconciliation required');
+        if (badge.badgeType === 'GOLD') {
+          const member = await tx.creatorMembership.findUnique({ where: { userId: recipientId } });
+          if (!member || member.paymentMethod !== 'vanta-coins' || member.paymentTxHash !== purchaseId) throw new Error('Membership changed; manual reconciliation required');
+        }
+        const debit = await tx.walletTransaction.findFirst({ where: { userId: order.userId, reference: purchaseId, type: 'SUBSCRIPTION', currency: 'VANTA', status: 'COMPLETED' } });
+        if (!debit || !Number.isSafeInteger(debit.amount) || debit.amount <= 0 || debit.amount !== badgeCoinCost(order.amount)) throw new Error('Original wallet debit not found');
+        const wallet = await tx.wallet.update({ where: { userId: order.userId }, data: { coinBalance: { increment: debit.amount } } });
+        await tx.walletTransaction.create({ data: { walletId: wallet.id, userId: order.userId, type: 'REFUND', currency: 'VANTA', amount: debit.amount, fee: 0, balanceBefore: wallet.coinBalance - debit.amount, balance: wallet.coinBalance, reference: purchaseId, status: 'COMPLETED', description: 'Verification badge purchase refund', metadata: JSON.stringify({ adminId, recipientId, reason }) } });
+        await tx.walletAuditLog.create({ data: { userId: order.userId, action: 'COIN_BADGE_REFUND', details: JSON.stringify({ purchaseId, adminId, coins: debit.amount, recipientId, reason }) } });
+      }
       // Reverse the entitlement if and only if the current active badge was
       // activated by this exact purchase.
-      const activeBadge = await tx.verificationBadge.findUnique({ where: { userId: order.userId } });
+      const activeBadge = await tx.verificationBadge.findUnique({ where: { userId: recipientId } });
       if (activeBadge?.status === 'ACTIVE' && activeBadge.sourcePurchaseId === purchaseId) {
         await tx.verificationBadge.update({
-          where: { userId: order.userId },
+          where: { userId: recipientId },
           data: {
             status: 'REVOKED',
             revokedAt: new Date(),
@@ -931,13 +973,13 @@ export class VerificationPaymentService {
         });
         if (activeBadge.badgeType === 'GOLD') {
           await tx.creatorMembership.updateMany({
-            where: { userId: order.userId, status: 'ACTIVE' },
+            where: { userId: recipientId, status: 'ACTIVE' },
             data: { status: 'CANCELLED', cancelledAt: new Date(), updatedAt: new Date() },
           });
         }
         await tx.verificationHistory.create({
           data: {
-            userId: order.userId,
+            userId: recipientId,
             action: 'BADGE_REVOKED_REFUND',
             performedBy: adminId,
             details: JSON.stringify({ purchaseId, reason: reason || 'Purchase refunded' }),

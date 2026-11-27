@@ -14,7 +14,7 @@
 //   VANTA_BASE_RPC_URL  (default: public Base RPC)
 // ============================================================================
 
-export type BlockchainNetworkId = 'usdt-bep20' | 'usdc-base';
+export type BlockchainNetworkId = 'usdt-bep20' | 'usdc-base' | 'usdt-erc20' | 'eth-erc20' | 'usdt-trc20' | 'gram-ton';
 
 export interface BlockchainNetworkConfig {
   id: BlockchainNetworkId;
@@ -25,6 +25,9 @@ export interface BlockchainNetworkConfig {
   tokenContract: string;
   /** Number of decimals the token contract uses for its balances/transfers. */
   tokenDecimals: number;
+  native?: boolean;
+  tron?: boolean;
+  ton?: boolean;
   /** JSON-RPC endpoint for the chain (resolved from env per network). */
   rpcUrl: string;
 }
@@ -33,9 +36,12 @@ export interface BlockchainNetworkConfig {
 export const ERC20_TRANSFER_EVENT_SIGNATURE = '0xddf252ad1be2c89b69c2b608fc26bd2742204fa22e51d0b52488e1c4bccf45d9b';
 
 export function resolveNetworkRpcUrl(networkId: BlockchainNetworkId): string {
-  const envName = networkId === 'usdt-bep20' ? 'VANTA_BSC_RPC_URL' : 'VANTA_BASE_RPC_URL';
+  if (networkId === 'gram-ton') return 'https://toncenter.com';
+  if (networkId === 'usdt-trc20') return 'https://api.trongrid.io';
+  const envName = networkId === 'usdt-bep20' ? 'VANTA_BSC_RPC_URL' : (networkId === 'usdt-erc20' || networkId === 'eth-erc20') ? 'VANTA_ETHEREUM_RPC_URL' : 'VANTA_BASE_RPC_URL';
   const configured = (process.env[envName] || '').trim();
   if (configured) return configured;
+  if (networkId === 'usdt-erc20' || networkId === 'eth-erc20') return ''; // require an explicitly configured Ethereum RPC
   return networkId === 'usdt-bep20' ? 'https://bsc-dataseed1.binance.org' : 'https://mainnet.base.org';
 }
 
@@ -49,6 +55,26 @@ export const BLOCKCHAIN_NETWORKS: Readonly<Record<BlockchainNetworkId, Blockchai
     tokenDecimals: 18,
     rpcUrl: resolveNetworkRpcUrl('usdt-bep20'),
   }),
+  'gram-ton': Object.freeze({
+    id: 'gram-ton', chainName: 'TON (native GRAM)', chainId: -239, tokenName: 'GRAM',
+    tokenContract: '', tokenDecimals: 9, ton: true,
+    rpcUrl: resolveNetworkRpcUrl('gram-ton'),
+  }),
+  'usdt-trc20': Object.freeze({
+    id: 'usdt-trc20', chainName: 'Tron (TRC-20)', chainId: 728126428, tokenName: 'USDT',
+    tokenContract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', tokenDecimals: 6, tron: true,
+    rpcUrl: resolveNetworkRpcUrl('usdt-trc20'),
+  }),
+  'eth-erc20': Object.freeze({
+    id: 'eth-erc20', chainName: 'Ethereum (native ETH)', chainId: 1, tokenName: 'ETH',
+    tokenContract: '', tokenDecimals: 18, native: true,
+    rpcUrl: resolveNetworkRpcUrl('eth-erc20'),
+  }),
+  'usdt-erc20': Object.freeze({
+    id: 'usdt-erc20', chainName: 'Ethereum (ERC-20)', chainId: 1, tokenName: 'USDT',
+    tokenContract: '0xdac17f958d2ee523a2206206994597c13d831ec7', tokenDecimals: 6,
+    rpcUrl: resolveNetworkRpcUrl('usdt-erc20'),
+  }),
   'usdc-base': Object.freeze({
     id: 'usdc-base',
     chainName: 'Base',
@@ -61,7 +87,7 @@ export const BLOCKCHAIN_NETWORKS: Readonly<Record<BlockchainNetworkId, Blockchai
 });
 
 export function getBlockchainNetwork(id: unknown): BlockchainNetworkConfig | null {
-  if (typeof id !== 'string') return null;
+  if (typeof id !== 'string' || !Object.prototype.hasOwnProperty.call(BLOCKCHAIN_NETWORKS, id)) return null;
   const network = BLOCKCHAIN_NETWORKS[id as BlockchainNetworkId];
   return network || null;
 }

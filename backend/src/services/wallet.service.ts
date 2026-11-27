@@ -1,3 +1,5 @@
+import { shopCardEnabled } from '../config/shop-card.config';
+import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 import { prisma } from "../prisma";
 import { notificationService } from "./notification.service";
 import { emailService } from "./email.service";
@@ -592,7 +594,10 @@ export class WalletService {
     if (!COIN_PAYMENT_CREDITABLE_STATUSES.includes(order.status)) {
       throw new Error(`This purchase order cannot be completed (status: ${order.status}).`);
     }
-    if (COIN_PAYMENT_ORDER_TTL_SECONDS > 0) {
+    if (order.paymentMethod === "stripe-card") {
+      const paid = await prisma.shopCardCheckout.findFirst({ where: { orderId, payerId: userId, product: "coins", paidAt: { not: null }, paymentIntentId: { not: null } } });
+      if (!shopCardEnabled() || options.mode !== "test" || !paid || paid.amountCents !== Math.round(order.amount * 100) || options.providerOrderId !== paid.paymentIntentId || !order.expiresAt || order.expiresAt.getTime() <= Date.now()) throw new Error("Card payment is not verified or expired.");
+    } else if (COIN_PAYMENT_ORDER_TTL_SECONDS > 0) {
       const createdAt = new Date(order.createdAt).getTime();
       if (Date.now() - createdAt > COIN_PAYMENT_ORDER_TTL_SECONDS * 1000) {
         throw new Error("This payment session has expired. Please start a new purchase.");
@@ -610,7 +615,11 @@ export class WalletService {
       }
     }
 
-    const wallet = await this.ensureWallet(userId);
+    const recipientId = order.recipientUserId || userId;
+    if (order.recipientUserId && (options.mode !== "test" || order.paymentMode !== "test" || !shopSandboxEnabled())) {
+      throw new Error("Gift purchase is only available in the isolated sandbox.");
+    }
+    const wallet = await this.ensureWallet(recipientId);
     if (wallet.isFrozen) {
       throw new Error("Wallet is frozen. Contact support.");
     }
@@ -626,6 +635,10 @@ export class WalletService {
     // Conditional status flip makes the completion idempotent under concurrency:
     // a second request finds 0 rows updated and cannot credit twice.
     const result = await prisma.$transaction(async (tx) => {
+      if (order.recipientUserId) {
+        const active = await tx.user.findFirst({ where: { id: recipientId, status: "ACTIVE" }, select: { id: true } });
+        if (!active) throw new Error("Gift recipient unavailable.");
+      }
       const claimed = await tx.purchaseOrder.updateMany({
         where: { id: orderId, userId, status: { in: [...COIN_PAYMENT_CREDITABLE_STATUSES] } },
         data: {
@@ -644,7 +657,16 @@ export class WalletService {
         throw new Error("This purchase order was already processed.");
       }
 
-      const updatedWallet = await tx.wallet.update({
+      if (order.recipientUserId) {
+        const credit = await tx.wallet.updateMany({
+          where: { userId: recipientId, isFrozen: false },
+          data: { coinBalance: { increment: order.coins }, totalCoinsPurchased: { increment: order.coins } },
+        });
+        if (credit.count !== 1) throw new Error("Gift recipient wallet unavailable.");
+      }
+      const updatedWallet = order.recipientUserId
+        ? await tx.wallet.findUniqueOrThrow({ where: { userId: recipientId } })
+        : await tx.wallet.update({
         where: { userId },
         data: {
           coinBalance: { increment: order.coins },
@@ -655,16 +677,17 @@ export class WalletService {
       await tx.walletTransaction.create({
         data: {
           walletId: wallet.id,
-          userId,
+          userId: recipientId,
           type: TX_TYPES.PURCHASE,
           amount: order.coins,
           fee: 0,
-          balanceBefore: updatedWallet.coinBalance + order.coins,
+          balanceBefore: updatedWallet.coinBalance - order.coins,
           balance: updatedWallet.coinBalance,
           status: "COMPLETED",
           description: `Purchased ${order.coins.toLocaleString()} VANTA Coins for $${order.amount.toFixed(2)}`,
           reference: orderId,
           metadata: JSON.stringify({
+            ...(order.recipientUserId ? { payerId: userId } : {}),
             paymentMethod: order.paymentMethod,
             provider: order.provider,
             mode: options.mode,
@@ -680,6 +703,7 @@ export class WalletService {
           action: "COIN_PURCHASE_COMPLETED",
           details: JSON.stringify({
             orderId,
+            ...(order.recipientUserId ? { recipientId } : {}),
             amount: order.amount,
             coins: order.coins,
             mode: options.mode,
@@ -701,7 +725,7 @@ export class WalletService {
     // never roll back a successful, idempotently-completed purchase.
     try {
       await notificationService.createNotification(
-        userId,
+        recipientId,
         "WALLET_DEPOSIT",
         "Deposit Successful",
         `${order.coins.toLocaleString()} VANTA Coins have been added to your Balance.`,
@@ -710,7 +734,7 @@ export class WalletService {
     } catch {
       // Ignore: the purchase itself already succeeded.
     }
-    return { order: result.order, coins: order.coins, wallet: result.updatedWallet, alreadyCompleted: false };
+    return { order: result.order, coins: order.coins, wallet: order.recipientUserId ? undefined : result.updatedWallet, alreadyCompleted: false };
   }
 
   // COIN PURCHASE REFUNDS (auditable, immutable original)
@@ -745,6 +769,7 @@ export class WalletService {
       );
     }
 
+    const recipientId = order.recipientUserId || order.userId;
     const refundReason = (reason || "").trim().slice(0, 500) || null;
 
     const result = await prisma.$transaction(async (tx) => {
@@ -764,26 +789,26 @@ export class WalletService {
         throw new Error("This purchase cannot be refunded.");
       }
 
-      const walletBefore = await tx.wallet.findUnique({ where: { userId: order.userId } });
+      const walletBefore = await tx.wallet.findUnique({ where: { userId: recipientId } });
       if (!walletBefore) throw new Error("Wallet not found");
 
       // Claim the refund only if the current spendable balance still covers
       // the debit. This is checked atomically with the balance update so a
       // concurrent purchase/gift/transfer cannot make the wallet negative.
       const balanceClaim = await tx.wallet.updateMany({
-        where: { userId: order.userId, coinBalance: { gte: order.coins } },
+        where: { userId: recipientId, coinBalance: { gte: order.coins } },
         data: { coinBalance: { decrement: order.coins } },
       });
       if (balanceClaim.count !== 1) {
         throw new Error("Refund deferred: the current wallet balance is below the refundable coin amount");
       }
-      const updatedWallet = await tx.wallet.findUniqueOrThrow({ where: { userId: order.userId } });
+      const updatedWallet = await tx.wallet.findUniqueOrThrow({ where: { userId: recipientId } });
 
       // Negative ledger entry: the original PURCHASE entry stays intact.
       await tx.walletTransaction.create({
         data: {
           walletId: walletBefore.id,
-          userId: order.userId,
+          userId: recipientId,
           type: "REFUND",
           amount: -order.coins,
           fee: 0,
@@ -803,7 +828,7 @@ export class WalletService {
 
       await tx.walletAuditLog.create({
         data: {
-          userId: order.userId,
+          userId: recipientId,
           action: "COIN_PURCHASE_REFUNDED",
           details: JSON.stringify({
             orderId,
@@ -825,7 +850,7 @@ export class WalletService {
 
     try {
       await notificationService.createNotification(
-        order.userId,
+        recipientId,
         "WALLET_REFUND",
         "Refund Processed",
         `${order.coins.toLocaleString()} VANTA Coins were returned to your Balance.${refundReason ? ` Reason: ${refundReason}` : ""}`
