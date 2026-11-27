@@ -1,3 +1,4 @@
+import { shopCardEnabled } from '../config/shop-card.config';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 import { prisma } from "../prisma";
 import { notificationService } from "./notification.service";
@@ -593,7 +594,10 @@ export class WalletService {
     if (!COIN_PAYMENT_CREDITABLE_STATUSES.includes(order.status)) {
       throw new Error(`This purchase order cannot be completed (status: ${order.status}).`);
     }
-    if (COIN_PAYMENT_ORDER_TTL_SECONDS > 0) {
+    if (order.paymentMethod === "stripe-card") {
+      const paid = await prisma.shopCardCheckout.findFirst({ where: { orderId, payerId: userId, product: "coins", paidAt: { not: null }, paymentIntentId: { not: null } } });
+      if (!shopCardEnabled() || options.mode !== "test" || !paid || paid.amountCents !== Math.round(order.amount * 100) || options.providerOrderId !== paid.paymentIntentId || !order.expiresAt || order.expiresAt.getTime() <= Date.now()) throw new Error("Card payment is not verified or expired.");
+    } else if (COIN_PAYMENT_ORDER_TTL_SECONDS > 0) {
       const createdAt = new Date(order.createdAt).getTime();
       if (Date.now() - createdAt > COIN_PAYMENT_ORDER_TTL_SECONDS * 1000) {
         throw new Error("This payment session has expired. Please start a new purchase.");
