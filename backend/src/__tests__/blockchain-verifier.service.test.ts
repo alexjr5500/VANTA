@@ -371,3 +371,32 @@ describe('BlockchainTxVerifier.verifyTransaction', () => {
     expect(attempts).toBe(1);
   });
 });
+describe('invoice-specific strict verification', () => {
+  const exact = (BigInt(199) * BigInt(10) ** BigInt(16)).toString();
+  const time = 1795800000000;
+  const opts = {
+    txHash: TX, network: 'usdt-bep20', expectedRecipient: OFFICIAL_WALLET, expectedAmountUsd: 1.99,
+    expectedAtomicAmount: exact, notBefore: new Date(time - 1000), notAfter: new Date(time + 1000), minBlock: 16,
+  };
+  const canonical = () => ({ hash: '0x' + 'f'.repeat(64), timestamp: '0x' + Math.floor(time / 1000).toString(16) });
+  test('accepts exact amount in canonical invoice block and validity window', async () => {
+    mockRpc({ ...defaultHandlers(), eth_getBlockByNumber: canonical });
+    await expect(blockchainTxVerifier.verifyTransaction(opts)).resolves.toMatchObject({ verified: true, blockNumber: 16 });
+  });
+  test('rejects a single atomic-unit mismatch even when rounded amount looks equal', async () => {
+    mockRpc({ ...defaultHandlers(), eth_getTransactionReceipt: () => makeReceipt({ logs: [makeTransferLog(OFFICIAL_WALLET, BigInt(exact) + BigInt(1))] }), eth_getBlockByNumber: canonical });
+    await expect(blockchainTxVerifier.verifyTransaction(opts)).rejects.toMatchObject({ code: 'AMOUNT_MISMATCH' });
+  });
+  test('rejects a payment mined before address reservation', async () => {
+    mockRpc({ ...defaultHandlers(), eth_getBlockByNumber: canonical });
+    await expect(blockchainTxVerifier.verifyTransaction({ ...opts, minBlock: 17 })).rejects.toMatchObject({ code: 'TRANSACTION_FAILED' });
+  });
+  test('rejects a mismatched canonical block', async () => {
+    mockRpc({ ...defaultHandlers(), eth_getBlockByNumber: () => ({ ...canonical(), hash: '0x' + 'b'.repeat(64) }) });
+    await expect(blockchainTxVerifier.verifyTransaction(opts)).rejects.toMatchObject({ code: 'RPC_ERROR' });
+  });
+  test('rejects an out-of-window payment', async () => {
+    mockRpc({ ...defaultHandlers(), eth_getBlockByNumber: canonical });
+    await expect(blockchainTxVerifier.verifyTransaction({ ...opts, notAfter: new Date(time - 1) })).rejects.toMatchObject({ code: 'TRANSACTION_FAILED' });
+  });
+});
