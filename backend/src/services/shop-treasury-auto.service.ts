@@ -73,9 +73,29 @@ async function enqueue(config: SignerConfig) {
   const start = process.env.VANTA_TREASURY_AUTO_NOT_BEFORE || '';
   const since = new Date(start);
   if (!start || !Number.isFinite(since.getTime()) || since > new Date()) return;
-  const rows = await prisma.shopCryptoInvoice.findMany({ where: {
-    network: { in: config.networks.map(n => n.network) }, settledAt: { gte: since }, transactionHash: { not: null }, treasuryTransfer: null,
-  }, orderBy: { settledAt: 'asc' }, take: 25 });
+  // Filter completed live orders and caps in SQL, rather than repeatedly
+  // selecting the same refunded/oversized oldest invoices and starving new ones.
+  const rows = await prisma.$queryRaw<ShopCryptoInvoice[]> `
+    SELECT i.* FROM "ShopCryptoInvoice" i
+    LEFT JOIN "ShopTreasuryTransfer" t ON t."invoiceId" = i."id"
+    WHERE i."settledAt" >= ${since} AND i."transactionHash" IS NOT NULL AND t."id" IS NULL
+      AND i."network" = ANY(${config.networks.map(n => n.network)}::text[])
+      AND (
+        (i."product" = 'coins' AND EXISTS (
+          SELECT 1 FROM "PurchaseOrder" p WHERE p."id" = i."orderId"
+            AND p."userId" = i."payerId" AND p."status" = 'COMPLETED'
+            AND p."paymentMode" = 'live' AND p."paymentMethod" = i."network"
+            AND p."providerOrderId" = 'live:' || i."transactionHash"
+            AND p."amount" > 0 AND p."amount" <= ${config.maxOrderCents / 100}))
+        OR (i."product" = 'badge' AND EXISTS (
+          SELECT 1 FROM "VerificationPurchase" p WHERE p."id" = i."orderId"
+            AND p."userId" = i."payerId" AND p."status" = 'COMPLETED'
+            AND p."paymentMode" = 'live' AND p."network" = i."network"
+            AND p."providerOrderId" = 'live:' || i."transactionHash"
+            AND p."amount" > 0 AND p."amount" <= ${config.maxOrderCents / 100}))
+      )
+    ORDER BY i."settledAt", i."id" LIMIT 25
+  `;
   for (const invoice of rows) {
     try {
       await prisma.$transaction(async tx => {
@@ -106,7 +126,7 @@ async function enqueue(config: SignerConfig) {
 }
 async function change(row: Row, lease: string, data: Prisma.ShopTreasuryTransferUpdateManyMutationInput, action?: string) {
   await prisma.$transaction(async tx => {
-    const count = await tx.shopTreasuryTransfer.updateMany({ where: { id: row.id, leaseToken: lease, status: row.status, automation: true }, data });
+    const count = await tx.shopTreasuryTransfer.updateMany({ where: { id: row.id, leaseToken: lease, leaseUntil: { gt: new Date() }, status: row.status, automation: true }, data });
     if (count.count !== 1) throw new Error('Settlement lease lost');
     if (action) await appendAuditLog(tx, { action, severity: 'CRITICAL', metadata: { transferId: row.id, network: row.network, requestId: row.signerRequestId, status: data.status, transactionHash: data.transactionHash } });
   });
@@ -190,6 +210,16 @@ export async function processTreasurySettlement(id: string, config: SignerConfig
         if (!row!.orderAmountCents || row!.orderAmountCents > again.maxOrderCents || (sum._sum.orderAmountCents || 0) + row!.orderAmountCents > again.dailyCapCents) throw new Error('Daily treasury dispatch limit');
         const count = await tx.shopTreasuryTransfer.updateMany({ where: { id, leaseToken: lease, status: 'AUTO_QUEUED', dispatchStartedAt: null, leaseUntil: { gt: new Date() } }, data: { status: 'AUTO_DISPATCHING', dispatchStartedAt: dispatchAt, dispatchDeadline: pending.dispatchDeadline, nextAttemptAt: delay(60000) } });
         if (count.count !== 1) throw new Error('Settlement lease lost');
+        // Recheck eligibility inside the transaction that persists the dispatch.
+        // Lock the original purchase against concurrent refund/status changes.
+        const invoice = row!.invoice;
+        if (invoice.product === 'coins') await tx.$queryRaw`SELECT "id" FROM "PurchaseOrder" WHERE "id" = ${invoice.orderId} FOR UPDATE`;
+        else if (invoice.product === 'badge') await tx.$queryRaw`SELECT "id" FROM "VerificationPurchase" WHERE "id" = ${invoice.orderId} FOR UPDATE`;
+        else throw new Error('Unknown invoice product');
+        const currentInvoice = await tx.shopCryptoInvoice.findUnique({ where: { id: invoice.id } });
+        if (!currentInvoice || currentInvoice.transactionHash !== invoice.transactionHash || currentInvoice.address !== row!.source || currentInvoice.amountAtomic !== row!.amountAtomic || currentInvoice.network !== row!.network) throw new Error('Invoice changed before dispatch');
+        const currentOrder = await assertVerifiedInvoice(tx, currentInvoice);
+        if (cents(currentOrder.amount) !== row!.orderAmountCents) throw new Error('Order amount changed before dispatch');
         await appendAuditLog(tx, { action: 'TREASURY_AUTO_DISPATCH_STARTED', severity: 'CRITICAL', metadata: { transferId: id, requestId: row!.signerRequestId, intent } });
       });
       row = { ...pending, status: 'AUTO_DISPATCHING', dispatchStartedAt: dispatchAt };
@@ -200,6 +230,9 @@ export async function processTreasurySettlement(id: string, config: SignerConfig
       buildSettlementIntent(row, final);
       const current = await prisma.shopTreasuryTransfer.findFirst({ where: { id, status: 'AUTO_DISPATCHING', leaseToken: lease, leaseUntil: { gt: new Date() } }, select: { id: true } });
       if (!current) return;
+      // Last gate before contacting custody. A refund after submission still
+      // requires separate reconciliation; the signer enforces its own policy.
+      await assertVerifiedInvoice(prisma, row.invoice);
       await applyResult(row, lease, await requestCustody(final, intent, 'submit'));
       return;
     }

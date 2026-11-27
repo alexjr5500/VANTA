@@ -19,3 +19,5 @@ One DB transfer per invoice, one unique request ID, multi-worker compare-and-swa
 
 ## Required before activation
 Select a regulated/appropriate custody arrangement and implement its adapter; review and test protocol, key custody, withdrawal policy, fee accounting, chain RPC correctness, gas funding, destination ownership, refund reserve and limits. Apply migrations, run PostgreSQL concurrency/crash tests, test forged/replayed responses, ambiguous requests, signer outages, chain reorganizations, fee breaches, and tiny controlled transfers on each approved network. Keep automatic settlement and live checkout off until validated. No Play Billing work.
+
+First-dispatch hardening: queue selection filters completed live orders and order limits before pagination; the worker locks and revalidates the original order during durable dispatch authorization and rechecks it before the custody request. Refunds after dispatch require separate reconciliation. Lease expiry blocks stale worker state changes. The mock regression suite covers first dispatch, ambiguous submission recovery, daily caps, fee caps and refunds during preflight. This is not a live custodian test.
