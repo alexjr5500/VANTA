@@ -14,7 +14,7 @@
 //   VANTA_BASE_RPC_URL  (default: public Base RPC)
 // ============================================================================
 
-export type BlockchainNetworkId = 'usdt-bep20' | 'usdc-base' | 'usdt-erc20' | 'eth-erc20';
+export type BlockchainNetworkId = 'usdt-bep20' | 'usdc-base' | 'usdt-erc20' | 'eth-erc20' | 'usdt-trc20';
 
 export interface BlockchainNetworkConfig {
   id: BlockchainNetworkId;
@@ -26,6 +26,7 @@ export interface BlockchainNetworkConfig {
   /** Number of decimals the token contract uses for its balances/transfers. */
   tokenDecimals: number;
   native?: boolean;
+  tron?: boolean;
   /** JSON-RPC endpoint for the chain (resolved from env per network). */
   rpcUrl: string;
 }
@@ -34,6 +35,7 @@ export interface BlockchainNetworkConfig {
 export const ERC20_TRANSFER_EVENT_SIGNATURE = '0xddf252ad1be2c89b69c2b608fc26bd2742204fa22e51d0b52488e1c4bccf45d9b';
 
 export function resolveNetworkRpcUrl(networkId: BlockchainNetworkId): string {
+  if (networkId === 'usdt-trc20') return 'https://api.trongrid.io';
   const envName = networkId === 'usdt-bep20' ? 'VANTA_BSC_RPC_URL' : (networkId === 'usdt-erc20' || networkId === 'eth-erc20') ? 'VANTA_ETHEREUM_RPC_URL' : 'VANTA_BASE_RPC_URL';
   const configured = (process.env[envName] || '').trim();
   if (configured) return configured;
@@ -50,6 +52,11 @@ export const BLOCKCHAIN_NETWORKS: Readonly<Record<BlockchainNetworkId, Blockchai
     tokenContract: '0x55d398326f99059ff775485246999027b3197955', // Tether USD (BSC-USD), 18 decimals
     tokenDecimals: 18,
     rpcUrl: resolveNetworkRpcUrl('usdt-bep20'),
+  }),
+  'usdt-trc20': Object.freeze({
+    id: 'usdt-trc20', chainName: 'Tron (TRC-20)', chainId: 728126428, tokenName: 'USDT',
+    tokenContract: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', tokenDecimals: 6, tron: true,
+    rpcUrl: resolveNetworkRpcUrl('usdt-trc20'),
   }),
   'eth-erc20': Object.freeze({
     id: 'eth-erc20', chainName: 'Ethereum (native ETH)', chainId: 1, tokenName: 'ETH',

@@ -1,3 +1,4 @@
+import { tronHead, verifyTronUsdt, discoverTronUsdt } from './shop-tron.service';
 import * as QRCode from 'qrcode';
 import { quoteEth, ethAtomicFromQuote, atomicDisplay, verifyNativeEth } from './shop-native-eth.service';
 import { prisma } from '../prisma';
@@ -19,6 +20,7 @@ export function priceToAtomic(amount: number, decimals: number): string {
   return (BigInt(cents) * BigInt(10) ** BigInt(decimals - 2)).toString();
 }
 export function paymentUri(network: BlockchainNetworkConfig, address: string, atomic: string): string {
+  if (network.tron) { if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address)) throw new Error('Invalid TRON address'); return address; }
   if (!/^0x[0-9a-f]{40}$/.test(address) || !/^[1-9][0-9]*$/.test(atomic)) throw new Error('Invalid invoice');
   if (network.native) return 'ethereum:' + address + '@' + network.chainId + '?value=' + atomic;
   return 'ethereum:' + network.tokenContract + '@' + network.chainId + '/transfer?address=' + address + '&uint256=' + atomic;
@@ -59,7 +61,7 @@ async function orderFor(i: ShopCryptoInvoice) {
 async function renderInvoice(i: ShopCryptoInvoice) {
   const network = getBlockchainNetwork(i.network);
   const order = await orderFor(i);
-  if (!network || !shopCryptoNetworks().includes(network.id) || !order || order.recipientUserId || !shopCryptoAddresses().includes(i.address)) throw new Error('Invoice unavailable');
+  if (!network || !shopCryptoNetworks().includes(network.id) || !order || order.recipientUserId || !shopCryptoAddresses(i.network).includes(i.address)) throw new Error('Invoice unavailable');
   if (expectedAtomic(i, network, order.amount) !== i.amountAtomic) throw new Error('Invoice price mismatch');
   if (!pendingStates.includes(order.status) || Date.now() >= i.expiresAt.getTime()) throw new Error('Invoice closed. Contact support if you already sent payment.');
   const uri = paymentUri(network, i.address, i.amountAtomic);
@@ -78,7 +80,7 @@ export async function createShopCryptoInvoice(payerId: string, input: Record<str
   if (input.recipientId != null || input.renew === true) throw new Error('Live gifts and recurring billing are not enabled');
   const network = getBlockchainNetwork(input.network);
   if (!network || !shopCryptoNetworks().includes(network.id)) throw new Error('Unsupported or disabled network');
-  const startBlock = await getHead(network) + 1;
+  const startBlock = (network.tron ? await tronHead() : await getHead(network)) + 1;
   // Keep the existing catalog and fulfillment services authoritative. No price
   // or amount supplied by the client is ever used to calculate the invoice.
   const data = product === 'coins'
@@ -90,7 +92,7 @@ export async function createShopCryptoInvoice(payerId: string, input: Record<str
   if (data.mode !== 'live' || !orderId || !Number.isFinite(expiresAt.getTime())) throw new Error('Order unavailable');
   const quote = network.native ? await quoteEth(network, amount, rpc) : { amountAtomic: priceToAtomic(amount, network.tokenDecimals) };
   // Never reuse a receiving address, even if an earlier order expired.
-  const addresses = shopCryptoAddresses();
+  const addresses = shopCryptoAddresses(network.id);
   const used = await prisma.shopCryptoInvoice.findMany({ where: { address: { in: addresses } }, select: { address: true } });
   const reserved = new Set(used.map(a => a.address));
   let invoice: ShopCryptoInvoice | undefined;
@@ -123,7 +125,7 @@ export async function listShopCryptoInvoices(payerId: string) {
   const result: { orderId: string; product: string; network: string; amount: number; expiresAt: Date }[] = [];
   for (const invoice of invoices) {
     const order = await orderFor(invoice);
-    if (order && pendingStates.includes(order.status) && shopCryptoAddresses().includes(invoice.address)) result.push({ orderId: invoice.orderId, product: invoice.product, network: invoice.network, amount: order.amount, expiresAt: invoice.expiresAt });
+    if (order && pendingStates.includes(order.status) && shopCryptoAddresses(invoice.network).includes(invoice.address)) result.push({ orderId: invoice.orderId, product: invoice.product, network: invoice.network, amount: order.amount, expiresAt: invoice.expiresAt });
   }
   return { invoices: result };
 }
@@ -140,14 +142,14 @@ const running = new Set<string>();
 async function verifyAndSettle(i: ShopCryptoInvoice, txHash: string) {
   const network = getBlockchainNetwork(i.network);
   const order = await orderFor(i);
-  if (!network || !order || order.recipientUserId || !shopCryptoAddresses().includes(i.address) ||
+  if (!network || !order || order.recipientUserId || !shopCryptoAddresses(i.network).includes(i.address) ||
       expectedAtomic(i, network, order.amount) !== i.amountAtomic) throw new Error('Invoice mismatch');
   if (order.status === 'COMPLETED') {
     await prisma.shopCryptoInvoice.updateMany({ where: { id: i.id, settledAt: null }, data: { settledAt: new Date() } });
     return { success: true, status: 'COMPLETED', ...('coins' in order ? { coins: order.coins } : {}) };
   }
   if (!pendingStates.includes(order.status) || Date.now() >= i.expiresAt.getTime()) return { success: false, status: 'RECONCILIATION', message: 'Invoice closed. If payment was sent, contact support with the order reference and transaction hash.' };
-  const verified = network.native ? await verifyNativeEth(network, i, txHash, rpc) : await blockchainTxVerifier.verifyTransaction({
+  const verified = network.tron ? await verifyTronUsdt(i, txHash) : network.native ? await verifyNativeEth(network, i, txHash, rpc) : await blockchainTxVerifier.verifyTransaction({
     txHash, network: i.network, expectedRecipient: i.address, expectedAmountUsd: order.amount,
     expectedAtomicAmount: i.amountAtomic, minConfirmations: confirmations(),
     notBefore: new Date(Math.floor(i.createdAt.getTime() / 1000) * 1000), notAfter: i.expiresAt, minBlock: i.startBlock,
@@ -160,10 +162,10 @@ async function verifyAndSettle(i: ShopCryptoInvoice, txHash: string) {
   });
   if (claim.count !== 1) throw new Error('A different payment is already attached to the invoice');
   if (i.product === 'coins') await walletService.completeCoinPurchase(i.payerId, i.orderId, {
-    mode: 'live', providerOrderId: hash, verification: { invoiceId: i.id, onChain: verified },
+    mode: 'live', providerOrderId: network.tron ? 'tron:' + hash : hash, verification: { invoiceId: i.id, onChain: verified },
   });
   else await verificationPaymentService.activateEntitlementFromOrder(i.payerId, order, {
-    mode: 'live', providerReference: hash, metadata: { onChain: verified, invoiceId: i.id },
+    mode: 'live', providerReference: network.tron ? 'tron:' + hash : hash, metadata: { onChain: verified, invoiceId: i.id },
   });
   await prisma.shopCryptoInvoice.updateMany({ where: { id: i.id, transactionHash: hash }, data: { settledAt: new Date() } });
   return { success: true, status: 'COMPLETED', ...('coins' in order ? { coins: order.coins } : {}) };
@@ -175,19 +177,29 @@ async function checkInvoice(i: ShopCryptoInvoice, suppliedHash?: string) {
   try {
     const network = getBlockchainNetwork(i.network);
     const order = await orderFor(i);
-    if (!network || !shopCryptoNetworks().includes(network.id) || !order || !shopCryptoAddresses().includes(i.address)) throw new Error('Invoice unavailable');
+    if (!network || !shopCryptoNetworks().includes(network.id) || !order || !shopCryptoAddresses(i.network).includes(i.address)) throw new Error('Invoice unavailable');
     if (order.status === 'COMPLETED') {
       await prisma.shopCryptoInvoice.updateMany({ where: { id: i.id, settledAt: null }, data: { settledAt: new Date() } });
       return { success: true, status: 'COMPLETED', ...('coins' in order ? { coins: order.coins } : {}) };
     }
     if (!pendingStates.includes(order.status) || Date.now() >= i.expiresAt.getTime()) return { success: false, status: 'RECONCILIATION', message: 'Invoice expired or closed. If you sent payment, contact support with the order reference and transaction hash.' };
-    if (suppliedHash && !/^0x[0-9a-f]{64}$/i.test(suppliedHash)) throw new Error('Enter a valid transaction hash');
+    if (suppliedHash && !(network.tron ? /^[0-9a-f]{64}$/i : /^0x[0-9a-f]{64}$/i).test(suppliedHash)) throw new Error('Enter a valid transaction hash');
     if (i.transactionHash || suppliedHash) {
       try { return await verifyAndSettle(i, i.transactionHash || suppliedHash!); }
       catch (e) {
         if (e instanceof BlockchainTxVerificationError && ['LOW_CONFIRMATIONS', 'TRANSACTION_PENDING', 'TRANSACTION_NOT_FOUND'].includes(e.code)) return { success: false, status: 'PROCESSING', message: 'Waiting for network confirmation.' };
         throw e;
       }
+    }
+    if (network.tron) {
+      for (const hash of await discoverTronUsdt(i)) {
+        try { return await verifyAndSettle(i, hash); }
+        catch (e) {
+          if (e instanceof BlockchainTxVerificationError && !e.transient && !['LOW_CONFIRMATIONS', 'TRANSACTION_PENDING', 'TRANSACTION_NOT_FOUND'].includes(e.code)) continue;
+          throw e;
+        }
+      }
+      return { success: false, status: 'PENDING', message: 'Waiting for solidified TRON USDT payment.' };
     }
     const head = await getHead(network);
     let safeHead = head - confirmations() + 1;
