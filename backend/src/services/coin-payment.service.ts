@@ -1,4 +1,5 @@
 import { prisma } from '../prisma';
+import { resolveShopGiftRecipient } from './shop-gift.service';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 import { coinsToUsd } from '../config/wallet.config';
 import { walletService } from './wallet.service';
@@ -110,7 +111,8 @@ export class CoinPaymentService {
     packageId: unknown,
     network: unknown,
     ipAddress?: string,
-    customCoins?: unknown
+    customCoins?: unknown,
+    recipientId?: unknown
   ) {
     if (!userId) throw new Error('Unauthorized');
 
@@ -121,6 +123,7 @@ export class CoinPaymentService {
       throw new Error('Unsupported payment network. Choose USDT (BEP-20) or USDC (Base).');
     }
 
+    const recipientUserId = await resolveShopGiftRecipient(userId, recipientId);
     const isCustom = packageId === 'custom';
     if (isCustom && (!shopSandboxEnabled() || typeof customCoins !== 'number' || !Number.isSafeInteger(customCoins) || customCoins < 100 || customCoins > 100000)) {
       throw new Error('Custom quantity must be a whole number from 100 to 100,000 in the isolated sandbox.');
@@ -170,6 +173,7 @@ export class CoinPaymentService {
     const order = await prisma.purchaseOrder.create({
       data: {
         userId,
+        ...(recipientUserId ? { recipientUserId } : {}),
         coins,
         amount,
         currency: 'USD',
@@ -186,6 +190,7 @@ export class CoinPaymentService {
     const payload: Record<string, unknown> = {
       address,
       orderId: order.id,
+      recipientUserId,
       network,
       amount,
       coins,
