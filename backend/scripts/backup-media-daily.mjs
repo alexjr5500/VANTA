@@ -92,11 +92,12 @@ async function main(env){
   check((await readFile('/proc/self/mountinfo','utf8')).split('\n').some(x=>x.split(' ')[4]==='/data')&&await realpath(root)===root);
   const key=createPrivateKey(env.VANTA_MEDIA_BACKUP_SIGNER_PRIVATE_KEY);check(key.asymmetricKeyType==='ed25519'&&fp(createPublicKey(key))===env.VANTA_MEDIA_BACKUP_SIGNER_FINGERPRINT);
   const control='/data/.vanta-media-backup-control';await mkdir(control,{mode:0o700,recursive:true});check(await realpath(control)===control);
-  const journal=await openBackupJournal(control),scratch=await mkdtemp(join(tmpdir(),'vanta-media-only-'));
+  const journal=await openBackupJournal(control);
   const require=createRequire(new URL('../backup-runtime/package.json',import.meta.url)),sdk=require('@aws-sdk/client-s3');
   const depLock=JSON.parse(await readFile(new URL('../backup-runtime/package-lock.json',import.meta.url),'utf8'));
   check(depLock.packages?.['node_modules/@aws-sdk/client-s3']?.version==='3.1178.0');
   const s3=new sdk.S3Client({region:'auto',endpoint:env.VANTA_BACKUP_R2_ENDPOINT,forcePathStyle:true,maxAttempts:1,credentials:{accessKeyId:env.VANTA_MEDIA_BACKUP_R2_ACCESS_KEY_ID,secretAccessKey:env.VANTA_MEDIA_BACKUP_R2_SECRET_ACCESS_KEY},requestChecksumCalculation:'WHEN_REQUIRED',responseChecksumValidation:'WHEN_REQUIRED'});
+  const scratch=await mkdtemp(join(tmpdir(),'vanta-media-only-'));
   const now=Date.now(),runId=mediaDayId(now),producerEnv={PATH:env.PATH,HOME:scratch};
   try{
     const result=await runMediaDay({now,limit,budget,adapters:{

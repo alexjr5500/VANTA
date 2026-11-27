@@ -58,7 +58,7 @@ async function mediaInventory() {
   const hash = createHash('sha256'); let entries = 0, bytes = 0;
   async function walk(dir, relative) {
     for (const name of (await readdir(dir)).sort()) {
-      if (!relative && name === controlName) continue;
+      if (!relative && [controlName,'.vanta-media-backup-control'].includes(name)) continue;
       const path = join(dir,name), rel = relative ? relative + '/' + name : name, s = await lstat(path);
       check(++entries <= 50000 && s.dev === root.dev && (s.isDirectory() || s.isFile()), 'Media inventory limit or unsupported entry');
       bytes += s.isFile() ? s.size : 0;
@@ -155,7 +155,7 @@ async function main() {
           const output=join(scratch,kind), isDb=kind==='database.dump.age';
           const result=await captureEncryptedArtifact({producer:isDb?'pg_dump':'tar',
             args:isDb?['--format=custom','--no-owner','--no-acl','--dbname',database]:
-              ['--one-file-system','--exclude=./'+controlName,'-C',mediaRoot,'-cf','-','.'],
+              ['--one-file-system','--exclude=./'+controlName,'--exclude=./.vanta-media-backup-control','-C',mediaRoot,'-cf','-','.'],
             producerEnv:isDb?pgEnv:{PATH:env.PATH,HOME:scratch},recipient,output,maxBytes,timeoutMs:600000});
           if(!isDb){const after=await mediaInventory();check(after.digest===beforeMedia?.digest,'Media changed during capture');}
           return {path:output,bytes:result.bytes};

@@ -33,3 +33,27 @@ test('alert drill is explicitly a test, uses actual mail transport contract, and
   const r=await runAlertDrill({env,notify:args=>sendBackupAlert({...args,fetchImpl:async(url,req)=>{assert.equal(url,'https://api.sendgrid.com/v3/mail/send');const b=JSON.parse(req.body);assert.match(b.subject,/TEST/);assert.match(b.content[0].value,/No production failure/);return {status:202}}})});
   assert.equal(r.providerAccepted,true);assert.equal(r.inboxConfirmed,false);
 });
+
+test('actual GNU tar and age capture roundtrip of local media',async()=>{
+  if(process.env.VANTA_CI_MEDIA_CAPTURE!=='yes')return;
+  const {execFileSync}=await import('node:child_process');
+  const {readFile}=await import('node:fs/promises');
+  const root=await mkdtemp(join(tmpdir(),'media-age-ci-'));
+  try{
+    const src=join(root,'uploads'),scratch=join(root,'scratch'),target=join(root,'target'),identity=join(root,'identity'),archive=join(root,'archive.tar');
+    await mkdir(src);await mkdir(scratch,{mode:0o700});await mkdir(target);
+    await mkdir(join(src,'.chunks'));await writeFile(join(src,'.chunks','pending'),'ignore');
+    await mkdir(join(src,'optimized'));await writeFile(join(src,'optimized','photo.webp'),'synthetic media');
+    await writeFile(join(src,'-odd name'),'fixture');
+    execFileSync('age-keygen',['-o',identity],{stdio:'ignore'});
+    const recipient=execFileSync('age-keygen',['-y',identity]).toString().trim();
+    const captured=await captureStableMedia({directory:src,scratch,limit:1024**2,recipient,producerEnv:{PATH:process.env.PATH,HOME:scratch}});
+    assert.equal(captured.sourceEntries,3);
+    execFileSync('age',['-d','-i',identity,'-o',archive,captured.path],{stdio:'ignore'});
+    const listing=execFileSync('tar',['-tf',archive]).toString();
+    assert.ok(!listing.includes('.chunks'));
+    execFileSync('tar',['-xf',archive,'-C',target],{stdio:'ignore'});
+    assert.equal(await readFile(join(target,'optimized','photo.webp'),'utf8'),'synthetic media');
+    assert.equal(await readFile(join(target,'-odd name'),'utf8'),'fixture');
+  }finally{await rm(root,{recursive:true,force:true});}
+});
