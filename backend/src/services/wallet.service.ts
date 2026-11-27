@@ -653,7 +653,7 @@ export class WalletService {
    * Safety:
    *  - The original PurchaseOrder row is NEVER deleted — it is marked REFUNDED
    *    and a separate negative REFUND ledger entry is created.
-   *  - Refund claim is conditional (`status` in [COMPLETED, PAID]), so a
+   *  - Refund claim is conditional (status COMPLETED only), so a
    *    repeated refund request can never run twice.
    *  - The user's spendable balance must cover the refund; otherwise the
    *    refund is rejected so a user cannot end up with unlimited coins by
@@ -670,7 +670,7 @@ export class WalletService {
     if (order.status === "REFUNDED") {
       return { order, alreadyRefunded: true };
     }
-    if (order.status !== "COMPLETED" && order.status !== "PAID") {
+    if (order.status !== "COMPLETED") {
       throw new Error(
         `Only completed purchases can be refunded (current status: ${order.status}).`
       );
@@ -680,7 +680,7 @@ export class WalletService {
 
     const result = await prisma.$transaction(async (tx) => {
       const claimed = await tx.purchaseOrder.updateMany({
-        where: { id: orderId, status: { in: ["COMPLETED", "PAID"] } },
+        where: { id: orderId, status: "COMPLETED", coins: order.coins, userId: order.userId },
         data: {
           status: "REFUNDED",
           refundedAt: new Date(),

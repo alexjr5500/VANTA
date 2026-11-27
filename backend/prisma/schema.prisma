@@ -3857,3 +3857,13 @@ model TwoFactorLoginChallenge {
   @@index([userId, expiresAt])
   @@index([expiresAt])
 }
+
+
+// Permanent, cross-product blockchain reference fence. No cascading user/order
+// foreign keys: deleting or refunding an order must not make a payment reusable.
+model BlockchainPaymentClaim {
+  txHash    String   @id
+  family    String
+  orderId   String
+  createdAt DateTime @default(now())
+}

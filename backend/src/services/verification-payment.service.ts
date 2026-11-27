@@ -299,7 +299,14 @@ export class VerificationPaymentService {
     const badgeType: 'BLUE' | 'GOLD' = plan.badgeType === 'BLUE' ? 'BLUE' : 'GOLD';
 
     const mode = options.mode || existingAttempt.paymentMode || COIN_PAYMENT_MODE.LIVE;
-    const providerRef = (options.providerReference || existingAttempt.providerReference || '').trim();
+    const providerRef = (options.providerReference || existingAttempt.providerReference || '').trim().toLowerCase();
+    if (mode === COIN_PAYMENT_MODE.LIVE && (existingAttempt.paymentMode !== COIN_PAYMENT_MODE.LIVE ||
+        !isValidTransactionHash(providerRef) || !options.metadata?.onChain)) {
+      throw new Error('Verified live payment reference is required.');
+    }
+    if (mode !== COIN_PAYMENT_MODE.LIVE && mode !== COIN_PAYMENT_MODE.TEST) {
+      throw new Error('Unsupported purchase completion mode.');
+    }
     const providerOrderId = resolveProviderOrderId(mode, existingAttempt.id, providerRef);
     const now = new Date();
 
@@ -309,6 +316,11 @@ export class VerificationPaymentService {
         where: {
           id: existingAttempt.id,
           userId,
+          amount: existingAttempt.amount,
+          planId: existingAttempt.planId,
+          paymentMode: existingAttempt.paymentMode,
+          network: existingAttempt.network,
+          expiresAt: { gt: now },
           status: { in: [...VERIFICATION_PURCHASE_ACTIVABLE_STATUSES] },
         },
         data: {
