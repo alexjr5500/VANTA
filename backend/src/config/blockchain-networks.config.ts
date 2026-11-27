@@ -14,7 +14,7 @@
 //   VANTA_BASE_RPC_URL  (default: public Base RPC)
 // ============================================================================
 
-export type BlockchainNetworkId = 'usdt-bep20' | 'usdc-base' | 'usdt-erc20' | 'eth-erc20' | 'usdt-trc20';
+export type BlockchainNetworkId = 'usdt-bep20' | 'usdc-base' | 'usdt-erc20' | 'eth-erc20' | 'usdt-trc20' | 'gram-ton';
 
 export interface BlockchainNetworkConfig {
   id: BlockchainNetworkId;
@@ -27,6 +27,7 @@ export interface BlockchainNetworkConfig {
   tokenDecimals: number;
   native?: boolean;
   tron?: boolean;
+  ton?: boolean;
   /** JSON-RPC endpoint for the chain (resolved from env per network). */
   rpcUrl: string;
 }
@@ -35,6 +36,7 @@ export interface BlockchainNetworkConfig {
 export const ERC20_TRANSFER_EVENT_SIGNATURE = '0xddf252ad1be2c89b69c2b608fc26bd2742204fa22e51d0b52488e1c4bccf45d9b';
 
 export function resolveNetworkRpcUrl(networkId: BlockchainNetworkId): string {
+  if (networkId === 'gram-ton') return 'https://toncenter.com';
   if (networkId === 'usdt-trc20') return 'https://api.trongrid.io';
   const envName = networkId === 'usdt-bep20' ? 'VANTA_BSC_RPC_URL' : (networkId === 'usdt-erc20' || networkId === 'eth-erc20') ? 'VANTA_ETHEREUM_RPC_URL' : 'VANTA_BASE_RPC_URL';
   const configured = (process.env[envName] || '').trim();
@@ -52,6 +54,11 @@ export const BLOCKCHAIN_NETWORKS: Readonly<Record<BlockchainNetworkId, Blockchai
     tokenContract: '0x55d398326f99059ff775485246999027b3197955', // Tether USD (BSC-USD), 18 decimals
     tokenDecimals: 18,
     rpcUrl: resolveNetworkRpcUrl('usdt-bep20'),
+  }),
+  'gram-ton': Object.freeze({
+    id: 'gram-ton', chainName: 'TON (native GRAM)', chainId: -239, tokenName: 'GRAM',
+    tokenContract: '', tokenDecimals: 9, ton: true,
+    rpcUrl: resolveNetworkRpcUrl('gram-ton'),
   }),
   'usdt-trc20': Object.freeze({
     id: 'usdt-trc20', chainName: 'Tron (TRC-20)', chainId: 728126428, tokenName: 'USDT',

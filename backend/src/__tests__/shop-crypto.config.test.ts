@@ -43,6 +43,7 @@ describe('Ethereum shop rail opt-in', () => {
   test('requires explicit switches and HTTPS RPC endpoint', () => {
     delete process.env.VANTA_SHOP_ERC20_ENABLED;
     delete process.env.VANTA_SHOP_NATIVE_ETH_ENABLED;
+    process.env.VANTA_SHOP_CRYPTO_DEPOSIT_ADDRESSES = '0x' + 'd'.repeat(40);
     process.env.VANTA_ETHEREUM_RPC_URL = 'https://rpc.example.test';
     expect(shopCryptoNetworks()).not.toContain('usdt-erc20');
     expect(shopCryptoNetworks()).not.toContain('eth-erc20');

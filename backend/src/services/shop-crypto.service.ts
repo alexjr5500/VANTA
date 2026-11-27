@@ -1,3 +1,5 @@
+import { tonHead, quoteGram, gramAtomicFromQuote, gramPaymentUri, verifyGram, discoverGram, tonDepositWalletReady, tonHashHex } from './shop-ton.service';
+import { tonFriendlyAddress } from '../config/ton-address';
 import { tronHead, verifyTronUsdt, discoverTronUsdt } from './shop-tron.service';
 import * as QRCode from 'qrcode';
 import { quoteEth, ethAtomicFromQuote, atomicDisplay, verifyNativeEth } from './shop-native-eth.service';
@@ -20,6 +22,7 @@ export function priceToAtomic(amount: number, decimals: number): string {
   return (BigInt(cents) * BigInt(10) ** BigInt(decimals - 2)).toString();
 }
 export function paymentUri(network: BlockchainNetworkConfig, address: string, atomic: string): string {
+  if (network.ton) return gramPaymentUri(address, atomic);
   if (network.tron) { if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(address)) throw new Error('Invalid TRON address'); return address; }
   if (!/^0x[0-9a-f]{40}$/.test(address) || !/^[1-9][0-9]*$/.test(atomic)) throw new Error('Invalid invoice');
   if (network.native) return 'ethereum:' + address + '@' + network.chainId + '?value=' + atomic;
@@ -47,6 +50,10 @@ async function getHead(network: BlockchainNetworkConfig): Promise<number> {
   return hexNumber(await rpc(network, 'eth_blockNumber', []));
 }
 function expectedAtomic(i: ShopCryptoInvoice, network: BlockchainNetworkConfig, amount: number) {
+  if (network.ton) {
+    if (!i.quotePrice8 || !i.quoteUpdatedAt || i.quoteUpdatedAt > i.createdAt || i.createdAt.getTime() - i.quoteUpdatedAt.getTime() > 330000) throw new Error('Invalid stored GRAM quote');
+    return gramAtomicFromQuote(amount, i.quotePrice8);
+  }
   if (network.native) {
     if (!i.quotePrice8 || !i.quoteUpdatedAt || i.quoteUpdatedAt > i.createdAt || i.createdAt.getTime() - i.quoteUpdatedAt.getTime() > 3600000 + 30000) throw new Error('Missing or stale stored ETH quote');
     return ethAtomicFromQuote(amount, i.quotePrice8);
@@ -66,9 +73,9 @@ async function renderInvoice(i: ShopCryptoInvoice) {
   if (!pendingStates.includes(order.status) || Date.now() >= i.expiresAt.getTime()) throw new Error('Invoice closed. Contact support if you already sent payment.');
   const uri = paymentUri(network, i.address, i.amountAtomic);
   return { orderId: i.orderId, product: i.product, amount: order.amount, currency: 'USD', network: i.network,
-    mode: 'live' as const, expiresAt: i.expiresAt.toISOString(), address: i.address, paymentUri: uri,
+    mode: 'live' as const, expiresAt: i.expiresAt.toISOString(), address: network.ton ? tonFriendlyAddress(i.address) : i.address, paymentUri: uri,
     qrCode: await QRCode.toDataURL(uri, { width: 360, margin: 3, errorCorrectionLevel: 'M' }),
-    token: network.tokenName, tokenAmount: network.native ? atomicDisplay(i.amountAtomic, network.tokenDecimals) : order.amount.toFixed(2), status: order.status,
+    token: network.tokenName, tokenAmount: (network.native || network.ton) ? atomicDisplay(i.amountAtomic, network.tokenDecimals) : order.amount.toFixed(2), status: order.status,
     ...(i.product === 'coins' && 'coins' in order ? { coins: order.coins } : {}),
     ...(i.product === 'badge' && 'planId' in order ? { planId: order.planId } : {}),
   };
@@ -80,7 +87,7 @@ export async function createShopCryptoInvoice(payerId: string, input: Record<str
   if (input.recipientId != null || input.renew === true) throw new Error('Live gifts and recurring billing are not enabled');
   const network = getBlockchainNetwork(input.network);
   if (!network || !shopCryptoNetworks().includes(network.id)) throw new Error('Unsupported or disabled network');
-  const startBlock = (network.tron ? await tronHead() : await getHead(network)) + 1;
+  const startBlock = (network.ton ? await tonHead() : network.tron ? await tronHead() : await getHead(network)) + 1;
   // Keep the existing catalog and fulfillment services authoritative. No price
   // or amount supplied by the client is ever used to calculate the invoice.
   const data = product === 'coins'
@@ -90,7 +97,7 @@ export async function createShopCryptoInvoice(payerId: string, input: Record<str
   const amount = Number(data.amount);
   const expiresAt = new Date(String(data.expiresAt));
   if (data.mode !== 'live' || !orderId || !Number.isFinite(expiresAt.getTime())) throw new Error('Order unavailable');
-  const quote = network.native ? await quoteEth(network, amount, rpc) : { amountAtomic: priceToAtomic(amount, network.tokenDecimals) };
+  const quote = network.ton ? await quoteGram(amount) : network.native ? await quoteEth(network, amount, rpc) : { amountAtomic: priceToAtomic(amount, network.tokenDecimals) };
   // Never reuse a receiving address, even if an earlier order expired.
   const addresses = shopCryptoAddresses(network.id);
   const used = await prisma.shopCryptoInvoice.findMany({ where: { address: { in: addresses } }, select: { address: true } });
@@ -98,6 +105,7 @@ export async function createShopCryptoInvoice(payerId: string, input: Record<str
   let invoice: ShopCryptoInvoice | undefined;
   for (const address of addresses.filter(a => !reserved.has(a))) {
     try {
+      if (network.ton && !(await tonDepositWalletReady(address))) continue;
       if (network.native && await rpc(network, 'eth_getCode', [address, 'latest']) !== '0x') continue;
       invoice = await prisma.shopCryptoInvoice.create({ data: { product, orderId, payerId, network: network.id, address, ...quote, expiresAt, startBlock, scanCursor: startBlock } });
       break;
@@ -149,23 +157,23 @@ async function verifyAndSettle(i: ShopCryptoInvoice, txHash: string) {
     return { success: true, status: 'COMPLETED', ...('coins' in order ? { coins: order.coins } : {}) };
   }
   if (!pendingStates.includes(order.status) || Date.now() >= i.expiresAt.getTime()) return { success: false, status: 'RECONCILIATION', message: 'Invoice closed. If payment was sent, contact support with the order reference and transaction hash.' };
-  const verified = network.tron ? await verifyTronUsdt(i, txHash) : network.native ? await verifyNativeEth(network, i, txHash, rpc) : await blockchainTxVerifier.verifyTransaction({
+  const verified = network.ton ? await verifyGram(i, txHash) : network.tron ? await verifyTronUsdt(i, txHash) : network.native ? await verifyNativeEth(network, i, txHash, rpc) : await blockchainTxVerifier.verifyTransaction({
     txHash, network: i.network, expectedRecipient: i.address, expectedAmountUsd: order.amount,
     expectedAtomicAmount: i.amountAtomic, minConfirmations: confirmations(),
     notBefore: new Date(Math.floor(i.createdAt.getTime() / 1000) * 1000), notAfter: i.expiresAt, minBlock: i.startBlock,
   });
   const hash = verified.txHash.toLowerCase();
-  if (!verified.verified || hash !== txHash.toLowerCase()) throw new Error('Payment could not be independently verified');
+  if (!verified.verified || hash !== (network.ton ? tonHashHex(txHash) : txHash.toLowerCase())) throw new Error('Payment could not be independently verified');
   const claim = await prisma.shopCryptoInvoice.updateMany({
     where: { id: i.id, OR: [{ transactionHash: null }, { transactionHash: hash }] },
     data: { transactionHash: hash },
   });
   if (claim.count !== 1) throw new Error('A different payment is already attached to the invoice');
   if (i.product === 'coins') await walletService.completeCoinPurchase(i.payerId, i.orderId, {
-    mode: 'live', providerOrderId: network.tron ? 'tron:' + hash : hash, verification: { invoiceId: i.id, onChain: verified },
+    mode: 'live', providerOrderId: network.ton ? 'ton:' + hash : network.tron ? 'tron:' + hash : hash, verification: { invoiceId: i.id, onChain: verified },
   });
   else await verificationPaymentService.activateEntitlementFromOrder(i.payerId, order, {
-    mode: 'live', providerReference: network.tron ? 'tron:' + hash : hash, metadata: { onChain: verified, invoiceId: i.id },
+    mode: 'live', providerReference: network.ton ? 'ton:' + hash : network.tron ? 'tron:' + hash : hash, metadata: { onChain: verified, invoiceId: i.id },
   });
   await prisma.shopCryptoInvoice.updateMany({ where: { id: i.id, transactionHash: hash }, data: { settledAt: new Date() } });
   return { success: true, status: 'COMPLETED', ...('coins' in order ? { coins: order.coins } : {}) };
@@ -183,7 +191,7 @@ async function checkInvoice(i: ShopCryptoInvoice, suppliedHash?: string) {
       return { success: true, status: 'COMPLETED', ...('coins' in order ? { coins: order.coins } : {}) };
     }
     if (!pendingStates.includes(order.status) || Date.now() >= i.expiresAt.getTime()) return { success: false, status: 'RECONCILIATION', message: 'Invoice expired or closed. If you sent payment, contact support with the order reference and transaction hash.' };
-    if (suppliedHash && !(network.tron ? /^[0-9a-f]{64}$/i : /^0x[0-9a-f]{64}$/i).test(suppliedHash)) throw new Error('Enter a valid transaction hash');
+    if (suppliedHash && !(network.ton ? tonHashHex(suppliedHash) : (network.tron ? /^[0-9a-f]{64}$/i : /^0x[0-9a-f]{64}$/i).test(suppliedHash))) throw new Error('Enter a valid transaction hash');
     if (i.transactionHash || suppliedHash) {
       try { return await verifyAndSettle(i, i.transactionHash || suppliedHash!); }
       catch (e) {
@@ -191,15 +199,15 @@ async function checkInvoice(i: ShopCryptoInvoice, suppliedHash?: string) {
         throw e;
       }
     }
-    if (network.tron) {
-      for (const hash of await discoverTronUsdt(i)) {
+    if (network.ton || network.tron) {
+      for (const hash of await (network.ton ? discoverGram(i) : discoverTronUsdt(i))) {
         try { return await verifyAndSettle(i, hash); }
         catch (e) {
           if (e instanceof BlockchainTxVerificationError && !e.transient && !['LOW_CONFIRMATIONS', 'TRANSACTION_PENDING', 'TRANSACTION_NOT_FOUND'].includes(e.code)) continue;
           throw e;
         }
       }
-      return { success: false, status: 'PENDING', message: 'Waiting for solidified TRON USDT payment.' };
+      return { success: false, status: 'PENDING', message: network.ton ? 'Waiting for finalized GRAM payment.' : 'Waiting for solidified TRON USDT payment.' };
     }
     const head = await getHead(network);
     let safeHead = head - confirmations() + 1;

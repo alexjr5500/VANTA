@@ -203,7 +203,7 @@ export class BlockchainTxVerifier {
       );
     }
     const network = getBlockchainNetwork(options.network);
-    if (!network || network.native || network.tron) {
+    if (!network || network.native || network.tron || network.ton) {
       throw new BlockchainTxVerificationError(
         BLOCKCHAIN_VERIFICATION_ERROR_CODES.UNSUPPORTED_NETWORK,
         `Unsupported blockchain network: ${String(options.network)}`
