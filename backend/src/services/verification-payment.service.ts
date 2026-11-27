@@ -1,6 +1,6 @@
 import { prisma } from '../prisma';
 import { auditLog } from '../security/auditLog';
-import { CryptoUtils } from '../security/crypto';
+import { verifyPaymentWebhookSignature } from '../security/payment-webhook-signature';
 import {
   COIN_PAYMENT_MODE,
   getCoinPaymentMode,
@@ -508,8 +508,7 @@ export class VerificationPaymentService {
     if (typeof input.signature !== 'string' || !input.signature) {
       throw new VerificationPaymentWebhookError(401, 'Missing webhook signature.');
     }
-    const expected = CryptoUtils.sha256(`${input.rawBody || ''}${secret}`);
-    if (expected.length !== input.signature.length || !CryptoUtils.constantTimeCompare(expected, input.signature)) {
+    if (!verifyPaymentWebhookSignature(input.rawBody, input.signature, secret)) {
       throw new VerificationPaymentWebhookError(401, 'Invalid webhook signature.');
     }
 

@@ -1,7 +1,7 @@
 ﻿import { verificationPaymentService, VerificationPaymentWebhookError } from '../services/verification-payment.service';
 import { COIN_PAYMENT_MODE, createCoinPaymentSimulateToken } from '../config/coin-payments.config';
 import { prisma } from '../prisma';
-import { CryptoUtils } from '../security/crypto';
+import { createHmac } from 'node:crypto';
 
 jest.mock('../prisma', () => ({
   prisma: {
@@ -86,7 +86,7 @@ function setMode(mode: string) {
 }
 
 function sign(payload: object): string {
-  return CryptoUtils.sha256(`${JSON.stringify(payload)}${SECRET}`);
+  return createHmac('sha256', SECRET).update(JSON.stringify(payload)).digest('hex');
 }
 
 function eventBody(orderId = 'order_1') {

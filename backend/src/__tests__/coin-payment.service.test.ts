@@ -1,7 +1,7 @@
 import { coinPaymentService, CoinPaymentUnavailableError, PaymentWebhookError } from '../services/coin-payment.service';
 import { COIN_PAYMENT_MODE } from '../config/coin-payments.config';
 import { prisma } from '../prisma';
-import { CryptoUtils } from '../security/crypto';
+import { createHmac, createHash } from 'node:crypto';
 
 jest.mock('../prisma', () => ({
   prisma: {
@@ -125,7 +125,7 @@ const TX_HASH = '0x' + 'a'.repeat(64);
 
 function sign(payload: object): string {
   const raw = JSON.stringify(payload);
-  return CryptoUtils.sha256(`${raw}dev-webhook-secret-do-not-use-in-production`);
+  return createHmac('sha256', 'dev-webhook-secret-do-not-use-in-production').update(raw).digest('hex');
 }
 
 function eventBody() {
@@ -293,6 +293,14 @@ describe('CoinPaymentService.processPaymentWebhook', () => {
       asset: body.asset, amount: body.amount, status: body.status,
     })).rejects.toBeInstanceOf(PaymentWebhookError);
     expect(walletService.completeCoinPurchase).not.toHaveBeenCalled();
+  });
+
+  test('rejects legacy concatenated SHA256 signatures before processing', async () => {
+    const body = eventBody();
+    const rawBody = JSON.stringify(body);
+    const signature = createHash('sha256').update(rawBody + 'dev-webhook-secret-do-not-use-in-production').digest('hex');
+    await expect(coinPaymentService.processPaymentWebhook({ ...body, rawBody, signature })).rejects.toThrow('Invalid webhook signature');
+    expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
   });
 
   test('rejects a webhook with an invalid signature', async () => {

@@ -1,19 +1,15 @@
 import { prisma } from '../prisma';
 import { BLOCKCHAIN_NETWORKS, BlockchainNetworkId, ERC20_TRANSFER_EVENT_SIGNATURE, getMinBlockchainConfirmations } from '../config/blockchain-networks.config';
-import { getCoinPaymentDepositAddress, getCoinPaymentWebhookSecret, isValidTransactionHash } from '../config/coin-payments.config';
+import { getCoinPaymentDepositAddress, isValidTransactionHash } from '../config/coin-payments.config';
 import { getBadgePaymentDepositAddress } from '../config/verification-badge.config';
-import { CryptoUtils } from '../security/crypto';
-import { coinPaymentService } from './coin-payment.service';
-import { verificationPaymentService } from './verification-payment.service';
 import { getNetworkRetryDelayMs, isBlockRangeLimitError } from './blockchain-rpc-policy';
 
 /**
  * Continuous, restart-safe-by-overlap chain log watcher.
  * It scans ERC-20 Transfer logs for the two VANTA deposit wallets, matches a
- * transfer to exactly one live order by network + exact USD amount + order
- * validity window, then sends it through the existing independently verified,
- * idempotent fulfillment path. Ambiguous matches are deliberately not auto-
- * credited; they are logged for operator reconciliation.
+ * transfer to candidate live orders by network + amount + validity window.
+ * Candidates are reconciliation evidence only. Without independent payer/order
+ * binding even a single candidate must never be automatically credited.
  */
 const POLL_MS = Math.max(10_000, Number(process.env.VANTA_CHAIN_WATCH_POLL_MS || 30_000));
 // Public BSC/Base RPCs commonly reject large eth_getLogs ranges. Keep the
@@ -71,30 +67,11 @@ async function fulfill(network: BlockchainNetworkId, txHash: string, amount: num
     console.warn('[CHAIN-WATCH] Transfer needs reconciliation', { network, txHash, amount, recipient, candidateCount: orders.length });
     return;
   }
-  const order = orders[0] as any;
-  const secret = getCoinPaymentWebhookSecret();
-  if (!secret) {
-    console.error('[CHAIN-WATCH] Webhook secret missing; cannot fulfill verified transfer', { network, txHash });
-    return;
-  }
-  const body: Record<string, unknown> = {
-    eventId: `chain-watch:${network}:${txHash.toLowerCase()}`,
-    orderId: order.id,
-    txHash,
-    network,
-    asset: BLOCKCHAIN_NETWORKS[network].tokenName,
-    amount,
-    status: 'confirmed',
-    confirmations: getMinBlockchainConfirmations(),
-    confirmedAt: timestamp.toISOString(),
-    recipient,
-  };
-  const rawBody = JSON.stringify(body);
-  const signature = CryptoUtils.sha256(`${rawBody}${secret}`);
-  const input = { ...body, rawBody, signature };
-  if (isCoin) await coinPaymentService.processPaymentWebhook(input as any);
-  else await verificationPaymentService.processPaymentWebhook(input as any);
-  console.info('[CHAIN-WATCH] Matched and processed payment', { network, txHash, orderId: order.id, kind: isCoin ? 'coin' : 'badge' });
+  // A unique amount/time candidate is not evidence of who paid. Do not
+  // fabricate a provider-authenticated order assignment from a chain log.
+  console.warn('[CHAIN-WATCH] Transfer requires independently verified order ownership', {
+    network, txHash, candidateCount: orders.length, kind: isCoin ? 'coin' : 'badge',
+  });
 }
 
 async function getTransferLogs(network: BlockchainNetworkId, filter: Record<string, unknown>, fromBlock: number, toBlock: number): Promise<any[]> {
