@@ -861,6 +861,10 @@ async function startServer() {
     // verification are under maintenance. Existing wallet balances, ledgers,
     // withdrawals, and completed entitlements remain untouched.
 
+    // The new monitor only scans unique invoices when explicitly configured.
+    const { startShopCryptoMonitor } = await import('./services/shop-crypto.service');
+    startShopCryptoMonitor();
+
     // Start HTTP server
     httpServer.listen(PORT, () => {
       console.info(`Server running on port ${PORT}`);
