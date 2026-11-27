@@ -201,7 +201,7 @@ export class NotificationService {
    * Check whether a user has enabled notifications for a given channel/type.
    * Returns true when no explicit preference exists (defaults are enabled).
    */
-  async shouldDeliver(userId: string, type: string): Promise<boolean> {
+  async shouldDeliver(userId: string, type: string, actorId?: string): Promise<boolean> {
     const normalized = normalizeType(type);
     const master = MASTER_PREFERENCE_KEY[normalized];
     const granular = GRANULAR_PREFERENCE_KEY[normalized];
@@ -217,7 +217,17 @@ export class NotificationService {
     // The master channel and the granular category must both be enabled.
     const masterAllowed = DEFAULT_PREFERENCES[master] === true ? prefs[master] !== false : prefs[master] !== false;
     const granularAllowed = granular ? prefs[granular as keyof typeof prefs] !== false : true;
-    return masterAllowed && granularAllowed;
+    if (!masterAllowed || !granularAllowed) return false;
+    if (prefs.followingOnlySocialAlerts && ['follow', 'like', 'comment', 'mention'].includes(normalized)) {
+      // Unknown actor provenance cannot satisfy an explicitly enabled filter.
+      if (!actorId) return false;
+      const relationship = await prisma.follow.findUnique({
+        where: { followerId_followingId: { followerId: userId, followingId: actorId } },
+        select: { id: true },
+      });
+      return !!relationship;
+    }
+    return true;
   }
 
   async createNotification(
@@ -227,15 +237,13 @@ export class NotificationService {
     body: string,
     metadata?: any
   ) {
-    // Respect the user's notification preferences before delivering
-    const allowed = await this.shouldDeliver(userId, type);
-    if (!allowed) return null;
-
     const actorId = typeof metadata?.actorId === "string"
       ? metadata.actorId
       : typeof metadata?.senderId === "string"
         ? metadata.senderId
         : typeof metadata?.followerId === "string" ? metadata.followerId : undefined;
+    const allowed = await this.shouldDeliver(userId, type, actorId);
+    if (!allowed) return null;
     const normalizedType = normalizeType(type);
     if (actorId === userId && !["system", "wallet_deposit", "wallet_transfer_sent", "gift"].includes(normalizedType)) return null;
     const entityType = typeof metadata?.entityType === "string" ? metadata.entityType : undefined;

@@ -26,6 +26,7 @@ import { useToast } from '@/components/ui/Toast';
 import {
   SelectRow,
   SettingsGroup,
+  SettingsLink,
   ToggleRow,
 } from '@/components/settings/SettingsUI';
 
@@ -56,6 +57,7 @@ export default function PrivacySettingsPage() {
 
   const [privacy, setPrivacy] = useState<PrivacySettings>(PRIVACY_DEFAULTS);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [savedKey, setSavedKey] = useState<string | null>(null);
 
   const [blocked, setBlocked] = useState<UserReference[]>([]);
@@ -64,11 +66,9 @@ export default function PrivacySettingsPage() {
   const [muteTarget, setMuteTarget] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
 
+  const pendingKeys = useRef(new Set<keyof PrivacySettings>());
+  const [saving, setSaving] = useState<keyof PrivacySettings[]>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const privacyRef = useRef(privacy);
-  useEffect(() => {
-    privacyRef.current = privacy;
-  }, [privacy]);
 
   const flagSaved = (key: string) => {
     setSavedKey(key);
@@ -98,7 +98,7 @@ export default function PrivacySettingsPage() {
         setMuted(m?.muted || []);
       })
       .catch(() => {
-        if (!cancel) toast.error('Could not load privacy settings');
+        if (!cancel) { setLoadError(true); toast.error('Could not load privacy settings'); }
       })
       .finally(() => {
         if (!cancel) setLoading(false);
@@ -109,26 +109,25 @@ export default function PrivacySettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity churns on each render; load-once behaviour is intentional
   }, [token]);
 
-  const updatePrivacy = (key: keyof PrivacySettings, value: string | boolean) => {
-    if (!token) return;
-    const next = { ...privacyRef.current, [key]: value };
-    setPrivacy(next);
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        await apiPut('/api/settings/privacy', { [key]: value }, token);
-        flagSaved(key);
-      } catch {
-        // Revert the UI to the actual saved value on failure.
-        setPrivacy(privacyRef.current);
-        toast.error('Could not save', 'Please try again.');
-      }
-    }, 320);
+  const updatePrivacy = async (key: keyof PrivacySettings, value: string | boolean) => {
+    if (!token || loadError || pendingKeys.current.has(key)) return;
+    pendingKeys.current.add(key);
+    setSaving((prev) => [...prev, key]);
+    try {
+      await apiPut('/api/settings/privacy', { [key]: value }, token);
+      setPrivacy((prev) => ({ ...prev, [key]: value }));
+      flagSaved(key);
+    } catch {
+      toast.error('Could not save', 'Please try again.');
+    } finally {
+      pendingKeys.current.delete(key);
+      setSaving((prev) => prev.filter((item) => item !== key));
+    }
   };
 
   const addBlocked = async () => {
     const username = blockTarget.trim();
-    if (!username || !token) return;
+    if (!username || !token || loadError || busy) return;
     setBusy('block');
     try {
       await apiPost('/api/settings/blocked', { targetUsername: username }, token);
@@ -147,7 +146,7 @@ export default function PrivacySettingsPage() {
   };
 
   const unblock = async (id: string) => {
-    if (!token) return;
+    if (!token || loadError || busy) return;
     setBusy(`unblock-${id}`);
     try {
       await apiDelete(`/api/settings/blocked/${id}`, token);
@@ -162,7 +161,7 @@ export default function PrivacySettingsPage() {
 
   const addMuted = async () => {
     const username = muteTarget.trim();
-    if (!username || !token) return;
+    if (!username || !token || loadError || busy) return;
     setBusy('mute');
     try {
       await apiPost('/api/settings/muted', { targetUsername: username }, token);
@@ -181,7 +180,7 @@ export default function PrivacySettingsPage() {
   };
 
   const unmute = async (id: string) => {
-    if (!token) return;
+    if (!token || loadError || busy) return;
     setBusy(`unmute-${id}`);
     try {
       await apiDelete(`/api/settings/muted/${id}`, token);
@@ -198,7 +197,7 @@ return (
       <PageHeader
         sticky
         bleed
-        title="Privacy"
+        title="Privacy and safety"
         back="/settings"
       />
 
@@ -217,11 +216,12 @@ return (
       ) : (
         <div className="space-y-6">
           {/* ── Account privacy ── */}
-          <SettingsGroup icon={Lock} title="Account Privacy" description="Profile and audience">
+          <SettingsGroup icon={Lock} title="Audience and interactions" description="Profile and audience">
             <SelectRow
               icon={Lock}
               title="Account privacy"
               value={privacy.privacyProfile}
+              disabled={loadError || saving.includes('privacyProfile')}
               saved={savedKey === 'privacyProfile'}
               onSelect={(v) => updatePrivacy('privacyProfile', v)}
               options={[
@@ -233,6 +233,7 @@ return (
               icon={MessageSquare}
               title="Who can message me"
               value={privacy.privacyMessages}
+              disabled={loadError || saving.includes('privacyMessages')}
               saved={savedKey === 'privacyMessages'}
               onSelect={(v) => updatePrivacy('privacyMessages', v)}
               options={[
@@ -246,6 +247,7 @@ return (
               icon={UserCheck}
               title="Who can follow me"
               value={privacy.privacyFollows}
+              disabled={loadError || saving.includes('privacyFollows')}
               saved={savedKey === 'privacyFollows'}
               onSelect={(v) => updatePrivacy('privacyFollows', v)}
               options={[
@@ -256,6 +258,13 @@ return (
             />
           </SettingsGroup>
 
+          <SettingsGroup title="Privacy and data">
+            <SettingsLink href="/settings/privacy/audience" icon={Users} title="Mentions, calls and discoverability" description="Choose who can mention, call or find you" />
+            <SettingsLink href="/settings/content" icon={Eye} title="Content you see" description="Media and sensitive-content preferences" />
+            <SettingsLink href="/privacy-center?tab=consent" icon={Lock} title="Data sharing and consent" description="Manage and review your consent preferences" />
+          </SettingsGroup>
+          {loadError && <p role="alert" className="text-sm text-red-400">Could not load privacy settings. Return and try again before making changes.</p>}
+
           {/* ── Presence ── */}
           <SettingsGroup icon={Users} title="Presence" description="How you appear to others">
             <ToggleRow
@@ -264,6 +273,7 @@ return (
               description="Show when you're active to people who follow you."
               checked={privacy.activityStatus}
               onChange={(v) => updatePrivacy('activityStatus', v)}
+              disabled={loadError || saving.includes('activityStatus')}
               saved={savedKey === 'activityStatus'}
             />
             <ToggleRow
@@ -272,6 +282,7 @@ return (
               description="Let people see when you've read their messages."
               checked={privacy.readReceipts}
               onChange={(v) => updatePrivacy('readReceipts', v)}
+              disabled={loadError || saving.includes('readReceipts')}
               saved={savedKey === 'readReceipts'}
             />
           </SettingsGroup>
@@ -294,7 +305,7 @@ return (
                 <button
                   type="button"
                   onClick={addBlocked}
-                  disabled={busy === 'block' || !blockTarget.trim()}
+                  disabled={loadError || !!busy || !blockTarget.trim()}
                   className="btn-accent-ghost shrink-0 disabled:opacity-40"
                 >
                   {busy === 'block' ? (
@@ -324,7 +335,7 @@ return (
                       <button
                         type="button"
                         onClick={() => unblock(user.id)}
-                        disabled={busy === `unblock-${user.id}`}
+                        disabled={loadError || !!busy}
                         className="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-white/40 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
                       >
                         {busy === `unblock-${user.id}` ? (
@@ -360,7 +371,7 @@ return (
                 <button
                   type="button"
                   onClick={addMuted}
-                  disabled={busy === 'mute' || !muteTarget.trim()}
+                  disabled={loadError || !!busy || !muteTarget.trim()}
                   className="btn-accent-ghost shrink-0 disabled:opacity-40"
                 >
                   {busy === 'mute' ? (
@@ -390,7 +401,7 @@ return (
                       <button
                         type="button"
                         onClick={() => unmute(user.id)}
-                        disabled={busy === `unmute-${user.id}`}
+                        disabled={loadError || !!busy}
                         className="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-white/40 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
                       >
                         {busy === `unmute-${user.id}` ? (

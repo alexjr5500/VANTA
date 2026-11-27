@@ -1207,6 +1207,7 @@ model NotificationPreferences {
   groupAlerts            Boolean  @default(true)
   channelAlerts          Boolean  @default(true)
   liveInteractionsAlerts Boolean  @default(true)
+  followingOnlySocialAlerts Boolean @default(false)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 }

@@ -5,7 +5,7 @@ jest.mock('../prisma', () => ({
   prisma: {
     user: { findUnique: jest.fn(), findMany: jest.fn() },
     userSettings: { findMany: jest.fn() },
-    follow: { findMany: jest.fn() },
+    follow: { findMany: jest.fn(), findUnique: jest.fn() },
     blockedUser: { findMany: jest.fn() },
     notification: {
       findMany: jest.fn(),
@@ -105,6 +105,23 @@ describe('NotificationService', () => {
 
       const result = await notificationService.deleteNotification('notif1', 'user1');
       expect(result.message).toBe('Notification deleted');
+    });
+  });
+
+  describe('following-only social notification filter', () => {
+    test('suppresses social notifications from accounts the recipient does not follow', async () => {
+      (prisma.notificationPreferences.findUnique as jest.Mock).mockResolvedValue({ followingOnlySocialAlerts: true });
+      (prisma.follow.findUnique as jest.Mock).mockResolvedValue(null);
+      expect(await notificationService.createNotification('recipient', 'like', 'Like', 'New like', { actorId: 'stranger' })).toBeNull();
+      expect(prisma.follow.findUnique).toHaveBeenCalledWith({ where: { followerId_followingId: { followerId: 'recipient', followingId: 'stranger' } }, select: { id: true } });
+      expect(prisma.notification.create).not.toHaveBeenCalled();
+    });
+    test('allows followed actors, preserves wallet alerts, and rejects unknown social actors', async () => {
+      (prisma.notificationPreferences.findUnique as jest.Mock).mockResolvedValue({ followingOnlySocialAlerts: true });
+      (prisma.follow.findUnique as jest.Mock).mockResolvedValue({ id: 'follow1' });
+      expect(await notificationService.shouldDeliver('recipient', 'mention', 'followed')).toBe(true);
+      expect(await notificationService.shouldDeliver('recipient', 'wallet')).toBe(true);
+      expect(await notificationService.shouldDeliver('recipient', 'comment')).toBe(false);
     });
   });
 

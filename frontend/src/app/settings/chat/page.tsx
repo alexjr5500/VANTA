@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/Toast';
 import {
   SelectRow,
   SettingsGroup,
+  SettingsLink,
   ToggleRow,
   useLocalPrefs,
 } from '@/components/settings/SettingsUI';
@@ -39,7 +40,10 @@ export default function ChatSettingsPage() {
   const toast = useToast();
   const [prefs, setPrefs] = useState<ChatPrefs>(CHAT_DEFAULTS);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [savedKey, setSavedKey] = useState<string | null>(null);
+  const pendingKeys = useRef(new Set<ChatPrefKey>());
+  const [saving, setSaving] = useState<ChatPrefKey[]>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prefsRef = useRef(prefs);
 
@@ -68,7 +72,7 @@ export default function ChatSettingsPage() {
         });
       })
       .catch(() => {
-        if (!cancel) toast.error('Could not load chat settings');
+        if (!cancel) { setLoadError(true); toast.error('Could not load chat settings'); }
       })
       .finally(() => {
         if (!cancel) setLoading(false);
@@ -77,20 +81,20 @@ export default function ChatSettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity churns; load-once is intentional
   }, [token]);
 
-  const toggle = (key: ChatPrefKey, value: boolean) => {
-    if (!token) return;
-    setPrefs((prev) => ({ ...prev, [key]: value }));
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        await apiPut('/api/settings/privacy', { [key]: value }, token);
-        flagSaved(key);
-      } catch {
-        // Revert the UI to the actual saved value on failure.
-        setPrefs(prefsRef.current);
-        toast.error('Could not save', 'Please try again.');
-      }
-    }, 320);
+  const toggle = async (key: ChatPrefKey, value: boolean) => {
+    if (!token || loadError || pendingKeys.current.has(key)) return;
+    pendingKeys.current.add(key);
+    setSaving((prev) => [...prev, key]);
+    try {
+      await apiPut('/api/settings/privacy', { [key]: value }, token);
+      setPrefs((prev) => ({ ...prev, [key]: value }));
+      flagSaved(key);
+    } catch {
+      toast.error('Could not save', 'Please try again.');
+    } finally {
+      pendingKeys.current.delete(key);
+      setSaving((prev) => prev.filter((item) => item !== key));
+    }
   };
 
   return (
@@ -121,6 +125,7 @@ export default function ChatSettingsPage() {
               description="Notify me about new messages and replies."
               checked={prefs.chatNotifications}
               onChange={(v) => toggle('chatNotifications', v)}
+              disabled={loadError || saving.includes('chatNotifications')}
               saved={savedKey === 'chatNotifications'}
             />
             <ToggleRow
@@ -129,6 +134,7 @@ export default function ChatSettingsPage() {
               description="Show message text on notifications."
               checked={prefs.messagePreviews}
               onChange={(v) => toggle('messagePreviews', v)}
+              disabled={loadError || saving.includes('messagePreviews')}
               saved={savedKey === 'messagePreviews'}
             />
             <ToggleRow
@@ -137,10 +143,15 @@ export default function ChatSettingsPage() {
               description="Let others see when you are typing a reply."
               checked={prefs.typingIndicators}
               onChange={(v) => toggle('typingIndicators', v)}
+              disabled={loadError || saving.includes('typingIndicators')}
               saved={savedKey === 'typingIndicators'}
             />
           </SettingsGroup>
 
+          <SettingsGroup title="Calls and privacy">
+            <SettingsLink href="/settings/privacy/audience" title="Audio and video call permissions" description="Choose who can call you" />
+            <SettingsLink href="/settings/privacy" title="Message requests and privacy" description="Manage who can message you" />
+          </SettingsGroup>
           <SettingsGroup
             icon={Mic}
             title="Voice Messages"

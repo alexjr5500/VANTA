@@ -26,6 +26,7 @@ import { usePush } from '@/context/PushContext';
 import { useToast } from '@/components/ui/Toast';
 import {
   SettingsGroup,
+  SettingsLink,
   ToggleRow,
 } from '@/components/settings/SettingsUI';
 
@@ -44,6 +45,7 @@ interface BackendPrefs {
   groupAlerts: boolean;
   channelAlerts: boolean;
   liveInteractionsAlerts: boolean;
+  followingOnlySocialAlerts: boolean;
 }
 
 const BACKEND_DEFAULTS: BackendPrefs = {
@@ -58,6 +60,7 @@ const BACKEND_DEFAULTS: BackendPrefs = {
   groupAlerts: true,
   channelAlerts: true,
   liveInteractionsAlerts: true,
+  followingOnlySocialAlerts: false,
 };
 
 type BackendKey = keyof BackendPrefs;
@@ -71,6 +74,8 @@ export default function NotificationSettingsPage() {
   const [loadError, setLoadError] = useState(false);
   const [savedKey, setSavedKey] = useState<string | null>(null);
 
+  const pendingKeys = useRef(new Set<BackendKey>());
+  const [saving, setSaving] = useState<BackendKey[]>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flagSaved = (key: string) => {
@@ -106,21 +111,20 @@ export default function NotificationSettingsPage() {
   }, [token]);
 
   /* Toggle a backend-persisted channel (immediate update + debounced PUT) */
-  const toggleBackend = (key: BackendKey, value: boolean) => {
-    if (!token) return;
-    const next = { ...backend, [key]: value };
-    setBackend(next);
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        await apiPut('/api/settings/notifications', { [key]: value }, token);
-        flagSaved(key);
-      } catch {
-        // Revert the UI to the actual saved value on failure.
-        setBackend((prev) => ({ ...prev, [key]: !value }));
-        toast.error('Could not save', 'Please try again.');
-      }
-    }, 320);
+  const toggleBackend = async (key: BackendKey, value: boolean) => {
+    if (!token || loadError || pendingKeys.current.has(key)) return;
+    pendingKeys.current.add(key);
+    setSaving((prev) => [...prev, key]);
+    try {
+      await apiPut('/api/settings/notifications', { [key]: value }, token);
+      setBackend((prev) => ({ ...prev, [key]: value }));
+      flagSaved(key);
+    } catch {
+      toast.error('Could not save', 'Please try again.');
+    } finally {
+      pendingKeys.current.delete(key);
+      setSaving((prev) => prev.filter((item) => item !== key));
+    }
   };
 
   const paused = !backend.pushAlerts;
@@ -197,6 +201,7 @@ export default function NotificationSettingsPage() {
               description="Receive push notifications for your activity."
               checked={backend.pushAlerts}
               onChange={(v) => toggleBackend('pushAlerts', v)}
+              disabled={loadError || saving.includes('pushAlerts')}
               saved={savedKey === 'pushAlerts'}
             />
             {paused && (
@@ -236,11 +241,20 @@ export default function NotificationSettingsPage() {
               description="Get email updates for messages and activity you miss."
               checked={backend.emailAlerts}
               onChange={(v) => toggleBackend('emailAlerts', v)}
+              disabled={loadError || saving.includes('emailAlerts')}
               saved={savedKey === 'emailAlerts'}
             />
           </SettingsGroup>
 
           {/* â”€â”€ Social Activity â”€â”€ */}
+          <SettingsGroup title="Filters" description="Control new social notifications">
+            <ToggleRow icon={UserPlus} title="Only accounts you follow" description="Only receive new likes, comments, mentions and follower notifications from accounts you follow. Does not affect chats, payments or security alerts."
+              checked={backend.followingOnlySocialAlerts}
+              onChange={(value) => toggleBackend('followingOnlySocialAlerts', value)}
+              disabled={loadError || saving.includes('followingOnlySocialAlerts')}
+              saved={savedKey === 'followingOnlySocialAlerts'} />
+            <SettingsLink href="/settings/privacy" title="Mute and block accounts" description="Manage accounts you have muted or blocked" />
+          </SettingsGroup>
           <SettingsGroup
             icon={Heart}
             title="Social Activity"
@@ -252,7 +266,7 @@ export default function NotificationSettingsPage() {
               description="When someone likes or reacts to your content."
               checked={backend.likesAlerts}
               onChange={(v) => toggleBackend('likesAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('likesAlerts')}
               saved={savedKey === 'likesAlerts'}
             />
             <ToggleRow
@@ -261,7 +275,7 @@ export default function NotificationSettingsPage() {
               description="When someone comments on your posts."
               checked={backend.commentsAlerts}
               onChange={(v) => toggleBackend('commentsAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('commentsAlerts')}
               saved={savedKey === 'commentsAlerts'}
             />
             <ToggleRow
@@ -270,7 +284,7 @@ export default function NotificationSettingsPage() {
               description="When someone mentions you."
               checked={backend.mentionsAlerts}
               onChange={(v) => toggleBackend('mentionsAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('mentionsAlerts')}
               saved={savedKey === 'mentionsAlerts'}
             />
             <ToggleRow
@@ -279,7 +293,7 @@ export default function NotificationSettingsPage() {
               description="When someone follows you."
               checked={backend.followersAlerts}
               onChange={(v) => toggleBackend('followersAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('followersAlerts')}
               saved={savedKey === 'followersAlerts'}
             />
           </SettingsGroup>
@@ -295,7 +309,7 @@ export default function NotificationSettingsPage() {
               description="When someone sends you a message."
               checked={backend.chatAlerts}
               onChange={(v) => toggleBackend('chatAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('chatAlerts')}
               saved={savedKey === 'chatAlerts'}
             />
             <ToggleRow
@@ -304,7 +318,7 @@ export default function NotificationSettingsPage() {
               description="Notifications from groups you're a member of."
               checked={backend.groupAlerts}
               onChange={(v) => toggleBackend('groupAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('groupAlerts')}
               saved={savedKey === 'groupAlerts'}
             />
             <ToggleRow
@@ -313,7 +327,7 @@ export default function NotificationSettingsPage() {
               description="Notifications from channels you follow."
               checked={backend.channelAlerts}
               onChange={(v) => toggleBackend('channelAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('channelAlerts')}
               saved={savedKey === 'channelAlerts'}
             />
           </SettingsGroup>
@@ -326,7 +340,7 @@ export default function NotificationSettingsPage() {
               description="When creators you follow go live."
               checked={backend.liveAlerts}
               onChange={(v) => toggleBackend('liveAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('liveAlerts')}
               saved={savedKey === 'liveAlerts'}
             />
             <ToggleRow
@@ -335,7 +349,7 @@ export default function NotificationSettingsPage() {
               description="Important interactions involving your live streams."
               checked={backend.liveInteractionsAlerts}
               onChange={(v) => toggleBackend('liveInteractionsAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('liveInteractionsAlerts')}
               saved={savedKey === 'liveInteractionsAlerts'}
             />
           </SettingsGroup>

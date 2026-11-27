@@ -861,6 +861,10 @@ export class UserService {
     if (data.pushAlerts !== undefined) updates.pushAlerts = Boolean(data.pushAlerts);
     if (data.chatAlerts !== undefined) updates.chatAlerts = Boolean(data.chatAlerts);
     if (data.liveAlerts !== undefined) updates.liveAlerts = Boolean(data.liveAlerts);
+    if (data.followingOnlySocialAlerts !== undefined) {
+      if (typeof data.followingOnlySocialAlerts !== 'boolean') throw new Error('Notification filter must be a boolean');
+      updates.followingOnlySocialAlerts = data.followingOnlySocialAlerts;
+    }
     for (const key of ['likesAlerts', 'commentsAlerts', 'mentionsAlerts', 'followersAlerts', 'groupAlerts', 'channelAlerts', 'liveInteractionsAlerts'] as const) {
       if (data[key] !== undefined) updates[key] = Boolean(data[key]);
     }
