@@ -2,7 +2,7 @@ import * as QRCode from 'qrcode';
 import { prisma } from '../prisma';
 import { ShopCryptoInvoice } from '@prisma/client';
 import { getBlockchainNetwork, getMinBlockchainConfirmations, ERC20_TRANSFER_EVENT_SIGNATURE, BlockchainNetworkConfig } from '../config/blockchain-networks.config';
-import { shopCryptoAddresses, shopLiveCryptoEnabled } from '../config/shop-crypto.config';
+import { shopCryptoAddresses, shopCryptoNetworks, shopLiveCryptoEnabled } from '../config/shop-crypto.config';
 import { coinPaymentService } from './coin-payment.service';
 import { verificationPaymentService } from './verification-payment.service';
 import { walletService } from './wallet.service';
@@ -50,7 +50,7 @@ async function orderFor(i: ShopCryptoInvoice) {
 async function renderInvoice(i: ShopCryptoInvoice) {
   const network = getBlockchainNetwork(i.network);
   const order = await orderFor(i);
-  if (!network || !order || order.recipientUserId || !shopCryptoAddresses().includes(i.address)) throw new Error('Invoice unavailable');
+  if (!network || !shopCryptoNetworks().includes(network.id) || !order || order.recipientUserId || !shopCryptoAddresses().includes(i.address)) throw new Error('Invoice unavailable');
   if (priceToAtomic(order.amount, network.tokenDecimals) !== i.amountAtomic) throw new Error('Invoice price mismatch');
   if (!pendingStates.includes(order.status) || Date.now() >= i.expiresAt.getTime()) throw new Error('Invoice closed. Contact support if you already sent payment.');
   const uri = paymentUri(network, i.address, i.amountAtomic);
@@ -68,13 +68,13 @@ export async function createShopCryptoInvoice(payerId: string, input: Record<str
   const product: Product = input.product === 'coins' ? 'coins' : input.product === 'badge' ? 'badge' : (() => { throw new Error('Invalid product'); })();
   if (input.recipientId != null || input.renew === true) throw new Error('Live gifts and recurring billing are not enabled');
   const network = getBlockchainNetwork(input.network);
-  if (!network) throw new Error('Unsupported network');
+  if (!network || !shopCryptoNetworks().includes(network.id)) throw new Error('Unsupported or disabled network');
   const startBlock = await getHead(network) + 1;
   // Keep the existing catalog and fulfillment services authoritative. No price
   // or amount supplied by the client is ever used to calculate the invoice.
   const data = product === 'coins'
-    ? await coinPaymentService.initializeCoinPurchase(payerId, input.packageId, network.id, undefined, input.customCoins)
-    : await verificationPaymentService.initializeVerificationPurchase(payerId, input.planId, network.id);
+    ? await coinPaymentService.initializeCoinPurchase(payerId, input.packageId, network.id, undefined, input.customCoins, undefined, true)
+    : await verificationPaymentService.initializeVerificationPurchase(payerId, input.planId, network.id, undefined, undefined, true);
   const orderId = String(data.orderId);
   const amount = Number(data.amount);
   const expiresAt = new Date(String(data.expiresAt));
@@ -165,7 +165,7 @@ async function checkInvoice(i: ShopCryptoInvoice, suppliedHash?: string) {
   try {
     const network = getBlockchainNetwork(i.network);
     const order = await orderFor(i);
-    if (!network || !order || !shopCryptoAddresses().includes(i.address)) throw new Error('Invoice unavailable');
+    if (!network || !shopCryptoNetworks().includes(network.id) || !order || !shopCryptoAddresses().includes(i.address)) throw new Error('Invoice unavailable');
     if (order.status === 'COMPLETED') {
       await prisma.shopCryptoInvoice.updateMany({ where: { id: i.id, settledAt: null }, data: { settledAt: new Date() } });
       return { success: true, status: 'COMPLETED', ...('coins' in order ? { coins: order.coins } : {}) };
