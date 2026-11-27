@@ -12,7 +12,8 @@ import { useWalletDialog } from './useWalletDialog';
 type Product = 'coins' | 'badge';
 type Pack = { id: string; coins: number; price: number };
 type Recipient = { id: string; username: string; fullName?: string };
-type Invoice = { orderId: string; amount: number; currency: string; network: string; mode: 'test'; expiresAt: string; simulateToken: string };
+type Invoice = { orderId: string; amount: number; currency: string; network: string; expiresAt: string; coins?: number; planId?: string; product?: Product } & ({ mode: 'test'; simulateToken: string } | { mode: 'live'; address: string; paymentUri: string; qrCode: string; token: string; tokenAmount: string });
+type PendingInvoice = { orderId: string; product: Product; network: string; amount: number; expiresAt: string };
 type Step = 'choose' | 'payment' | 'token' | 'invoice' | 'waiting' | 'success';
 const networks = [
   { id: 'eth-erc20', label: 'ETH', chain: 'Ethereum', enabled: false },
@@ -50,8 +51,10 @@ function recipientsFrom(v: unknown): Recipient[] {
 }
 function invoiceFrom(v: unknown): Invoice {
   const a = obj(v);
-  if (a.mode !== 'test' || typeof a.orderId !== 'string' || typeof a.amount !== 'number' || !Number.isFinite(a.amount) || a.amount <= 0 || typeof a.currency !== 'string' || typeof a.network !== 'string' || typeof a.expiresAt !== 'string' || !Number.isFinite(Date.parse(a.expiresAt)) || typeof a.simulateToken !== 'string') throw new Error('Checkout is not an isolated test invoice.');
-  return a as Invoice;
+  if (typeof a.orderId !== 'string' || typeof a.amount !== 'number' || !Number.isFinite(a.amount) || a.amount <= 0 || a.currency !== 'USD' || typeof a.network !== 'string' || typeof a.expiresAt !== 'string' || !Number.isFinite(Date.parse(a.expiresAt))) throw new Error('Invalid invoice.');
+  if (a.mode === 'test' && typeof a.simulateToken === 'string') return a as Invoice;
+  if (a.mode === 'live' && typeof a.address === 'string' && /^0x[0-9a-f]{40}$/i.test(a.address) && typeof a.paymentUri === 'string' && /^ethereum:0x[0-9a-f]{40}@[0-9]+\/transfer\?address=0x[0-9a-f]{40}&uint256=[0-9]+$/i.test(a.paymentUri) && typeof a.qrCode === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(a.qrCode) && typeof a.token === 'string' && typeof a.tokenAmount === 'string') return a as Invoice;
+  throw new Error('Invalid payment invoice.');
 }
 async function request(path: string, token: string, body?: Record<string, unknown>): Promise<unknown> {
   const response = await fetch(API_BASE_URL + path, { headers: { ...authHeaders(token), ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}), cache: 'no-store' });
@@ -87,6 +90,11 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   const [network, setNetwork] = useState('usdt-bep20');
   const [networkSearch, setNetworkSearch] = useState('');
   const [sandbox, setSandbox] = useState(false);
+  const [liveCrypto, setLiveCrypto] = useState(false);
+  const [pendingInvoices, setPendingInvoices] = useState<PendingInvoice[]>([]);
+  const [txHash, setTxHash] = useState('');
+  const [paymentStatus, setPaymentStatus] = useState('PENDING');
+  const [qrExpanded, setQrExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -100,7 +108,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   useEffect(() => {
     if (!open || !token) return;
     let active = true;
-    setProduct(initialProduct); setStep('choose'); setPackId(''); setPlanId(initialPlan?.id || ''); setGift(false); setRecipient(null); setQuery(''); setRecipients([]); setRenew(false); setCustom(''); setInvoice(null); setError(''); setSandbox(false); setPacks([]); setPlans([]); setRate(null); setBalance(null); setMethod('crypto'); setNetwork('usdt-bep20'); setLoading(true);
+    setProduct(initialProduct); setStep('choose'); setPackId(''); setPlanId(initialPlan?.id || ''); setGift(false); setRecipient(null); setQuery(''); setRecipients([]); setRenew(false); setCustom(''); setInvoice(null); setError(''); setSandbox(false); setLiveCrypto(false); setPendingInvoices([]); setTxHash(''); setPaymentStatus('PENDING'); setQrExpanded(false); setPacks([]); setPlans([]); setRate(null); setBalance(null); setMethod('crypto'); setNetwork('usdt-bep20'); setLoading(true);
     Promise.allSettled([
       request('/api/wallets/packages', token).then(data => ({ packs: packagesFrom(data), rate: obj(data).exchangeRate })),
       getBadgePurchasePlans(token),
@@ -114,7 +122,20 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
         if (r && typeof r === 'object' && 'coinsPerUsd' in r && typeof r.coinsPerUsd === 'number' && Number.isFinite(r.coinsPerUsd) && r.coinsPerUsd > 0) setRate(r.coinsPerUsd);
       }
       if (v.status === 'fulfilled') setPlans(v.value);
-      if (s.status === 'fulfilled') setSandbox(obj(s.value).sandbox === true);
+      if (s.status === 'fulfilled') {
+        const capabilities = obj(s.value);
+        setSandbox(capabilities.sandbox === true);
+        setLiveCrypto(capabilities.liveCrypto === true);
+        if (capabilities.liveCrypto === true) request('/api/wallets/shop/crypto/invoices', token).then(data => {
+          if (!active) return;
+          const entries = obj(data).invoices;
+          if (Array.isArray(entries)) setPendingInvoices(entries.filter((v: unknown): v is PendingInvoice => {
+            if (!v || typeof v !== 'object') return false;
+            const p = v as Record<string, unknown>;
+            return typeof p.orderId === 'string' && (p.product === 'coins' || p.product === 'badge') && typeof p.network === 'string' && typeof p.amount === 'number' && typeof p.expiresAt === 'string';
+          }));
+        }).catch(() => { if (active) setError('Could not load pending invoices.'); });
+      }
       if (b.status === 'fulfilled') { const raw = obj(b.value); const w = raw.wallet && typeof raw.wallet === 'object' ? obj(raw.wallet) : raw; if (typeof w.coinBalance === 'number') setBalance(w.coinBalance); }
       if (p.status === 'rejected' || v.status === 'rejected') setError('Some product prices could not be loaded. Reopen the shop to retry.');
     }).catch(e => { if (active) setError(e instanceof Error ? e.message : 'Unable to load shop'); }).finally(() => { if (active) setLoading(false); });
@@ -138,6 +159,24 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
     const timer = window.setInterval(() => setClock(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [open, invoice]);
+  useEffect(() => {
+    if (!open || !token || invoice?.mode !== 'live' || (step !== 'invoice' && step !== 'waiting')) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const result = obj(await request('/api/wallets/shop/crypto/invoices/' + encodeURIComponent(invoice.orderId) + '/status', token));
+        if (!active) return;
+        if (typeof result.status === 'string') setPaymentStatus(result.status);
+        if (result.success === true && result.status === 'COMPLETED') {
+          setResultCoins(typeof result.coins === 'number' ? result.coins : 0);
+          setStep('success'); setError('');
+        }
+      } catch { /* Keep the invoice visible for manual retry. */ }
+    };
+    void poll();
+    const timer = window.setInterval(poll, 8000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [open, token, invoice, step]);
   const selectedPack = packs.find(p => p.id === packId);
   const customNumber = Number(custom);
   const customValid = /^\d+$/.test(custom) && Number.isSafeInteger(customNumber) && customNumber >= 100 && customNumber <= 100000 && rate !== null;
@@ -149,29 +188,48 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   const countdown = Math.floor(remaining / 60).toString().padStart(2, '0') + ':' + (remaining % 60).toString().padStart(2, '0');
   const networkInfo = networks.find(n => n.id === network);
   const recipientLabel = gift ? recipient ? '@' + recipient.username : 'Choose recipient' : 'You';
-  const productLabel = product === 'badge' ? plan?.name || 'Verification Badge' : quantity.toLocaleString() + ' VANTA Coins';
+  const productLabel = product === 'badge' ? plan?.name || 'Verification Badge' : (invoice?.coins || quantity).toLocaleString() + ' VANTA Coins';
   const selectProduct = (p: Product) => { setProduct(p); setStep('choose'); setError(''); setRenew(false); setMethod('crypto'); };
   const go = (s: Step) => { setError(''); setStep(s); };
   const clipboard = async (value: string) => { try { await navigator.clipboard.writeText(value); setCopied(value); } catch { setError('Clipboard unavailable. Select and copy manually.'); } };
   const paste = async () => { try { setRecipient(null); setQuery((await navigator.clipboard.readText()).trim()); } catch { setError('Paste the username into the field manually.'); } };
-  async function start() {
-    if (!token || !ready || !sandbox || renew || method !== 'crypto' || !networkInfo?.enabled || actionLock.current) return;
+  const canPay = (sandbox || (liveCrypto && !gift)) && !renew && method === 'crypto' && !!networkInfo?.enabled;
+  async function resumePending(orderId: string) {
+    if (!token || actionLock.current) return;
     actionLock.current = true; setBusy(true); setError('');
     try {
-      const data = product === 'coins'
+      const next = invoiceFrom(await request('/api/wallets/shop/crypto/invoices/' + encodeURIComponent(orderId), token));
+      if (next.mode !== 'live' || !next.product) throw new Error('Invalid pending invoice');
+      setProduct(next.product); setNetwork(next.network); setGift(false); setRenew(false);
+      if (next.product === 'coins' && next.coins) { setPackId('custom'); setCustom(String(next.coins)); }
+      if (next.planId) setPlanId(next.planId);
+      setInvoice(next); setTxHash(''); setPaymentStatus('PENDING'); setClock(Date.now()); setStep('invoice');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Cannot resume invoice'); }
+    finally { actionLock.current = false; setBusy(false); }
+  }
+  async function start() {
+    if (!token || !ready || !canPay || actionLock.current) return;
+    actionLock.current = true; setBusy(true); setError('');
+    try {
+      const data = liveCrypto && !sandbox
+        ? await request('/api/wallets/shop/crypto/invoices', token, { product, network, ...(product === 'coins' ? { packageId: packId, ...(packId === 'custom' ? { customCoins: quantity } : {}) } : { planId }) })
+        : product === 'coins'
         ? await request('/api/wallets/payment-address', token, { packageId: packId, network, ...(packId === 'custom' ? { customCoins: quantity } : {}), ...(gift && recipient ? { recipientId: recipient.id } : {}) })
         : await request('/api/verification/purchase/init', token, { planId, network, ...(gift && recipient ? { recipientId: recipient.id } : {}) });
       const next = invoiceFrom(data);
-      if (next.amount !== price || next.network !== network) throw new Error('The price or network changed. Reopen the shop and review the catalog.');
-      setInvoice(next); setClock(Date.now()); setStep('invoice');
+      if (next.amount !== price || next.network !== network || next.mode !== (sandbox ? 'test' : 'live')) throw new Error('The price or network changed. Reopen the shop and review the catalog.');
+      setInvoice(next); setTxHash(''); setPaymentStatus('PENDING'); setClock(Date.now()); setStep('invoice');
     } catch (e) { setError(e instanceof Error ? e.message : 'Unable to initialize checkout'); }
     finally { actionLock.current = false; setBusy(false); }
   }
   async function confirm() {
-    if (!token || !invoice || !sandbox || remaining <= 0 || actionLock.current) return;
+    if (!token || !invoice || (invoice.mode === 'test' ? !sandbox : !liveCrypto) || remaining <= 0 || actionLock.current) return;
     actionLock.current = true; setBusy(true); setError(''); setStep('waiting');
     try {
-      const result = obj(await request(product === 'coins' ? '/api/wallets/verify-payment' : '/api/verification/purchase/verify', token, { orderId: invoice.orderId, testConfirmation: true, simulateToken: invoice.simulateToken, ...(product === 'coins' ? { txHash: 'sandbox:' + invoice.orderId } : {}) }));
+      const result = obj(invoice.mode === 'live'
+        ? await request('/api/wallets/shop/crypto/invoices/' + encodeURIComponent(invoice.orderId) + '/check', token, txHash.trim() ? { txHash: txHash.trim() } : {})
+        : await request(product === 'coins' ? '/api/wallets/verify-payment' : '/api/verification/purchase/verify', token, { orderId: invoice.orderId, testConfirmation: true, simulateToken: invoice.simulateToken, ...(product === 'coins' ? { txHash: 'sandbox:' + invoice.orderId } : {}) }));
+      if (typeof result.status === 'string') setPaymentStatus(result.status);
       if (result.success === true) { setResultCoins(typeof result.coins === 'number' ? result.coins : quantity); setStep('success'); }
       else setError(typeof result.message === 'string' ? result.message : 'Awaiting server confirmation.');
     } catch (e) { setError(e instanceof Error ? e.message : 'Unable to verify checkout'); }
@@ -188,6 +246,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
       <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5">
         {(step === 'choose' || showPay) && <div aria-hidden={showPay ? true : undefined}>
           <h2 className="mb-5 text-[25px] font-semibold leading-8">Choose a product</h2>
+          {pendingInvoices.length > 0 && <div className="mb-4 space-y-2"><h3 className="text-sm font-semibold">Pending payments</h3>{pendingInvoices.map(p => <button key={p.orderId} type="button" disabled={busy || showPay} onClick={() => resumePending(p.orderId)} className="w-full rounded-xl bg-[#212529] p-3 text-left text-sm">Resume {p.product === 'coins' ? 'coin' : 'badge'} payment · {usd(p.amount)}</button>)}</div>}
           <div className="mb-6 flex flex-wrap gap-2">{(['badge','coins'] as Product[]).map(p => <button key={p} type="button" onClick={() => selectProduct(p)} aria-pressed={product === p} className={'rounded-full px-3 py-2 text-sm font-semibold ' + (product === p ? 'bg-white text-black' : 'bg-[#212529] text-[#95979b]')}>{p === 'badge' ? 'Verification Badge' : 'VANTA Coins'}</button>)}</div>
           <div className="space-y-2"><h3 className="mb-2 text-[15px]">Who is it for?</h3><Choice selected={!gift} onClick={() => { setGift(false); setRecipient(null); }} icon={<User size={22}/>} title="For me" detail="Goes to your VANTA account"/><Choice selected={gift} onClick={() => { setGift(true); setRenew(false); }} icon={<Gift size={22}/>} title="As a gift" detail="Send it to another VANTA user"/></div>
           <p className={'mt-3 text-[13px] ' + muted}>Buy it for yourself or send it to a friend on VANTA.</p>
@@ -201,10 +260,30 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
             <p className={'pt-2 text-sm ' + muted}>Longer plans may cost less per month.</p><label className="flex items-center justify-between gap-3 pt-5 text-[15px]"><span>Auto-renewal</span><input type="checkbox" role="switch" checked={renew} onChange={e => setRenew(e.target.checked)} className="h-5 w-9 accent-white"/></label><p className={'text-sm ' + muted}>{plan ? 'Renew every ' + plan.durationLabel + '. ' : ''}Auto-renewal requires a supported recurring payment provider.</p>
           </div>}
         </div>}
-        {(step === 'invoice' || step === 'waiting') && invoice && <div className="space-y-4"><h2 className="text-xl font-semibold">{step === 'invoice' ? 'Amount due: ' + usd(invoice.amount) : 'Waiting for your payment'}</h2><p className={'text-sm ' + muted}>{productLabel}</p><div className="rounded-xl bg-[#212529] p-4"><p className="font-semibold text-amber-300">Test payment — do not send real funds</p><p className={'mt-2 text-sm ' + muted}>This order is only for the isolated VANTA sandbox. The server verifies the signed test confirmation.</p></div><div className="divide-y divide-white/5 rounded-xl bg-[#212529] p-3 text-sm">{[['Expires in',countdown],['Order reference',invoice.orderId],['Amount',usd(invoice.amount)],['Payment token',networkInfo?.label + ' · ' + networkInfo?.chain],['Status',step === 'waiting' ? 'Checking server' : remaining ? 'Unpaid (test)' : 'Expired'],['Network fee','None in sandbox']].map(([label,value]) => <div key={label} className="flex items-center justify-between gap-3 py-3"><span className={muted}>{label}</span><span className="min-w-0 break-all text-right">{value}</span>{label === 'Order reference' && <button type="button" aria-label="Copy order reference" onClick={() => clipboard(invoice.orderId)}><Copy size={16}/></button>}</div>)}</div>{copied === invoice.orderId && <p role="status" className="text-xs">Order reference copied.</p>}</div>}
-        {step === 'success' && <div className="flex flex-col items-center gap-4 py-14 text-center"><span className="grid h-16 w-16 place-items-center rounded-full bg-emerald-700"><Check size={36}/></span><h2 className="text-2xl font-semibold">Payment successful</h2><p>{product === 'coins' ? resultCoins.toLocaleString() + ' test coins credited' : 'Test verification purchase confirmed'}</p>{gift && recipient && <p>Gift delivered to @{recipient.username}</p>}<p className={muted}>Confirmed by the sandbox backend. No real payment was taken.</p></div>}
+        {(step === 'invoice' || step === 'waiting') && invoice && <div className="space-y-4">
+          <h2 className="text-xl font-semibold">{step === 'invoice' ? 'Amount due: ' + (invoice.mode === 'live' ? invoice.tokenAmount + ' ' + invoice.token : usd(invoice.amount)) : 'Waiting for your payment'}</h2><p className={'text-sm ' + muted}>{productLabel}</p>
+          {invoice.mode === 'live' ? <>
+            {remaining > 0 && paymentStatus !== 'RECONCILIATION' ? <>
+              <div className="rounded-xl bg-[#212529] p-4 text-center">
+                <p className="font-semibold">{invoice.token} · {networkInfo?.chain}</p>
+                <button type="button" onClick={() => setQrExpanded(!qrExpanded)} aria-label={qrExpanded ? 'Reduce QR code' : 'Enlarge QR code'} className="mx-auto mt-3 block rounded-xl bg-white p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={invoice.qrCode} alt="Crypto invoice QR code" className={qrExpanded ? 'h-auto w-[min(72vw,320px)]' : 'h-44 w-44'}/>
+                </button><p className={'mt-2 text-xs ' + muted}>Tap QR to enlarge</p>
+                <p className="mt-4 break-all text-sm">{invoice.address}</p>
+                <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" onClick={() => clipboard(invoice.address)} className="rounded-lg bg-[#191d21] p-3 text-sm">Copy address</button><button type="button" onClick={() => clipboard(invoice.tokenAmount)} className="rounded-lg bg-[#191d21] p-3 text-sm">Copy amount</button></div>
+              </div>
+              <a href={invoice.paymentUri} className="block rounded-xl bg-[#212529] p-3 text-center text-sm font-semibold">Open wallet</a>
+              <p className="text-xs text-amber-200">Send the exact amount on {networkInfo?.chain}. Network fees are paid separately. Use this address only for this invoice; do not send after expiry.</p>
+            </> : <div role="alert" className="rounded-xl bg-[#212529] p-4 text-sm text-amber-200">Invoice closed. If you sent payment, contact support with the order reference and transaction hash.</div>}
+            <label className="block text-sm">Transaction hash (optional)<input value={txHash} onChange={e => setTxHash(e.target.value)} maxLength={66} placeholder="0x…" className="mt-2 w-full rounded-xl bg-[#212529] p-3 outline-none"/></label>
+          </> : <div className="rounded-xl bg-[#212529] p-4"><p className="font-semibold text-amber-300">Test payment — do not send real funds</p><p className={'mt-2 text-sm ' + muted}>This order is only for the isolated VANTA sandbox. The server verifies the signed test confirmation.</p></div>}
+          <div className="divide-y divide-white/5 rounded-xl bg-[#212529] p-3 text-sm">{[['Expires in',countdown],['Order reference',invoice.orderId],['Amount',invoice.mode === 'live' ? invoice.tokenAmount + ' ' + invoice.token : usd(invoice.amount)],['Payment token',networkInfo?.label + ' · ' + networkInfo?.chain],['Status',invoice.mode === 'live' ? (remaining ? paymentStatus : 'Expired / reconciliation') : step === 'waiting' ? 'Checking server' : remaining ? 'Unpaid (test)' : 'Expired'],['Network fee',invoice.mode === 'live' ? 'Paid by you' : 'None in sandbox']].map(([label,value]) => <div key={label} className="flex items-center justify-between gap-3 py-3"><span className={muted}>{label}</span><span className="min-w-0 break-all text-right">{value}</span>{label === 'Order reference' && <button type="button" aria-label="Copy order reference" onClick={() => clipboard(invoice.orderId)}><Copy size={16}/></button>}</div>)}</div>
+          {copied && <p role="status" className="text-xs">Copied.</p>}
+        </div>}
+        {step === 'success' && <div className="flex flex-col items-center gap-4 py-14 text-center"><span className="grid h-16 w-16 place-items-center rounded-full bg-emerald-700"><Check size={36}/></span><h2 className="text-2xl font-semibold">Payment successful</h2><p>{product === 'coins' ? resultCoins.toLocaleString() + (invoice?.mode === 'test' ? ' test coins credited' : ' VANTA Coins credited') : invoice?.mode === 'test' ? 'Test verification purchase confirmed' : 'Verification purchase confirmed'}</p>{gift && recipient && <p>Gift delivered to @{recipient.username}</p>}<p className={muted}>{invoice?.mode === 'test' ? 'Confirmed by the sandbox backend. No real payment was taken.' : 'Payment verified and fulfilled by VANTA.'}</p></div>}
       </main>
-      {!showPay && <footer className="shrink-0 space-y-2 rounded-t-2xl border-t border-white/5 bg-[#191d21] px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-3">{error && <p role="alert" className="text-sm text-red-300">{error}</p>}{step === 'choose' && footerButton(ready && price !== undefined ? (gift ? 'Gift ' : product === 'badge' ? 'Subscribe for ' : 'Buy ' + quantity.toLocaleString() + ' coins for ') + usd(price) + (product === 'badge' && plan ? ' / ' + plan.durationLabel : '') : product === 'badge' ? 'Subscribe' : 'Buy coins', () => go('payment'), !ready)}{(step === 'invoice' || step === 'waiting') && <>{footerButton(step === 'waiting' ? 'Check test payment again' : 'Confirm test payment', confirm, remaining <= 0)}<button type="button" onClick={close} disabled={busy} className="w-full rounded-xl bg-[#212529] py-3 text-sm">Close</button></>}{step === 'success' && footerButton('Done', close)}</footer>}
+      {!showPay && <footer className="shrink-0 space-y-2 rounded-t-2xl border-t border-white/5 bg-[#191d21] px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-3">{error && <p role="alert" className="text-sm text-red-300">{error}</p>}{step === 'choose' && footerButton(ready && price !== undefined ? (gift ? 'Gift ' : product === 'badge' ? 'Subscribe for ' : 'Buy ' + quantity.toLocaleString() + ' coins for ') + usd(price) + (product === 'badge' && plan ? ' / ' + plan.durationLabel : '') : product === 'badge' ? 'Subscribe' : 'Buy coins', () => go('payment'), !ready)}{(step === 'invoice' || step === 'waiting') && <>{footerButton(invoice?.mode === 'live' ? (step === 'waiting' ? 'Check payment again' : "I've sent the payment") : step === 'waiting' ? 'Check test payment again' : 'Confirm test payment', confirm, remaining <= 0 || paymentStatus === 'RECONCILIATION')}<button type="button" onClick={close} disabled={busy} className="w-full rounded-xl bg-[#212529] py-3 text-sm">Close</button></>}{step === 'success' && footerButton('Done', close)}</footer>}
       {showPay && <div className="absolute inset-0 z-10 flex flex-col justify-end bg-black/65"><section aria-label={step === 'token' ? 'Payment token' : 'Payment'} className="flex max-h-[96%] min-h-[50%] flex-col rounded-t-2xl bg-[#191d21]"><header className="flex shrink-0 items-center justify-between px-4 py-3"><h2 className="text-xl font-semibold">{step === 'token' ? 'Payment token' : 'Payment'}</h2><button type="button" aria-label="Close payment sheet" disabled={busy} onClick={() => go(step === 'token' ? 'payment' : 'choose')} className="grid h-9 w-9 place-items-center rounded-full bg-[#212529]"><X size={20}/></button></header><div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4">
         {step === 'token' ? <><label className="flex items-center gap-2 rounded-xl bg-[#212529] p-3"><Search size={18}/><input aria-label="Search payment tokens" placeholder="Search…" value={networkSearch} onChange={e => setNetworkSearch(e.target.value)} className="min-w-0 flex-1 bg-transparent outline-none"/></label>{networks.filter(n => (n.label + ' ' + n.chain).toLowerCase().includes(networkSearch.toLowerCase())).map(n => <Choice key={n.id} selected={network === n.id} disabled={!n.enabled} onClick={() => setNetwork(n.id)} icon={<Bitcoin size={22}/>} title={n.label} detail={n.chain + (!n.enabled ? ' · Not configured' : '')}/>)}</> : <>
           <div className={cardClass + ' p-4'}><p className={'text-sm ' + muted}>Total</p><p className="my-1 text-2xl font-bold">{usd(price || 0)}</p><div className="mt-4 flex justify-between gap-2 text-sm"><span className={muted}>{product === 'coins' ? 'VANTA Coins' : 'Verification Badge'}</span><span className="text-right">{product === 'coins' ? quantity.toLocaleString() : plan?.durationLabel}</span></div><div className="mt-2 flex justify-between text-sm"><span className={muted}>Recipient</span><span>{recipientLabel}</span></div>{product === 'badge' && <><label className="mt-2 flex justify-between text-sm"><span className={muted}>Auto-renewal</span><input type="checkbox" role="switch" checked={renew} onChange={e => setRenew(e.target.checked)}/></label>{renew && <div className="mt-2 flex justify-between text-sm"><span className={muted}>Renewal period</span><span>Every {plan?.durationLabel}</span></div>}</>}</div>
@@ -213,9 +292,9 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
           <Choice selected={method === 'crypto'} onClick={() => { setMethod('crypto'); setRenew(false); }} icon={<Bitcoin size={22}/>} title="Crypto" detail={(networkInfo?.label || '') + ' · ' + (networkInfo?.chain || '') + ' · One-time payment'}/>
           {method === 'crypto' && <button type="button" onClick={() => { setNetworkSearch(''); go('token'); }} className="w-full rounded-xl bg-[#212529] p-3 text-left text-sm">Change payment token <ChevronDown className="float-right" size={18}/></button>}
           {product === 'badge' && <Choice selected={method === 'coins'} onClick={() => { setMethod('coins'); setRenew(false); }} icon={<WalletCards size={22}/>} title="VANTA Coins" detail="Coin-balance checkout · not configured"/>}
-          <p className={'text-sm ' + muted}>{renew ? 'Recurring billing is not connected yet.' : method !== 'crypto' ? 'This payment provider is not configured.' : !sandbox ? 'Checkout is disabled on this environment. The isolated sandbox must be configured before a test purchase can be made.' : 'Test checkout only. No real funds will be requested.'}</p>
+          <p className={'text-sm ' + muted}>{renew ? 'Recurring billing is not connected yet.' : method !== 'crypto' ? 'This payment provider is not configured.' : sandbox ? 'Test checkout only. No real funds will be requested.' : liveCrypto && gift ? 'Live gifts are not enabled yet.' : liveCrypto ? 'Send the exact token amount on the selected network.' : 'Checkout is disabled on this environment.'}</p>
         </>}
-      </div><footer className="shrink-0 space-y-2 px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-2">{error && <p role="alert" className="text-sm text-red-300">{error}</p>}{step === 'token' ? footerButton('OK', () => go('payment')) : footerButton((sandbox ? 'Test pay ' : 'Pay ') + usd(price || 0), start, !ready || !sandbox || renew || method !== 'crypto' || !networkInfo?.enabled)}{step === 'payment' && <p className={'text-center text-xs ' + muted}>No payment is charged until a supported checkout is confirmed.</p>}</footer></section></div>}
+      </div><footer className="shrink-0 space-y-2 px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-2">{error && <p role="alert" className="text-sm text-red-300">{error}</p>}{step === 'token' ? footerButton('OK', () => go('payment')) : footerButton((sandbox ? 'Test pay ' : 'Pay ') + usd(price || 0), start, !ready || !canPay)}{step === 'payment' && <p className={'text-center text-xs ' + muted}>No payment is charged until a supported checkout is confirmed.</p>}</footer></section></div>}
     </div>
   </section>;
 }
