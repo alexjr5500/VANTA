@@ -389,7 +389,7 @@ export default function BalancePage() {
           while the balance and transaction content scroll beneath it. */}
       <header className="sticky top-0 z-30 relative -mx-4 flex h-14 w-[calc(100%+2rem)] shrink-0 items-center gap-2.5 border-b border-white/[.08] bg-[var(--header-surface)] px-4 backdrop-blur-xl">
         <button type="button" onClick={() => router.back()} aria-label="Go back" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)] hover:bg-white/[.05] hover:text-[var(--text-primary)]"><ArrowLeft size={20} /></button>
-        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[var(--text-primary)]">Balance</h1>
+        <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-[var(--text-primary)]">VANTA Shop</h1>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <button type="button" onClick={fetchWallet} aria-label="Refresh wallet" className="grid h-11 w-11 place-items-center rounded-lg text-[var(--vanta-gold-bright)]"><RefreshCw size={18}/></button>
           <button
@@ -404,6 +404,10 @@ export default function BalancePage() {
         </div>
       </header>
 
+      <div className="grid grid-cols-2 gap-2">
+        <button type="button" onClick={() => setShowBuyModal(true)} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold">VANTA Coins</button>
+        <button type="button" onClick={() => router.push('/verification/badge')} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold">Verification Badge</button>
+      </div>
       {/* Main Balance Card */}
       <motion.section
         initial={{ opacity: 0, y: 14 }}

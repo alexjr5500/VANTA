@@ -48,7 +48,7 @@ import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 // navigation below stays focused on the five primary product actions.
 const mainNavItems = [
   { href: '/live', icon: Video, label: 'Live' },
-  { href: '/balance', icon: WalletCards, label: 'Balance' },
+  { href: '/balance', icon: WalletCards, label: 'VANTA Shop' },
   { href: '/bookmarks', icon: Bookmark, label: 'Bookmarks' },
   { href: '/creator', icon: Sparkles, label: 'Creator Studio' },
   { href: '/gifts', icon: Gift, label: 'Gifts' },
