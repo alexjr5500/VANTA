@@ -17,7 +17,7 @@ import { shopCoinBadgeEnabled } from '../config/shop-coin-badge.config';
 import { buyBadgeWithCoins } from '../services/shop-coin-badge.service';
 import { shopCardEnabled } from '../config/shop-card.config';
 import { createShopCardCheckout, checkShopCardCheckout, resumeShopCardCheckout, listShopCardCheckouts } from '../services/shop-card.service';
-import { shopLiveCryptoEnabled } from '../config/shop-crypto.config';
+import { shopCryptoNetworks, shopLiveCryptoEnabled } from '../config/shop-crypto.config';
 import { createShopCryptoInvoice, resumeShopCryptoInvoice, checkShopCryptoInvoice, listShopCryptoInvoices, shopCryptoStatus } from '../services/shop-crypto.service';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 
@@ -70,7 +70,7 @@ router.post('/address', saveWalletAddress);
 
 // Coin packages (Buy Coins flow)
 router.get('/packages', getCoinPackages);
-router.get('/shop-capabilities', (_req, res) => res.json({ sandbox: shopSandboxEnabled(), liveCrypto: shopLiveCryptoEnabled(), cardTest: shopCardEnabled(), coinBadge: shopCoinBadgeEnabled() }));
+router.get('/shop-capabilities', (_req, res) => res.json({ sandbox: shopSandboxEnabled(), liveCrypto: shopLiveCryptoEnabled(), cryptoNetworks: shopLiveCryptoEnabled() ? shopCryptoNetworks() : [], cardTest: shopCardEnabled(), coinBadge: shopCoinBadgeEnabled() }));
 router.post('/payment-address', rateLimiter.otp, (req, res) => shopSandboxEnabled() ? getPaymentAddress(req, res) : purchasesUnderMaintenance(req, res));
 router.post('/verify-payment', rateLimiter.otp, (req, res) => shopSandboxEnabled() ? verifyPayment(req, res) : purchasesUnderMaintenance(req, res));
 router.post('/shop/badges/coins', rateLimiter.otp, async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
