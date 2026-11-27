@@ -14,7 +14,18 @@ type Pack = { id: string; coins: number; price: number };
 type Recipient = { id: string; username: string; fullName?: string };
 type Invoice = { orderId: string; amount: number; currency: string; network: string; expiresAt: string; coins?: number; planId?: string; product?: Product } & ({ mode: 'test'; simulateToken: string } | { mode: 'live'; address: string; paymentUri: string; qrCode: string; token: string; tokenAmount: string });
 type PendingInvoice = { orderId: string; product: Product; network: string; amount: number; expiresAt: string };
-type Step = 'choose' | 'payment' | 'token' | 'invoice' | 'waiting' | 'success';
+type Step = 'choose' | 'payment' | 'token' | 'invoice' | 'waiting' | 'card' | 'success';
+type CardOrder = { orderId: string; product: Product; amount: number; expiresAt: string; checkoutUrl?: string | null; status?: string };
+function cardFrom(value: unknown): CardOrder {
+  const a = obj(value);
+  if (a.mode !== 'card-test' || typeof a.orderId !== 'string' || (a.product !== 'coins' && a.product !== 'badge') || typeof a.amount !== 'number' || !Number.isFinite(a.amount) || a.amount <= 0 || typeof a.expiresAt !== 'string') throw new Error('Invalid card order');
+  if (a.checkoutUrl != null) {
+    if (typeof a.checkoutUrl !== 'string') throw new Error('Invalid checkout link');
+    const u = new URL(a.checkoutUrl);
+    if (u.protocol !== 'https:' || u.hostname !== 'checkout.stripe.com' || u.username || u.password || u.port || !u.pathname.startsWith('/c/pay/cs_test_')) throw new Error('Invalid checkout link');
+  }
+  return a as CardOrder;
+}
 const networks = [
   { id: 'eth-erc20', label: 'ETH', chain: 'Ethereum', enabled: false },
   { id: 'usdt-trc20', label: 'USDT', chain: 'Tron (TRC-20)', enabled: false },
@@ -91,6 +102,9 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   const [networkSearch, setNetworkSearch] = useState('');
   const [sandbox, setSandbox] = useState(false);
   const [liveCrypto, setLiveCrypto] = useState(false);
+  const [cardTest, setCardTest] = useState(false);
+  const [cardOrder, setCardOrder] = useState<CardOrder | null>(null);
+  const [pendingCards, setPendingCards] = useState<CardOrder[]>([]);
   const [pendingInvoices, setPendingInvoices] = useState<PendingInvoice[]>([]);
   const [txHash, setTxHash] = useState('');
   const [paymentStatus, setPaymentStatus] = useState('PENDING');
@@ -108,7 +122,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   useEffect(() => {
     if (!open || !token) return;
     let active = true;
-    setProduct(initialProduct); setStep('choose'); setPackId(''); setPlanId(initialPlan?.id || ''); setGift(false); setRecipient(null); setQuery(''); setRecipients([]); setRenew(false); setCustom(''); setInvoice(null); setError(''); setSandbox(false); setLiveCrypto(false); setPendingInvoices([]); setTxHash(''); setPaymentStatus('PENDING'); setQrExpanded(false); setPacks([]); setPlans([]); setRate(null); setBalance(null); setMethod('crypto'); setNetwork('usdt-bep20'); setLoading(true);
+    setProduct(initialProduct); setStep('choose'); setPackId(''); setPlanId(initialPlan?.id || ''); setGift(false); setRecipient(null); setQuery(''); setRecipients([]); setRenew(false); setCustom(''); setInvoice(null); setError(''); setSandbox(false); setLiveCrypto(false); setCardTest(false); setCardOrder(null); setPendingCards([]); setPendingInvoices([]); setTxHash(''); setPaymentStatus('PENDING'); setQrExpanded(false); setPacks([]); setPlans([]); setRate(null); setBalance(null); setMethod('crypto'); setNetwork('usdt-bep20'); setLoading(true);
     Promise.allSettled([
       request('/api/wallets/packages', token).then(data => ({ packs: packagesFrom(data), rate: obj(data).exchangeRate })),
       getBadgePurchasePlans(token),
@@ -126,6 +140,29 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
         const capabilities = obj(s.value);
         setSandbox(capabilities.sandbox === true);
         setLiveCrypto(capabilities.liveCrypto === true);
+        const webCard = capabilities.cardTest === true && !/VANTAAndroid/i.test(navigator.userAgent);
+        setCardTest(webCard);
+        if (webCard) {
+          request('/api/wallets/shop/card/checkouts', token).then(data => {
+            if (!active) return;
+            const entries = obj(data).checkouts;
+            if (Array.isArray(entries)) setPendingCards(entries.filter((v: unknown): v is CardOrder => {
+              if (!v || typeof v !== 'object') return false;
+              const p = v as Record<string, unknown>;
+              return typeof p.orderId === 'string' && (p.product === 'coins' || p.product === 'badge') && typeof p.amount === 'number' && typeof p.expiresAt === 'string';
+            }));
+          }).catch(() => { if (active) setError('Could not load pending card orders.'); });
+          const url = new URL(window.location.href);
+          const orderId = url.searchParams.get('shopCard');
+          if (orderId) {
+            request('/api/wallets/shop/card/checkouts/' + encodeURIComponent(orderId), token).then(data => {
+              if (!active) return;
+              const next = cardFrom(data);
+              setCardOrder(next); setProduct(next.product); setMethod('card'); setStep('card'); setPaymentStatus(next.status || 'PENDING');
+              url.searchParams.delete('shopCard'); window.history.replaceState(window.history.state, '', url.toString());
+            }).catch(() => { if (active) setError('Could not recover card order.'); });
+          }
+        }
         if (capabilities.liveCrypto === true) request('/api/wallets/shop/crypto/invoices', token).then(data => {
           if (!active) return;
           const entries = obj(data).invoices;
@@ -193,7 +230,26 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   const go = (s: Step) => { setError(''); setStep(s); };
   const clipboard = async (value: string) => { try { await navigator.clipboard.writeText(value); setCopied(value); } catch { setError('Clipboard unavailable. Select and copy manually.'); } };
   const paste = async () => { try { setRecipient(null); setQuery((await navigator.clipboard.readText()).trim()); } catch { setError('Paste the username into the field manually.'); } };
-  const canPay = (sandbox || (liveCrypto && !gift)) && !renew && method === 'crypto' && !!networkInfo?.enabled;
+  const canPay = !renew && (method === 'card' ? cardTest : method === 'crypto' && (sandbox || (liveCrypto && !gift)) && !!networkInfo?.enabled);
+  async function resumeCard(orderId: string) {
+    if (!token || actionLock.current) return;
+    actionLock.current = true; setBusy(true); setError('');
+    try {
+      const next = cardFrom(await request('/api/wallets/shop/card/checkouts/' + encodeURIComponent(orderId), token));
+      setCardOrder(next); setProduct(next.product); setMethod('card'); setStep('card'); setPaymentStatus(next.status || 'PENDING');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not recover checkout'); }
+    finally { actionLock.current = false; setBusy(false); }
+  }
+  async function checkCard() {
+    if (!token || !cardOrder || !cardTest || actionLock.current) return;
+    actionLock.current = true; setBusy(true); setError('');
+    try {
+      const result = obj(await request('/api/wallets/shop/card/checkouts/' + encodeURIComponent(cardOrder.orderId) + '/check', token, {}));
+      setPaymentStatus(typeof result.status === 'string' ? result.status : 'PENDING');
+      if (result.success === true && result.status === 'COMPLETED') { setResultCoins(typeof result.coins === 'number' ? result.coins : 0); setStep('success'); }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not confirm card payment'); }
+    finally { actionLock.current = false; setBusy(false); }
+  }
   async function resumePending(orderId: string) {
     if (!token || actionLock.current) return;
     actionLock.current = true; setBusy(true); setError('');
@@ -211,6 +267,12 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
     if (!token || !ready || !canPay || actionLock.current) return;
     actionLock.current = true; setBusy(true); setError('');
     try {
+      if (method === 'card') {
+        const next = cardFrom(await request('/api/wallets/shop/card/checkouts', token, { product, ...(product === 'coins' ? { packageId: packId, ...(packId === 'custom' ? { customCoins: quantity } : {}) } : { planId }), ...(gift && recipient ? { recipientId: recipient.id } : {}) }));
+        if (next.amount !== price || next.product !== product || !next.checkoutUrl) throw new Error('Checkout price changed or payment link unavailable.');
+        setCardOrder(next); setPaymentStatus('PENDING'); setStep('card');
+        return;
+      }
       const data = liveCrypto && !sandbox
         ? await request('/api/wallets/shop/crypto/invoices', token, { product, network, ...(product === 'coins' ? { packageId: packId, ...(packId === 'custom' ? { customCoins: quantity } : {}) } : { planId }) })
         : product === 'coins'
@@ -246,6 +308,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
       <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5">
         {(step === 'choose' || showPay) && <div aria-hidden={showPay ? true : undefined}>
           <h2 className="mb-5 text-[25px] font-semibold leading-8">Choose a product</h2>
+          {pendingCards.length > 0 && <div className="mb-4 space-y-2"><h3 className="text-sm font-semibold">Pending card payments</h3>{pendingCards.map(p => <button key={p.orderId} type="button" disabled={busy || showPay} onClick={() => resumeCard(p.orderId)} className="w-full rounded-xl bg-[#212529] p-3 text-left text-sm">Resume {p.product === 'coins' ? 'coin' : 'badge'} card payment · {usd(p.amount)}</button>)}</div>}
           {pendingInvoices.length > 0 && <div className="mb-4 space-y-2"><h3 className="text-sm font-semibold">Pending payments</h3>{pendingInvoices.map(p => <button key={p.orderId} type="button" disabled={busy || showPay} onClick={() => resumePending(p.orderId)} className="w-full rounded-xl bg-[#212529] p-3 text-left text-sm">Resume {p.product === 'coins' ? 'coin' : 'badge'} payment · {usd(p.amount)}</button>)}</div>}
           <div className="mb-6 flex flex-wrap gap-2">{(['badge','coins'] as Product[]).map(p => <button key={p} type="button" onClick={() => selectProduct(p)} aria-pressed={product === p} className={'rounded-full px-3 py-2 text-sm font-semibold ' + (product === p ? 'bg-white text-black' : 'bg-[#212529] text-[#95979b]')}>{p === 'badge' ? 'Verification Badge' : 'VANTA Coins'}</button>)}</div>
           <div className="space-y-2"><h3 className="mb-2 text-[15px]">Who is it for?</h3><Choice selected={!gift} onClick={() => { setGift(false); setRecipient(null); }} icon={<User size={22}/>} title="For me" detail="Goes to your VANTA account"/><Choice selected={gift} onClick={() => { setGift(true); setRenew(false); }} icon={<Gift size={22}/>} title="As a gift" detail="Send it to another VANTA user"/></div>
@@ -281,20 +344,27 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
           <div className="divide-y divide-white/5 rounded-xl bg-[#212529] p-3 text-sm">{[['Expires in',countdown],['Order reference',invoice.orderId],['Amount',invoice.mode === 'live' ? invoice.tokenAmount + ' ' + invoice.token : usd(invoice.amount)],['Payment token',networkInfo?.label + ' · ' + networkInfo?.chain],['Status',invoice.mode === 'live' ? (remaining ? paymentStatus : 'Expired / reconciliation') : step === 'waiting' ? 'Checking server' : remaining ? 'Unpaid (test)' : 'Expired'],['Network fee',invoice.mode === 'live' ? 'Paid by you' : 'None in sandbox']].map(([label,value]) => <div key={label} className="flex items-center justify-between gap-3 py-3"><span className={muted}>{label}</span><span className="min-w-0 break-all text-right">{value}</span>{label === 'Order reference' && <button type="button" aria-label="Copy order reference" onClick={() => clipboard(invoice.orderId)}><Copy size={16}/></button>}</div>)}</div>
           {copied && <p role="status" className="text-xs">Copied.</p>}
         </div>}
-        {step === 'success' && <div className="flex flex-col items-center gap-4 py-14 text-center"><span className="grid h-16 w-16 place-items-center rounded-full bg-emerald-700"><Check size={36}/></span><h2 className="text-2xl font-semibold">Payment successful</h2><p>{product === 'coins' ? resultCoins.toLocaleString() + (invoice?.mode === 'test' ? ' test coins credited' : ' VANTA Coins credited') : invoice?.mode === 'test' ? 'Test verification purchase confirmed' : 'Verification purchase confirmed'}</p>{gift && recipient && <p>Gift delivered to @{recipient.username}</p>}<p className={muted}>{invoice?.mode === 'test' ? 'Confirmed by the sandbox backend. No real payment was taken.' : 'Payment verified and fulfilled by VANTA.'}</p></div>}
+        {step === 'card' && cardOrder && <div className="space-y-4">
+          <h2 className="text-xl font-semibold">Card checkout · {usd(cardOrder.amount)}</h2>
+          <div className="rounded-xl bg-[#212529] p-4"><p className="font-semibold text-amber-200">Stripe test payment — no real charge</p><p className={'mt-2 text-sm ' + muted}>Card details are entered on Stripe, not on VANTA. Return to the shop after completing or cancelling checkout.</p></div>
+          <div className="rounded-xl bg-[#212529] p-4 text-sm space-y-3"><p>Order: <span className="break-all">{cardOrder.orderId}</span></p><p>Status: {paymentStatus}</p><p>Product: {cardOrder.product === 'coins' ? 'VANTA Coins' : 'Verification Badge'}</p></div>
+          {cardOrder.checkoutUrl && paymentStatus === 'PENDING' && Date.parse(cardOrder.expiresAt) > Date.now() && <a href={cardOrder.checkoutUrl} className="block rounded-xl bg-white p-3 text-center text-sm font-semibold text-black">Open secure test checkout</a>}
+          {paymentStatus === 'EXPIRED' || paymentStatus === 'RECONCILIATION' ? <p className="text-sm text-amber-200">Order closed. If you completed payment, contact support with this order reference.</p> : null}
+        </div>}
+        {step === 'success' && <div className="flex flex-col items-center gap-4 py-14 text-center"><span className="grid h-16 w-16 place-items-center rounded-full bg-emerald-700"><Check size={36}/></span><h2 className="text-2xl font-semibold">Payment successful</h2><p>{product === 'coins' ? resultCoins.toLocaleString() + ((invoice?.mode === 'test' || cardOrder) ? ' test coins credited' : ' VANTA Coins credited') : (invoice?.mode === 'test' || cardOrder) ? 'Test verification purchase confirmed' : 'Verification purchase confirmed'}</p>{gift && recipient && <p>Gift delivered to @{recipient.username}</p>}<p className={muted}>{(invoice?.mode === 'test' || cardOrder) ? 'Confirmed by the sandbox backend. No real payment was taken.' : 'Payment verified and fulfilled by VANTA.'}</p></div>}
       </main>
-      {!showPay && <footer className="shrink-0 space-y-2 rounded-t-2xl border-t border-white/5 bg-[#191d21] px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-3">{error && <p role="alert" className="text-sm text-red-300">{error}</p>}{step === 'choose' && footerButton(ready && price !== undefined ? (gift ? 'Gift ' : product === 'badge' ? 'Subscribe for ' : 'Buy ' + quantity.toLocaleString() + ' coins for ') + usd(price) + (product === 'badge' && plan ? ' / ' + plan.durationLabel : '') : product === 'badge' ? 'Subscribe' : 'Buy coins', () => go('payment'), !ready)}{(step === 'invoice' || step === 'waiting') && <>{footerButton(invoice?.mode === 'live' ? (step === 'waiting' ? 'Check payment again' : "I've sent the payment") : step === 'waiting' ? 'Check test payment again' : 'Confirm test payment', confirm, remaining <= 0 || paymentStatus === 'RECONCILIATION')}<button type="button" onClick={close} disabled={busy} className="w-full rounded-xl bg-[#212529] py-3 text-sm">Close</button></>}{step === 'success' && footerButton('Done', close)}</footer>}
+      {!showPay && <footer className="shrink-0 space-y-2 rounded-t-2xl border-t border-white/5 bg-[#191d21] px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-3">{error && <p role="alert" className="text-sm text-red-300">{error}</p>}{step === 'choose' && footerButton(ready && price !== undefined ? (gift ? 'Gift ' : product === 'badge' ? 'Subscribe for ' : 'Buy ' + quantity.toLocaleString() + ' coins for ') + usd(price) + (product === 'badge' && plan ? ' / ' + plan.durationLabel : '') : product === 'badge' ? 'Subscribe' : 'Buy coins', () => go('payment'), !ready)}{(step === 'invoice' || step === 'waiting') && <>{footerButton(invoice?.mode === 'live' ? (step === 'waiting' ? 'Check payment again' : "I've sent the payment") : step === 'waiting' ? 'Check test payment again' : 'Confirm test payment', confirm, remaining <= 0 || paymentStatus === 'RECONCILIATION')}<button type="button" onClick={close} disabled={busy} className="w-full rounded-xl bg-[#212529] py-3 text-sm">Close</button></>}{step === 'card' && footerButton('Check card payment', checkCard, !cardTest || !cardOrder)}{step === 'success' && footerButton('Done', close)}</footer>}
       {showPay && <div className="absolute inset-0 z-10 flex flex-col justify-end bg-black/65"><section aria-label={step === 'token' ? 'Payment token' : 'Payment'} className="flex max-h-[96%] min-h-[50%] flex-col rounded-t-2xl bg-[#191d21]"><header className="flex shrink-0 items-center justify-between px-4 py-3"><h2 className="text-xl font-semibold">{step === 'token' ? 'Payment token' : 'Payment'}</h2><button type="button" aria-label="Close payment sheet" disabled={busy} onClick={() => go(step === 'token' ? 'payment' : 'choose')} className="grid h-9 w-9 place-items-center rounded-full bg-[#212529]"><X size={20}/></button></header><div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4">
         {step === 'token' ? <><label className="flex items-center gap-2 rounded-xl bg-[#212529] p-3"><Search size={18}/><input aria-label="Search payment tokens" placeholder="Search…" value={networkSearch} onChange={e => setNetworkSearch(e.target.value)} className="min-w-0 flex-1 bg-transparent outline-none"/></label>{networks.filter(n => (n.label + ' ' + n.chain).toLowerCase().includes(networkSearch.toLowerCase())).map(n => <Choice key={n.id} selected={network === n.id} disabled={!n.enabled} onClick={() => setNetwork(n.id)} icon={<Bitcoin size={22}/>} title={n.label} detail={n.chain + (!n.enabled ? ' · Not configured' : '')}/>)}</> : <>
           <div className={cardClass + ' p-4'}><p className={'text-sm ' + muted}>Total</p><p className="my-1 text-2xl font-bold">{usd(price || 0)}</p><div className="mt-4 flex justify-between gap-2 text-sm"><span className={muted}>{product === 'coins' ? 'VANTA Coins' : 'Verification Badge'}</span><span className="text-right">{product === 'coins' ? quantity.toLocaleString() : plan?.durationLabel}</span></div><div className="mt-2 flex justify-between text-sm"><span className={muted}>Recipient</span><span>{recipientLabel}</span></div>{product === 'badge' && <><label className="mt-2 flex justify-between text-sm"><span className={muted}>Auto-renewal</span><input type="checkbox" role="switch" checked={renew} onChange={e => setRenew(e.target.checked)}/></label>{renew && <div className="mt-2 flex justify-between text-sm"><span className={muted}>Renewal period</span><span>Every {plan?.durationLabel}</span></div>}</>}</div>
           {product === 'badge' && plan && <><div className="flex items-center justify-between text-sm"><span>Plan</span><button type="button" onClick={() => go('choose')} className="flex items-center gap-1 text-[#b8bcc0]"><Pencil size={14}/>Change</button></div><Choice selected onClick={() => go('choose')} icon={<VerificationBadge type={plan.badgeType} size="md"/>} title={plan.name} detail={usd(plan.priceUSD)}/></>}
-          <h3 className="pt-2 text-sm">Payment method</h3><Choice selected={method === 'card'} onClick={() => setMethod('card')} icon={<CreditCard size={22}/>} title="Card" detail="Hosted card checkout · not configured"/>
+          <h3 className="pt-2 text-sm">Payment method</h3><Choice selected={method === 'card'} onClick={() => setMethod('card')} icon={<CreditCard size={22}/>} title="Card" detail={cardTest ? "Secure Stripe hosted checkout · test mode" : "Hosted web card checkout · not configured"}/>
           <Choice selected={method === 'crypto'} onClick={() => { setMethod('crypto'); setRenew(false); }} icon={<Bitcoin size={22}/>} title="Crypto" detail={(networkInfo?.label || '') + ' · ' + (networkInfo?.chain || '') + ' · One-time payment'}/>
           {method === 'crypto' && <button type="button" onClick={() => { setNetworkSearch(''); go('token'); }} className="w-full rounded-xl bg-[#212529] p-3 text-left text-sm">Change payment token <ChevronDown className="float-right" size={18}/></button>}
           {product === 'badge' && <Choice selected={method === 'coins'} onClick={() => { setMethod('coins'); setRenew(false); }} icon={<WalletCards size={22}/>} title="VANTA Coins" detail="Coin-balance checkout · not configured"/>}
-          <p className={'text-sm ' + muted}>{renew ? 'Recurring billing is not connected yet.' : method !== 'crypto' ? 'This payment provider is not configured.' : sandbox ? 'Test checkout only. No real funds will be requested.' : liveCrypto && gift ? 'Live gifts are not enabled yet.' : liveCrypto ? 'Send the exact token amount on the selected network.' : 'Checkout is disabled on this environment.'}</p>
+          <p className={'text-sm ' + muted}>{renew ? 'Recurring billing is not connected yet.' : method === 'card' ? (cardTest ? 'You will enter card details on Stripe in test mode.' : 'Web card checkout is not configured; Android Play Billing is separate.') : method !== 'crypto' ? 'This payment provider is not configured.' : sandbox ? 'Test checkout only. No real funds will be requested.' : liveCrypto && gift ? 'Live gifts are not enabled yet.' : liveCrypto ? 'Send the exact token amount on the selected network.' : 'Checkout is disabled on this environment.'}</p>
         </>}
-      </div><footer className="shrink-0 space-y-2 px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-2">{error && <p role="alert" className="text-sm text-red-300">{error}</p>}{step === 'token' ? footerButton('OK', () => go('payment')) : footerButton((sandbox ? 'Test pay ' : 'Pay ') + usd(price || 0), start, !ready || !canPay)}{step === 'payment' && <p className={'text-center text-xs ' + muted}>No payment is charged until a supported checkout is confirmed.</p>}</footer></section></div>}
+      </div><footer className="shrink-0 space-y-2 px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-2">{error && <p role="alert" className="text-sm text-red-300">{error}</p>}{step === 'token' ? footerButton('OK', () => go('payment')) : footerButton(((sandbox || (method === 'card' && cardTest)) ? 'Test pay ' : 'Pay ') + usd(price || 0), start, !ready || !canPay)}{step === 'payment' && <p className={'text-center text-xs ' + muted}>No payment is charged until a supported checkout is confirmed.</p>}</footer></section></div>}
     </div>
   </section>;
 }
