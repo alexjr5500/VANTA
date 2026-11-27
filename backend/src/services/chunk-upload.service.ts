@@ -98,7 +98,7 @@ const chunksDiskStorage = multer.diskStorage({
 
 export const uploadChunk = multer({
   storage: chunksDiskStorage,
-  limits: { fileSize: UPLOAD_CHUNK_SIZE, files: 1, fields: 2, parts: 3 },
+  limits: { fileSize: UPLOAD_CHUNK_SIZE + 1, files: 1, fields: 2, parts: 4 },
 });
 
 interface InitChunkInput {

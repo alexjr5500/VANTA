@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import express from 'express';
 
 jest.mock('../prisma', () => ({
   prisma: {
@@ -15,7 +16,7 @@ jest.mock('../prisma', () => ({
 }));
 
 import { prisma } from '../prisma';
-import { chunkUploadService, UPLOAD_CHUNK_SIZE } from '../services/chunk-upload.service';
+import { chunkUploadService, uploadChunk, UPLOAD_CHUNK_SIZE } from '../services/chunk-upload.service';
 import { uploadService, uploadStorageDir } from '../services/upload.service';
 
 const db = prisma as jest.Mocked<typeof prisma>;
@@ -121,6 +122,55 @@ describe('ChunkUploadService', () => {
     expect(state.receivedIndexes).toEqual([]);
     expect(state.complete).toBe(false); // byte-staging flag is not the persistence status
   });
+
+  it('accepts a full-size multipart part and denies a non-owner before writing', async () => {
+    (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({
+      ...baseSession, fileSize: UPLOAD_CHUNK_SIZE, totalChunks: 1,
+    });
+    const app = express();
+    app.post('/part', (request, _response, next) => {
+      (request as any).user = { userId: request.header('x-fixture-user') };
+      next();
+    }, uploadChunk.single('chunk'), async (request, response) => {
+      try {
+        response.json(await chunkUploadService.acceptChunkPart(
+          (request as any).user.userId, request.body.sessionId, request.body.index, request.file,
+        ));
+      } catch { response.status(400).end(); }
+    });
+    app.use((_error: any, _request: any, response: any, _next: any) => response.status(400).end());
+    const server = app.listen(0, '127.0.0.1');
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('listening', resolve);
+        server.once('error', reject);
+      });
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing listener');
+      const send = (user: string, value: number) => {
+        const data = new FormData();
+        data.append('sessionId', baseSession.id);
+        data.append('index', '0');
+        data.append('chunk', new Blob([new Uint8Array(UPLOAD_CHUNK_SIZE).fill(value)]), 'part');
+        return fetch(`http://127.0.0.1:${address.port}/part`, {
+          method: 'POST', headers: { 'x-fixture-user': user }, body: data,
+        });
+      };
+      const valid = await send('user-1', 7);
+      expect(valid.status).toBe(200);
+      expect(await valid.json()).toMatchObject({ receivedChunks: 1 });
+      const accepted = partPath(baseSession.id, 0);
+      expect(fs.statSync(accepted).size).toBe(UPLOAD_CHUNK_SIZE);
+      const denied = await send('user-2', 9);
+      expect(denied.status).toBe(400);
+      await denied.arrayBuffer();
+      expect(fs.readFileSync(accepted)).toEqual(Buffer.alloc(UPLOAD_CHUNK_SIZE, 7));
+      expect(fs.readdirSync(stagingDir(baseSession.id))).toEqual(['000000.part']);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }, 20000);
 
   describe('acceptChunkPart', () => {
     it('publishes a complete part and does not overwrite it with a short retry', async () => {
