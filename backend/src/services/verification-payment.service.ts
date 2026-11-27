@@ -1,3 +1,4 @@
+import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 import { prisma } from '../prisma';
 import { resolveShopGiftRecipient } from './shop-gift.service';
 import { auditLog } from '../security/auditLog';
@@ -304,6 +305,8 @@ export class VerificationPaymentService {
     const badgeType: 'BLUE' | 'GOLD' = plan.badgeType === 'BLUE' ? 'BLUE' : 'GOLD';
 
     const mode = options.mode || existingAttempt.paymentMode || COIN_PAYMENT_MODE.LIVE;
+    const recipientId = existingAttempt.recipientUserId || userId;
+    if (existingAttempt.recipientUserId && (mode !== 'test' || existingAttempt.paymentMode !== 'test' || !shopSandboxEnabled())) throw new Error('Gift purchases require the isolated sandbox.');
     const providerRef = (options.providerReference || existingAttempt.providerReference || '').trim();
     const providerOrderId = resolveProviderOrderId(mode, existingAttempt.id, providerRef);
     const now = new Date();
@@ -338,20 +341,26 @@ export class VerificationPaymentService {
         throw new Error('This purchase was already processed.');
       }
 
+      if (existingAttempt.recipientUserId) {
+        // Serialize gift activation for the target and fail closed if the account is no longer active.
+        const active = await tx.user.updateMany({ where: { id: recipientId, status: 'ACTIVE' }, data: { status: 'ACTIVE' } });
+        if (active.count !== 1) throw new Error('Gift recipient unavailable.');
+      }
       // ---- entitlement date computation (renewal-aware, never shortening) ----
-      const existingBadge = await tx.verificationBadge.findUnique({ where: { userId } });
+      const existingBadge = await tx.verificationBadge.findUnique({ where: { userId: recipientId } });
       const hasActiveBadge =
         existingBadge?.status === 'ACTIVE' &&
         existingBadge.expiresAt &&
         new Date(existingBadge.expiresAt).getTime() > now.getTime();
 
+      if (existingAttempt.recipientUserId && existingBadge?.status === 'ACTIVE') throw new Error('Recipient already has an active badge. Choose another recipient.');
       const startDate = hasActiveBadge && existingBadge?.expiresAt ? new Date(existingBadge.expiresAt) : now;
       const endDate = addMonths(startDate, plan.durationMonths);
 
       let badge;
       if (existingBadge) {
         badge = await tx.verificationBadge.update({
-          where: { userId },
+          where: { userId: recipientId },
           data: {
             badgeType,
             status: 'ACTIVE',
@@ -369,7 +378,7 @@ export class VerificationPaymentService {
       } else {
         badge = await tx.verificationBadge.create({
           data: {
-            userId,
+            userId: recipientId,
             badgeType,
             status: 'ACTIVE',
             grantedAt: startDate,
@@ -384,7 +393,7 @@ export class VerificationPaymentService {
       // BLUE badges never touch the membership record.
       let membership: any = null;
       if (badgeType === 'GOLD') {
-        const existingMembership = await tx.creatorMembership.findUnique({ where: { userId } });
+        const existingMembership = await tx.creatorMembership.findUnique({ where: { userId: recipientId } });
         const membershipActive =
           existingMembership?.status === 'ACTIVE' &&
           existingMembership.endDate &&
@@ -396,7 +405,7 @@ export class VerificationPaymentService {
 
         if (existingMembership) {
           membership = await tx.creatorMembership.update({
-            where: { userId },
+            where: { userId: recipientId },
             data: {
               planId: plan.id,
               status: 'ACTIVE',
@@ -413,7 +422,7 @@ export class VerificationPaymentService {
         } else {
           membership = await tx.creatorMembership.create({
             data: {
-              userId,
+              userId: recipientId,
               planId: plan.id,
               status: 'ACTIVE',
               startDate: membershipStart,
@@ -429,9 +438,10 @@ export class VerificationPaymentService {
 
       await tx.verificationHistory.create({
         data: {
-          userId,
+          userId: recipientId,
           action: 'BADGE_ACTIVATED',
           details: JSON.stringify({
+            ...(existingAttempt.recipientUserId ? { payerId: userId } : {}),
             badgeType,
             planId: plan.id,
             planName: plan.name,
@@ -449,8 +459,7 @@ export class VerificationPaymentService {
       return {
         alreadyCompleted: false,
         order: { ...existingAttempt, status: VERIFICATION_PURCHASE_STATUS.COMPLETED },
-        badge,
-        membership,
+        ...(existingAttempt.recipientUserId ? {} : { badge, membership }),
       };
     });
 
@@ -901,6 +910,7 @@ export class VerificationPaymentService {
       throw new Error('Only completed purchases can be refunded');
     }
 
+    const recipientId = order.recipientUserId || order.userId;
     await prisma.$transaction(async (tx) => {
       const claimed = await tx.verificationPurchase.updateMany({
         where: { id: purchaseId, status: VERIFICATION_PURCHASE_STATUS.COMPLETED },
@@ -922,10 +932,10 @@ export class VerificationPaymentService {
 
       // Reverse the entitlement if and only if the current active badge was
       // activated by this exact purchase.
-      const activeBadge = await tx.verificationBadge.findUnique({ where: { userId: order.userId } });
+      const activeBadge = await tx.verificationBadge.findUnique({ where: { userId: recipientId } });
       if (activeBadge?.status === 'ACTIVE' && activeBadge.sourcePurchaseId === purchaseId) {
         await tx.verificationBadge.update({
-          where: { userId: order.userId },
+          where: { userId: recipientId },
           data: {
             status: 'REVOKED',
             revokedAt: new Date(),
@@ -936,13 +946,13 @@ export class VerificationPaymentService {
         });
         if (activeBadge.badgeType === 'GOLD') {
           await tx.creatorMembership.updateMany({
-            where: { userId: order.userId, status: 'ACTIVE' },
+            where: { userId: recipientId, status: 'ACTIVE' },
             data: { status: 'CANCELLED', cancelledAt: new Date(), updatedAt: new Date() },
           });
         }
         await tx.verificationHistory.create({
           data: {
-            userId: order.userId,
+            userId: recipientId,
             action: 'BADGE_REVOKED_REFUND',
             performedBy: adminId,
             details: JSON.stringify({ purchaseId, reason: reason || 'Purchase refunded' }),
