@@ -14,7 +14,7 @@ import { authenticateJWT } from '../middleware/auth.middleware';
 import { rateLimiter } from '../security/rateLimiter';
 
 import { shopLiveCryptoEnabled } from '../config/shop-crypto.config';
-import { createShopCryptoInvoice, resumeShopCryptoInvoice, checkShopCryptoInvoice } from '../services/shop-crypto.service';
+import { createShopCryptoInvoice, resumeShopCryptoInvoice, checkShopCryptoInvoice, listShopCryptoInvoices, shopCryptoStatus } from '../services/shop-crypto.service';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 
 const router = Router();
@@ -75,6 +75,19 @@ router.post('/shop/crypto/invoices', rateLimiter.otp, async (req: import('../mid
   if (!req.user?.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   try { res.status(201).json(await createShopCryptoInvoice(req.user.userId, req.body || {})); }
   catch (e) { console.warn('[SHOP-CRYPTO] Invoice creation failed'); res.status(400).json({ error: 'Could not create payment invoice. Check the selection or try again later.' }); }
+});
+router.get('/shop/crypto/invoices', async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
+  if (!shopLiveCryptoEnabled()) { purchasesUnderMaintenance(req, res); return; }
+  if (!req.user?.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(await listShopCryptoInvoices(req.user.userId)); }
+  catch { res.status(503).json({ error: 'Could not load pending invoices' }); }
+});
+router.get('/shop/crypto/invoices/:orderId/status', async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
+  if (!req.user?.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(await shopCryptoStatus(req.user.userId, req.params.orderId)); }
+  catch { res.status(404).json({ error: 'Invoice unavailable' }); }
 });
 router.get('/shop/crypto/invoices/:orderId', async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
   if (!shopLiveCryptoEnabled()) { purchasesUnderMaintenance(req, res); return; }
