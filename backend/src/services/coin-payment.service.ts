@@ -1,6 +1,6 @@
 import { prisma } from '../prisma';
 import { resolveShopGiftRecipient } from './shop-gift.service';
-import { shopLiveCryptoEnabled } from '../config/shop-crypto.config';
+import { shopCryptoNetworks, shopLiveCryptoEnabled } from '../config/shop-crypto.config';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 import { coinsToUsd } from '../config/wallet.config';
 import { walletService } from './wallet.service';
@@ -113,15 +113,16 @@ export class CoinPaymentService {
     network: unknown,
     ipAddress?: string,
     customCoins?: unknown,
-    recipientId?: unknown
+    recipientId?: unknown,
+    dedicatedInvoice = false
   ) {
     if (!userId) throw new Error('Unauthorized');
 
     if (typeof packageId !== 'string' || !packageId.trim()) {
       throw new Error('packageId is required');
     }
-    if (typeof network !== 'string' || !SUPPORTED_COIN_PAYMENT_NETWORKS.includes(network)) {
-      throw new Error('Unsupported payment network. Choose USDT (BEP-20) or USDC (Base).');
+    if (typeof network !== 'string' || !SUPPORTED_COIN_PAYMENT_NETWORKS.includes(network) && !(dedicatedInvoice && shopLiveCryptoEnabled() && shopCryptoNetworks().includes(network))) {
+      throw new Error('Unsupported payment network.');
     }
 
     const recipientUserId = await resolveShopGiftRecipient(userId, recipientId);
