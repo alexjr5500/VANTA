@@ -318,6 +318,7 @@ describe('ChunkUploadService', () => {
         expect.objectContaining({ where: expect.objectContaining({ status: 'ACTIVE' }), data: { status: 'FINALIZING' } })
       );
       expect(spy).toHaveBeenCalledWith(req, expect.anything(), expect.objectContaining({ chunkSessionId: baseSession.id }));
+      expect(spy.mock.calls[0][1].stream).toBeUndefined();
       fs.rmSync(path.join(uploadStorageDir, result.filename), { force: true });
       // Staging is cleaned up after a successful compose.
       expect(fs.existsSync(stagingDir(baseSession.id))).toBe(false);

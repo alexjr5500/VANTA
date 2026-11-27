@@ -350,7 +350,7 @@ export class ChunkUploadService {
       destination: uploadStorageDir,
       filename: finalName,
       path: finalPath,
-      stream: fs.createReadStream(finalPath),
+      // Disk-backed Multer files do not need a second, unread stream.
     } as Express.Multer.File;
 
     try {
