@@ -65,4 +65,41 @@ describe('real FFmpeg HLS integration', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   }, 120000);
+
+  run('preserves portrait framing and aligns short HLS segments with keyframes', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vanta-portrait-hls-'));
+    try {
+      const input = path.join(root, 'portrait.mp4');
+      expect(spawnSync(ffmpeg, [
+        '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+        'testsrc2=size=180x320:rate=15', '-t', '6', '-c:v', 'libx264',
+        '-threads', '2', '-pix_fmt', 'yuv420p', '-y', input,
+      ], { timeout: 20000 }).status).toBe(0);
+      const original = fs.readFileSync(input);
+      const job = { inputPath: 'portrait.mp4', outputName: 'portrait', qualities: ['360p', '480p'] };
+      const result = await transcodeLocalHls(root, job);
+      const dir = path.join(root, 'videos', 'portrait');
+      const master = fs.readFileSync(path.join(dir, 'master.m3u8'), 'utf8');
+      expect(master).toContain('RESOLUTION=360x640');
+      expect(master).toContain('RESOLUTION=480x854');
+      for (const quality of job.qualities) {
+        const variant = path.join(dir, quality);
+        const playlist = fs.readFileSync(path.join(variant, 'playlist.m3u8'), 'utf8');
+        const durations = [...playlist.matchAll(/^#EXTINF:(\d+(?:\.\d+)?),$/gm)].map(match => Number(match[1]));
+        expect(durations.length).toBe(3);
+        expect(durations.every(duration => duration > 0 && duration <= 2.1)).toBe(true);
+        const probe = spawnSync(process.env.FFPROBE_PATH || 'ffprobe', [
+          '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height',
+          '-of', 'json', path.join(variant, 'segment-00000.ts'),
+        ], { timeout: 10000 });
+        expect(probe.status).toBe(0);
+        const stream = JSON.parse(probe.stdout.toString()).streams[0];
+        expect([stream.width, stream.height]).toEqual(quality === '360p' ? [360, 640] : [480, 854]);
+      }
+      expect(fs.readFileSync(input)).toEqual(original);
+      await expect(transcodeLocalHls(root, job)).resolves.toBe(result);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 120000);
 });
