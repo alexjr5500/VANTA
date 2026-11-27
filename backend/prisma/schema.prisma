@@ -1536,6 +1536,8 @@ model SparkCoinPackage {
 model PurchaseOrder {
   id              String            @id @default(cuid())
   userId          String
+  // Payer is userId; gift target is fixed at order creation. Null means self.
+  recipientUserId String?
   packageId       String?
   coins           Int
   amount          Float
@@ -3355,6 +3357,8 @@ model VerificationBadge {
 model VerificationPurchase {
   id                String           @id @default(cuid())
   userId            String
+  // Payer is userId; gift target is fixed at order creation. Null means self.
+  recipientUserId String?
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   planId            String
   plan              SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
