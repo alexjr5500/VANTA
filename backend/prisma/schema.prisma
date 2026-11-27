@@ -3866,6 +3866,8 @@ model ShopCryptoInvoice {
   network       String
   address       String   @unique
   amountAtomic  String
+  quotePrice8 String?
+  quoteUpdatedAt DateTime?
   createdAt     DateTime @default(now())
   expiresAt     DateTime
   transactionHash String?
