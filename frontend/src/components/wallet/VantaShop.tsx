@@ -27,7 +27,7 @@ function cardFrom(value: unknown): CardOrder {
   return a as CardOrder;
 }
 const networks = [
-  { id: 'eth-erc20', label: 'ETH', chain: 'Ethereum', enabled: false },
+  { id: 'eth-erc20', label: 'ETH', chain: 'Ethereum (native)', enabled: false },
   { id: 'usdt-trc20', label: 'USDT', chain: 'Tron (TRC-20)', enabled: false },
   { id: 'usdt-erc20', label: 'USDT', chain: 'Ethereum (ERC-20)', enabled: false },
   { id: 'usdt-bep20', label: 'USDT', chain: 'BNB Smart Chain (BEP-20)', enabled: true },
@@ -64,7 +64,7 @@ function invoiceFrom(v: unknown): Invoice {
   const a = obj(v);
   if (typeof a.orderId !== 'string' || typeof a.amount !== 'number' || !Number.isFinite(a.amount) || a.amount <= 0 || a.currency !== 'USD' || typeof a.network !== 'string' || typeof a.expiresAt !== 'string' || !Number.isFinite(Date.parse(a.expiresAt))) throw new Error('Invalid invoice.');
   if (a.mode === 'test' && typeof a.simulateToken === 'string') return a as Invoice;
-  if (a.mode === 'live' && typeof a.address === 'string' && /^0x[0-9a-f]{40}$/i.test(a.address) && typeof a.paymentUri === 'string' && /^ethereum:0x[0-9a-f]{40}@[0-9]+\/transfer\?address=0x[0-9a-f]{40}&uint256=[0-9]+$/i.test(a.paymentUri) && typeof a.qrCode === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(a.qrCode) && typeof a.token === 'string' && typeof a.tokenAmount === 'string') return a as Invoice;
+  if (a.mode === 'live' && typeof a.address === 'string' && /^0x[0-9a-f]{40}$/i.test(a.address) && typeof a.paymentUri === 'string' && (/^ethereum:0x[0-9a-f]{40}@[0-9]+\/transfer\?address=0x[0-9a-f]{40}&uint256=[0-9]+$/i.test(a.paymentUri) || (a.network === 'eth-erc20' && /^ethereum:0x[0-9a-f]{40}@1\?value=[1-9][0-9]*$/i.test(a.paymentUri))) && typeof a.qrCode === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(a.qrCode) && typeof a.token === 'string' && typeof a.tokenAmount === 'string') return a as Invoice;
   throw new Error('Invalid payment invoice.');
 }
 async function request(path: string, token: string, body?: Record<string, unknown>): Promise<unknown> {
