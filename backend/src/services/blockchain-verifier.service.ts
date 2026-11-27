@@ -203,7 +203,7 @@ export class BlockchainTxVerifier {
       );
     }
     const network = getBlockchainNetwork(options.network);
-    if (!network) {
+    if (!network || network.native) {
       throw new BlockchainTxVerificationError(
         BLOCKCHAIN_VERIFICATION_ERROR_CODES.UNSUPPORTED_NETWORK,
         `Unsupported blockchain network: ${String(options.network)}`
@@ -433,6 +433,11 @@ const logAddress = String(transferLog.address || '').toLowerCase();
     }
 
     if (exact !== undefined) {
+      if (network.chainId === 1) {
+        const finalized = await rpcCall(network, 'eth_getBlockByNumber', ['finalized', false], timeoutMs);
+        const height = finalized && typeof finalized === 'object' ? hexToNumber((finalized as Record<string, unknown>).number) : null;
+        if (height === null || height < txBlock) throw new BlockchainTxVerificationError(BLOCKCHAIN_VERIFICATION_ERROR_CODES.LOW_CONFIRMATIONS, 'Waiting for Ethereum finality.', true);
+      }
       const block = await rpcCall(network, 'eth_getBlockByNumber', ['0x' + txBlock.toString(16), false], timeoutMs);
       const canonical = block && typeof block === 'object' ? block as Record<string, unknown> : null;
       const blockTime = hexToNumber(canonical?.timestamp);
