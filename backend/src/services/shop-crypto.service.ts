@@ -89,7 +89,6 @@ export async function createShopCryptoInvoice(payerId: string, input: Record<str
   const expiresAt = new Date(String(data.expiresAt));
   if (data.mode !== 'live' || !orderId || !Number.isFinite(expiresAt.getTime())) throw new Error('Order unavailable');
   const quote = network.native ? await quoteEth(network, amount, rpc) : { amountAtomic: priceToAtomic(amount, network.tokenDecimals) };
-  const atomic = quote.amountAtomic;
   // Never reuse a receiving address, even if an earlier order expired.
   const addresses = shopCryptoAddresses();
   const used = await prisma.shopCryptoInvoice.findMany({ where: { address: { in: addresses } }, select: { address: true } });
