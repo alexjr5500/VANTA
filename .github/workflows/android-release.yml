@@ -55,29 +55,7 @@ jobs:
 
       - name: Verify production artifacts and signing
         shell: bash
-        run: |
-          set -euo pipefail
-          export LC_ALL=C
-          shopt -s nullglob
-          apks=(android/app/build/outputs/apk/release/*.apk)
-          bundles=(android/app/build/outputs/bundle/release/*.aab)
-          test "${#apks[@]}" -eq 1
-          test "${#bundles[@]}" -eq 1
-          apk="${apks[0]}"
-          aab="${bundles[0]}"
-          tools="$ANDROID_HOME/build-tools/36.0.0"
-          expected=$(keytool -J-Duser.language=en -list -v -keystore "$ANDROID_KEYSTORE_PATH" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" | awk '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
-          test "${#expected}" -eq 64
-          actual=$("$tools/apksigner" verify --print-certs "$apk" | awk '/Signer #1 certificate SHA-256 digest:/{print $NF; exit}' | tr '[:upper:]' '[:lower:]')
-          test "$actual" = "$expected"
-          badging=$("$tools/aapt" dump badging "$apk")
-          grep -Fq "package: name='com.vanta.app' versionCode='$GITHUB_RUN_NUMBER'" <<< "$badging"
-          if grep -q '^application-debuggable' <<< "$badging"; then exit 1; fi
-          jarsigner -J-Duser.language=en -verify "$aab" | grep -Fq 'jar verified.'
-          bundle_cert=$(keytool -J-Duser.language=en -printcert -jarfile "$aab" | awk '/SHA256:/{print $2; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
-          test "$bundle_cert" = "$expected"
-          printf 'commit=%s\nrun=%s\nversionCode=%s\npackage=com.vanta.app\nsignerSha256=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_NUMBER" "$expected" > android/release-build-info.txt
-          sha256sum "$apk" "$aab" > android/release-sha256.txt
+        run: bash android/scripts/verify-release-artifacts.sh "$GITHUB_RUN_NUMBER"
 
       - name: Upload production APK and AAB
         uses: actions/upload-artifact@v4
@@ -90,3 +68,8 @@ jobs:
             android/release-sha256.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Remove temporary signing keystore
+        if: always()
+        shell: bash
+        run: rm -f -- "$ANDROID_KEYSTORE_PATH"

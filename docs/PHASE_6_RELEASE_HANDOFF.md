@@ -24,3 +24,8 @@ Test a release-signed candidate and separately test the matching staging web rev
 5. Merge/deploy only with explicit approval; monitor health, errors, latency, queues and mobile crashes after release. Existing payment and worker activation gates remain separate.
 
 No claim of full release readiness. No production merge, deploy, distribution, restart, payout, or backup deletion performed in this handoff.
+
+## Release candidate verification update
+Candidate 66e51dfee5f37581494f1f59069ad160aee9e546: all four CI workflows passed after retry. Exact two-replica staging backend and private HTTP acceptance passed (four addresses, two instances, max readiness 62.75 ms); database 35 migrations and 84 free connections. Redis RDB persistence remains failing. Read-only inventory reported no populated databases, 9 changes since last save and AOF disabled; dashboard confirms no backups. This does not verify recoverability or authorize loss. Hold restart while continuing mobile work.
+
+A new CI release-artifact acceptance job uses a disposable test key, assembles both release variants, exercises the shared signature and APK identity checker and rejects an incorrect version. It must not publish or install these artifacts; they are not production-signed. Production workflow shares the checker, including complete AAB payload signature coverage; APK package/version/non-debuggable checks do not independently decode the protobuf AAB manifest. Physical-device and authenticated staging tests, actual production signing, recovery point and release approval remain open. No production release or Redis restart performed.
