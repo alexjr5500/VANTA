@@ -94,6 +94,7 @@ function txMock() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  (bcrypt.compare as jest.Mock).mockReset().mockResolvedValue(true);
   (prisma.wallet.findUnique as jest.Mock).mockImplementation(async ({ where }: { where: { userId: string } }) =>
     where.userId === 'user1' ? senderWallet : receiverWallet
   );
