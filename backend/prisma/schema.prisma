@@ -3856,3 +3856,19 @@ model TwoFactorLoginChallenge {
   @@index([userId, expiresAt])
   @@index([expiresAt])
 }
+
+ // One-time deposit address reservation. Never delete/recycle these records.
+model ShopCryptoInvoice {
+  id            String   @id @default(cuid())
+  product       String
+  orderId       String   @unique
+  payerId       String
+  network       String
+  address       String   @unique
+  amountAtomic  String
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+  transactionHash String?
+  @@index([payerId, createdAt])
+  @@index([network, expiresAt])
+}
