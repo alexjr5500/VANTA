@@ -70,6 +70,7 @@ const receiverInfo = { id: 'user2', username: 'bob', displayName: 'Bob', email: 
 
 function txMock() {
   return {
+    $queryRaw: jest.fn().mockResolvedValue([{ id: 'locked-row' }]),
     wallet: {
       findUniqueOrThrow: jest.fn()
         .mockResolvedValueOnce(senderWallet)
@@ -180,7 +181,7 @@ describe('WalletService.transferCoins — OTP challenge (Phase 5)', () => {
   });
 
   test('requires authenticator 2FA for a high-value transfer when the sender enabled it', async () => {
-    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ twoFactorEnabled: true });
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ twoFactorEnabled: true, twoFactorSecret: 'TESTSECRET' });
     (prisma.transferLimit.findUnique as jest.Mock).mockResolvedValue({ ...defaultLimit, otpThreshold: 1000 });
     (prisma.transferOtpChallenge.findUnique as jest.Mock).mockResolvedValue({
       id: 'challenge1', userId: 'user1', receiverId: 'user2', amount: 2100, sessionId: 'session1',
@@ -194,7 +195,7 @@ describe('WalletService.transferCoins — OTP challenge (Phase 5)', () => {
   });
 
   test('verifies authenticator 2FA before a high-value transfer when enabled', async () => {
-    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ twoFactorEnabled: true });
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ twoFactorEnabled: true, twoFactorSecret: 'TESTSECRET' });
     (prisma.transferLimit.findUnique as jest.Mock).mockResolvedValue({ ...defaultLimit, otpThreshold: 1000 });
     const challenge = {
       id: 'challenge1', userId: 'user1', receiverId: 'user2', amount: 2100, sessionId: 'session1',
@@ -206,7 +207,7 @@ describe('WalletService.transferCoins — OTP challenge (Phase 5)', () => {
     tx.transferOtpChallenge.findUnique.mockResolvedValue(challenge);
     (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
     await transferWithPin('user1', 'user2', 2000, undefined, '123456', '127.0.0.1', undefined, undefined, 'challenge1', 'session1', '654321');
-    expect(twoFactorAuth.verifyLogin).toHaveBeenCalledWith('user1', '654321', true);
+    expect(twoFactorAuth.verifyLogin).toHaveBeenCalledWith('user1', '654321', true, 'TESTSECRET');
   });
 
   test('rejects an invalid OTP inside the transaction and aborts the transfer', async () => {
@@ -524,5 +525,26 @@ describe('Transfer OTP challenge state fencing', () => {
     await expect(walletService.verifyTransferOtp({ userId: 'user1', challengeId: 'challenge1', otpCode: '123456' }))
       .resolves.toEqual({ valid: false, reason: 'session' });
     expect(prisma.transferOtpChallenge.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('Financial authorization row fencing', () => {
+  test('rejects changed PIN state before a low-value debit', async () => {
+    const tx = txMock();
+    tx.$queryRaw.mockResolvedValueOnce([]);
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(transferWithPin('user1', 'user2', 100)).rejects.toThrow('PIN security state changed');
+    expect(tx.wallet.updateMany).not.toHaveBeenCalled();
+    expect(tx.coinTransfer.create).not.toHaveBeenCalled();
+  });
+  test('rejects changed authenticator state before a high-value debit or OTP consumption', async () => {
+    (prisma.transferLimit.findUnique as jest.Mock).mockResolvedValue({ ...defaultLimit, otpThreshold: 1000 });
+    const tx = txMock();
+    tx.$queryRaw.mockResolvedValueOnce([]);
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(transferWithPin('user1', 'user2', 2000, undefined, '123456', 'ip', undefined, undefined, 'challenge1', 'session1'))
+      .rejects.toThrow('Authenticator security state changed');
+    expect(tx.transferOtpChallenge.updateMany).not.toHaveBeenCalled();
+    expect(tx.wallet.updateMany).not.toHaveBeenCalled();
   });
 });

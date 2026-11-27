@@ -125,3 +125,8 @@ describe('2FA credential state fencing', () => {
     await expect(twoFactorAuth.verifyLogin('user1', '123456')).resolves.toEqual({ valid: false, isBackupCode: false });
   });
 });
+
+test('strict wallet verification rejects a replaced expected secret before consuming a code', async () => {
+  await expect(twoFactorAuth.verifyLogin('user1', '123456', true, 'OLDSECRET')).resolves.toEqual({ valid: false, isBackupCode: false });
+  expect(prisma.user.updateMany).not.toHaveBeenCalled();
+});

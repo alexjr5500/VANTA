@@ -48,7 +48,7 @@ const validTxHash = `0x${'a'.repeat(64)}`;
 
 function txMock() {
   return {
-    $queryRaw: jest.fn().mockResolvedValue([]),
+    $queryRaw: jest.fn().mockResolvedValue([{ id: 'locked-row' }]),
     wallet: {
       update: jest.fn().mockResolvedValue({ ...walletRow, earningsBalance: 100 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -100,7 +100,7 @@ describe('WalletService.requestWithdrawal', () => {
   });
 
   test('requires authenticator 2FA for withdrawals when enabled', async () => {
-    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ twoFactorEnabled: true });
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ twoFactorEnabled: true, twoFactorSecret: 'TESTSECRET' });
     await expect(walletService.requestWithdrawal('user1', 100, validAddress, '1234'))
       .rejects.toThrow('Authenticator 2FA code is required');
     expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -108,11 +108,11 @@ describe('WalletService.requestWithdrawal', () => {
   });
 
   test('verifies authenticator 2FA before creating a withdrawal when enabled', async () => {
-    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ twoFactorEnabled: true });
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ twoFactorEnabled: true, twoFactorSecret: 'TESTSECRET' });
     const tx = txMock();
     (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
     await walletService.requestWithdrawal('user1', 100, validAddress, '1234', '123456');
-    expect(twoFactorAuth.verifyLogin).toHaveBeenCalledWith('user1', '123456', true);
+    expect(twoFactorAuth.verifyLogin).toHaveBeenCalledWith('user1', '123456', true, 'TESTSECRET');
   });
 
   test('aborts when the earnings balance cannot cover the amount (CAS count 0)', async () => {
@@ -246,5 +246,24 @@ describe('WalletService.processWithdrawal on-chain verification', () => {
   test('rejects a missing or malformed transaction hash', async () => {
     await expect(walletService.processWithdrawal('wd1', 'admin1', '')).rejects.toThrow('transaction hash is required');
     expect(blockchainTxVerifier.verifyTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('Withdrawal authorization row fencing', () => {
+  test('rejects changed 2FA state before reserving earnings', async () => {
+    const tx = txMock();
+    tx.$queryRaw.mockResolvedValueOnce([]);
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(walletService.requestWithdrawal('user1', 100, validAddress, '1234')).rejects.toThrow('Authenticator security state changed');
+    expect(tx.wallet.updateMany).not.toHaveBeenCalled();
+    expect(tx.withdrawal.create).not.toHaveBeenCalled();
+  });
+  test('rejects a changed PIN after locking the authenticator state', async () => {
+    const tx = txMock();
+    tx.$queryRaw.mockResolvedValueOnce([{ id: 'locked-user' }]).mockResolvedValueOnce([]);
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(walletService.requestWithdrawal('user1', 100, validAddress, '1234')).rejects.toThrow('PIN security state changed');
+    expect(tx.wallet.updateMany).not.toHaveBeenCalled();
+    expect(tx.withdrawal.create).not.toHaveBeenCalled();
   });
 });

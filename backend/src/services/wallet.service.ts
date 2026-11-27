@@ -1,4 +1,8 @@
 import { prisma } from "../prisma";
+import type { Prisma } from "@prisma/client";
+
+type WalletPinProof = { id: string; walletId: string; pinHash: string };
+type WalletTwoFactorState = { enabled: boolean; secret: string | null };
 import { notificationService } from "./notification.service";
 import { emailService } from "./email.service";
 import * as crypto from "crypto";
@@ -777,10 +781,43 @@ export class WalletService {
     return user?.twoFactorEnabled === true;
   }
 
-  private async verifyWalletTwoFactor(userId: string, token: string | undefined, action: string, required?: boolean): Promise<void> {
-    if (!(required ?? await this.isTwoFactorEnabled(userId))) return;
+  private async readWalletTwoFactorState(userId: string): Promise<WalletTwoFactorState> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId }, select: { twoFactorEnabled: true, twoFactorSecret: true },
+    });
+    if (!user) throw new Error("Wallet authentication state unavailable");
+    return { enabled: user.twoFactorEnabled === true, secret: user.twoFactorSecret ?? null };
+  }
+
+  // Hold the verified credential rows until the financial transaction commits.
+  // NO KEY UPDATE serializes credential changes without conflicting with
+  // ordinary foreign-key key-share locks. Never return proof material to clients.
+  private async fenceWalletAuthorization(
+    tx: Prisma.TransactionClient, userId: string, pin: WalletPinProof,
+    factor?: WalletTwoFactorState,
+  ): Promise<void> {
+    if (factor) {
+      const users = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "User" WHERE "id" = ${userId}
+          AND "twoFactorEnabled" = ${factor.enabled}
+          AND "twoFactorSecret" IS NOT DISTINCT FROM ${factor.secret}::text
+        FOR NO KEY UPDATE
+      `;
+      if (users.length !== 1) throw new Error("Authenticator security state changed. Please try again.");
+    }
+    const pins = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "WalletPIN" WHERE "id" = ${pin.id}
+        AND "walletId" = ${pin.walletId} AND "pinHash" = ${pin.pinHash}
+        AND "failedAttempts" = 0 AND "lockedUntil" IS NULL
+      FOR NO KEY UPDATE
+    `;
+    if (pins.length !== 1) throw new Error("PIN security state changed. Please try again.");
+  }
+
+  private async verifyWalletTwoFactor(userId: string, token: string | undefined, action: string, state: WalletTwoFactorState): Promise<void> {
+    if (!state.enabled) return;
     if (typeof token !== 'string' || !token.trim()) throw new Error('Authenticator 2FA code is required for this wallet action');
-    const result = await twoFactorAuth.verifyLogin(userId, token.trim(), true);
+    const result = await twoFactorAuth.verifyLogin(userId, token.trim(), true, state.secret);
     if (!result.valid) throw new Error('Invalid authenticator 2FA code');
     await this.logAudit(userId, 'WALLET_2FA_VERIFIED', { action, isBackupCode: result.isBackupCode });
   }
@@ -809,7 +846,7 @@ export class WalletService {
       throw new Error("Transfer amount must be a positive whole number");
     }
     if (typeof pinCode !== 'string' || !/^\d{4,6}$/.test(pinCode)) throw new Error("A valid 4-6 digit wallet PIN is required");
-    await this.verifyPin(senderId, pinCode);
+    const pinProof = await this.verifyPinProof(senderId, pinCode);
 
     // Every transfer must carry a stable idempotency key. This is enforced
     // in the service as well as the HTTP controller so non-HTTP callers and
@@ -891,7 +928,7 @@ export class WalletService {
       };
     }
 
-    let authenticatorRequired = false;
+    let authenticatorState: WalletTwoFactorState | undefined;
     let authenticatorChallengeHash: string | undefined;
     // Step-up OTP for high-value transfers (Phase 5).
     // The effective threshold is min(user setting, platform cap) computed by
@@ -921,8 +958,8 @@ export class WalletService {
         throw new Error("An OTP challenge id is required to complete this transfer");
       }
 
-      authenticatorRequired = await this.isTwoFactorEnabled(senderId);
-      if (authenticatorRequired) {
+      authenticatorState = await this.readWalletTwoFactorState(senderId);
+      if (authenticatorState.enabled) {
         const challenge = await prisma.transferOtpChallenge.findUnique({ where: { id: challengeId } });
         const challengeMatches = challenge && challenge.userId === senderId &&
           challenge.receiverId === receiverId && challenge.amount === totalDeduction &&
@@ -930,7 +967,7 @@ export class WalletService {
           !challenge.consumedAt && challenge.expiresAt >= new Date() &&
           challenge.attempts < challenge.maxAttempts;
         if (challengeMatches && await bcrypt.compare(otpCode || "", challenge.otpHash)) {
-          await this.verifyWalletTwoFactor(senderId, twoFactorCode, 'high_value_transfer', true);
+          await this.verifyWalletTwoFactor(senderId, twoFactorCode, 'high_value_transfer', authenticatorState);
           authenticatorChallengeHash = challenge.otpHash;
         }
       }
@@ -979,6 +1016,7 @@ export class WalletService {
     // sequence, so concurrent transfers / retries / double-submits can never
     // overspend or drive a balance negative.
     const result = await prisma.$transaction(async (tx) => {
+      await this.fenceWalletAuthorization(tx, senderId, pinProof, authenticatorState);
       // Re-read the sender inside the transaction for authoritative checks.
       const senderCurrent = await tx.wallet.findUniqueOrThrow({ where: { userId: senderId } });
       if (senderCurrent.isFrozen || resolveAvailableCoins(senderCurrent) < totalDeduction) {
@@ -1042,7 +1080,7 @@ export class WalletService {
           return { otpInvalid: true as const };
         }
 
-        if (authenticatorRequired && authenticatorChallengeHash !== challenge.otpHash) {
+        if (authenticatorState?.enabled && authenticatorChallengeHash !== challenge.otpHash) {
           throw new Error("Authenticator 2FA verification is required for this OTP challenge");
         }
         const consumed = await tx.transferOtpChallenge.updateMany({
@@ -1502,6 +1540,11 @@ export class WalletService {
   }
 
   async verifyPin(userId: string, pin: string) {
+    await this.verifyPinProof(userId, pin);
+    return { success: true, message: "PIN verified" };
+  }
+
+  private async verifyPinProof(userId: string, pin: string): Promise<WalletPinProof> {
     if (typeof pin !== 'string' || !/^\d{4,6}$/.test(pin)) throw new Error('Invalid PIN format');
     const wallet = await this.ensureWallet(userId);
     const pinRecord = await prisma.walletPIN.findUnique({ where: { walletId: wallet.id } });
@@ -1533,7 +1576,7 @@ export class WalletService {
     });
     if (verified.count !== 1) throw new Error("PIN security state changed. Please try again.");
     await this.logAudit(userId, "PIN_VERIFY", { walletId: wallet.id });
-    return { success: true, message: "PIN verified" };
+    return { id: pinRecord.id, walletId: wallet.id, pinHash: pinRecord.pinHash };
   }
 
   // ============================================================
@@ -1547,8 +1590,9 @@ export class WalletService {
     amount = validated.amount;
     walletAddress = validated.walletAddress;
     if (typeof pinCode !== 'string' || !/^\d{4,6}$/.test(pinCode)) throw new Error('A valid 4-6 digit wallet PIN is required');
-    await this.verifyPin(userId, pinCode);
-    await this.verifyWalletTwoFactor(userId, twoFactorCode, 'withdrawal');
+    const pinProof = await this.verifyPinProof(userId, pinCode);
+    const authenticatorState = await this.readWalletTwoFactorState(userId);
+    await this.verifyWalletTwoFactor(userId, twoFactorCode, 'withdrawal', authenticatorState);
 
     const wallet = await this.ensureWallet(userId);
 
@@ -1589,6 +1633,7 @@ export class WalletService {
     // INSIDE the transaction (serialized), and the earnings debit is a
     // compare-and-swap so two concurrent requests can never both succeed.
     const result = await prisma.$transaction(async (tx) => {
+      await this.fenceWalletAuthorization(tx, userId, pinProof, authenticatorState);
       // Re-check single-PENDING invariant inside the transaction: two
       // concurrent requests can both pass the preflight lookup above.
       // Serialize withdrawal creation per wallet before checking the

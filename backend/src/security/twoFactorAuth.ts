@@ -162,13 +162,14 @@ export class TwoFactorAuth {
   /**
    * Verify a 2FA code during login
    */
-  async verifyLogin(userId: string, token: string, requireEnabled = false): Promise<TwoFactorVerifyResult> {
+  async verifyLogin(userId: string, token: string, requireEnabled = false, expectedSecret?: string | null): Promise<TwoFactorVerifyResult> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { twoFactorSecret: true, backupCodes: true, twoFactorEnabled: true },
     });
 
     if (!user) return { valid: false, isBackupCode: false };
+    if (expectedSecret !== undefined && user.twoFactorSecret !== expectedSecret) return { valid: false, isBackupCode: false };
     if (!user.twoFactorEnabled) {
       return { valid: !requireEnabled, isBackupCode: false };
     }
