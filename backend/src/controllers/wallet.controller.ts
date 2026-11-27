@@ -467,7 +467,8 @@ export const getPaymentAddress = async (req: AuthRequest, res: Response): Promis
       userId,
       req.body?.packageId,
       req.body?.network,
-      req.ip
+      req.ip,
+      req.body?.customCoins
     );
 
     res.status(200).json(payload);
