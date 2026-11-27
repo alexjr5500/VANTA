@@ -8,6 +8,8 @@ jest.mock('../prisma', () => ({
       findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
     },
     purchaseOrder: {
       findFirst: jest.fn(),
@@ -32,6 +34,7 @@ jest.mock('../prisma', () => ({
       findMany: jest.fn(),
     },
     user: {
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
     },
@@ -250,5 +253,36 @@ describe('coin-payments config', () => {
     const config = validateCoinPaymentConfig();
     expect(config.errors).toEqual([]);
     expect(config.depositAddress.toLowerCase()).toBe('0x7fa9677c65272d80b06cb0c3a9bbeeba8f95db56');
+  });
+});
+describe('sandbox coin gift fulfillment', () => {
+  const old = { ...process.env };
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.NODE_ENV = 'development';
+    process.env.VANTA_COIN_PAYMENT_MODE = 'test';
+    process.env.VANTA_SHOP_SANDBOX_ENABLED = 'true';
+  });
+  afterEach(() => { process.env = { ...old }; });
+  test('credits exact coins to the selected recipient only; keeps their balance private', async () => {
+    const order = { ...PENDING_ORDER, createdAt: new Date(), paymentMode: 'test', recipientUserId: 'friend' };
+    (prisma.purchaseOrder.findFirst as jest.Mock).mockResolvedValue(order);
+    (prisma.user.findFirst as jest.Mock).mockResolvedValue({ id: 'friend' });
+    (prisma.wallet.findUnique as jest.Mock).mockResolvedValue({ id: 'friendWallet', userId: 'friend', coinBalance: 100, isFrozen: false });
+    (prisma.purchaseOrder.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+    (prisma.wallet.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+    (prisma.wallet.findUniqueOrThrow as jest.Mock).mockResolvedValue({ id: 'friendWallet', coinBalance: 600 });
+    const token = require('../config/coin-payments.config').createCoinPaymentSimulateToken(order);
+    const result = await walletService.completeCoinPurchase('user1', order.id, { mode: 'test', simulateToken: token });
+    expect(result.coins).toBe(500);
+    expect(result.wallet).toBeUndefined();
+    expect(prisma.wallet.update).not.toHaveBeenCalled();
+    expect(prisma.wallet.updateMany).toHaveBeenCalledWith({ where: { userId: 'friend', isFrozen: false }, data: { coinBalance: { increment: 500 }, totalCoinsPurchased: { increment: 500 } } });
+    expect(prisma.walletTransaction.create).toHaveBeenCalledWith({ data: expect.objectContaining({ userId: 'friend', amount: 500, balanceBefore: 100 }) });
+  });
+  test('duplicate gift confirmation never credits again', async () => {
+    (prisma.purchaseOrder.findFirst as jest.Mock).mockResolvedValue({ ...PENDING_ORDER, status: 'COMPLETED', recipientUserId: 'friend' });
+    expect((await walletService.completeCoinPurchase('user1', PENDING_ORDER.id, { mode: 'test' })).alreadyCompleted).toBe(true);
+    expect(prisma.wallet.updateMany).not.toHaveBeenCalled();
   });
 });
