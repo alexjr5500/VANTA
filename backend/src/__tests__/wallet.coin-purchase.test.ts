@@ -259,6 +259,7 @@ describe('sandbox coin gift fulfillment', () => {
   const old = { ...process.env };
   beforeEach(() => {
     jest.clearAllMocks();
+    (prisma.$transaction as jest.Mock).mockImplementation((fn: any) => fn({ ...prisma }));
     process.env.NODE_ENV = 'development';
     process.env.VANTA_COIN_PAYMENT_MODE = 'test';
     process.env.VANTA_SHOP_SANDBOX_ENABLED = 'true';
