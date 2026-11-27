@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { Database, Download, Wifi } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+import { apiGet } from '@/lib/apiClient';
 import PageHeader from '@/components/ui/PageHeader';
 import { SettingsGroup, SettingsLink, ToggleRow } from '@/components/settings/SettingsUI';
 
@@ -10,6 +12,18 @@ import { readChatDataSaver, writeChatDataSaver } from '@/lib/chatDataSaver';
 const format = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 
 export default function ChatStoragePage() {
+  const { token } = useAuth();
+  const [uploads, setUploads] = useState<{ totalBytes: number; fileCount: number; categories: { type: string; bytes: number; count: number }[] } | null>(null);
+  const [uploadError, setUploadError] = useState('');
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setUploads(null); setUploadError('');
+    if (token) apiGet<NonNullable<typeof uploads>>('/api/messages/storage-usage', token, { skipCache: true })
+      .then(data => { if (active) setUploads(data); })
+      .catch(() => { if (active) setUploadError('Could not load chat uploads.'); });
+    return () => { active = false; };
+  }, [token, revision]);
   const [dataSaver, setDataSaver] = useState(false);
   const [dataReady, setDataReady] = useState(false);
   const [dataError, setDataError] = useState('');
@@ -39,6 +53,19 @@ export default function ChatStoragePage() {
     <SettingsGroup title="Data usage">
       <ToggleRow icon={Wifi} title="Reduce chat media data usage" description="Do not load voice notes or video previews until you choose to play or open them." checked={dataSaver} disabled={!dataReady} onChange={changeDataSaver} />
       {dataError && <p role="alert" className="px-4 py-2 text-sm text-red-400">{dataError}</p>}
+    </SettingsGroup>
+    <SettingsGroup title="Your uploaded chat media">
+      <div className="space-y-3 px-4 py-4">
+        <p className="text-sm opacity-70">Server-recorded sizes of active chat uploads owned by your account. These are not device cache sizes or media uploaded by other people.</p>
+        {uploads ? <>
+          <p className="text-xl font-semibold">{format(uploads.totalBytes)} <span className="text-xs font-normal opacity-65">· {uploads.fileCount} files</span></p>
+          {uploads.categories.map(category => <div key={category.type} className="space-y-1">
+            <div className="flex justify-between text-sm"><span>{category.type.toLowerCase().replace(/^./, letter => letter.toUpperCase())} ({category.count})</span><span>{format(category.bytes)}</span></div>
+            <div className="h-1.5 rounded-full bg-white/10"><div className="h-full rounded-full bg-[var(--vanta-gold)]" style={{ width: (uploads.totalBytes ? Math.min(100, category.bytes / uploads.totalBytes * 100) : 0) + '%' }} /></div>
+          </div>)}
+        </> : <p role={uploadError ? 'alert' : 'status'} className="text-sm opacity-75">{uploadError || 'Checking uploaded media…'}</p>}
+        <button type="button" onClick={() => setRevision(value => value + 1)} className="min-h-10 text-sm text-[var(--vanta-gold)]">Refresh usage</button>
+      </div>
     </SettingsGroup>
     <SettingsGroup title="Device storage">
       <div className="px-4 py-4 space-y-2">

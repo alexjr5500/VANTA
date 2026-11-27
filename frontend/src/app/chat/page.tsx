@@ -2531,7 +2531,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
   };
   const handleNewChat = async (person: any) => {
     if (!token) return;
-    try { const result = await apiPost<any>('/api/messages/start', { participantIds: [person.id] }, token); const id = result.conversation?.id ?? result.id; await fetchConversations(); setNewChatSearch(''); setNewChatResults([]); handleSelectConversation(id); } catch (err: any) { showToast?.({ type: 'error', title: 'Could not start chat', message: err?.message || 'Please try again.' }); }
+    try { const result = await apiPost<any>('/api/messages/start', { participantIds: [person.id] }, token); const id = result.conversation?.id ?? result.id; await fetchConversations(); setNewChatSearch(''); setNewChatResults([]); handleSelectConversation(id); } catch (err: any) { if (err?.message?.includes('Contact approval required')) { router.push('/chat/requests?to=' + encodeURIComponent(person.username || '')); return; } showToast?.({ type: 'error', title: 'Could not start chat', message: err?.message || 'Please try again.' }); }
   };
 
   const filteredConversations = conversations.filter(conv => {
@@ -2879,6 +2879,7 @@ const [pendingNewMessage, setPendingNewMessage] = useState(false);
         <div className="flex h-14 min-h-14 shrink-0 items-center justify-between border-b border-white/[0.08] px-4">
           <div className="flex items-center gap-3">
             <h1 className="text-base font-semibold tracking-tight text-[var(--vanta-gold-bright)]">Chats</h1>
+            <button type="button" onClick={() => router.push('/chat/requests')} className="flex min-h-10 items-center gap-1.5 text-xs text-[var(--vanta-gold)]" aria-label="Message requests"><UserPlus size={16} /> Requests</button>
           </div>
           <button type="button" onClick={() => router.push('/notifications')} aria-label="Open notifications" className="relative grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#dfbd55] transition hover:bg-white/[.06] hover:text-[#f2c75c]">
             <Bell size={18} />

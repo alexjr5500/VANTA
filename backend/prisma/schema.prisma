@@ -62,6 +62,8 @@ model User {
   // [provider, providerAccountId] constraint below).
   providerAccounts ProviderAccount[]
 
+  sentChatRequests  ChatContactRequest[] @relation("ChatRequestSender")
+  receivedChatRequests ChatContactRequest[] @relation("ChatRequestRecipient")
   profile           Profile?
   photos            Photo[]
   notifications     Notification[]           @relation("UserNotifications")
@@ -878,6 +880,21 @@ model PostCommentLike {
   @@index([userId, createdAt])
 }
 
+model ChatContactRequest {
+  id          String   @id @default(cuid())
+  senderId    String
+  recipientId String
+  sender      User     @relation("ChatRequestSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient   User     @relation("ChatRequestRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([senderId, recipientId])
+  @@index([recipientId, status, createdAt])
+  @@index([senderId, createdAt])
+}
+
 model Conversation {
   id              String        @id @default(cuid())
   isGroup         Boolean       @default(false)
@@ -1160,6 +1177,7 @@ model UserSettings {
   typingIndicators  Boolean  @default(true)
   messagePreviews   Boolean  @default(true)
   chatNotifications Boolean  @default(true)
+  requireChatRequest Boolean @default(false)
   privacyProfile    String   @default("public")
   privacyMessages   String   @default("everyone")
   privacyFollows    String   @default("everyone")

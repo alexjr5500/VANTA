@@ -809,6 +809,11 @@ export class UserService {
       }
     }
 
+    if (data.requireChatRequest !== undefined) {
+      if (typeof data.requireChatRequest !== 'boolean') throw new Error('Message request preference must be a boolean');
+      settings.requireChatRequest = data.requireChatRequest;
+    }
+
     if (data.privacyProfile !== undefined) {
       const value = data.privacyProfile.trim().toLowerCase();
       if (!['public', 'private'].includes(value)) {

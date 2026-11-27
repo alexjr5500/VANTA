@@ -21,18 +21,20 @@ import {
 
 const VOICE_DEFAULTS = { speed: '1' };
 
-type ChatPrefKey = 'chatNotifications' | 'messagePreviews' | 'typingIndicators';
+type ChatPrefKey = 'chatNotifications' | 'messagePreviews' | 'typingIndicators' | 'requireChatRequest';
 
 interface ChatPrefs {
   chatNotifications: boolean;
   messagePreviews: boolean;
   typingIndicators: boolean;
+  requireChatRequest: boolean;
 }
 
 const CHAT_DEFAULTS: ChatPrefs = {
   chatNotifications: true,
   messagePreviews: true,
   typingIndicators: true,
+  requireChatRequest: false,
 };
 
 export default function ChatSettingsPage() {
@@ -65,6 +67,7 @@ export default function ChatSettingsPage() {
           chatNotifications: data.chatNotifications ?? true,
           messagePreviews: data.messagePreviews ?? true,
           typingIndicators: data.typingIndicators ?? true,
+          requireChatRequest: data.requireChatRequest ?? false,
         });
       })
       .catch(() => {
@@ -144,6 +147,11 @@ export default function ChatSettingsPage() {
             />
           </SettingsGroup>
 
+          <SettingsGroup title="Message requests">
+            <ToggleRow icon={MessageSquare} title="Approve new contacts first" description="Require approval before new contacts you do not follow can start a direct chat. Existing message conversations and other privacy restrictions are preserved."
+              checked={prefs.requireChatRequest} disabled={loadError || saving.includes('requireChatRequest')} saved={savedKey === 'requireChatRequest'} onChange={(value) => toggle('requireChatRequest', value)} />
+            <SettingsLink href="/chat/requests" title="Message requests" description="Review incoming and outgoing contact requests" />
+          </SettingsGroup>
           <SettingsGroup title="Calls and privacy">
             <SettingsLink href="/settings/privacy/audience" title="Audio and video call permissions" description="Choose who can call you" />
             <SettingsLink href="/settings/privacy" title="Who can message you" description="Manage incoming direct-message permissions" />

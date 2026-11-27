@@ -1,4 +1,5 @@
 import { prisma } from "../prisma";
+import { assertChatContactApproved } from "./chat-contact.service";
 import { notificationService } from "./notification.service";
 import { BADGE_USER_SELECT, enrichPublicUser } from "./public-verification";
 import { createPrivateMediaUrl } from "./private-media.service";
@@ -33,7 +34,7 @@ function conversationPermissions(value: string | null | undefined): Record<strin
  * messages. This runs server-side on every DM start and send so an alternate
  * or malicious client cannot bypass the account's messaging preference.
  */
-async function assertDirectMessageAllowed(senderId: string, recipientId: string): Promise<void> {
+export async function assertDirectMessageAllowed(senderId: string, recipientId: string): Promise<void> {
   if (senderId === recipientId) return;
 
   // Blocked accounts can never message or be messaged.
@@ -423,6 +424,7 @@ export class ChatService {
       const peerId = conversation.participants.find((p: any) => p.userId !== senderId)?.userId;
       if (peerId) {
         await assertDirectMessageAllowed(senderId, peerId);
+        await assertChatContactApproved(senderId, peerId, conversationId);
       }
     }
     if (conversation.type === "CHANNEL") {
@@ -943,6 +945,12 @@ export class ChatService {
       return existing;
     }
 
+    if (type === "DIRECT") {
+      const creator = options?.createdById || uniqueUserIds[0];
+      const recipient = uniqueUserIds.find(id => id !== creator);
+      if (!recipient) throw new Error("Invalid recipient");
+      await assertChatContactApproved(creator, recipient);
+    }
     const conversation = await prisma.conversation.create({
       data: {
         isGroup: type !== "DIRECT",
