@@ -20,6 +20,8 @@ const maxFeeKeys: Record<AutoNetwork, string> = {
 export function automaticTreasuryConfig() {
   if (process.env.VANTA_TREASURY_AUTO_ENABLED !== 'true' || getCoinPaymentMode() !== 'live') return null;
   if (process.env.VANTA_TREASURY_CUSTODY_VERIFIED !== 'true') return null;
+  const start = process.env.VANTA_TREASURY_AUTO_NOT_BEFORE || '';
+  if (!start || !Number.isFinite(Date.parse(start)) || Date.parse(start) > Date.now()) return null;
   const policyId = process.env.VANTA_TREASURY_SIGNER_POLICY_ID || '';
   const secret = process.env.VANTA_TREASURY_SIGNER_HMAC_SECRET || '';
   const raw = process.env.VANTA_TREASURY_SIGNER_URL || '';

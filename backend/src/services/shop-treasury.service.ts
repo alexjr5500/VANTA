@@ -41,9 +41,9 @@ export async function treasuryDashboard(cursor?: string) {
   const rows = await prisma.shopCryptoInvoice.findMany({
     where: { settledAt: { not: null }, transactionHash: { not: null } },
     orderBy: { id: 'asc' }, take: 51, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    select: { id: true, orderId: true, network: true, address: true, amountAtomic: true, transactionHash: true, settledAt: true, treasuryTransfer: true },
+    select: { id: true, orderId: true, network: true, address: true, amountAtomic: true, transactionHash: true, settledAt: true, treasuryTransfer: { select: { id: true, network: true, source: true, destination: true, amountAtomic: true, status: true, authorizedAt: true, transactionHash: true, verifiedAt: true, automation: true, lastFailure: true, maxFeeAtomic: true } } },
   });
-  return { networks, totals, instructionsEnabled: treasuryInstructionsEnabled(), ...automaticTreasuryPublicStatus(), invoices: rows.slice(0, 50), nextCursor: rows.length > 50 ? rows[49].id : null };
+  return { networks, totals, instructionsEnabled: treasuryInstructionsEnabled(), automatic: automaticTreasuryPublicStatus(), automaticBroadcast: automaticTreasuryPublicStatus().automaticBroadcast, invoices: rows.slice(0, 50), nextCursor: rows.length > 50 ? rows[49].id : null };
 }
 async function stepUp(actorId: string, code: unknown) {
   if (typeof code !== 'string' || !/^\d{6}$/.test(code)) throw new Error('Fresh authenticator code required');
