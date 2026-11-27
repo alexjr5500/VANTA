@@ -150,7 +150,7 @@ const running = new Set<string>();
 async function verifyAndSettle(i: ShopCryptoInvoice, txHash: string) {
   const network = getBlockchainNetwork(i.network);
   const order = await orderFor(i);
-  if (!network || !order || order.recipientUserId || !shopCryptoAddresses(i.network).includes(i.address) ||
+  if (!network || !shopCryptoNetworks().includes(network.id) || !order || order.recipientUserId || !shopCryptoAddresses(i.network).includes(i.address) ||
       expectedAtomic(i, network, order.amount) !== i.amountAtomic) throw new Error('Invoice mismatch');
   if (order.status === 'COMPLETED') {
     await prisma.shopCryptoInvoice.updateMany({ where: { id: i.id, settledAt: null }, data: { settledAt: new Date() } });

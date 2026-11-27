@@ -57,3 +57,20 @@ describe('Ethereum shop rail opt-in', () => {
     expect(shopCryptoNetworks()).not.toContain('eth-erc20');
   });
 });
+
+describe('Non-EVM shop opt-in', () => {
+  const old = { ...process.env };
+  afterEach(() => { process.env = { ...old }; });
+  test('TON requires distinct address pool and both provider credentials', () => {
+    process.env.VANTA_SHOP_TON_ENABLED = 'true';
+    process.env.VANTA_SHOP_TON_DEPOSIT_ADDRESSES = '0:' + 'b'.repeat(64);
+    delete process.env.VANTA_TONCENTER_API_KEY;
+    delete process.env.VANTA_COINGECKO_DEMO_API_KEY;
+    expect(shopCryptoNetworks()).not.toContain('gram-ton');
+    process.env.VANTA_TONCENTER_API_KEY = 'test';
+    process.env.VANTA_COINGECKO_DEMO_API_KEY = 'test';
+    expect(shopCryptoNetworks()).toContain('gram-ton');
+    delete process.env.VANTA_SHOP_TON_ENABLED;
+    expect(shopCryptoNetworks()).not.toContain('gram-ton');
+  });
+});
