@@ -3,11 +3,21 @@
 import { useEffect, useState } from 'react';
 import { Database, Download, Wifi } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
-import { SettingsGroup, SettingsLink } from '@/components/settings/SettingsUI';
+import { SettingsGroup, SettingsLink, ToggleRow } from '@/components/settings/SettingsUI';
+
+import { readChatDataSaver, writeChatDataSaver } from '@/lib/chatDataSaver';
 
 const format = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 
 export default function ChatStoragePage() {
+  const [dataSaver, setDataSaver] = useState(false);
+  const [dataReady, setDataReady] = useState(false);
+  const [dataError, setDataError] = useState('');
+  useEffect(() => { setDataSaver(readChatDataSaver()); setDataReady(true); }, []);
+  const changeDataSaver = (enabled: boolean) => {
+    try { writeChatDataSaver(enabled); setDataSaver(enabled); setDataError(''); }
+    catch { setDataError('Could not save your device preference.'); }
+  };
   const [estimate, setEstimate] = useState<StorageEstimate | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -26,6 +36,10 @@ export default function ChatStoragePage() {
 
   return <div className="space-y-5 pb-24">
     <PageHeader sticky bleed title="Storage and data" back="/settings/chat" />
+    <SettingsGroup title="Data usage">
+      <ToggleRow icon={Wifi} title="Reduce chat media data usage" description="Do not load voice notes or video previews until you choose to play or open them." checked={dataSaver} disabled={!dataReady} onChange={changeDataSaver} />
+      {dataError && <p role="alert" className="px-4 py-2 text-sm text-red-400">{dataError}</p>}
+    </SettingsGroup>
     <SettingsGroup title="Device storage">
       <div className="px-4 py-4 space-y-2">
         <p className="text-lg font-semibold">{loading ? 'Checking…' : typeof estimate?.usage === 'number' ? format(estimate.usage) : 'Unavailable'}</p>

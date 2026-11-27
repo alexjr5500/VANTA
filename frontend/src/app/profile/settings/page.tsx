@@ -40,6 +40,7 @@ const searchable = [
   { title: 'Push and email notifications', href: '/settings/notifications', icon: Bell },
   { title: 'Chat notifications, message previews and typing indicators', href: '/settings/chat', icon: MessageCircle },
   { title: 'Voice note playback speed', href: '/settings/chat', icon: Mic },
+  { title: 'Chat passcode and screen lock', href: '/settings/chat/passcode', icon: LockKeyhole },
   { title: 'Call history', href: '/settings/chat/history', icon: MessageCircle },
   { title: 'Chat storage and data', href: '/settings/chat/storage', icon: Database },
   { title: 'Chat and call troubleshooting', href: '/settings/chat/troubleshooting', icon: MessageCircle },

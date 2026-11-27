@@ -166,6 +166,9 @@ export default function ChatSettingsPage() {
               ]}
             />
           </SettingsGroup>
+          <SettingsGroup title="Security">
+            <SettingsLink href="/settings/chat/passcode" title="Chat passcode" description="Lock the chat screen on this device" />
+          </SettingsGroup>
           <SettingsGroup title="Storage and history">
             <SettingsLink href="/settings/chat/storage" title="Storage and data" description="Review device storage and media preferences" />
             <SettingsLink href="/settings/chat/history" title="Call history" description="Recent incoming and outgoing calls" />
