@@ -3875,6 +3875,7 @@ model ShopCryptoInvoice {
   scanCursor Int
   lastCheckedAt DateTime?
   settledAt DateTime?
+  treasuryTransfer ShopTreasuryTransfer?
   @@unique([network, transactionHash])
   @@index([payerId, createdAt])
   @@index([network, expiresAt])
@@ -3894,4 +3895,23 @@ model ShopCardCheckout {
   expiresAt DateTime
   createdAt DateTime @default(now())
   @@index([payerId, createdAt])
+}
+
+model ShopTreasuryTransfer {
+  id String @id @default(cuid())
+  invoiceId String @unique
+  invoice ShopCryptoInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  network String
+  source String
+  destination String
+  amountAtomic String
+  status String @default("AUTHORIZED")
+  authorizedBy String
+  authorizedAt DateTime @default(now())
+  transactionHash String?
+  submittedAt DateTime?
+  verifiedAt DateTime?
+  updatedAt DateTime @updatedAt
+  @@unique([network, transactionHash])
+  @@index([status, authorizedAt])
 }
