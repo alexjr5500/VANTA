@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Pause, Play } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getVoicePlaybackRate } from '@/lib/voicePlayback';
 import { getVoiceNoteFooterLabels } from './voiceNoteLayout';
 export { getVoiceNoteFooterLabels } from './voiceNoteLayout';
 
@@ -77,8 +78,10 @@ export function VoiceNotePlayer({ src, name, sentAt, isOwn = false }: { src: str
   const togglePlay = () => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (audio.paused) void audio.play().catch(() => undefined);
-    else audio.pause();
+    if (audio.paused) {
+      audio.playbackRate = getVoicePlaybackRate();
+      void audio.play().catch(() => undefined);
+    } else audio.pause();
   };
 
   const activeBars = duration > 0 ? Math.round((progress / duration) * VOICE_WAVE_BARS.length) : 0;

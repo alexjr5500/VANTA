@@ -6,6 +6,18 @@ const router = Router();
 
 router.use(authenticateJWT);
 
+router.get("/history", async (req: any, res: any) => {
+  const userId = req.user?.userId;
+  if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  try {
+    const items = await callSessionService.getRecentHistory(userId);
+    res.set("Cache-Control", "private, no-store");
+    res.json({ items });
+  } catch {
+    res.status(500).json({ error: "Could not load call history" });
+  }
+});
+
 /**
  * Callee-side call lookup used by the push "Answer" action. Returns the stored
  * SDP offer + buffered ICE candidates ONLY when the requesting user is the

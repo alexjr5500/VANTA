@@ -19,7 +19,7 @@ import {
   useLocalPrefs,
 } from '@/components/settings/SettingsUI';
 
-const VOICE_DEFAULTS = { voicePref: 'auto' as string };
+const VOICE_DEFAULTS = { speed: '1' };
 
 type ChatPrefKey = 'chatNotifications' | 'messagePreviews' | 'typingIndicators';
 
@@ -45,19 +45,15 @@ export default function ChatSettingsPage() {
   const pendingKeys = useRef(new Set<ChatPrefKey>());
   const [saving, setSaving] = useState<ChatPrefKey[]>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prefsRef = useRef(prefs);
 
-  const { prefs: voice, set: setVoice } = useLocalPrefs('vanta_voice_pref', VOICE_DEFAULTS);
+  const { prefs: voice, set: setVoice, hydrated: voiceLoaded } = useLocalPrefs('vanta_voice_playback', VOICE_DEFAULTS);
+  useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
 
   const flagSaved = (key: string) => {
     setSavedKey(key);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => setSavedKey(null), 1400);
   };
-
-  useEffect(() => {
-    prefsRef.current = prefs;
-  }, [prefs]);
 
   useEffect(() => {
     if (!token) return;
@@ -150,7 +146,7 @@ export default function ChatSettingsPage() {
 
           <SettingsGroup title="Calls and privacy">
             <SettingsLink href="/settings/privacy/audience" title="Audio and video call permissions" description="Choose who can call you" />
-            <SettingsLink href="/settings/privacy" title="Message requests and privacy" description="Manage who can message you" />
+            <SettingsLink href="/settings/privacy" title="Who can message you" description="Manage incoming direct-message permissions" />
           </SettingsGroup>
           <SettingsGroup
             icon={Mic}
@@ -159,16 +155,27 @@ export default function ChatSettingsPage() {
           >
             <SelectRow
               icon={Mic}
-              title="Voice message playback"
-              value={voice.voicePref}
-              onSelect={(v) => setVoice('voicePref', v)}
+              title="Voice note playback speed"
+              value={voice.speed}
+              disabled={!voiceLoaded}
+              onSelect={(v) => setVoice('speed', v)}
               options={[
-                { value: 'auto', label: 'Auto-play', description: 'Voice messages start playing automatically.' },
-                { value: 'tap', label: 'Tap to play', description: 'Voice messages only play when you tap them.' },
-                { value: 'subtitles', label: 'Subtitles only', description: 'Show transcripts instead of playing audio.' },
+                { value: '1', label: 'Normal (1×)' },
+                { value: '1.5', label: '1.5×' },
+                { value: '2', label: '2×' },
               ]}
             />
           </SettingsGroup>
+          <SettingsGroup title="Storage and history">
+            <SettingsLink href="/settings/chat/storage" title="Storage and data" description="Review device storage and media preferences" />
+            <SettingsLink href="/settings/chat/history" title="Call history" description="Recent incoming and outgoing calls" />
+            <SettingsLink href="/settings/account/archive" title="Download your data" description="Request an account archive including your messages" />
+          </SettingsGroup>
+          <SettingsGroup title="Troubleshooting">
+            <SettingsLink href="/settings/chat/troubleshooting" title="Chat and call diagnostics" description="Test your microphone, camera and connection" />
+            <SettingsLink href="/settings/help" title="Help Center" />
+          </SettingsGroup>
+          {loadError && <p role="alert" className="text-sm text-red-400">Could not load chat preferences. Return and try again.</p>}
         </>
       )}
     </div>

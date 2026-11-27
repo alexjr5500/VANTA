@@ -67,7 +67,7 @@ export default function PrivacySettingsPage() {
   const [busy, setBusy] = useState<string | null>(null);
 
   const pendingKeys = useRef(new Set<keyof PrivacySettings>());
-  const [saving, setSaving] = useState<keyof PrivacySettings[]>([]);
+  const [saving, setSaving] = useState<(keyof PrivacySettings)[]>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flagSaved = (key: string) => {
