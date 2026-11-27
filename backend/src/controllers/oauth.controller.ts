@@ -123,8 +123,8 @@ return;
       frontendRedirect(res, `/login${loginErrorQuery(provider, 'existing-account', result.redirectPath)}`);
       return;
     }
-    // Account linking completed from an authenticated context.
-    frontendRedirect(res, `${result.redirectPath}`);
+    // The provider identity is staged, not linked until authenticated confirmation.
+    frontendRedirect(res, result.pendingLink ? '/settings/security/connected?link=' + encodeURIComponent(result.pendingLink) : result.redirectPath);
   } catch (error) {
     console.error(`[OAuth] callback(${provider}) failed:`, error instanceof Error ? error.message : error);
     const reason = error instanceof OAuthError && error.code !== 'invalid-state' ? error.code : 'login-failed';

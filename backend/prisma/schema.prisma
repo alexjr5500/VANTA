@@ -1406,6 +1406,9 @@ model OAuthState {
   redirect      String
   codeVerifier  String?
   linkingUserId String?
+  linkingSessionId String?
+  verifiedLinkIdentity String?
+  linkedAt DateTime?
   createdAt     DateTime  @default(now())
   expiresAt     DateTime
   consumedAt    DateTime?

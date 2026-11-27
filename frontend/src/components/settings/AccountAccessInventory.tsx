@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { KeyRound, Laptop } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { SettingsGroup, SettingsLink } from '@/components/settings/SettingsUI';
@@ -17,6 +17,11 @@ export function AccountAccessInventory({ kind }: { kind: 'connected' | 'trusted'
   const [password,setPassword] = useState('');
   const [code,setCode] = useState('');
   const [notice,setNotice] = useState('');
+  const [linkId,setLinkId]=useState('');
+  const [pendingLink,setPendingLink]=useState<{provider:string;email?:string;displayName?:string}|null>(null);
+  const [linkPassword,setLinkPassword]=useState('');
+  const [linkCode,setLinkCode]=useState('');
+  const linking=useRef(false);
   const trusted = kind === 'trusted';
   const path = '/api/settings/' + (trusted ? 'trusted-devices' : 'connected-accounts');
   useEffect(() => {
@@ -27,6 +32,39 @@ export function AccountAccessInventory({ kind }: { kind: 'connected' | 'trusted'
       .catch(() => { if (active) setError('Unable to load. Try again.'); });
     return () => { active = false; };
   }, [token, path, revision]);
+  useEffect(()=>{
+    if(trusted||!token)return;
+    let active=true;
+    const id=new URLSearchParams(window.location.search).get('link');
+    if(!id)return;
+    setLinkId(id);
+    apiGet<{provider:string;email?:string;displayName?:string}>(path+'/link/'+encodeURIComponent(id),token,{skipCache:true})
+      .then(value=>{if(active)setPendingLink(value);})
+      .catch(()=>{if(active)setError('Link request expired or unavailable. Start again.');});
+    return()=>{active=false;};
+  },[trusted,token,path]);
+  const startLink=async(provider:'google'|'telegram')=>{
+    if(!token||busy||linking.current)return;
+    linking.current=true;setBusy(true);setError('');
+    try{
+      const result=await apiPost<{authorizeUrl:string}>(path+'/link/start',{provider},token);
+      const url=new URL(result.authorizeUrl);
+      const expected=provider==='google'?'accounts.google.com':'oauth.telegram.org';
+      if(url.protocol!=='https:'||url.hostname!==expected)throw new Error('Invalid provider URL');
+      window.location.assign(url.href);
+    }catch(caught){setError(caught instanceof Error?caught.message:'Could not start linking');}
+    finally{linking.current=false;setBusy(false);}
+  };
+  const clearLink=()=>{setPendingLink(null);setLinkId('');setLinkPassword('');setLinkCode('');window.history.replaceState(null,'',window.location.pathname);};
+  const confirmLink=async()=>{
+    if(!token||!pendingLink||!linkId||!linkPassword||linking.current)return;
+    linking.current=true;setBusy(true);setError('');
+    try{
+      await apiPost(path+'/link/'+encodeURIComponent(linkId)+'/confirm',{password:linkPassword,code:linkCode},token,undefined,{noRetry:true});
+      clearLink();setRevision(value=>value+1);setNotice('Sign-in account connected.');
+    }catch(caught){setError(caught instanceof Error?caught.message:'Could not confirm link');}
+    finally{setLinkPassword('');setLinkCode('');linking.current=false;setBusy(false);}
+  };
   const remove = async (id: string) => {
     if (!token || busy || !window.confirm('Remove this trusted-device record? This does not end an existing session.')) return;
     setBusy(true); setError('');
@@ -45,10 +83,25 @@ export function AccountAccessInventory({ kind }: { kind: 'connected' | 'trusted'
   };
   return <div className="space-y-5 pb-24">
     <PageHeader sticky bleed title={trusted ? 'Trusted devices' : 'Connected accounts'} back="/settings/security" />
-    <p className="text-sm opacity-75">{trusted ? 'Review active trusted-device records. To terminate a signed-in session, use Active Sessions.' : 'Review external identities already linked to your VANTA account. Disconnect a sign-in method after confirming your verified VANTA password. Connecting a new identity is not available here yet.'}</p>
+    <p className="text-sm opacity-75">{trusted ? 'Review active trusted-device records. To terminate a signed-in session, use Active Sessions.' : 'Review external identities already linked to your VANTA account. Disconnect a sign-in method after confirming your verified VANTA password. Connect a new identity by verifying it with its provider and confirming your VANTA credentials.'}</p>
     {notice && <p role="status" className="text-sm text-[var(--vanta-gold)]">{notice}</p>}
     {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
     <button type="button" onClick={() => setRevision(value => value + 1)} disabled={busy} className="min-h-10 text-sm text-[var(--vanta-gold)]">Refresh</button>
+    {!trusted && <SettingsGroup title="Connect a sign-in account">
+      <div className="p-4 space-y-3"><p className="text-sm opacity-75">Requires a verified VANTA email and password. If 2FA is enabled, you will also need your authenticator.</p>
+      <button type="button" disabled={busy} onClick={()=>void startLink('google')} className="btn-accent w-full disabled:opacity-50">Connect Google</button>
+      <button type="button" disabled={busy} onClick={()=>void startLink('telegram')} className="btn-accent w-full disabled:opacity-50">Connect Telegram</button></div>
+    </SettingsGroup>}
+    {!trusted && pendingLink && <SettingsGroup title="Approve this external identity">
+      <form className="p-4 space-y-3" onSubmit={event=>{event.preventDefault();void confirmLink();}}>
+        <p className="text-sm font-medium break-words">{pendingLink.provider==='google'?'Google':'Telegram'} · {pendingLink.email||pendingLink.displayName||'Verified provider account'}</p>
+        <p className="text-sm opacity-75">Only approve an identity you personally control. It will be able to sign in to your VANTA account.</p>
+        <label className="block text-sm">VANTA password<input type="password" autoComplete="current-password" value={linkPassword} onChange={event=>setLinkPassword(event.target.value)} className="settings-input w-full" /></label>
+        <label className="block text-sm">Authenticator code (if enabled)<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={linkCode} onChange={event=>setLinkCode(event.target.value.replace(/\D/g,'').slice(0,6))} className="settings-input w-full" /></label>
+        <button type="submit" disabled={busy||!linkPassword} className="btn-accent w-full disabled:opacity-50">Confirm connection</button>
+        <button type="button" disabled={busy} onClick={clearLink} className="min-h-10 w-full text-sm opacity-75">Cancel</button>
+      </form>
+    </SettingsGroup>}
     <SettingsGroup title={trusted ? 'Trusted records' : 'Linked identities'}>
       {!items ? <p className="p-4 text-sm opacity-70">{error || 'Loading…'}</p> : !items.length ? <p className="p-4 text-sm opacity-70">{trusted ? 'No active trusted devices.' : 'No connected external sign-in accounts.'}</p> : items.map(item => <div key={item.id} className="flex items-start gap-3 px-4 py-3">
         {trusted ? <Laptop size={20} className="shrink-0 text-[var(--vanta-gold)]" /> : <KeyRound size={20} className="shrink-0 text-[var(--vanta-gold)]" />}

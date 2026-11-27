@@ -22,6 +22,7 @@ jest.mock('../prisma', () => ({
       update: jest.fn(),
       updateMany: jest.fn(),
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       deleteMany: jest.fn(),
     },
     twoFactorLoginChallenge: { create: jest.fn() },

@@ -58,6 +58,7 @@ export interface OAuthState {
   redirect: string;
   codeVerifier?: string;
   linkingUserId?: string;
+  linkingSessionId?: string;
 }
 
 export interface OAuthRegistrationTicket {
@@ -281,6 +282,7 @@ export const issueOAuthState = async (payload: Omit<OAuthState, 'type'>): Promis
       redirect: payload.redirect,
       codeVerifier: payload.codeVerifier ?? null,
       linkingUserId: payload.linkingUserId ?? null,
+      ...(payload.linkingSessionId ? {linkingSessionId:payload.linkingSessionId} : {}),
       expiresAt: new Date(Date.now() + ttl * 1000),
     },
   });
@@ -336,6 +338,7 @@ export const verifyOAuthState = async (raw: unknown, provider: OAuthProvider): P
     redirect: stored.redirect,
     codeVerifier: stored.codeVerifier ?? undefined,
     linkingUserId: stored.linkingUserId ?? undefined,
+    linkingSessionId: stored.linkingSessionId ?? undefined,
   };
 };
 
@@ -471,13 +474,13 @@ const identityFromClaims = (provider: OAuthProvider, claims: Record<string, unkn
     phoneNumber: typeof claims.phone_number === 'string' && claims.phone_number ? claims.phone_number : undefined,
   };
 };
-export const buildAuthorizeRequest = async (provider: OAuthProvider, redirectUnknown: unknown, linkingUserId?: string) => {
+export const buildAuthorizeRequest = async (provider: OAuthProvider, redirectUnknown: unknown, linkingUserId?: string, linkingSessionId?: string) => {
   const { clientId, redirectUri } = providerClientConfig(provider);
   const redirect = safeFrontendPath(redirectUnknown);
   const nonce = randomHex(16);
 
   if (provider === 'google') {
-    const state = await issueOAuthState({ nonce, provider: 'google', redirect, linkingUserId });
+    const state = await issueOAuthState({ nonce, provider: 'google', redirect, linkingUserId, linkingSessionId });
     const query = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,
@@ -493,7 +496,7 @@ export const buildAuthorizeRequest = async (provider: OAuthProvider, redirectUnk
 
   // Telegram requires PKCE (S256).
   const codeVerifier = generatePkceVerifier();
-  const state = await issueOAuthState({ nonce, provider: 'telegram', redirect, codeVerifier, linkingUserId });
+  const state = await issueOAuthState({ nonce, provider: 'telegram', redirect, codeVerifier, linkingUserId, linkingSessionId });
   const query = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -684,6 +687,7 @@ export interface OAuthCallbackResult {
   email?: string;
   name?: string;
   linkedToLinkingUserId?: boolean;
+  pendingLink?: string;
 }
 
 const issueRegistrationTicket = (identity: VerifiedIdentity, redirect: string): string =>
@@ -765,32 +769,22 @@ export const handleProviderCallback = async (
   // authenticated VANTA user; never merged by display names/emails.
   // ------------------------------------------------------------------
   if (state.linkingUserId) {
+    // A provider callback proves control of the external identity, not the
+    // identity of the person currently using the VANTA account. Stage it;
+    // only the original authenticated session may explicitly approve it.
+    if (!state.linkingSessionId) throw new OAuthError('invalid-state','Link request expired.');
+    const liveSession = await prisma.session.findFirst({where:{id:state.linkingSessionId,userId:state.linkingUserId,expiresAt:{gt:new Date()}},select:{id:true}});
+    if (!liveSession) throw new OAuthError('invalid-state','Link session expired.');
     const existing = await prisma.providerAccount.findUnique({
-      where: { provider_providerAccountId: { provider, providerAccountId: identity.providerAccountId } },
+      where:{provider_providerAccountId:{provider,providerAccountId:identity.providerAccountId}},
     });
-    if (existing) {
-      throw new OAuthError('already-linked', 'This account is already linked to another VANTA account.');
-    }
-    await prisma.providerAccount.create({
-      data: {
-        userId: state.linkingUserId,
-        provider,
-        providerAccountId: identity.providerAccountId,
-        email: identity.email,
-        displayName: identity.name,
-        avatarUrl: identity.avatarUrl,
-        metadata: providerAccountMetadata(identity),
-      },
+    if (existing) throw new OAuthError('already-linked','This identity is already connected.');
+    const staged = await prisma.oAuthState.updateMany({
+      where:{id:stateRaw,linkingUserId:state.linkingUserId,linkingSessionId:state.linkingSessionId,consumedAt:{not:null},expiresAt:{gt:new Date()},verifiedLinkIdentity:null,linkedAt:null},
+      data:{verifiedLinkIdentity:JSON.stringify({providerAccountId:identity.providerAccountId,email:identity.email,displayName:identity.name,avatarUrl:identity.avatarUrl,metadata:providerAccountMetadata(identity)})},
     });
-    await auditLog.log({
-      userId: state.linkingUserId,
-      action: 'OAUTH_ACCOUNT_LINKED',
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent'],
-      metadata: { provider },
-      severity: 'INFO',
-    });
-    return { kind: 'linked', provider, redirectPath: state.redirect, linkedToLinkingUserId: true };
+    if (staged.count!==1) throw new OAuthError('invalid-state','Link request expired.');
+    return {kind:'linked',provider,redirectPath:'/settings/security/connected',linkedToLinkingUserId:true,pendingLink:stateRaw};
   }
 
   // ------------------------------------------------------------------

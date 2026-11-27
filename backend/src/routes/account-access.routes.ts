@@ -5,6 +5,8 @@ import { rateLimiter } from '../security';
 import { CryptoUtils } from '../security/crypto';
 import { twoFactorAuth } from '../security/twoFactorAuth';
 import { prisma } from '../prisma';
+import { buildAuthorizeRequest, OAUTH_PROVIDERS } from '../services/oauth.service';
+import { getPendingProviderLink, confirmProviderLink } from '../services/provider-link.service';
 import { connectedIdentities, trustedDeviceRecords, removeTrustedDeviceRecord } from '../services/account-access.service';
 
 export const accountAccessRoutes = Router();
@@ -66,3 +68,42 @@ accountAccessRoutes.delete('/trusted-devices/:id', async (req: AuthRequest, res)
     res.json({message:'Account disconnected; other sessions revoked'});
   } catch {res.status(400).json({error:'Could not disconnect account safely. Try again.'});}
  });
+
+accountAccessRoutes.post('/connected-accounts/link/start', rateLimiter.login2fa, async (req: AuthRequest,res) => {
+  const userId=req.user?.userId, sessionId=req.user?.sessionId;
+  const provider=OAUTH_PROVIDERS.find(value=>value===req.body?.provider);
+  if(!userId||!sessionId){res.status(401).json({error:'Unauthorized'});return;}
+  if(!provider){res.status(400).json({error:'Unsupported sign-in provider'});return;}
+  try {
+    const user=await prisma.user.findUnique({where:{id:userId},select:{passwordHash:true,emailVerified:true}});
+    if(!user?.passwordHash||!user.emailVerified){res.status(403).json({error:'A verified email and VANTA password are required for linking'});return;}
+    const result=await buildAuthorizeRequest(provider,'/settings/security/connected',userId,sessionId);
+    res.set('Cache-Control','private, no-store');
+    res.json({authorizeUrl:result.authorizeUrl});
+  } catch {res.status(400).json({error:'This provider is unavailable. Try again later.'});}
+});
+accountAccessRoutes.get('/connected-accounts/link/:id',async(req:AuthRequest,res)=>{
+  const userId=req.user?.userId,sessionId=req.user?.sessionId;
+  if(!userId||!sessionId){res.status(401).json({error:'Unauthorized'});return;}
+  try{
+    const item=await getPendingProviderLink(userId,sessionId,String(req.params.id));
+    if(!item){res.status(404).json({error:'Link request expired or unavailable'});return;}
+    res.set('Cache-Control','private, no-store');res.json({provider:item.provider,email:item.identity.email,displayName:item.identity.displayName});
+  }catch{res.status(400).json({error:'Could not load link request'});}
+});
+accountAccessRoutes.post('/connected-accounts/link/:id/confirm',rateLimiter.login2fa,async(req:AuthRequest,res)=>{
+  const userId=req.user?.userId,sessionId=req.user?.sessionId;
+  if(!userId||!sessionId){res.status(401).json({error:'Unauthorized'});return;}
+  const password=req.body?.password,code=req.body?.code;
+  if(typeof password!=='string'||!password||password.length>1024){res.status(400).json({error:'Enter your VANTA password'});return;}
+  try{
+    const pending=await getPendingProviderLink(userId,sessionId,String(req.params.id));
+    if(!pending){res.status(404).json({error:'Link request expired or unavailable'});return;}
+    const user=await prisma.user.findUnique({where:{id:userId},select:{passwordHash:true,emailVerified:true,status:true,lockedUntil:true,twoFactorEnabled:true,twoFactorSecret:true}});
+    if(!user?.passwordHash||!user.emailVerified||user.status!=='ACTIVE'||(user.lockedUntil&&user.lockedUntil>new Date())||!await CryptoUtils.verifyPassword(user.passwordHash,password)){res.status(403).json({error:'Verify your email and enter your current VANTA password'});return;}
+    if(user.twoFactorEnabled&&(typeof code!=='string'||!/^\d{6}$/.test(code)||!(await twoFactorAuth.verifyLogin(userId,code)).valid)){res.status(403).json({error:'Enter a fresh authenticator code'});return;}
+    await confirmProviderLink(userId,sessionId,pending,user);
+    await auditLog.log({userId,action:'OAUTH_ACCOUNT_LINKED',metadata:{provider:pending.provider}});
+    res.json({message:'Sign-in account connected'});
+  }catch{res.status(400).json({error:'Could not connect this identity safely. It may already be linked or expired.'});}
+});
