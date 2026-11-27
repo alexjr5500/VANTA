@@ -6,12 +6,14 @@ import {
   processDeposit, transferCoins,
   setupPin, updatePin, verifyPin,
   updateTransferLimit,
-  getCoinPackages, searchWalletUsers,
+  getCoinPackages, searchWalletUsers, getPaymentAddress, verifyPayment,
   getCoinPurchases,
   exportTransactions, getCoinActivity, getReceiveLink, resolveReceiveRecipient,
 } from '../controllers/wallet.controller';
 import { authenticateJWT } from '../middleware/auth.middleware';
 import { rateLimiter } from '../security/rateLimiter';
+
+import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 
 const router = Router();
 
@@ -62,8 +64,9 @@ router.post('/address', saveWalletAddress);
 
 // Coin packages (Buy Coins flow)
 router.get('/packages', getCoinPackages);
-router.post('/payment-address', purchasesUnderMaintenance);
-router.post('/verify-payment', purchasesUnderMaintenance);
+router.get('/shop-capabilities', (_req, res) => res.json({ sandbox: shopSandboxEnabled() }));
+router.post('/payment-address', rateLimiter.otp, (req, res) => shopSandboxEnabled() ? getPaymentAddress(req, res) : purchasesUnderMaintenance(req, res));
+router.post('/verify-payment', rateLimiter.otp, (req, res) => shopSandboxEnabled() ? verifyPayment(req, res) : purchasesUnderMaintenance(req, res));
 // Coin purchase history for the authenticated user
 router.get('/purchases', getCoinPurchases);
 
