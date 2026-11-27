@@ -67,7 +67,7 @@ export async function preflightSpecial(row: Row, chain: BlockchainNetworkConfig,
 }
 function outboundInvoice(row: Row): ShopCryptoInvoice {
   if (!row.dispatchStartedAt) throw new Error('Missing dispatch time');
-  return {...row.invoice,address:row.destination,amountAtomic:row.amountAtomic,startBlock:0,
+  return {...row.invoice,network:row.network,address:row.destination,amountAtomic:row.amountAtomic,startBlock:0,
     createdAt:row.dispatchStartedAt,expiresAt:new Date()};
 }
 function finalizedTx(tx: Json, account: string, hash: string, head: number, since: number) {
