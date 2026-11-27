@@ -13,3 +13,13 @@ export function shopLiveCryptoEnabled(): boolean {
   return process.env.VANTA_SHOP_LIVE_CRYPTO_ENABLED === 'true' &&
     getCoinPaymentMode() === 'live' && shopCryptoAddresses().length > 0;
 }
+
+/** Extra rails are opt-in; existing shared-wallet routes do not gain support. */
+export function shopCryptoNetworks(): string[] {
+  const networks = ['usdt-bep20', 'usdc-base'];
+  const rpc = process.env.VANTA_ETHEREUM_RPC_URL?.trim();
+  if (process.env.VANTA_SHOP_ERC20_ENABLED === 'true' && rpc) {
+    try { const url = new URL(rpc); if (url.protocol === 'https:' && !url.username && !url.password) networks.push('usdt-erc20'); } catch { /* fail closed */ }
+  }
+  return networks;
+}
