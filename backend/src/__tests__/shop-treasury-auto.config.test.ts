@@ -39,3 +39,25 @@ describe('Automatic treasury release gate', () => {
     expect(positiveAtomic('1000000')).toBe(true);
   });
 });
+
+describe('Expanded settlement rail configuration', () => {
+  const old = { ...process.env };
+  beforeEach(() => Object.assign(process.env, {
+    NODE_ENV:'production', VANTA_COIN_PAYMENT_MODE:'live', VANTA_TREASURY_AUTO_ENABLED:'true',
+    VANTA_TREASURY_CUSTODY_VERIFIED:'true', VANTA_TREASURY_AUTO_NOT_BEFORE:'2020-01-01T00:00:00Z',
+    VANTA_TREASURY_SIGNER_POLICY_ID:'policy_example', VANTA_TREASURY_SIGNER_HMAC_SECRET:'x'.repeat(40),
+    VANTA_TREASURY_SIGNER_URL:'https://custody.example.test', VANTA_TREASURY_AUTO_MAX_ORDER_CENTS:'5000',
+    VANTA_TREASURY_AUTO_DAILY_CAP_CENTS:'100000', VANTA_TREASURY_AUTO_NETWORKS:'gram-ton',
+    VANTA_TREASURY_TON_ADDRESS:'0:'+'a'.repeat(64), VANTA_SHOP_TON_DEPOSIT_ADDRESSES:'0:'+'b'.repeat(64),
+    VANTA_TREASURY_TON_MAX_FEE_NANO:'10000000',
+  }));
+  afterEach(() => { process.env={...old}; });
+  test('TON requires separate review and its mainnet provider', () => {
+    delete process.env.VANTA_TREASURY_TON_REVIEWED; delete process.env.VANTA_TONCENTER_API_KEY;
+    expect(automaticTreasuryConfig()).toBeNull();
+    process.env.VANTA_TREASURY_TON_REVIEWED='true';
+    expect(automaticTreasuryConfig()).toBeNull();
+    process.env.VANTA_TONCENTER_API_KEY='mock';
+    expect(automaticTreasuryConfig()?.networks[0]).toMatchObject({network:'gram-ton',maxFeeAtomic:'10000000'});
+  });
+});

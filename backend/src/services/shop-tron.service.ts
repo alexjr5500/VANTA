@@ -73,6 +73,10 @@ export async function verifyTronUsdt(invoice: ShopCryptoInvoice, hash: string, c
   if (expectedSender && ((callData.call_value ?? 0) !== 0 || (callData.call_token_value ?? 0) !== 0)) throw new BlockchainTxVerificationError('TRANSACTION_FAILED', 'Unexpected attached value.');
   const fee = info.fee ?? 0;
   if (!Number.isSafeInteger(fee) || fee < 0) throw new Error('Invalid TRON fee');
+  if (expectedSender) {
+    const energy = info.receipt?.energy_fee ?? 0, net = info.receipt?.net_fee ?? 0;
+    if (!Number.isSafeInteger(energy) || energy < 0 || !Number.isSafeInteger(net) || net < 0 || fee < energy + net) throw new Error('TRON fee receipt inconsistent');
+  }
   return { verified: true, sender, feeAtomic: String(fee), txHash: id, network: 'usdt-trc20', recipient: invoice.address, asset: 'USDT', amountAtomic: invoice.amountAtomic, blockNumber: info.blockNumber, blockHash: block.blockID, verifiedAt: new Date().toISOString() };
 }
 

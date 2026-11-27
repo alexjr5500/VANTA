@@ -90,7 +90,7 @@ export async function verifyTonSweep(row: Row, nc: TonCall = tonCall): Promise<b
   const tx=source.transactions[0];
   if (source.transactions.length!==1 || !finalizedTx(tx,row.source,hash,head,since) || !Array.isArray(tx.out_msgs) || tx.out_msgs.length!==1) throw fail('Invalid finalized TON source sweep');
   const msg=tx.out_msgs[0], messageHash=tonHashHex(msg.hash);
-  if (!messageHash || tonRawAddress(msg.source)!==row.source || tonRawAddress(msg.destination)!==row.destination || msg.bounced!==false || msg.value!==row.amountAtomic || (msg.value_extra_currencies && Object.keys(msg.value_extra_currencies).length)) throw fail('TON outgoing message mismatch');
+  if (!messageHash || msg.ihr_disabled !== true || integer(msg.ihr_fee ?? 0) !== BigInt(0) || tonRawAddress(msg.source)!==row.source || tonRawAddress(msg.destination)!==row.destination || msg.bounced!==false || msg.value!==row.amountAtomic || (msg.value_extra_currencies && Object.keys(msg.value_extra_currencies).length)) throw fail('TON outgoing message mismatch');
   const received=await nc('/api/v3/transactionsByMessage',{msg_hash:Buffer.from(messageHash,'hex').toString('base64'),direction:'in',limit:'2'});
   if (!Array.isArray(received.transactions)) throw new Error('TON delivery response invalid');
   if (!received.transactions.length) throw new BlockchainTxVerificationError('TRANSACTION_PENDING','Waiting for TON destination delivery',true);
@@ -99,7 +99,12 @@ export async function verifyTonSweep(row: Row, nc: TonCall = tonCall): Promise<b
       tonRawAddress(dest.in_msg?.source)!==row.source || !validTransfer(dest,outboundInvoice(row),destHash,head)) throw fail('TON treasury delivery mismatch');
   // total_fees excludes the remaining outbound forwarding fee; add it
   // conservatively along with destination fees. Missing fee fields fail closed.
-  return integer(tx.total_fees)+integer(msg.fwd_fee)+integer(dest.total_fees);
+  const destinationFee=integer(dest.total_fees);
+  const receivedAmount=BigInt(row.amountAtomic);
+  if (destinationFee >= receivedAmount) throw fail('TON treasury credit consumed by fees');
+  const before=integer(dest.account_state_before?.balance), after=integer(dest.account_state_after?.balance);
+  if (after < before || after-before !== receivedAmount-destinationFee) throw fail('TON destination balance delta mismatch');
+  return integer(tx.total_fees)+integer(msg.fwd_fee)+destinationFee;
 }
 export async function verifySpecialOutgoing(row: Row, chain: BlockchainNetworkConfig, rpc: Rpc, tc: TronCall=tronCall, nc: TonCall=tonCall): Promise<bigint> {
   if (!row.transactionHash || !row.dispatchStartedAt) throw new Error('Missing sweep proof');
