@@ -407,7 +407,12 @@ export const getWithdrawals = (token: string, limit = 50): Promise<any[]> => {
   return apiGet<any[]>(`/api/admin/withdrawals?limit=${limit}`, token);
 };
 
-/** Complete a withdrawal only after sending USDT and copying its on-chain tx hash. */
+/** Reserve a reconciled, unsent withdrawal before any external settlement. No money is sent. */
+export const reserveWithdrawalPayout = (token: string, withdrawalId: string, reconciledUnsent: boolean): Promise<any> => {
+  return apiPost<any>('/api/admin/withdrawals/reserve-payout', { withdrawalId, reconciledUnsent }, token);
+};
+
+/** Complete a reserved withdrawal only with independently verified on-chain evidence. */
 export const approveWithdrawal = (token: string, withdrawalId: string, transactionHash: string): Promise<any> => {
   return apiPost<any>('/api/admin/withdrawals/approve', { withdrawalId, transactionHash }, token);
 };

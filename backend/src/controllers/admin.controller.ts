@@ -1182,6 +1182,21 @@ export const getWithdrawals = async (req: AuthenticatedRequest, res: Response): 
   }
 };
 
+export const reserveWithdrawalPayout = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { withdrawalId, reconciledUnsent } = req.body;
+    if (typeof withdrawalId !== 'string' || !withdrawalId || reconciledUnsent !== true) {
+      res.status(400).json({ error: 'withdrawalId and explicit unsent reconciliation confirmation are required' });
+      return;
+    }
+    const withdrawal = await walletService.reserveWithdrawalPayout(withdrawalId, req.user!.userId, reconciledUnsent);
+    res.status(200).json({ message: 'Payout reserved; no funds have been sent by VANTA', withdrawal });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
 export const approveWithdrawal = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { withdrawalId, transactionHash } = req.body;

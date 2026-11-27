@@ -297,7 +297,7 @@ export class WalletService {
         _count: { _all: true }, _sum: { amount: true },
       }),
       prisma.withdrawal.aggregate({
-        where: { userId, status: { in: ["PENDING", "PROCESSING", "APPROVED"] } },
+        where: { userId, status: { in: ["PENDING", "PROCESSING", "APPROVED", "PAYOUT_RESERVED"] } },
         _count: { _all: true }, _sum: { amount: true, netAmount: true },
       }),
       prisma.withdrawal.aggregate({
@@ -1621,7 +1621,7 @@ export class WalletService {
     const pendingWithdrawal = await prisma.withdrawal.findFirst({
       where: {
         userId,
-        status: "PENDING",
+        status: { in: ["PENDING", "PROCESSING", "APPROVED", "PAYOUT_RESERVED"] },
       },
     });
     if (pendingWithdrawal) {
@@ -1641,7 +1641,7 @@ export class WalletService {
       // zero pending rows and both reserve earnings.
       await tx.$queryRaw`SELECT "id" FROM "Wallet" WHERE "userId" = ${userId} FOR UPDATE`;
       const existingPending = await tx.withdrawal.count({
-        where: { userId, status: "PENDING" },
+        where: { userId, status: { in: ["PENDING", "PROCESSING", "APPROVED", "PAYOUT_RESERVED"] } },
       });
       if (existingPending > 0) {
         throw new Error("You already have a pending withdrawal request. Please wait for it to be processed.");
@@ -1741,13 +1741,54 @@ export class WalletService {
     return result.withdrawal;
   }
 
+  /**
+   * Reserve an explicitly reviewed, unsent withdrawal BEFORE any external
+   * payout. This only changes local state; it never sends money. An ambiguous
+   * or abandoned reservation stays fenced for reconciliation, not auto-refund.
+   */
+  async reserveWithdrawalPayout(withdrawalId: string, adminId: string, reconciledUnsent: boolean) {
+    if (reconciledUnsent !== true) throw new Error('Confirm reconciliation found no prior payout before reserving');
+    const payoutSender = (process.env.VANTA_USDT_WITHDRAWAL_SENDER_ADDRESS || '').trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(payoutSender)) throw new Error('Authorized payout wallet must be configured');
+    return prisma.$transaction(async (tx) => {
+      const withdrawal = await tx.withdrawal.findUnique({ where: { id: withdrawalId } });
+      if (!withdrawal || withdrawal.status !== 'PENDING' || withdrawal.transactionHash !== null) {
+        throw new Error('Only an unreserved pending withdrawal can be reserved');
+      }
+      if (withdrawal.method !== 'USDT_BEP20' || withdrawal.currency !== 'USDT' ||
+          withdrawal.cryptoNetwork !== 'BNB_SMART_CHAIN' || !withdrawal.walletAddress ||
+          !/^0x[a-fA-F0-9]{40}$/.test(withdrawal.walletAddress) ||
+          !Number.isFinite(withdrawal.netAmount) || withdrawal.netAmount <= 0) {
+        throw new Error('Withdrawal settlement details are invalid');
+      }
+      const claimed = await tx.withdrawal.updateMany({
+        where: { id: withdrawalId, status: 'PENDING', transactionHash: null,
+          userId: withdrawal.userId, amount: withdrawal.amount, fee: withdrawal.fee,
+          netAmount: withdrawal.netAmount, walletAddress: withdrawal.walletAddress,
+          method: withdrawal.method, currency: withdrawal.currency, cryptoNetwork: withdrawal.cryptoNetwork },
+        data: { status: 'PAYOUT_RESERVED', processedBy: adminId },
+      });
+      if (claimed.count !== 1) throw new Error('Withdrawal reservation already changed');
+      const ledgerCount = await tx.walletTransaction.count({
+        where: { reference: withdrawalId, userId: withdrawal.userId, type: 'WITHDRAWAL', status: 'PENDING',
+          currency: 'USD', amount: withdrawal.amount, fee: withdrawal.fee },
+      });
+      if (ledgerCount !== 1) throw new Error('Exact pending withdrawal ledger entry is missing');
+      await tx.walletAuditLog.create({ data: {
+        userId: withdrawal.userId, action: 'WITHDRAWAL_PAYOUT_RESERVED',
+        details: JSON.stringify({ withdrawalId, adminId, reconciledUnsent: true }),
+      } });
+      return tx.withdrawal.findUniqueOrThrow({ where: { id: withdrawalId } });
+    });
+  }
+
   async processWithdrawal(withdrawalId: string, adminId: string, transactionHash: string) {
     const normalizedHash = typeof transactionHash === 'string' ? transactionHash.trim().toLowerCase() : '';
     if (!/^0x[a-f0-9]{64}$/.test(normalizedHash)) throw new Error('A valid BNB Smart Chain transaction hash is required');
 
     const withdrawal = await prisma.withdrawal.findUnique({ where: { id: withdrawalId } });
     if (!withdrawal) throw new Error('Withdrawal not found');
-    if (withdrawal.status !== 'PENDING') throw new Error('Only pending withdrawals can be processed');
+    if (withdrawal.status !== 'PAYOUT_RESERVED' || !withdrawal.processedBy) throw new Error('Withdrawal must be reserved before settlement');
     if (!withdrawal.walletAddress) throw new Error('Withdrawal destination address is missing');
 
     // A manual admin click or client-supplied hash is not proof of payment.
@@ -1769,7 +1810,7 @@ export class WalletService {
 
     const result = await prisma.$transaction(async (tx) => {
       const claim = await tx.withdrawal.updateMany({
-        where: { id: withdrawalId, status: 'PENDING', transactionHash: null,
+        where: { id: withdrawalId, status: 'PAYOUT_RESERVED', transactionHash: null, processedBy: withdrawal.processedBy,
           userId: withdrawal.userId, amount: withdrawal.amount, fee: withdrawal.fee,
           netAmount: withdrawal.netAmount, walletAddress: withdrawal.walletAddress,
           method: withdrawal.method, currency: withdrawal.currency, cryptoNetwork: withdrawal.cryptoNetwork },

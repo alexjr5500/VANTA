@@ -43,7 +43,8 @@ const walletRow: any = {
 
 const validAddress = `0x${'a'.repeat(40)}`;
 const payoutSender = `0x${'c'.repeat(40)}`;
-const pendingWithdrawal = { id: 'wd1', userId: 'user1', amount: 100, fee: 10, netAmount: 90, status: 'PENDING', walletAddress: validAddress, createdAt: new Date() };
+const pendingWithdrawal = { id: 'wd1', userId: 'user1', amount: 100, fee: 10, netAmount: 90, status: 'PENDING', walletAddress: validAddress, transactionHash: null, processedBy: null, method: 'USDT_BEP20', currency: 'USDT', cryptoNetwork: 'BNB_SMART_CHAIN', createdAt: new Date() };
+const reservedWithdrawal = { ...pendingWithdrawal, status: 'PAYOUT_RESERVED', processedBy: 'admin1' };
 const validTxHash = `0x${'a'.repeat(64)}`;
 
 function txMock() {
@@ -57,12 +58,13 @@ function txMock() {
         .mockResolvedValueOnce({ ...walletRow, earningsBalance: 100 }),
     },
     withdrawal: {
+      findUnique: jest.fn().mockResolvedValue(pendingWithdrawal),
       count: jest.fn().mockResolvedValue(0),
       create: jest.fn().mockResolvedValue({ id: 'wd1', ...pendingWithdrawal }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUniqueOrThrow: jest.fn().mockResolvedValue(pendingWithdrawal),
     },
-    walletTransaction: { create: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    walletTransaction: { count: jest.fn().mockResolvedValue(1), create: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     walletAuditLog: { create: jest.fn().mockResolvedValue({}) },
   };
 }
@@ -126,6 +128,7 @@ describe('WalletService.requestWithdrawal', () => {
 });
 
 describe('WalletService.processWithdrawal', () => {
+  beforeEach(() => { (prisma.withdrawal.findUnique as jest.Mock).mockResolvedValue(reservedWithdrawal); });
   test('a second concurrent approval cannot succeed (CAS count 0)', async () => {
     const tx = txMock();
     tx.withdrawal.updateMany.mockResolvedValue({ count: 0 });
@@ -208,6 +211,7 @@ describe('WalletService.cancelWithdrawal', () => {
 });
 
 describe('WalletService.processWithdrawal on-chain verification', () => {
+  beforeEach(() => { (prisma.withdrawal.findUnique as jest.Mock).mockResolvedValue(reservedWithdrawal); });
   test('verifies the exact USDT payout before completing the ledger', async () => {
     const tx = txMock();
     (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
@@ -220,7 +224,7 @@ describe('WalletService.processWithdrawal on-chain verification', () => {
       expectedSender: payoutSender,
     }));
     expect(tx.withdrawal.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ id: 'wd1', status: 'PENDING', transactionHash: null, userId: 'user1', amount: 100, fee: 10, netAmount: 90, walletAddress: validAddress }),
+      where: expect.objectContaining({ id: 'wd1', status: 'PAYOUT_RESERVED', transactionHash: null, processedBy: 'admin1', userId: 'user1', amount: 100, fee: 10, netAmount: 90, walletAddress: validAddress }),
       data: expect.objectContaining({ status: 'COMPLETED', transactionHash: validTxHash }),
     }));
     expect(tx.walletTransaction.updateMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -265,5 +269,49 @@ describe('Withdrawal authorization row fencing', () => {
     await expect(walletService.requestWithdrawal('user1', 100, validAddress, '1234')).rejects.toThrow('PIN security state changed');
     expect(tx.wallet.updateMany).not.toHaveBeenCalled();
     expect(tx.withdrawal.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('Withdrawal payout reservation', () => {
+  test('requires explicit unsent reconciliation before reserving', async () => {
+    await expect(walletService.reserveWithdrawalPayout('wd1', 'admin1', false)).rejects.toThrow('Confirm reconciliation');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+  test('reserves one pending request and audits without debiting or sending', async () => {
+    const tx = txMock();
+    tx.withdrawal.findUniqueOrThrow.mockResolvedValue(reservedWithdrawal);
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(walletService.reserveWithdrawalPayout('wd1', 'admin1', true)).resolves.toMatchObject({ status: 'PAYOUT_RESERVED' });
+    expect(tx.withdrawal.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: 'PENDING', transactionHash: null }), data: { status: 'PAYOUT_RESERVED', processedBy: 'admin1' } }));
+    expect(tx.walletAuditLog.create).toHaveBeenCalled();
+    expect(tx.wallet.updateMany).not.toHaveBeenCalled();
+    expect(blockchainTxVerifier.verifyTransaction).not.toHaveBeenCalled();
+  });
+  test('losing reservation race cannot return success', async () => {
+    const tx = txMock();
+    tx.withdrawal.updateMany.mockResolvedValue({ count: 0 });
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(walletService.reserveWithdrawalPayout('wd1', 'admin1', true)).rejects.toThrow('reservation already changed');
+    expect(tx.walletAuditLog.create).not.toHaveBeenCalled();
+  });
+  test('missing ledger aborts reservation before audit', async () => {
+    const tx = txMock();
+    tx.walletTransaction.count.mockResolvedValue(0);
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(walletService.reserveWithdrawalPayout('wd1', 'admin1', true)).rejects.toThrow('ledger entry is missing');
+    expect(tx.walletAuditLog.create).not.toHaveBeenCalled();
+  });
+  test('cannot complete unreserved payout', async () => {
+    await expect(walletService.processWithdrawal('wd1', 'admin1', validTxHash)).rejects.toThrow('must be reserved');
+    expect(blockchainTxVerifier.verifyTransaction).not.toHaveBeenCalled();
+  });
+  test('cannot reject or refund a reserved payout', async () => {
+    (prisma.withdrawal.findUnique as jest.Mock).mockResolvedValue(reservedWithdrawal);
+    await expect(walletService.rejectWithdrawal('wd1', 'admin1', 'reason')).rejects.toThrow('Only pending');
+    const tx = txMock();
+    tx.withdrawal.updateMany.mockResolvedValue({ count: 0 });
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(walletService.cancelWithdrawal('wd1', 'user1')).rejects.toThrow('no longer be cancelled');
+    expect(tx.wallet.update).not.toHaveBeenCalled();
   });
 });
