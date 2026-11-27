@@ -1166,15 +1166,27 @@ export const decideAppeal = async (req: AuthenticatedRequest, res: Response): Pr
 export const getWithdrawals = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const limit = parseAdminQueryInt(req.query.limit, 20, 1, 200);
-
+    const offset = parseAdminQueryInt(req.query.offset, 0, 0, 1_000_000);
+    const status = req.query.status;
+    const allowed = ['PENDING', 'PAYOUT_RESERVED', 'PROCESSING', 'APPROVED', 'COMPLETED', 'FAILED', 'CANCELLED'];
+    if (status !== undefined && (typeof status !== 'string' || (status !== 'active' && status !== 'all' && !allowed.includes(status)))) {
+      res.status(400).json({ error: 'Invalid withdrawal status filter' });
+      return;
+    }
+    const where = status === 'active'
+      ? { status: { in: ['PENDING', 'PAYOUT_RESERVED', 'PROCESSING', 'APPROVED'] } }
+      : typeof status === 'string' && status !== 'all' ? { status } : {};
     const withdrawals = await prisma.withdrawal.findMany({
+      where,
       include: {
         user: { select: { id: true, username: true, email: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: offset,
       take: limit,
     });
 
+    res.setHeader('Cache-Control', 'private, no-store');
     res.status(200).json(withdrawals);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
