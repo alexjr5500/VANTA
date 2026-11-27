@@ -48,6 +48,10 @@ done
 # Same runtime image, real encrypted dump helper, ephemeral identity and signer.
 docker run --rm --name "$prefix-capture" --network "$net" -v "$scratch:/scratch" vanta-maintenance-ci bash -euc '
   umask 077
+  # The host-created mount is owned by the CI runner, not the container UID.
+  # Keep the real capture guard intact; give the disposable scratch to its writer.
+  chown "$(id -u):$(id -g)" /scratch
+  chmod 700 /scratch
   age-keygen -o /scratch/identity 2>/dev/null
   export RECIPIENT="$(age-keygen -y /scratch/identity)"
   node --input-type=module <<'"'"'JS'"'"'
@@ -69,10 +73,9 @@ JS
   VANTA_BACKUP_AGE_RECIPIENT="$RECIPIENT" bash backend/scripts/backup-age-encrypt.sh /scratch/manifest.json.age < /scratch/marker
   age --decrypt -i /scratch/identity /scratch/manifest.json.age | cmp - /scratch/marker
   age --decrypt -i /scratch/identity /scratch/database.dump.age > /scratch/database.dump
-  chmod 644 /scratch/database.dump
 '
 # A separate target without a network restores the committed snapshot.
-docker exec -i "$dst" pg_restore -U fixture_admin -d recovery_ci --no-owner --no-acl --exit-on-error --single-transaction < "$scratch/database.dump"
+sudo cat "$scratch/database.dump" | docker exec -i "$dst" pg_restore -U fixture_admin -d recovery_ci --no-owner --no-acl --exit-on-error --single-transaction
 [[ "$(psql_fixture "$dst" <<< 'SELECT id || chr(58) || value FROM fixture ORDER BY id;')" == '1:committed-before-dump' ]]
 [[ "$(psql_fixture "$src" <<< "SELECT count(*) FROM pg_stat_activity WHERE wait_event='PgSleep' AND query LIKE 'BEGIN; INSERT INTO fixture%';")" == 1 ]]
 echo '{"event":"vanta.ci.online_database_recovery","status":"passed","readerWriteRejected":true,"activeWriter":true,"committedSnapshotRestored":true,"mediaIncluded":false}'
