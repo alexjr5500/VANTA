@@ -1,3 +1,4 @@
+import { shopCoinBadgeEnabled, badgeCoinCost } from '../config/shop-coin-badge.config';
 import { shopCardEnabled } from '../config/shop-card.config';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 import { prisma } from '../prisma';
@@ -299,6 +300,7 @@ export class VerificationPaymentService {
       throw new Error('This payment session has expired. Please start a new purchase.');
     }
 
+    if (existingAttempt.network === 'vanta-coins') throw new Error('Coin-funded badge activation requires atomic wallet checkout.');
     if (existingAttempt.network === 'stripe-card') {
       const paid = await prisma.shopCardCheckout.findFirst({ where: { orderId: existingAttempt.id, payerId: userId, product: 'badge', paidAt: { not: null }, paymentIntentId: { not: null } } });
       if (!shopCardEnabled() || options.mode !== 'test' || !paid || paid.amountCents !== Math.round(existingAttempt.amount * 100)) throw new Error('Card payment has not been verified.');
@@ -935,6 +937,24 @@ export class VerificationPaymentService {
         throw new Error('This purchase cannot be refunded');
       }
 
+      if (order.network === 'vanta-coins') {
+        if (!shopCoinBadgeEnabled() || order.paymentMode !== 'test') throw new Error('Coin badge refund unavailable');
+        const badge = await tx.verificationBadge.findUnique({ where: { userId: recipientId } });
+        if (!badge || badge.status !== 'ACTIVE' || badge.sourcePurchaseId !== purchaseId || !badge.expiresAt || badge.expiresAt <= new Date()) throw new Error('Badge changed or expired; manual reconciliation required');
+        const locked = await tx.user.updateMany({ where: { id: recipientId, status: 'ACTIVE' }, data: { status: 'ACTIVE' } });
+        if (locked.count !== 1) throw new Error('Recipient unavailable');
+        const current = await tx.verificationBadge.findUnique({ where: { userId: recipientId } });
+        if (current?.sourcePurchaseId !== purchaseId || current.status !== 'ACTIVE') throw new Error('Badge changed; manual reconciliation required');
+        if (badge.badgeType === 'GOLD') {
+          const member = await tx.creatorMembership.findUnique({ where: { userId: recipientId } });
+          if (!member || member.paymentMethod !== 'vanta-coins' || member.paymentTxHash !== purchaseId) throw new Error('Membership changed; manual reconciliation required');
+        }
+        const debit = await tx.walletTransaction.findFirst({ where: { userId: order.userId, reference: purchaseId, type: 'SUBSCRIPTION', currency: 'VANTA', status: 'COMPLETED' } });
+        if (!debit || !Number.isSafeInteger(debit.amount) || debit.amount <= 0 || debit.amount !== badgeCoinCost(order.amount)) throw new Error('Original wallet debit not found');
+        const wallet = await tx.wallet.update({ where: { userId: order.userId }, data: { coinBalance: { increment: debit.amount } } });
+        await tx.walletTransaction.create({ data: { walletId: wallet.id, userId: order.userId, type: 'REFUND', currency: 'VANTA', amount: debit.amount, fee: 0, balanceBefore: wallet.coinBalance - debit.amount, balance: wallet.coinBalance, reference: purchaseId, status: 'COMPLETED', description: 'Verification badge purchase refund', metadata: JSON.stringify({ adminId, recipientId, reason }) } });
+        await tx.walletAuditLog.create({ data: { userId: order.userId, action: 'COIN_BADGE_REFUND', details: JSON.stringify({ purchaseId, adminId, coins: debit.amount, recipientId, reason }) } });
+      }
       // Reverse the entitlement if and only if the current active badge was
       // activated by this exact purchase.
       const activeBadge = await tx.verificationBadge.findUnique({ where: { userId: recipientId } });
