@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { assertDirectMessageAllowed } from '../services/chat.service';
+import { notificationService } from '../services/notification.service';
 import { getChatUploadUsage } from '../services/chat-contact.service';
 
 export const chatContactRoutes = Router();
@@ -46,6 +47,11 @@ chatContactRoutes.post('/requests', async (req: AuthRequest, res) => {
       where: { senderId_recipientId: { senderId, recipientId: target.id } },
       create: { senderId, recipientId: target.id }, update: {}, select: requestSelect,
     });
+    if (item.status === 'PENDING') {
+      await notificationService.createNotification(target.id, 'chat_request', 'Message request', '@' + item.sender.username + ' wants to start a chat', {
+        actorId: senderId, entityType: 'chat_request', entityId: item.id, referenceKey: 'chat-request:' + item.id,
+      }).catch(error => console.error('[chat-request] notification failed', error));
+    }
     res.status(200).json(item);
   } catch { res.status(500).json({ error: 'Could not send contact request' }); }
 });
@@ -65,6 +71,11 @@ chatContactRoutes.put('/requests/:id', async (req: AuthRequest, res) => {
     }
     const changed = await prisma.chatContactRequest.updateMany({ where: { id, recipientId, status: 'PENDING' }, data: { status } });
     if (!changed.count) { res.status(409).json({ error: 'Request has already been reviewed' }); return; }
+    if (status === 'ACCEPTED') {
+      await notificationService.createNotification(request.senderId, 'chat_request', 'Request accepted', 'Your contact request was accepted', {
+        actorId: recipientId, entityType: 'chat_request', entityId: id, referenceKey: 'chat-request-accepted:' + id,
+      }).catch(error => console.error('[chat-request] notification failed', error));
+    }
     res.json({ status });
   } catch { res.status(500).json({ error: 'Could not review request' }); }
 });

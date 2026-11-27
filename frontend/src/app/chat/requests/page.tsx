@@ -32,27 +32,27 @@ export default function ChatRequestsPage() {
     return () => { active = false; };
   }, [token, revision]);
 
-  const run = async (action: () => Promise<void>) => {
+  const run = async (action: (authToken: string) => Promise<void>) => {
     if (!token || lock.current) return;
     lock.current = true; setBusy(true); setError(''); setNotice('');
-    try { await action(); }
+    try { await action(token); }
     catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not complete action.'); }
     finally { lock.current = false; setBusy(false); }
   };
 
-  const submit = () => run(async () => {
-    const result = await apiPost<RequestItem>('/api/messages/requests', { username }, token);
+  const submit = () => run(async (authToken) => {
+    const result = await apiPost<RequestItem>('/api/messages/requests', { username }, authToken);
     setNotice(result.status === 'PENDING' ? 'Request is pending approval.' : result.status === 'ACCEPTED' ? 'This contact has already approved your request.' : 'This contact has declined your request.');
     setUsername(''); setRevision(value => value + 1);
   });
 
-  const review = (item: RequestItem, status: 'ACCEPTED' | 'DECLINED') => run(async () => {
-    await apiPut('/api/messages/requests/' + encodeURIComponent(item.id), { status }, token);
+  const review = (item: RequestItem, status: 'ACCEPTED' | 'DECLINED') => run(async (authToken) => {
+    await apiPut('/api/messages/requests/' + encodeURIComponent(item.id), { status }, authToken);
     setNotice(status === 'ACCEPTED' ? 'Request accepted. This person may now start a chat, subject to your privacy settings.' : 'Request declined.');
     setRevision(value => value + 1);
   });
-  const openChat = (peer: Peer) => run(async () => {
-    const result = await apiPost<{ conversation: { id: string } }>('/api/messages/start', { participantIds: [peer.id] }, token);
+  const openChat = (peer: Peer) => run(async (authToken) => {
+    const result = await apiPost<{ conversation: { id: string } }>('/api/messages/start', { participantIds: [peer.id] }, authToken);
     router.push('/chat?conversation=' + encodeURIComponent(result.conversation.id));
   });
 

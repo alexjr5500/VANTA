@@ -9,6 +9,7 @@
    ═══════════════════════════════════════════════════════════════ */
 
 import { Play, Shield, Wifi, Video, SlidersHorizontal } from 'lucide-react';
+import { DefaultSectionSetting } from '@/components/settings/DefaultSectionSetting';
 import PageHeader from '@/components/ui/PageHeader';
 import {
   SavedChip,
@@ -42,7 +43,7 @@ export default function ContentMediaSettingsPage() {
       <PageHeader
         sticky
         bleed
-        title="Content & Media"
+        title="Timeline"
         back="/settings"
       />
 
@@ -52,6 +53,7 @@ export default function ContentMediaSettingsPage() {
         </p>
       </div>
 
+      <DefaultSectionSetting area="timeline" />
       <SettingsGroup
         icon={Play}
         title="Playback"

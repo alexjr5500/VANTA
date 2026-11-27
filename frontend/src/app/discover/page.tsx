@@ -3,6 +3,7 @@
 import BookmarkIcon from '@/components/ui/BookmarkIcon';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { readDefaultSection } from '@/lib/defaultSection';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowRight, Bookmark, Check, ChevronRight, CircleAlert, Compass, Eye,
@@ -151,6 +152,7 @@ export default function DiscoverPage() {
   useEffect(() => {
     const initialQuery = new URLSearchParams(window.location.search).get('q');
     if (initialQuery) setQuery(initialQuery);
+    else setCategory(readDefaultSection('explore'));
   }, []);
 
   useEffect(() => { void loadDiscover(); }, [loadDiscover]);
