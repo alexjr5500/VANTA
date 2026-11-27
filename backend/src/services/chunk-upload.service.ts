@@ -2,6 +2,9 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
+import { createPrivateMediaUrl } from "./private-media.service";
 import {
   uploadService,
   uploadStorageDir,
@@ -188,12 +191,21 @@ export class ChunkUploadService {
       if (expected <= 0 || file.size !== expected || fs.statSync(file.path).size !== expected) {
         throw new Error("Chunk part does not match the expected size.");
       }
-      fs.renameSync(file.path, path.join(chunkDir, `${String(index).padStart(6, "0")}.part`));
+      // Once published, a part is immutable. A retry must never replace bytes
+      // that an already-running finalizer may be reading.
+      const canonical = path.join(chunkDir, `${String(index).padStart(6, "0")}.part`);
+      try {
+        fs.linkSync(file.path, canonical);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const stat = fs.lstatSync(canonical);
+        if (!stat.isFile() || stat.size !== expected) throw new Error("Existing chunk is invalid. Restart the upload.");
+      }
     } finally {
       removeLocal(file.path);
     }
     const receivedChunks = fs.readdirSync(chunkDir).filter(name => /^\d{6}\.part$/.test(name)).length;
-    await prisma.uploadSession.update({ where: { id: sessionId }, data: { receivedChunks } });
+    await prisma.uploadSession.updateMany({ where: { id: sessionId, userId, status: "ACTIVE" }, data: { receivedChunks } });
     return {
       sessionId, receivedChunks, totalChunks: session.totalChunks, chunkSize: session.chunkSize,
       complete: receivedChunks >= session.totalChunks,
@@ -255,21 +267,22 @@ export class ChunkUploadService {
     assertVerificationUploadAvailable(session.category, session.recordType);
 
     if (session.status === "COMPLETE") {
-      // Idempotent re-completion: return the already-uploaded file when present.
+      // Never guess from the newest file with a matching category/record.
+      if (!session.completedFileId) throw new Error("Completed upload has no verified file binding.");
       const existing = await prisma.uploadedFile.findFirst({
         where: {
+          id: session.completedFileId,
           userId,
           category: session.category,
           recordType: session.recordType,
           recordId: session.recordId,
           deletedAt: null,
         },
-        orderBy: { createdAt: "desc" },
       });
       if (existing) {
         return {
           id: existing.id,
-          url: existing.url,
+          url: existing.category === "message" ? createPrivateMediaUrl(existing.id, userId) : existing.url,
           type: existing.fileType,
           filename: existing.filename,
           mimeType: existing.mimeType,
@@ -277,8 +290,10 @@ export class ChunkUploadService {
           category: existing.category,
         };
       }
+      throw new Error("Completed upload file is no longer available.");
     }
-    if (session.status === "FAILED" || session.status === "CANCELLED") {
+    if (session.status === "FINALIZING") throw new Error("Upload completion is already in progress. Retry shortly.");
+    if (session.status !== "ACTIVE") {
       throw new Error("This upload session is closed. Please start a new upload.");
     }
 
@@ -291,38 +306,39 @@ export class ChunkUploadService {
       throw new Error(`Upload incomplete (${received.length}/${session.totalChunks} chunks received).`);
     }
 
-    let totalBytes = 0;
-    for (const name of received) {
-      const stat = fs.statSync(path.join(chunkDir, name));
-      if (stat.size > session.chunkSize) {
-        throw new Error("A chunk part exceeds the allowed size.");
-      }
-      totalBytes += stat.size;
-    }
-    if (totalBytes !== session.fileSize) {
-      throw new Error(`Uploaded bytes (${totalBytes}) do not match the declared file size (${session.fileSize}).`);
+    for (let i = 0; i < session.totalChunks; i++) {
+      const part = path.join(chunkDir, `${String(i).padStart(6, "0")}.part`);
+      const expected = Math.min(session.chunkSize, session.fileSize - i * session.chunkSize);
+      if (!fs.existsSync(part)) throw new Error("Upload incomplete: missing chunk.");
+      const stat = fs.lstatSync(part);
+      if (!stat.isFile() || expected <= 0 || stat.size !== expected) throw new Error("Upload incomplete: invalid chunk size.");
     }
 
-    // Assemble into a unique final file inside the upload storage directory so
-    // uploadFile's path + magic-byte + duration validation all apply unchanged.
+    // A single database claim wins across processes. No provider write is
+    // attempted before the claim; unknown outcomes must not be retried blindly.
+    const claim = await prisma.uploadSession.updateMany({
+      where: { id: sessionId, userId, status: "ACTIVE", expiresAt: { gt: new Date() } },
+      data: { status: "FINALIZING" },
+    });
+    if (claim.count !== 1) throw new Error("Upload completion is already in progress or the session is closed.");
+
     const extension = path.extname(sanitizeChunkFilename(session.fileName)).toLowerCase();
     const finalName = `${Date.now()}-${crypto.randomBytes(12).toString("hex")}${extension || (session.mimeType.startsWith("video/") ? ".webm" : "")}`;
     const finalPath = path.join(uploadStorageDir, finalName);
-    try {
-      const writeStream = fs.createWriteStream(finalPath);
-      for (let i = 0; i < session.totalChunks; i++) {
+    async function* orderedParts() {
+      for (let i = 0; i < session!.totalChunks; i++) {
         const partPath = path.join(chunkDir, `${String(i).padStart(6, "0")}.part`);
-        if (!fs.existsSync(partPath)) {
-          throw new Error(`Chunk ${i} is missing — resume from the parts already received.`);
-        }
-        writeStream.write(fs.readFileSync(partPath));
+        const reader = fs.createReadStream(partPath, { flags: fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW });
+        for await (const bytes of reader) yield bytes;
       }
-      await new Promise<void>((resolve, reject) => {
-        writeStream.end((error) => (error ? reject(error) : resolve()));
-      });
-    } catch (error) {
+    }
+    try {
+      await pipeline(Readable.from(orderedParts()), fs.createWriteStream(finalPath, { flags: "wx" }));
+      if ((await fs.promises.stat(finalPath)).size !== session.fileSize) throw new Error("Assembled size mismatch.");
+    } catch {
       removeLocal(finalPath);
-      throw new Error(`Could not assemble upload: ${error instanceof Error ? error.message : "unknown error"}`);
+      await prisma.uploadSession.updateMany({ where: { id: session.id, userId, status: "FINALIZING" }, data: { status: "FAILED" } });
+      throw new Error("Could not assemble upload.");
     }
 
     const multerFile = {
@@ -342,10 +358,7 @@ export class ChunkUploadService {
         category: session.category,
         recordType: session.recordType || undefined,
         recordId: session.recordId || undefined,
-      });
-      await prisma.uploadSession.update({
-        where: { id: session.id },
-        data: { status: "COMPLETE", receivedChunks: session.totalChunks },
+        chunkSessionId: session.id,
       });
       try {
         fs.rmSync(chunkDir, { recursive: true, force: true });
@@ -354,8 +367,9 @@ export class ChunkUploadService {
       }
       return result;
     } catch (error) {
-      removeLocal(finalPath);
-      await prisma.uploadSession.update({ where: { id: session.id }, data: { status: "FAILED" } });
+      // The upload service commits metadata and COMPLETE together. If the
+      // outcome is ambiguous, retain FINALIZING for operator reconciliation;
+      // never delete a possibly committed asset or allow another provider write.
       throw error;
     }
   }
@@ -368,8 +382,11 @@ export class ChunkUploadService {
     }
     // Media is already persisted: a late cancellation must not roll back the
     // completed session or compromise an idempotent finalize retry.
-    if (session.status === "COMPLETE") return { cancelled: false };
-    await prisma.uploadSession.update({ where: { id: sessionId }, data: { status: "CANCELLED" } });
+    if (session.status !== "ACTIVE") return { cancelled: false };
+    const claim = await prisma.uploadSession.updateMany({
+      where: { id: sessionId, userId, status: "ACTIVE" }, data: { status: "CANCELLED" },
+    });
+    if (claim.count !== 1) return { cancelled: false };
     try {
       fs.rmSync(chunkStagingDir(sessionId), { recursive: true, force: true });
     } catch {
@@ -384,8 +401,10 @@ export class ChunkUploadService {
     if (!session || session.userId !== userId) {
       throw new Error("Upload session not found.");
     }
-    await prisma.uploadSession.update({ where: { id: sessionId }, data: { status: "FAILED" } });
-    return { failed: true };
+    const claim = await prisma.uploadSession.updateMany({
+      where: { id: sessionId, userId, status: "ACTIVE" }, data: { status: "FAILED" },
+    });
+    return { failed: claim.count === 1 };
   }
 }
 

@@ -559,6 +559,8 @@ export class UploadService {
       recordId?: string;
       optimize?: boolean;
       generateThumbnail?: boolean;
+      /** Internal only: bind a claimed resumable session to its file atomically. */
+      chunkSessionId?: string;
     } = {}
   ): Promise<UploadedFileResult> {
     const {
@@ -567,6 +569,7 @@ export class UploadService {
       recordId,
       optimize = true,
       generateThumbnail = false,
+      chunkSessionId,
     } = options;
 
     const userId = req.user?.userId;
@@ -674,21 +677,34 @@ export class UploadService {
     };
     let record;
     try {
-      if (cloudinaryMediaProducerEnabled) {
+      if (cloudinaryMediaProducerEnabled || chunkSessionId) {
         record = await prisma.$transaction(async tx => {
           const created = await tx.uploadedFile.create({ data: metadata });
-          const repository = new DurableQueueRepository(tx);
-          await enqueueCloudinaryMediaForUpload(
-            { id: created.id, fileType, category },
-            { optimize, generateThumbnail },
-            repository,
-          );
+          if (chunkSessionId) {
+            const bound = await tx.uploadSession.updateMany({
+              where: { id: chunkSessionId, userId, status: "FINALIZING", category,
+                recordType: recordType || null, recordId: recordId || null },
+              data: { status: "COMPLETE", completedFileId: created.id },
+            });
+            if (bound.count !== 1) throw new Error("Upload session finalization claim lost.");
+          }
+          if (cloudinaryMediaProducerEnabled) {
+            const repository = new DurableQueueRepository(tx);
+            await enqueueCloudinaryMediaForUpload(
+              { id: created.id, fileType, category },
+              { optimize, generateThumbnail },
+              repository,
+            );
+          }
           return created;
         });
       } else {
         record = await prisma.uploadedFile.create({ data: metadata });
       }
     } catch (error) {
+      // A lost commit response is ambiguous. Retain a chunk asset for
+      // reconciliation instead of deleting a potentially committed original.
+      if (chunkSessionId) throw new Error("Upload finalization requires reconciliation.");
       try {
         await this.deleteStorageAsset(file.filename, storagePath);
       } finally {

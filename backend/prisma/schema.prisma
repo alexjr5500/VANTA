@@ -299,7 +299,8 @@ model UploadSession {
   totalChunks    Int
   receivedChunks Int      @default(0)
   receivedBytes  Int      @default(0)
-  status         String   @default("ACTIVE") // ACTIVE | COMPLETE | FAILED | CANCELLED
+  status         String   @default("ACTIVE") // ACTIVE | FINALIZING | COMPLETE | FAILED | CANCELLED
+  completedFileId String? // Exact file identity; legacy COMPLETE sessions are not guessed.
   recordType     String? // e.g. Story, Video - bound at session creation
   recordId       String? // draft record the composed file will be linked to
   createdAt      DateTime @default(now())

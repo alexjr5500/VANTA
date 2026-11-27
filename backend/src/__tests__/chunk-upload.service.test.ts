@@ -8,6 +8,7 @@ jest.mock('../prisma', () => ({
       create: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     uploadedFile: {
       findFirst: jest.fn(),
@@ -48,6 +49,7 @@ const req = { user: { userId: 'user-1', role: 'USER' } } as any;
 beforeEach(() => {
   jest.clearAllMocks();
   (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession });
+  (db.uploadSession.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 });
 
 afterEach(() => {
@@ -221,6 +223,37 @@ describe('ChunkUploadService', () => {
   });
 
   describe('completeChunkSession', () => {
+    it('returns only the exact completed file, never the newest matching record', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, status: 'COMPLETE', completedFileId: 'file-original' });
+      (db.uploadedFile.findFirst as jest.Mock).mockResolvedValue({ id: 'file-original', category: 'reel', url: '/uploads/original.mp4' });
+      await expect(chunkUploadService.completeChunkSession(req, baseSession.id)).resolves.toMatchObject({ id: 'file-original' });
+      expect(db.uploadedFile.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 'file-original', userId: 'user-1' }) }));
+    });
+
+    it('fails closed for legacy completed sessions without a verified file binding', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, status: 'COMPLETE' });
+      await expect(chunkUploadService.completeChunkSession(req, baseSession.id)).rejects.toThrow('no verified file binding');
+      expect(db.uploadedFile.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('does not invoke the provider if the atomic completion claim loses', async () => {
+      fs.mkdirSync(stagingDir(baseSession.id), { recursive: true });
+      fs.writeFileSync(partPath(baseSession.id, 0), Buffer.alloc(baseSession.fileSize));
+      (db.uploadSession.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+      const spy = jest.spyOn(uploadService, 'uploadFile');
+      try {
+        await expect(chunkUploadService.completeChunkSession(req, baseSession.id)).rejects.toThrow('already in progress');
+        expect(spy).not.toHaveBeenCalled();
+      } finally { spy.mockRestore(); }
+    });
+
+    it('does not downgrade a finalizing session on late abort or failure', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, status: 'FINALIZING' });
+      (db.uploadSession.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+      await expect(chunkUploadService.cancelChunkSession('user-1', baseSession.id)).resolves.toEqual({ cancelled: false });
+      await expect(chunkUploadService.failChunkSession('user-1', baseSession.id)).resolves.toEqual({ failed: false });
+    });
+
     it('rejects an existing verification session before returning a completed file', async () => {
       (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, category: 'verification', status: 'COMPLETE' });
       await expect(chunkUploadService.completeChunkSession(req, baseSession.id)).rejects.toThrow('Secure verification document storage');
@@ -281,9 +314,11 @@ describe('ChunkUploadService', () => {
 
       expect(result.url).toContain('/uploads/');
       expect(spy).toHaveBeenCalled();
-      expect(db.uploadSession.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'COMPLETE' }) })
+      expect(db.uploadSession.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ status: 'ACTIVE' }), data: { status: 'FINALIZING' } })
       );
+      expect(spy).toHaveBeenCalledWith(req, expect.anything(), expect.objectContaining({ chunkSessionId: baseSession.id }));
+      fs.rmSync(path.join(uploadStorageDir, result.filename), { force: true });
       // Staging is cleaned up after a successful compose.
       expect(fs.existsSync(stagingDir(baseSession.id))).toBe(false);
       spy.mockRestore();
