@@ -89,6 +89,12 @@ export default function PrivacyCenterPage() {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
   useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    const allowed: Tab[] = ['overview', 'privacy', 'consent', 'export', 'account', 'devices', 'reporting', 'appeals', 'policies', 'standards', 'transparency', 'notifications'];
+    if (tab && allowed.includes(tab as Tab)) setActiveTab(tab as Tab);
+  }, []);
+
+  useEffect(() => {
     if (token) loadAllData();
   }, [token, activeTab]);
 

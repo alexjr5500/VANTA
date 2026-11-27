@@ -11,6 +11,8 @@ import { useEffect, useState } from 'react';
 import {
   BadgeCheck,
   CreditCard,
+  Download,
+  UserMinus,
   KeyRound,
   LogOut,
   Mail,
@@ -152,6 +154,11 @@ export default function AccountSettingsPage() {
               title="Change email address"
               description={profile?.email || 'Add and verify your email address'}
             />
+          </SettingsGroup>
+
+          <SettingsGroup icon={User} title="Your data and account">
+            <SettingsLink href="/settings/account/archive" icon={Download} title="Download an archive of your data" description="Request and download a copy of your VANTA data" />
+            <SettingsLink href="/settings/account/deactivate" icon={UserMinus} title="Deactivate your account" description="Temporarily disable your account" />
           </SettingsGroup>
 
           {/* ── Payments ── */}

@@ -47,6 +47,8 @@ const searchable = [
   { title: 'Privacy Policy', href: '/privacy', icon: ShieldCheck },
   { title: 'Community Guidelines', href: '/community-guidelines', icon: CircleEllipsis },
   { title: "What's New", href: '/settings/whats-new', icon: CircleEllipsis },
+  { title: 'Download an archive of your data', href: '/settings/account/archive', icon: User },
+  { title: 'Deactivate your account', href: '/settings/account/deactivate', icon: User },
   { title: 'Delete account and log out', href: '/settings/account', icon: User },
 ];
 
