@@ -25,7 +25,8 @@
     "test:ci": "jest --config jest.config.js --ci --coverage --maxWorkers=2",
     "seed": "prisma db seed",
     "seed:gifts": "ts-node --transpile-only prisma/seed-gift-catalog.ts",
-    "seed:dev-wallet": "ts-node --transpile-only prisma/seed-dev-wallet.ts"
+    "seed:dev-wallet": "ts-node --transpile-only prisma/seed-dev-wallet.ts",
+    "prebuild": "npm --prefix backup-runtime ci --omit=dev --ignore-scripts --no-audit --no-fund"
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"

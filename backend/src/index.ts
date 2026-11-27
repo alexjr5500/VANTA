@@ -63,6 +63,7 @@ import { setNotificationIO, notificationService } from './services/notification.
 import { setSocialEventsIO } from './services/social-events.service';
 import { apiLatencyMiddleware, healthStatus, metricsCollector, cacheService, setupDefaultAlerts } from './services';
 import { uploadStorageDir, getStorageDiagnostics } from './services/upload.service';
+import { runMediaBackupWindow } from './services/media-backup-scheduler';
 import { ServerReadiness, BackgroundDrain, shutdownWithin } from './services/server-lifecycle';
 import { HttpTelemetry, startHttpTelemetry } from './services/http-telemetry';
 import { DependencyProbe, DependencyTelemetry } from './services/dependency-telemetry';
@@ -898,6 +899,7 @@ async function startServer() {
     if (traffic.draining) { realtimeAdapter.close(); return; }
     httpServer.listen(PORT, () => {
       traffic.markServing();
+      if (process.env.VANTA_MEDIA_BACKUP_ENABLED === 'yes') backgroundDrain.schedule(() => runMediaBackupWindow(), 15 * 60 * 1000);
       if (process.env.VANTA_DEPENDENCY_TELEMETRY_ENABLED === 'true' && !traffic.draining) {
         const dependencies = new DependencyTelemetry({
           postgres: new DependencyProbe(true, async () => { await prisma.$queryRaw`SELECT 1`; return true; }),

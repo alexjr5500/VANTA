@@ -4,7 +4,7 @@ import { backupPrefix } from './backup-r2-multipart.mjs';
 const check=(v,m='Invalid backup operations evidence')=>{if(!v)throw Error(m)};
 const safe=n=>Number.isSafeInteger(n)&&n>=0;
 const hash=s=>typeof s==='string'&&/^[a-f0-9]{64}$/.test(s);
-const issueCodes=new Set(['backup_attempt_failed','verified_backup_missing_or_overdue','database_backup_missing_or_overdue','independent_restore_missing_or_overdue','source_fence_not_verified','schedule_not_approved','retention_inventory_unverified','backup_monitor_evidence_invalid','backup_capacity_warning','backup_capacity_exceeded','backup_remote_inventory_invalid']);
+const issueCodes=new Set(['backup_attempt_failed','verified_backup_missing_or_overdue','database_backup_missing_or_overdue','media_backup_missing_or_overdue','backup_alert_delivery_test','independent_restore_missing_or_overdue','source_fence_not_verified','schedule_not_approved','retention_inventory_unverified','backup_monitor_evidence_invalid','backup_capacity_warning','backup_capacity_exceeded','backup_remote_inventory_invalid']);
 export function productionIdentity(env){
   return env.RAILWAY_PROJECT_ID==='a05242c0-8a26-40b0-a88d-e338e96eec55' &&
     env.RAILWAY_ENVIRONMENT_ID==='4a6d43ce-571f-4d85-8abe-c7c5f19ed920' &&
@@ -69,13 +69,13 @@ export function alertConfig(env){
     email(env.VANTA_BACKUP_ALERT_FROM)&&email(env.VANTA_BACKUP_ALERT_TO),'Dedicated backup alert configuration required');
   return {apiKey:env.VANTA_BACKUP_ALERT_SENDGRID_KEY,from:env.VANTA_BACKUP_ALERT_FROM,to:env.VANTA_BACKUP_ALERT_TO};
 }
-export async function sendBackupAlert({config,issues,fetchImpl=fetch}){
-  check(config&&Array.isArray(issues)&&issues.length>0&&issues.every(i=>issueCodes.has(i)),'Invalid backup alert');
+export async function sendBackupAlert({config,issues,test=false,fetchImpl=fetch}){
+  check(config&&Array.isArray(issues)&&issues.length>0&&issues.every(i=>issueCodes.has(i))&&(test?issues.length===1&&issues[0]==='backup_alert_delivery_test':!issues.includes('backup_alert_delivery_test')),'Invalid backup alert');
   try{
     const res=await fetchImpl('https://api.sendgrid.com/v3/mail/send',{method:'POST',redirect:'error',
       signal:AbortSignal.timeout(10000),headers:{Authorization:'Bearer '+config.apiKey,'Content-Type':'application/json'},
       body:JSON.stringify({personalizations:[{to:[{email:config.to}]}],from:{email:config.from},
-        subject:'VANTA backup requires attention',content:[{type:'text/plain',value:'Backup control status: '+[...new Set(issues)].join(', ')+'. Review the backup journal before retrying.'}]})});
+        subject:test?'VANTA backup alert TEST — no action needed':'VANTA backup requires attention',content:[{type:'text/plain',value:test?'Controlled alert delivery drill. No production failure occurred. Please confirm receipt.':'Backup control status: '+[...new Set(issues)].join(', ')+'. Review the backup journal before retrying.'}]})});
     check(res.status===202,'Backup alert not accepted');
   }catch{throw Error('Backup alert delivery failed');}
   return true; // Provider accepted the request; this is not proof of inbox delivery.

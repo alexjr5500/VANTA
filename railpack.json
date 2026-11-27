@@ -3,7 +3,9 @@
   "deploy": {
     "aptPackages": [
       "...",
-      "ffmpeg"
+      "ffmpeg",
+      "age",
+      "tar"
     ]
   }
 }
