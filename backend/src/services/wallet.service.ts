@@ -1825,7 +1825,7 @@ export class WalletService {
 
       const updated = await tx.withdrawal.findUniqueOrThrow({ where: { id: withdrawalId } });
       const ledgerUpdate = await tx.walletTransaction.updateMany({
-        where: { reference: withdrawalId, type: 'WITHDRAWAL', status: 'PENDING' },
+        where: { reference: withdrawalId, userId: withdrawal.userId, type: 'WITHDRAWAL', status: 'PENDING', currency: 'USD', amount: withdrawal.amount, fee: withdrawal.fee },
         data: {
           status: 'COMPLETED',
           metadata: JSON.stringify({
@@ -1886,8 +1886,8 @@ export class WalletService {
       throw new Error("Withdrawal not found");
     }
 
-    if (withdrawal.status !== "PENDING") {
-      throw new Error("Only pending withdrawals can be rejected");
+    if (withdrawal.status !== "PENDING" || withdrawal.transactionHash !== null) {
+      throw new Error("Only pending withdrawals without settlement evidence can be rejected");
     }
 
     // Atomic transaction: conditionally flip PENDING -> FAILED + refund once.
@@ -1895,7 +1895,8 @@ export class WalletService {
     // a process + reject race) — only the first transition wins.
     const result = await prisma.$transaction(async (tx) => {
       const claim = await tx.withdrawal.updateMany({
-        where: { id: withdrawalId, status: "PENDING" },
+        where: { id: withdrawalId, status: "PENDING", transactionHash: null,
+          userId: withdrawal.userId, amount: withdrawal.amount, fee: withdrawal.fee, netAmount: withdrawal.netAmount },
         data: {
           status: "FAILED",
           processedBy: adminId,
@@ -1912,7 +1913,7 @@ export class WalletService {
       // refunding earnings. This keeps even the transaction's operation order
       // fail-closed when the ledger row is missing.
       const ledgerUpdate = await tx.walletTransaction.updateMany({
-        where: { reference: withdrawalId, type: "WITHDRAWAL", status: "PENDING" },
+        where: { reference: withdrawalId, userId: withdrawal.userId, type: "WITHDRAWAL", status: "PENDING", currency: "USD", amount: withdrawal.amount, fee: withdrawal.fee },
         data: { status: "FAILED" },
       });
       if (ledgerUpdate.count !== 1) {
@@ -1979,7 +1980,8 @@ export class WalletService {
 
     const result = await prisma.$transaction(async (tx) => {
       const claim = await tx.withdrawal.updateMany({
-        where: { id: withdrawalId, userId, status: "PENDING" },
+        where: { id: withdrawalId, userId, status: "PENDING", transactionHash: null,
+          amount: withdrawal.amount, fee: withdrawal.fee, netAmount: withdrawal.netAmount },
         data: {
           status: "CANCELLED",
           processedBy: userId,
@@ -1994,7 +1996,7 @@ export class WalletService {
 
       // Transition the reservation ledger before refunding the balance.
       const ledgerUpdate = await tx.walletTransaction.updateMany({
-        where: { reference: withdrawalId, type: "WITHDRAWAL", status: "PENDING" },
+        where: { reference: withdrawalId, userId: withdrawal.userId, type: "WITHDRAWAL", status: "PENDING", currency: "USD", amount: withdrawal.amount, fee: withdrawal.fee },
         data: { status: "CANCELLED" },
       });
       if (ledgerUpdate.count !== 1) {

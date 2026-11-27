@@ -315,3 +315,9 @@ describe('Withdrawal payout reservation', () => {
     expect(tx.wallet.update).not.toHaveBeenCalled();
   });
 });
+
+test('historical settlement evidence prevents ordinary rejection', async () => {
+  (prisma.withdrawal.findUnique as jest.Mock).mockResolvedValue({ ...pendingWithdrawal, transactionHash: validTxHash });
+  await expect(walletService.rejectWithdrawal('wd1', 'admin1', 'reason')).rejects.toThrow('without settlement evidence');
+  expect(prisma.$transaction).not.toHaveBeenCalled();
+});

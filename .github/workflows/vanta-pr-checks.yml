@@ -189,6 +189,10 @@ jobs:
           VANTA_CI_MAINTENANCE_DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
           VANTA_CI_SHARDING_DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
         run: npm --prefix backend run test -- --runInBand src/__tests__/durable-queue.postgres.integration.test.ts src/__tests__/database-replica.postgres.integration.test.ts src/__tests__/distributed-maintenance.postgres.integration.test.ts src/__tests__/sharding-assessment.postgres.integration.test.ts
+      - name: Verify withdrawal replay registry migration
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
+        run: node backend/scripts/verify-withdrawal-claim-migration.cjs
       - name: Verify approved gift catalog migration and historical records
         env:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
