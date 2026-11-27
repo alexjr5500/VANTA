@@ -13,6 +13,8 @@ import {
 import { authenticateJWT } from '../middleware/auth.middleware';
 import { rateLimiter } from '../security/rateLimiter';
 
+import { shopCardEnabled } from '../config/shop-card.config';
+import { createShopCardCheckout, checkShopCardCheckout, resumeShopCardCheckout, listShopCardCheckouts } from '../services/shop-card.service';
 import { shopLiveCryptoEnabled } from '../config/shop-crypto.config';
 import { createShopCryptoInvoice, resumeShopCryptoInvoice, checkShopCryptoInvoice, listShopCryptoInvoices, shopCryptoStatus } from '../services/shop-crypto.service';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
@@ -66,9 +68,36 @@ router.post('/address', saveWalletAddress);
 
 // Coin packages (Buy Coins flow)
 router.get('/packages', getCoinPackages);
-router.get('/shop-capabilities', (_req, res) => res.json({ sandbox: shopSandboxEnabled(), liveCrypto: shopLiveCryptoEnabled() }));
+router.get('/shop-capabilities', (_req, res) => res.json({ sandbox: shopSandboxEnabled(), liveCrypto: shopLiveCryptoEnabled(), cardTest: shopCardEnabled() }));
 router.post('/payment-address', rateLimiter.otp, (req, res) => shopSandboxEnabled() ? getPaymentAddress(req, res) : purchasesUnderMaintenance(req, res));
 router.post('/verify-payment', rateLimiter.otp, (req, res) => shopSandboxEnabled() ? verifyPayment(req, res) : purchasesUnderMaintenance(req, res));
+// Hosted Stripe test checkout is web-only; Android Play Billing is separate.
+const cardWebOnly = (req: import('../middleware/auth.middleware').AuthRequest, res: import('express').Response): boolean => {
+  if (!shopCardEnabled() || /VANTAAndroid/i.test(req.get('user-agent') || '')) { res.status(503).json({ error: 'Web card test checkout unavailable' }); return false; }
+  if (!req.user?.userId) { res.status(401).json({ error: 'Unauthorized' }); return false; }
+  res.setHeader('Cache-Control', 'no-store');
+  return true;
+};
+router.post('/shop/card/checkouts', rateLimiter.otp, async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
+  if (!cardWebOnly(req, res)) return;
+  try { res.status(201).json(await createShopCardCheckout(req.user!.userId, req.body || {})); }
+  catch { res.status(400).json({ error: 'Unable to initialize card checkout. Review the selection and try again.' }); }
+});
+router.get('/shop/card/checkouts', async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
+  if (!cardWebOnly(req, res)) return;
+  try { res.json(await listShopCardCheckouts(req.user!.userId)); }
+  catch { res.status(503).json({ error: 'Could not load card orders' }); }
+});
+router.get('/shop/card/checkouts/:orderId', async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
+  if (!cardWebOnly(req, res)) return;
+  try { res.json(await resumeShopCardCheckout(req.user!.userId, req.params.orderId)); }
+  catch { res.status(404).json({ error: 'Card checkout unavailable' }); }
+});
+router.post('/shop/card/checkouts/:orderId/check', rateLimiter.otp, async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
+  if (!cardWebOnly(req, res)) return;
+  try { res.json(await checkShopCardCheckout(req.user!.userId, req.params.orderId)); }
+  catch { res.status(503).json({ error: 'Card confirmation unavailable. Retry before starting another payment.' }); }
+});
 // Dedicated invoice route; legacy shared-wallet live endpoints remain blocked.
 router.post('/shop/crypto/invoices', rateLimiter.otp, async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
   if (!shopLiveCryptoEnabled()) { purchasesUnderMaintenance(req, res); return; }
