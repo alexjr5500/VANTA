@@ -60,6 +60,7 @@ export class TwoFactorAuth {
     const acceptedStep = Math.floor(Date.now() / 30_000) + delta.delta;
     const where: any = {
       id: userId,
+      twoFactorSecret: secret,
       OR: [
         { twoFactorLastUsedStep: null },
         { twoFactorLastUsedStep: { lt: acceptedStep } },
@@ -265,7 +266,9 @@ export class TwoFactorAuth {
   /**
    * Generate new backup codes
    */
-  async regenerateBackupCodes(userId: string): Promise<string[]> {
+  async regenerateBackupCodes(userId: string, token?: string): Promise<string[]> {
+    const account = await prisma.user.findUnique({ where: { id: userId }, select: { twoFactorEnabled: true, twoFactorSecret: true } });
+    if (!account?.twoFactorEnabled || !account.twoFactorSecret || !speakeasy || typeof token !== 'string' || !/^\d{6}$/.test(token) || !await this.verifyAndConsumeTotp(userId, account.twoFactorSecret, token, true)) throw new Error('A fresh authenticator code is required.');
     const newCodes: string[] = [];
     const hashedCodes: string[] = [];
 
@@ -275,10 +278,11 @@ export class TwoFactorAuth {
       hashedCodes.push(CryptoUtils.sha256(code));
     }
 
-    await prisma.user.update({
-      where: { id: userId },
+    const updated = await prisma.user.updateMany({
+      where: { id: userId, twoFactorEnabled: true, twoFactorSecret: account.twoFactorSecret },
       data: { backupCodes: JSON.stringify(hashedCodes) },
     });
+    if (!updated.count) throw new Error('Two-factor configuration changed.');
 
     auditLog.log({
       userId,

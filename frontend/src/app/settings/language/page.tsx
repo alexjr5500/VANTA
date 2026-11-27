@@ -33,6 +33,9 @@ export default function LanguageSettingsPage() {
 
   const [selected, setSelected] = useState<string>('en');
   const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState('');
+  const [ready, setReady] = useState(false);
+  const pending = useRef(false);
 
   useEffect(() => {
     setSelected(locale);
@@ -46,10 +49,13 @@ export default function LanguageSettingsPage() {
         if (cancel || chosenLocally.current || !data?.language) return;
         // If the account has a saved language different from the current one,
         // switch the app to it.
-        if (data.language !== locale) void setLocale(data.language as Locale);
-        setSelected(data.language);
+        const canonical = locales.find(code => code.toLowerCase() === data.language?.toLowerCase());
+        if (!canonical) return;
+        if (canonical !== locale) void setLocale(canonical);
+        setSelected(canonical);
       })
-      .catch(() => {});
+      .catch(() => { if (!cancel) toast.error('Could not load saved language'); })
+      .finally(() => { if (!cancel) setReady(true); });
     return () => {
       cancel = true;
     };
@@ -57,22 +63,17 @@ export default function LanguageSettingsPage() {
   }, [token]);
 
   const chooseLanguage = async (value: string) => {
+    const canonical = locales.find(code => code === value);
+    if (!canonical || !token || pending.current) return;
+    pending.current = true;
     chosenLocally.current = true;
-    setSelected(value);
-    try {
-      await setLocale(value as Locale);
-    } catch {
-      /* i18n already falls back gracefully */
-    }
-    if (!token) return;
     setSaving(true);
     try {
-      await apiPut('/api/settings/privacy', { language: value }, token);
-    } catch {
-      toast.error('Could not save language', 'Please try again.');
-    } finally {
-      setSaving(false);
-    }
+      await apiPut('/api/settings/privacy', { language: canonical }, token);
+      await setLocale(canonical);
+      setSelected(canonical);
+    } catch { toast.error('Could not save language', 'Please try again.'); }
+    finally { pending.current = false; setSaving(false); }
   };
 
   return (
@@ -90,6 +91,7 @@ export default function LanguageSettingsPage() {
         </p>
       </div>
 
+      <input type="search" aria-label="Search languages" placeholder="Search languages" value={query} onChange={event => setQuery(event.target.value)} className="settings-input w-full" />
       <SettingsGroup
         icon={Globe}
         title="Display Language"
@@ -97,12 +99,14 @@ export default function LanguageSettingsPage() {
         right={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin text-white/30" /> : undefined}
       >
         <div className="divide-y divide-white/[0.06]">
-          {LANGUAGES.map((lang) => {
+          {LANGUAGES.filter(lang => (lang.label + ' ' + lang.value).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map((lang) => {
             const active = selected === lang.value;
             return (
               <button
                 key={lang.value}
                 type="button"
+                disabled={!ready || saving}
+                aria-pressed={active}
                 onClick={() => chooseLanguage(lang.value)}
                 className={cn(
                   'flex w-full min-h-14 items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.03]',

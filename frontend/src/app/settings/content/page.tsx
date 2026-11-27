@@ -8,7 +8,7 @@
    (offline downloads) are intentionally not offered.
    ═══════════════════════════════════════════════════════════════ */
 
-import { Play, Shield, Wifi, Video, SlidersHorizontal } from 'lucide-react';
+import { Play, Wifi, Video, SlidersHorizontal } from 'lucide-react';
 import { DefaultSectionSetting } from '@/components/settings/DefaultSectionSetting';
 import PageHeader from '@/components/ui/PageHeader';
 import {
@@ -100,21 +100,6 @@ export default function ContentMediaSettingsPage() {
           description="Play lighter versions of media on mobile data."
           checked={prefs.lowerData}
           onChange={(v) => toggle('lowerData', v)}
-        />
-      </SettingsGroup>
-
-      <SettingsGroup
-        icon={SlidersHorizontal}
-        title="Sensitive Content"
-        description="What you&apos;re comfortable seeing"
-        right={savedVisible ? <SavedChip /> : undefined}
-      >
-        <ToggleRow
-          icon={Shield}
-          title="Hide sensitive content"
-          description="Blur posts that may be sensitive before you open them."
-          checked={prefs.hideSensitive}
-          onChange={(v) => toggle('hideSensitive', v)}
         />
       </SettingsGroup>
 

@@ -259,7 +259,7 @@ return (
           </SettingsGroup>
 
           <SettingsGroup title="Privacy and data">
-            <SettingsLink href="/settings/privacy/audience" icon={Users} title="Mentions, calls and discoverability" description="Choose who can mention, call or find you" />
+            <SettingsLink href="/settings/privacy/audience" icon={Users} title="Audience, invitations and discoverability" description="Manage mentions, calls, stories, invites, presence and receipts" />
             <SettingsLink href="/settings/content" icon={Eye} title="Content you see" description="Media and sensitive-content preferences" />
             <SettingsLink href="/privacy-center?tab=consent" icon={Lock} title="Data sharing and consent" description="Manage and review your consent preferences" />
           </SettingsGroup>
@@ -270,7 +270,7 @@ return (
             <ToggleRow
               icon={Eye}
               title="Activity status"
-              description="Show when you're active to people who follow you."
+              description="Allow online and last active visibility for everyone. For a narrower audience, open Audience settings."
               checked={privacy.activityStatus}
               onChange={(v) => updatePrivacy('activityStatus', v)}
               disabled={loadError || saving.includes('activityStatus')}
@@ -279,7 +279,7 @@ return (
             <ToggleRow
               icon={EyeOff}
               title="Read receipts"
-              description="Let people see when you've read their messages."
+              description="Allow read receipts for everyone. Use Audience settings for follower-only receipts."
               checked={privacy.readReceipts}
               onChange={(v) => updatePrivacy('readReceipts', v)}
               disabled={loadError || saving.includes('readReceipts')}

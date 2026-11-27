@@ -45,7 +45,7 @@ const GRANULAR_PREFERENCE_KEY: Record<string, string> = {
   comment: "commentsAlerts",
   mention: "mentionsAlerts",
   message: "chatAlerts",
-  chat_request: "chatAlerts",
+  chat_request: "chatRequestAlerts",
   group: "groupAlerts",
   channel: "channelAlerts",
   live: "liveAlerts",
@@ -220,6 +220,12 @@ export class NotificationService {
     const masterAllowed = DEFAULT_PREFERENCES[master] === true ? prefs[master] !== false : prefs[master] !== false;
     const granularAllowed = granular ? prefs[granular as keyof typeof prefs] !== false : true;
     if (!masterAllowed || !granularAllowed) return false;
+    if (prefs.muteSocialAlerts && actorId && ['follow','like','comment','mention'].includes(normalized)) {
+      const muted = await prisma.mutedUser.findUnique({
+        where: { userId_targetId: { userId, targetId: actorId } }, select: { id: true },
+      });
+      if (muted) return false;
+    }
     if (prefs.followingOnlySocialAlerts && ['follow', 'like', 'comment', 'mention'].includes(normalized)) {
       // Unknown actor provenance cannot satisfy an explicitly enabled filter.
       if (!actorId) return false;

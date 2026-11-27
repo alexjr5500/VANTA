@@ -1226,6 +1226,8 @@ model NotificationPreferences {
   channelAlerts          Boolean  @default(true)
   liveInteractionsAlerts Boolean  @default(true)
   followingOnlySocialAlerts Boolean @default(false)
+  chatRequestAlerts Boolean @default(true)
+  muteSocialAlerts Boolean @default(false)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 }

@@ -87,7 +87,7 @@ router.post('/2fa/verify', authenticate, rateLimiter.login2fa, verify2FA);
 router.post('/2fa/disable', authenticate, disable2FA);
 router.get('/2fa/status', authenticate, get2FAStatus);
 router.get('/2fa/backup-codes', authenticate, getBackupCodes);
-router.post('/2fa/regenerate-backup-codes', authenticate, regenerateBackupCodes);
+router.post('/2fa/regenerate-backup-codes', authenticate, rateLimiter.login2fa, regenerateBackupCodes);
 
 // Privacy & Security
 router.get('/security/logs', authenticate, getSecurityLogs);

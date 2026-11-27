@@ -7,6 +7,7 @@ jest.mock('../prisma', () => ({
     userSettings: { findMany: jest.fn() },
     follow: { findMany: jest.fn(), findUnique: jest.fn() },
     blockedUser: { findMany: jest.fn() },
+    mutedUser: { findUnique: jest.fn() },
     notification: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
@@ -40,6 +41,20 @@ describe('NotificationService', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
+  test('muted social filter does not silence private chat or financial alerts', async () => {
+    (prisma.notificationPreferences.findUnique as jest.Mock).mockResolvedValue({ muteSocialAlerts: true });
+    (prisma.mutedUser.findUnique as jest.Mock).mockResolvedValue({ id: 'muted' });
+    expect(await notificationService.shouldDeliver('owner','like','muted')).toBe(false);
+    expect(await notificationService.shouldDeliver('owner','message','muted')).toBe(true);
+    expect(await notificationService.shouldDeliver('owner','wallet','muted')).toBe(true);
+    (prisma.notificationPreferences.findUnique as jest.Mock).mockResolvedValue(null);
+  });
+  test('request alert preference is separate from direct message alerts', async () => {
+    (prisma.notificationPreferences.findUnique as jest.Mock).mockResolvedValue({chatRequestAlerts:false,chatAlerts:true});
+    expect(await notificationService.shouldDeliver('owner','chat_request','other')).toBe(false);
+    expect(await notificationService.shouldDeliver('owner','message','other')).toBe(true);
+    (prisma.notificationPreferences.findUnique as jest.Mock).mockResolvedValue(null);
+  });
   describe('published mentions', () => {
     test('delivers a canonical post mention once, excluding blocked and restricted recipients', async () => {
       (prisma.user.findUnique as jest.Mock).mockResolvedValue({ username: 'sender' });

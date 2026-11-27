@@ -62,6 +62,7 @@ class ComplianceService {
       if (value === undefined) continue;
       if (typeof value !== 'string' || !['everyone', 'followers', 'nobody'].includes(value)) throw new Error(`Invalid privacy value for ${key}.`);
       updates[key === 'readReceipts' ? 'privacyReadReceipts' : key] = value;
+      if (key === 'readReceipts') updates.readReceipts = value !== 'nobody';
       // Chat creation still enforces the legacy privacyMessages field. Map
       // the new Privacy Center values to that established contract.
       if (key === 'messagePermissions') {

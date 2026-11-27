@@ -851,7 +851,8 @@ export const getBackupCodes = async (req: AuthenticatedRequest, res: Response): 
 export const regenerateBackupCodes = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
-    const codes = await twoFactorAuth.regenerateBackupCodes(req.user.userId);
+    const codes = await twoFactorAuth.regenerateBackupCodes(req.user.userId, req.body?.token);
+    res.set('Cache-Control', 'private, no-store');
     res.status(200).json({ backupCodes: codes });
   } catch (error) {
     res.status(400).json({ error: 'Failed to regenerate backup codes' });

@@ -1,14 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { AtSign, Phone, Search } from 'lucide-react';
+import { AtSign, Phone, Search, Eye, Users } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import { SelectRow, SettingsGroup, ToggleRow } from '@/components/settings/SettingsUI';
 import { useAuth } from '@/context/AuthContext';
 import { privacyApi } from '@/lib/complianceApi';
 
 type Mode = 'everyone' | 'followers' | 'nobody';
-type Prefs = { mentionPermissions: Mode; callPermissions: Mode; privacyCalls: string; profileSearchVisibility: boolean; searchVisibility: boolean; discoverability: boolean };
+type Prefs = { storyVisibility: Mode; groupInvites: Mode; communityInvites: Mode; onlineStatus: Mode; lastSeen: Mode; readReceipts: Mode; mentionPermissions: Mode; callPermissions: Mode; privacyCalls: string; profileSearchVisibility: boolean; searchVisibility: boolean; discoverability: boolean };
 const options = [{ value: 'everyone', label: 'Everyone' }, { value: 'followers', label: 'Your followers' }, { value: 'nobody', label: 'Nobody' }];
 
 export default function AudiencePage() {
@@ -47,6 +47,16 @@ export default function AudiencePage() {
         <SettingsGroup title="Audience and mentions">
           <SelectRow icon={AtSign} title="Who can mention you" value={prefs.mentionPermissions} options={options} disabled={busy} onSelect={(value) => void save({ mentionPermissions: value as Mode })} />
           <SelectRow icon={Phone} title="Who can call you" value={callMode || 'everyone'} options={options} disabled={busy} onSelect={(value) => void save({ callPermissions: value as Mode })} />
+        </SettingsGroup>
+        <SettingsGroup title="Visibility and invitations">
+          <SelectRow icon={Eye} title="Who can view your stories" value={prefs.storyVisibility} options={options} disabled={busy} onSelect={value => void save({storyVisibility: value as Mode})} />
+          <SelectRow icon={Users} title="Who can invite you to groups" value={prefs.groupInvites} options={options} disabled={busy} onSelect={value => void save({groupInvites: value as Mode})} />
+          <SelectRow icon={Users} title="Who can invite you to channels" value={prefs.communityInvites} options={options} disabled={busy} onSelect={value => void save({communityInvites: value as Mode})} />
+        </SettingsGroup>
+        <SettingsGroup title="Presence and receipts">
+          <SelectRow icon={Eye} title="Who can see your online status" value={prefs.onlineStatus} options={options} disabled={busy} onSelect={value => void save({onlineStatus: value as Mode})} />
+          <SelectRow icon={Eye} title="Who can see your last active time" value={prefs.lastSeen} options={options} disabled={busy} onSelect={value => void save({lastSeen: value as Mode})} />
+          <SelectRow icon={Eye} title="Who can see your read receipts" value={prefs.readReceipts} options={options} disabled={busy} onSelect={value => void save({readReceipts: value as Mode})} />
         </SettingsGroup>
         <SettingsGroup title="Discoverability">
           <ToggleRow icon={Search} title="Appear in VANTA user search" description="Allow your profile to appear in VANTA search results. This does not control external search engines."

@@ -5,6 +5,8 @@
    Help, legal, guidelines and app info in one calm list.
    ═══════════════════════════════════════════════════════════════ */
 
+import { useState } from 'react';
+import packageInfo from '../../../../package.json';
 import {
   FileText,
   HelpCircle,
@@ -17,15 +19,22 @@ import {
 import PageHeader from '@/components/ui/PageHeader';
 import { SettingsGroup, SettingsLink } from '@/components/settings/SettingsUI';
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = packageInfo.version;
 
 export default function AboutPage() {
+  const [copyStatus, setCopyStatus] = useState('');
+  const copyDetails = async () => {
+    try {
+      await navigator.clipboard.writeText(['VANTA web version: ' + APP_VERSION, 'Platform: ' + navigator.userAgent, 'Language: ' + navigator.language].join('\n'));
+      setCopyStatus('Diagnostic details copied.');
+    } catch { setCopyStatus('Could not copy details.'); }
+  };
   return (
     <div className="space-y-8 pb-24">
       <PageHeader
         sticky
         bleed
-        title="About"
+        title="Additional resources"
         back="/settings"
       />
 
@@ -84,13 +93,14 @@ export default function AboutPage() {
             <Info size={17} strokeWidth={1.9} />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-white">App version</p>
+            <p className="text-sm font-medium text-white">Web app version</p>
             <p className="mt-0.5 text-xs text-white/30">
-              @vanta/app
+              VANTA web application
             </p>
           </div>
           <span className="shrink-0 text-xs text-white/30">{APP_VERSION}</span>
         </div>
+        <div className="px-4 py-3 space-y-2"><p className="text-xs opacity-70">Share version and browser details with support. This does not include your account token or messages.</p><button type="button" onClick={() => void copyDetails()} className="min-h-10 text-sm text-[var(--vanta-gold)]">Copy diagnostic details</button>{copyStatus && <p role="status" className="text-xs opacity-75">{copyStatus}</p>}</div>
       </SettingsGroup>
     </div>
   );
