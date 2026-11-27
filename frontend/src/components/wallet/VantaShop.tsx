@@ -107,6 +107,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   const [networkSearch, setNetworkSearch] = useState('');
   const [sandbox, setSandbox] = useState(false);
   const [liveCrypto, setLiveCrypto] = useState(false);
+  const [liveNetworks, setLiveNetworks] = useState<string[]>([]);
   const [cardTest, setCardTest] = useState(false);
   const [cardOrder, setCardOrder] = useState<CardOrder | null>(null);
   const [pendingCards, setPendingCards] = useState<CardOrder[]>([]);
@@ -127,7 +128,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   useEffect(() => {
     if (!open || !token) return;
     let active = true;
-    setProduct(initialProduct); setStep('choose'); setPackId(''); setPlanId(initialPlan?.id || ''); setGift(false); setRecipient(null); setQuery(''); setRecipients([]); setRenew(false); setCustom(''); setInvoice(null); setError(''); setSandbox(false); setLiveCrypto(false); setCardTest(false); setCardOrder(null); setPendingCards([]); setPendingInvoices([]); setTxHash(''); setPaymentStatus('PENDING'); setQrExpanded(false); setPacks([]); setPlans([]); setRate(null); setBalance(null); setAvailableCoins(null); setCoinBadge(false); setWalletPin(''); setCoinReceipt(null); coinRequest.current = null; setMethod('crypto'); setNetwork('usdt-bep20'); setLoading(true);
+    setProduct(initialProduct); setStep('choose'); setPackId(''); setPlanId(initialPlan?.id || ''); setGift(false); setRecipient(null); setQuery(''); setRecipients([]); setRenew(false); setCustom(''); setInvoice(null); setError(''); setSandbox(false); setLiveCrypto(false); setLiveNetworks([]); setCardTest(false); setCardOrder(null); setPendingCards([]); setPendingInvoices([]); setTxHash(''); setPaymentStatus('PENDING'); setQrExpanded(false); setPacks([]); setPlans([]); setRate(null); setBalance(null); setAvailableCoins(null); setCoinBadge(false); setWalletPin(''); setCoinReceipt(null); coinRequest.current = null; setMethod('crypto'); setNetwork('usdt-bep20'); setLoading(true);
     Promise.allSettled([
       request('/api/wallets/packages', token).then(data => ({ packs: packagesFrom(data), rate: obj(data).exchangeRate })),
       getBadgePurchasePlans(token),
@@ -146,6 +147,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
         setSandbox(capabilities.sandbox === true);
         setCoinBadge(capabilities.coinBadge === true);
         setLiveCrypto(capabilities.liveCrypto === true);
+        if (Array.isArray(capabilities.cryptoNetworks)) setLiveNetworks(capabilities.cryptoNetworks.filter((v: unknown): v is string => typeof v === 'string'));
         const webCard = capabilities.cardTest === true && !/VANTAAndroid/i.test(navigator.userAgent);
         setCardTest(webCard);
         if (webCard) {
@@ -229,6 +231,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   const ready = !loading && typeof price === 'number' && price > 0 && (product === 'badge' ? !!plan : quantity > 0) && (!gift || !!recipient);
   const remaining = invoice ? Math.max(0, Math.ceil((Date.parse(invoice.expiresAt) - clock) / 1000)) : 0;
   const countdown = Math.floor(remaining / 60).toString().padStart(2, '0') + ':' + (remaining % 60).toString().padStart(2, '0');
+  const networkEnabled = (id: string) => sandbox ? networks.some(n => n.id === id && n.enabled) : liveCrypto && liveNetworks.includes(id);
   const networkInfo = networks.find(n => n.id === network);
   const recipientLabel = gift ? recipient ? '@' + recipient.username : 'Choose recipient' : 'You';
   const productLabel = product === 'badge' ? plan?.name || 'Verification Badge' : (invoice?.coins || quantity).toLocaleString() + ' VANTA Coins';
@@ -237,7 +240,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   const clipboard = async (value: string) => { try { await navigator.clipboard.writeText(value); setCopied(value); } catch { setError('Clipboard unavailable. Select and copy manually.'); } };
   const paste = async () => { try { setRecipient(null); setQuery((await navigator.clipboard.readText()).trim()); } catch { setError('Paste the username into the field manually.'); } };
   const badgeCost = product === 'badge' && plan && rate ? Math.round(plan.priceUSD * rate) : null;
-  const canPay = !renew && (method === 'card' ? cardTest : method === 'coins' ? coinBadge && badgeCost !== null && availableCoins !== null && availableCoins >= badgeCost && /^[0-9]{4,6}$/.test(walletPin) : method === 'crypto' && (sandbox || (liveCrypto && !gift)) && !!networkInfo?.enabled);
+  const canPay = !renew && (method === 'card' ? cardTest : method === 'coins' ? coinBadge && badgeCost !== null && availableCoins !== null && availableCoins >= badgeCost && /^[0-9]{4,6}$/.test(walletPin) : method === 'crypto' && (sandbox || (liveCrypto && !gift)) && networkEnabled(network));
   async function resumeCard(orderId: string) {
     if (!token || actionLock.current) return;
     actionLock.current = true; setBusy(true); setError('');
@@ -377,7 +380,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
       </main>
       {!showPay && <footer className="shrink-0 space-y-2 rounded-t-2xl border-t border-white/5 bg-[#191d21] px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-3">{error && <p role="alert" className="text-sm text-red-300">{error}</p>}{step === 'choose' && footerButton(ready && price !== undefined ? (gift ? 'Gift ' : product === 'badge' ? 'Subscribe for ' : 'Buy ' + quantity.toLocaleString() + ' coins for ') + usd(price) + (product === 'badge' && plan ? ' / ' + plan.durationLabel : '') : product === 'badge' ? 'Subscribe' : 'Buy coins', () => go('payment'), !ready)}{(step === 'invoice' || step === 'waiting') && <>{footerButton(invoice?.mode === 'live' ? (step === 'waiting' ? 'Check payment again' : "I've sent the payment") : step === 'waiting' ? 'Check test payment again' : 'Confirm test payment', confirm, remaining <= 0 || paymentStatus === 'RECONCILIATION')}<button type="button" onClick={close} disabled={busy} className="w-full rounded-xl bg-[#212529] py-3 text-sm">Close</button></>}{step === 'card' && footerButton('Check card payment', checkCard, !cardTest || !cardOrder)}{step === 'success' && footerButton('Done', close)}</footer>}
       {showPay && <div className="absolute inset-0 z-10 flex flex-col justify-end bg-black/65"><section aria-label={step === 'token' ? 'Payment token' : 'Payment'} className="flex max-h-[96%] min-h-[50%] flex-col rounded-t-2xl bg-[#191d21]"><header className="flex shrink-0 items-center justify-between px-4 py-3"><h2 className="text-xl font-semibold">{step === 'token' ? 'Payment token' : 'Payment'}</h2><button type="button" aria-label="Close payment sheet" disabled={busy} onClick={() => go(step === 'token' ? 'payment' : 'choose')} className="grid h-9 w-9 place-items-center rounded-full bg-[#212529]"><X size={20}/></button></header><div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4">
-        {step === 'token' ? <><label className="flex items-center gap-2 rounded-xl bg-[#212529] p-3"><Search size={18}/><input aria-label="Search payment tokens" placeholder="Search…" value={networkSearch} onChange={e => setNetworkSearch(e.target.value)} className="min-w-0 flex-1 bg-transparent outline-none"/></label>{networks.filter(n => (n.label + ' ' + n.chain).toLowerCase().includes(networkSearch.toLowerCase())).map(n => <Choice key={n.id} selected={network === n.id} disabled={!n.enabled} onClick={() => setNetwork(n.id)} icon={<Bitcoin size={22}/>} title={n.label} detail={n.chain + (!n.enabled ? ' · Not configured' : '')}/>)}</> : <>
+        {step === 'token' ? <><label className="flex items-center gap-2 rounded-xl bg-[#212529] p-3"><Search size={18}/><input aria-label="Search payment tokens" placeholder="Search…" value={networkSearch} onChange={e => setNetworkSearch(e.target.value)} className="min-w-0 flex-1 bg-transparent outline-none"/></label>{networks.filter(n => (n.label + ' ' + n.chain).toLowerCase().includes(networkSearch.toLowerCase())).map(n => <Choice key={n.id} selected={network === n.id} disabled={!networkEnabled(n.id)} onClick={() => setNetwork(n.id)} icon={<Bitcoin size={22}/>} title={n.label} detail={n.chain + (!networkEnabled(n.id) ? ' · Not configured' : '')}/>)}</> : <>
           <div className={cardClass + ' p-4'}><p className={'text-sm ' + muted}>Total</p><p className="my-1 text-2xl font-bold">{usd(price || 0)}</p><div className="mt-4 flex justify-between gap-2 text-sm"><span className={muted}>{product === 'coins' ? 'VANTA Coins' : 'Verification Badge'}</span><span className="text-right">{product === 'coins' ? quantity.toLocaleString() : plan?.durationLabel}</span></div><div className="mt-2 flex justify-between text-sm"><span className={muted}>Recipient</span><span>{recipientLabel}</span></div>{product === 'badge' && <><label className="mt-2 flex justify-between text-sm"><span className={muted}>Auto-renewal</span><input type="checkbox" role="switch" checked={renew} onChange={e => setRenew(e.target.checked)}/></label>{renew && <div className="mt-2 flex justify-between text-sm"><span className={muted}>Renewal period</span><span>Every {plan?.durationLabel}</span></div>}</>}</div>
           {product === 'badge' && plan && <><div className="flex items-center justify-between text-sm"><span>Plan</span><button type="button" onClick={() => go('choose')} className="flex items-center gap-1 text-[#b8bcc0]"><Pencil size={14}/>Change</button></div><Choice selected onClick={() => go('choose')} icon={<VerificationBadge type={plan.badgeType} size="md"/>} title={plan.name} detail={usd(plan.priceUSD)}/></>}
           <h3 className="pt-2 text-sm">Payment method</h3><Choice selected={method === 'card'} onClick={() => setMethod('card')} icon={<CreditCard size={22}/>} title="Card" detail={cardTest ? "Secure Stripe hosted checkout · test mode" : "Hosted web card checkout · not configured"}/>
