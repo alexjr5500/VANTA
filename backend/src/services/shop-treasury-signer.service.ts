@@ -1,4 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
+import { treasuryHash } from '../config/shop-treasury-hash';
 import { automaticTreasuryConfig, positiveAtomic } from '../config/shop-treasury-auto.config';
 
 export type SignerConfig = NonNullable<ReturnType<typeof automaticTreasuryConfig>>;
@@ -24,9 +25,10 @@ export function validateSignerResult(value: unknown, intent: SettlementIntent, a
       v.source !== intent.source || v.destination !== intent.destination || v.amountAtomic !== intent.amountAtomic ||
       v.maxFeeAtomic !== intent.maxFeeAtomic || v.incomingTransactionHash !== intent.incomingTransactionHash || v.expiresAt !== intent.expiresAt) throw new Error('Signer transfer binding mismatch');
   if (v.status === 'broadcast') {
-    if (typeof v.transactionHash !== 'string' || !/^0x[0-9a-f]{64}$/i.test(v.transactionHash) || v.transactionHash.toLowerCase() === intent.incomingTransactionHash.toLowerCase() ||
+    const hash = treasuryHash(intent.network, v.transactionHash);
+    if (!hash || hash === treasuryHash(intent.network, intent.incomingTransactionHash) ||
         !positiveAtomic(v.approvedFeeAtomic) || BigInt(v.approvedFeeAtomic) > BigInt(intent.maxFeeAtomic)) throw new Error('Invalid signer broadcast proof');
-    return { status: 'broadcast', transactionHash: v.transactionHash.toLowerCase() };
+    return { status: 'broadcast', transactionHash: hash };
   }
   if (v.status === 'accepted' || v.status === 'pending' || v.status === 'rejected') {
     if (v.transactionHash != null) throw new Error('Unexpected signer transaction hash');

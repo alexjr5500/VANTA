@@ -13,7 +13,7 @@ async function readJson(url: URL, headers: Record<string, string>) {
   return body as Json;
 }
 export async function tonCall(path: string, query: Record<string, string> = {}): Promise<Json> {
-  if (!['/api/v3/masterchainInfo', '/api/v3/transactions', '/api/v2/getWalletInformation'].includes(path)) throw new Error('Invalid TON API path');
+  if (!['/api/v3/masterchainInfo', '/api/v3/transactions', '/api/v3/transactionsByMessage', '/api/v2/getWalletInformation'].includes(path)) throw new Error('Invalid TON API path');
   const url = new URL(path, ORIGIN);
   url.search = new URLSearchParams(query).toString();
   const key = process.env.VANTA_TONCENTER_API_KEY;
@@ -63,7 +63,7 @@ export function gramPaymentUri(address: string, atomic: string) {
   if (!/^[1-9][0-9]*$/.test(atomic)) throw new Error('Invalid GRAM amount');
   return 'ton://transfer/' + tonFriendlyAddress(address) + '?amount=' + atomic;
 }
-function validTransfer(tx: Json, invoice: ShopCryptoInvoice, hash: string, head: number) {
+export function validTransfer(tx: Json, invoice: ShopCryptoInvoice, hash: string, head: number) {
   const message = tx.in_msg, desc = tx.description;
   const sender = tonRawAddress(message?.source);
   return tonHashHex(tx.hash) === hash && tonRawAddress(tx.account) === invoice.address &&

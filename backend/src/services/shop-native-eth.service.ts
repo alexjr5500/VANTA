@@ -39,14 +39,14 @@ export async function quoteEth(network: BlockchainNetworkConfig, usd: number, rp
   if (round <= BigInt(0) || answer <= BigInt(0) || answer >= BigInt(2) ** BigInt(255) || started <= BigInt(0) || updated < started || answered < round || !Number.isSafeInteger(timestamp) || timestamp > now || now - timestamp > 3600000) throw new Error('ETH price feed stale or invalid');
   return { amountAtomic: ethAtomicFromQuote(usd, answer.toString()), quotePrice8: answer.toString(), quoteUpdatedAt: new Date(timestamp) };
 }
-export async function verifyNativeEth(network: BlockchainNetworkConfig, invoice: ShopCryptoInvoice, hash: string, rpc: Rpc) {
+export async function verifyNativeEth(network: BlockchainNetworkConfig, invoice: ShopCryptoInvoice, hash: string, rpc: Rpc, expectedSender?: string) {
   if (!network.native || network.chainId !== 1 || hex(await rpc(network, 'eth_chainId', [])) !== BigInt(1)) throw new Error('Wrong Ethereum network');
   if (!/^0x[0-9a-f]{64}$/i.test(hash)) throw new Error('Invalid transaction hash');
   const tx = await rpc(network, 'eth_getTransactionByHash', [hash]);
   const receipt = await rpc(network, 'eth_getTransactionReceipt', [hash]);
   if (!tx || !receipt) throw new BlockchainTxVerificationError('TRANSACTION_PENDING', 'Waiting for Ethereum transaction.', true);
   const t = object(tx), r = object(receipt);
-  if (String(t.hash).toLowerCase() !== hash.toLowerCase() || String(r.transactionHash).toLowerCase() !== hash.toLowerCase() || hex(r.status) !== BigInt(1) || String(t.to).toLowerCase() !== invoice.address || String(r.to).toLowerCase() !== invoice.address || typeof t.from !== 'string' || t.from.toLowerCase() === invoice.address || String(t.input) !== '0x' || hex(t.value).toString() !== invoice.amountAtomic) throw new BlockchainTxVerificationError('AMOUNT_MISMATCH', 'Not an exact direct ETH payment for this invoice.');
+  if (String(t.hash).toLowerCase() !== hash.toLowerCase() || String(r.transactionHash).toLowerCase() !== hash.toLowerCase() || hex(r.status) !== BigInt(1) || String(t.to).toLowerCase() !== invoice.address || String(r.to).toLowerCase() !== invoice.address || typeof t.from !== 'string' || t.from.toLowerCase() === invoice.address || (expectedSender !== undefined && t.from.toLowerCase() !== expectedSender.toLowerCase()) || String(t.input) !== '0x' || hex(t.value).toString() !== invoice.amountAtomic) throw new BlockchainTxVerificationError('AMOUNT_MISMATCH', 'Not an exact direct ETH payment for this invoice.');
   const height = hex(r.blockNumber);
   if (hex(t.blockNumber) !== height || String(t.blockHash).toLowerCase() !== String(r.blockHash).toLowerCase() || height < BigInt(invoice.startBlock)) throw new BlockchainTxVerificationError('TRANSACTION_FAILED', 'Invalid invoice block.');
   const final = object(await rpc(network, 'eth_getBlockByNumber', ['finalized', false]));
@@ -54,5 +54,5 @@ export async function verifyNativeEth(network: BlockchainNetworkConfig, invoice:
   const block = object(await rpc(network, 'eth_getBlockByNumber', [r.blockNumber, false]));
   const timestamp = Number(hex(block.timestamp)) * 1000;
   if (String(block.hash).toLowerCase() !== String(r.blockHash).toLowerCase() || hex(block.number) !== height || !Number.isSafeInteger(timestamp) || timestamp < Math.floor(invoice.createdAt.getTime() / 1000) * 1000 || timestamp > invoice.expiresAt.getTime()) throw new BlockchainTxVerificationError('TRANSACTION_FAILED', 'Payment outside canonical invoice window.');
-  return { verified: true, txHash: hash.toLowerCase(), network: network.id, recipient: invoice.address, amountAtomic: invoice.amountAtomic, blockNumber: Number(height), blockHash: r.blockHash, verifiedAt: new Date().toISOString() };
+  return { verified: true, sender: t.from, txHash: hash.toLowerCase(), network: network.id, recipient: invoice.address, amountAtomic: invoice.amountAtomic, blockNumber: Number(height), blockHash: r.blockHash, verifiedAt: new Date().toISOString() };
 }

@@ -4,6 +4,8 @@ import type { Prisma, ShopTreasuryTransfer, ShopCryptoInvoice } from '@prisma/cl
 import { appendAuditLog } from '../security/auditLog';
 import { automaticTreasuryConfig, isAutoNetwork, positiveAtomic } from '../config/shop-treasury-auto.config';
 import { getBlockchainNetwork, getMinBlockchainConfirmations, BlockchainNetworkConfig } from '../config/blockchain-networks.config';
+import { canonicalTreasuryAddress, expectedInvoiceAtomic, preflightSpecial, verifySpecialOutgoing } from './shop-treasury-chain.service';
+import { treasuryHash } from '../config/shop-treasury-hash';
 import { assertVerifiedInvoice } from './shop-treasury.service';
 import { blockchainTxVerifier, BlockchainTxVerificationError } from './blockchain-verifier.service';
 import { requestCustody, SignerConfig, SettlementIntent } from './shop-treasury-signer.service';
@@ -17,9 +19,6 @@ function cents(amount: number) {
   if (!Number.isSafeInteger(n) || n <= 0 || Math.abs(amount - n / 100) > 1e-8) throw new Error('Invalid invoice value');
   return n;
 }
-function expectedAtomic(amount: number, decimals: number) {
-  return (BigInt(cents(amount)) * BigInt(10) ** BigInt(decimals - 2)).toString();
-}
 
 export function buildSettlementIntent(row: Row, config: SignerConfig): SettlementIntent {
   const chain = getBlockchainNetwork(row.network);
@@ -28,7 +27,7 @@ export function buildSettlementIntent(row: Row, config: SignerConfig): Settlemen
       row.destination !== policy.destination || row.maxFeeAtomic !== policy.maxFeeAtomic || !row.signerRequestId ||
       !row.dispatchDeadline || !row.invoice.transactionHash || !positiveAtomic(row.amountAtomic) ||
       row.source !== row.invoice.address || row.amountAtomic !== row.invoice.amountAtomic || row.network !== row.invoice.network ||
-      row.source === row.destination || !/^0x[0-9a-f]{40}$/.test(row.source) || !/^0x[0-9a-f]{64}$/i.test(row.invoice.transactionHash)) throw new Error('Settlement policy or invoice binding changed');
+      row.source === row.destination || canonicalTreasuryAddress(row.network,row.source) !== row.source || canonicalTreasuryAddress(row.network,row.destination) !== row.destination || !treasuryHash(row.network,row.invoice.transactionHash)) throw new Error('Settlement policy or invoice binding changed');
   return { requestId: row.signerRequestId, policyId: config.policyId, network: row.network, chainId: chain.chainId,
     tokenContract: chain.tokenContract, source: row.source, destination: row.destination, amountAtomic: row.amountAtomic,
     maxFeeAtomic: policy.maxFeeAtomic, incomingTransactionHash: row.invoice.transactionHash, expiresAt: row.dispatchDeadline.toISOString() };
@@ -50,7 +49,8 @@ async function preflight(row: Row, intent: SettlementIntent) {
   const chain = getBlockchainNetwork(row.network)!;
   if (await prisma.shopCryptoInvoice.findUnique({ where: { address: row.destination }, select: { id: true } })) throw new Error('Treasury destination is a historical invoice address');
   const order = await assertVerifiedInvoice(prisma, row.invoice);
-  if (cents(order.amount) !== row.orderAmountCents || expectedAtomic(order.amount, chain.tokenDecimals) !== row.amountAtomic) throw new Error('Invoice amount changed');
+  if (cents(order.amount) !== row.orderAmountCents || expectedInvoiceAtomic(row.invoice,order.amount,chain) !== row.amountAtomic) throw new Error('Invoice amount changed');
+  if (chain.native || chain.tron || chain.ton) { await preflightSpecial(row,chain,rpc); return; }
   await blockchainTxVerifier.verifyTransaction({ network: row.network, txHash: intent.incomingTransactionHash,
     expectedRecipient: row.source, expectedAmountUsd: order.amount, expectedAtomicAmount: row.amountAtomic,
     notBefore: new Date(Math.floor(row.invoice.createdAt.getTime() / 1000) * 1000), notAfter: row.invoice.expiresAt,
@@ -85,13 +85,13 @@ async function enqueue(config: SignerConfig) {
           SELECT 1 FROM "PurchaseOrder" p WHERE p."id" = i."orderId"
             AND p."userId" = i."payerId" AND p."status" = 'COMPLETED'
             AND p."paymentMode" = 'live' AND p."paymentMethod" = i."network"
-            AND p."providerOrderId" = 'live:' || i."transactionHash"
+            AND p."providerOrderId" = 'live:' || CASE WHEN i."network" = 'gram-ton' THEN 'ton:' WHEN i."network" = 'usdt-trc20' THEN 'tron:' ELSE '' END || i."transactionHash"
             AND p."amount" > 0 AND p."amount" <= ${config.maxOrderCents / 100}))
         OR (i."product" = 'badge' AND EXISTS (
           SELECT 1 FROM "VerificationPurchase" p WHERE p."id" = i."orderId"
             AND p."userId" = i."payerId" AND p."status" = 'COMPLETED'
             AND p."paymentMode" = 'live' AND p."network" = i."network"
-            AND p."providerOrderId" = 'live:' || i."transactionHash"
+            AND p."providerOrderId" = 'live:' || CASE WHEN i."network" = 'gram-ton' THEN 'ton:' WHEN i."network" = 'usdt-trc20' THEN 'tron:' ELSE '' END || i."transactionHash"
             AND p."amount" > 0 AND p."amount" <= ${config.maxOrderCents / 100}))
       )
     ORDER BY i."settledAt", i."id" LIMIT 25
@@ -108,7 +108,7 @@ async function enqueue(config: SignerConfig) {
         const order = await assertVerifiedInvoice(tx, invoice);
         const usd = cents(order.amount);
         const chain = getBlockchainNetwork(invoice.network);
-        if (!chain || !positiveAtomic(invoice.amountAtomic) || expectedAtomic(order.amount, chain.tokenDecimals) !== invoice.amountAtomic ||
+        if (!chain || !positiveAtomic(invoice.amountAtomic) || expectedInvoiceAtomic(invoice,order.amount,chain) !== invoice.amountAtomic ||
             invoice.address === policy.destination || usd > active.maxOrderCents) return;
         const day = new Date(); day.setUTCHours(0, 0, 0, 0);
         const totals = await tx.shopTreasuryTransfer.aggregate({ where: { automation: true, authorizedAt: { gte: day } }, _sum: { orderAmountCents: true } });
@@ -134,6 +134,13 @@ async function change(row: Row, lease: string, data: Prisma.ShopTreasuryTransfer
 async function confirmOutgoing(row: Row, lease: string) {
   const chain = getBlockchainNetwork(row.network)!;
   const hash = row.transactionHash!;
+  if (chain.native || chain.tron || chain.ton) {
+    const fee = await verifySpecialOutgoing(row,chain,rpc);
+    if (!row.maxFeeAtomic || fee > BigInt(row.maxFeeAtomic)) {
+      await change(row,lease,{status:'AUTO_REVIEW',lastFailure:'Verified transfer exceeded fee policy; reconcile without rebroadcast.',nextAttemptAt:null},'TREASURY_AUTO_FEE_EXCEPTION');
+    } else await change(row,lease,{status:'VERIFIED',verifiedAt:new Date(),nextAttemptAt:null,lastFailure:null},'TREASURY_AUTO_VERIFIED');
+    return;
+  }
   const amount = Number(BigInt(row.amountAtomic)) / Number(BigInt(10) ** BigInt(chain.tokenDecimals));
   const proof = await blockchainTxVerifier.verifyTransaction({ network: row.network, txHash: hash,
     expectedSender: row.source, expectedRecipient: row.destination, expectedAmountUsd: amount, expectedAtomicAmount: row.amountAtomic,

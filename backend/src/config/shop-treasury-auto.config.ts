@@ -2,9 +2,8 @@ import { getCoinPaymentMode } from './coin-payments.config';
 import { treasuryAddress } from './shop-treasury.config';
 import { getBlockchainNetwork } from './blockchain-networks.config';
 
-// Initial automatic release supports exact ERC-20/BEP-20 stablecoin sweeps.
-// Native coin fee deductions and non-EVM outbound proof need separate review.
-export const AUTO_TREASURY_NETWORKS = ['usdt-bep20', 'usdc-base', 'usdt-erc20'] as const;
+// All transfers preserve the full invoice amount. Native fees require a separate reserve.
+export const AUTO_TREASURY_NETWORKS = ['usdt-bep20', 'usdc-base', 'usdt-erc20', 'eth-erc20', 'usdt-trc20', 'gram-ton'] as const;
 export type AutoNetwork = typeof AUTO_TREASURY_NETWORKS[number];
 export function isAutoNetwork(network: string): network is AutoNetwork {
   return AUTO_TREASURY_NETWORKS.some(n => n === network);
@@ -16,6 +15,9 @@ const maxFeeKeys: Record<AutoNetwork, string> = {
   'usdt-bep20': 'VANTA_TREASURY_BSC_MAX_FEE_WEI',
   'usdc-base': 'VANTA_TREASURY_BASE_MAX_FEE_WEI',
   'usdt-erc20': 'VANTA_TREASURY_ETHEREUM_MAX_FEE_WEI',
+  'eth-erc20': 'VANTA_TREASURY_ETHEREUM_MAX_FEE_WEI',
+  'usdt-trc20': 'VANTA_TREASURY_TRON_MAX_FEE_SUN',
+  'gram-ton': 'VANTA_TREASURY_TON_MAX_FEE_NANO',
 };
 export function automaticTreasuryConfig() {
   if (process.env.VANTA_TREASURY_AUTO_ENABLED !== 'true' || getCoinPaymentMode() !== 'live') return null;
@@ -38,6 +40,10 @@ export function automaticTreasuryConfig() {
     const destination = treasuryAddress(network);
     const maxFeeAtomic = process.env[maxFeeKeys[network]];
     if (!destination || !positiveAtomic(maxFeeAtomic) || !getBlockchainNetwork(network)?.rpcUrl) return null;
+    // Additional rail-specific review is mandatory; no inherited opt-in.
+    if (network === 'eth-erc20' && process.env.VANTA_TREASURY_NATIVE_ETH_REVIEWED !== 'true') return null;
+    if (network === 'usdt-trc20' && (process.env.VANTA_TREASURY_TRON_REVIEWED !== 'true' || !process.env.VANTA_TRONGRID_API_KEY)) return null;
+    if (network === 'gram-ton' && (process.env.VANTA_TREASURY_TON_REVIEWED !== 'true' || !process.env.VANTA_TONCENTER_API_KEY)) return null;
     networks.push({ network, destination, maxFeeAtomic });
   }
   return { origin: url.origin, policyId, secret, maxOrderCents, dailyCapCents, networks };

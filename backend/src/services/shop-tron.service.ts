@@ -29,7 +29,7 @@ export async function tronHead(call: Call = tronCall): Promise<number> {
   if (!Number.isSafeInteger(n) || n < 0 || n >= 2147483647 || !txId(head.blockID)) throw new Error('Invalid TRON mainnet head');
   return n;
 }
-export async function verifyTronUsdt(invoice: ShopCryptoInvoice, hash: string, call: Call = tronCall) {
+export async function verifyTronUsdt(invoice: ShopCryptoInvoice, hash: string, call: Call = tronCall, expectedSender?: string) {
   const id = txId(hash);
   const recipient = tronAddressHex(invoice.address);
   if (!id || !recipient || invoice.network !== 'usdt-trc20') throw new Error('Invalid TRON invoice or transaction');
@@ -54,7 +54,7 @@ export async function verifyTronUsdt(invoice: ShopCryptoInvoice, hash: string, c
     throw new BlockchainTxVerificationError('WRONG_TOKEN', 'Not an exact direct official USDT transfer.');
   }
   const sender = normalizeTronHex(callData.owner_address);
-  if (!sender || sender === recipient) throw new BlockchainTxVerificationError('WRONG_SENDER', 'Invalid TRON payment sender.');
+  if (!sender || sender === recipient || (expectedSender !== undefined && sender !== tronAddressHex(expectedSender))) throw new BlockchainTxVerificationError('WRONG_SENDER', 'Invalid TRON payment sender.');
   const matching = (Array.isArray(info.log) ? info.log : []).filter((log: Json) => {
     const topics = log.topics;
     return normalizeTronHex(log.address) === CONTRACT && Array.isArray(topics) && topics.length === 3 &&
@@ -69,7 +69,11 @@ export async function verifyTronUsdt(invoice: ShopCryptoInvoice, hash: string, c
       !txId(block.blockID) || !Array.isArray(block.transactions) || !block.transactions.some((t: Json) => txId(t.txID) === id)) {
     throw new BlockchainTxVerificationError('RPC_ERROR', 'Solidified block inclusion could not be established.', true);
   }
-  return { verified: true, txHash: id, network: 'usdt-trc20', recipient: invoice.address, asset: 'USDT', amountAtomic: invoice.amountAtomic, blockNumber: info.blockNumber, blockHash: block.blockID, verifiedAt: new Date().toISOString() };
+  // Reject attached native currency or auxiliary token value on an outgoing sweep.
+  if (expectedSender && ((callData.call_value ?? 0) !== 0 || (callData.call_token_value ?? 0) !== 0)) throw new BlockchainTxVerificationError('TRANSACTION_FAILED', 'Unexpected attached value.');
+  const fee = info.fee ?? 0;
+  if (!Number.isSafeInteger(fee) || fee < 0) throw new Error('Invalid TRON fee');
+  return { verified: true, sender, feeAtomic: String(fee), txHash: id, network: 'usdt-trc20', recipient: invoice.address, asset: 'USDT', amountAtomic: invoice.amountAtomic, blockNumber: info.blockNumber, blockHash: block.blockID, verifiedAt: new Date().toISOString() };
 }
 
 /** Indexer discovery is not proof. Each candidate is independently verified. */
