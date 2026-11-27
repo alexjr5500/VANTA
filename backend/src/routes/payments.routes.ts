@@ -1,7 +1,19 @@
 import { Router, Request, Response } from 'express';
 import { rateLimiter } from '../security/rateLimiter';
 
+import { shopCardEnabled } from '../config/shop-card.config';
+import { handleShopCardWebhook } from '../services/shop-card.service';
+
 const router = Router();
+
+router.post('/shop/stripe/webhook', rateLimiter.coinWebhook, async (req: Request, res: Response) => {
+  if (!shopCardEnabled()) { res.status(503).json({ error: 'Card checkout disabled' }); return; }
+  const raw = (req as Request & { rawBody?: string }).rawBody;
+  const sig = req.headers['stripe-signature'];
+  if (typeof raw !== 'string' || typeof sig !== 'string') { res.status(400).json({ error: 'Missing signature or raw body' }); return; }
+  try { res.json(await handleShopCardWebhook(raw, sig)); }
+  catch { res.status(400).json({ error: 'Card event verification or reconciliation failed' }); }
+});
 
 /**
  * POST /api/payments/webhook
