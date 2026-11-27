@@ -230,7 +230,8 @@ export const initializeVerificationPurchase = async (req: AuthenticatedRequest, 
       req.user!.userId,
       planId,
       network,
-      req.ip
+      req.ip,
+      req.body?.recipientId
     );
     res.status(201).json(payload);
   } catch (error) {
