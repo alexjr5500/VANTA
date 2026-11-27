@@ -507,6 +507,7 @@ export const verifyPayment = async (req: AuthRequest, res: Response): Promise<vo
     }
     const order = await prisma.purchaseOrder.findFirst({ where: { id: orderId, userId } });
     if (!order) { res.status(404).json({ error: 'Purchase order not found.' }); return; }
+    if (order.paymentMethod === 'stripe-card') { res.status(400).json({ error: 'Use the card checkout status endpoint.' }); return; }
     if (order.status === COIN_PAYMENT_STATUS.COMPLETED) {
       // Idempotent replay of a success callback/webhook — no second credit.
       res.status(200).json({ success: true, message: 'Purchase already confirmed.', coins: order.coins });
