@@ -11,6 +11,8 @@ import {
   getWithdrawals,
   approveWithdrawal,
   reserveWithdrawalPayout,
+  recordWithdrawalRecovery,
+  getWithdrawalRecoveryHistory,
   rejectWithdrawal,
   getCreators,
   verifyCreator,
@@ -227,6 +229,8 @@ router.post('/appeals/:appealId/decision', requirePermission(Permission.MODERATE
 
 // Withdrawals
 router.get('/withdrawals', requirePermission(Permission.VIEW_WALLET), getWithdrawals);
+router.get('/withdrawals/:withdrawalId/recovery', requirePermission(Permission.PROCESS_WITHDRAWALS), getWithdrawalRecoveryHistory);
+router.post('/withdrawals/recovery', requirePermission(Permission.PROCESS_WITHDRAWALS), recordWithdrawalRecovery);
 router.post('/withdrawals/reserve-payout', requirePermission(Permission.PROCESS_WITHDRAWALS), reserveWithdrawalPayout);
 router.post('/withdrawals/approve', requirePermission(Permission.PROCESS_WITHDRAWALS), approveWithdrawal);
 router.post('/withdrawals/reject', requirePermission(Permission.PROCESS_WITHDRAWALS), rejectWithdrawal);

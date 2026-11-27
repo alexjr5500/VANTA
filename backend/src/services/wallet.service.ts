@@ -1782,6 +1782,76 @@ export class WalletService {
     });
   }
 
+  /**
+   * Recovery evidence is operator-reported, never authorization to pay/refund.
+   * Keep a reserved or legacy unresolved payout fenced until independent
+   * settlement or a separately approved recovery policy exists.
+   */
+  async recordWithdrawalRecovery(withdrawalId: string, adminId: string, input: {
+    expectedStatus: unknown; outcome: unknown; caseReference: unknown; notes: unknown;
+    candidateHash?: unknown;
+  }) {
+    const outcomes = ['UNKNOWN', 'PAYOUT_PENDING', 'PAYOUT_FAILED_REPORTED', 'PAYOUT_FOUND', 'NO_PAYOUT_FOUND'];
+    const active = ['PAYOUT_RESERVED', 'PROCESSING', 'APPROVED'];
+    if (typeof input.expectedStatus !== 'string' || !active.includes(input.expectedStatus) ||
+        typeof input.outcome !== 'string' || !outcomes.includes(input.outcome)) {
+      throw new Error('Invalid recovery status or reported outcome');
+    }
+    const caseReference = typeof input.caseReference === 'string' ? input.caseReference.trim() : '';
+    const notes = typeof input.notes === 'string' ? input.notes.trim() : '';
+    const candidateHash = typeof input.candidateHash === 'string' ? input.candidateHash.trim().toLowerCase() : '';
+    if (!/^[A-Za-z0-9._-]{5,80}$/.test(caseReference) || notes.length < 20 || notes.length > 1000 ||
+        (input.candidateHash !== undefined && typeof input.candidateHash !== 'string') ||
+        (candidateHash && !/^0x[a-f0-9]{64}$/.test(candidateHash)) ||
+        (input.outcome === 'PAYOUT_FOUND' && !candidateHash)) {
+      throw new Error('Valid case reference, reconciliation notes and applicable candidate hash required');
+    }
+    return prisma.$transaction(async (tx) => {
+      const lock = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "Withdrawal" WHERE "id" = ${withdrawalId}
+          AND status = ${input.expectedStatus} FOR NO KEY UPDATE
+      `;
+      if (lock.length !== 1) throw new Error('Withdrawal recovery state changed; refresh before reviewing');
+      const row = await tx.withdrawal.findUniqueOrThrow({ where: { id: withdrawalId } });
+      const ledgerCount = await tx.walletTransaction.count({
+        where: { reference: withdrawalId, userId: row.userId, type: 'WITHDRAWAL',
+          status: 'PENDING', currency: 'USD', amount: row.amount, fee: row.fee },
+      });
+      const evidence = {
+        withdrawalId, adminId, observedStatus: row.status, outcome: input.outcome,
+        caseReference, notes, candidateHash: candidateHash || null,
+        recordedHash: row.transactionHash, exactPendingLedgerCount: ledgerCount,
+        independentlyVerified: false, financialActionAuthorized: false,
+      };
+      const entry = await tx.walletAuditLog.create({ data: {
+        userId: row.userId, action: 'WITHDRAWAL_RECOVERY_REVIEW', details: JSON.stringify(evidence),
+      } });
+      return { id: entry.id, createdAt: entry.createdAt, ...evidence };
+    });
+  }
+
+  async getWithdrawalRecoveryHistory(withdrawalId: string) {
+    return prisma.$transaction(async (tx) => {
+      const row = await tx.withdrawal.findUnique({ where: { id: withdrawalId } });
+      if (!row) throw new Error('Withdrawal not found');
+      // Only this event type and exact serialized first property; no broad
+      // user-history disclosure. Return recent reviews, not payment proof.
+      const prefix = '{"withdrawalId":' + JSON.stringify(withdrawalId) + ',';
+      const logs = await tx.walletAuditLog.findMany({
+        where: { userId: row.userId, action: 'WITHDRAWAL_RECOVERY_REVIEW', details: { startsWith: prefix } },
+        select: { id: true, createdAt: true, details: true },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 21,
+      });
+      const entries = logs.slice(0, 20).map(log => {
+        const details = JSON.parse(log.details || '{}');
+        if (details.withdrawalId !== withdrawalId || details.financialActionAuthorized !== false ||
+            details.independentlyVerified !== false) throw new Error('Recovery history requires manual audit review');
+        return { id: log.id, createdAt: log.createdAt, ...details };
+      });
+      return { status: row.status, entries, more: logs.length > 20, financialActionAuthorized: false };
+    }, { isolationLevel: 'RepeatableRead' });
+  }
+
   async processWithdrawal(withdrawalId: string, adminId: string, transactionHash: string) {
     const normalizedHash = typeof transactionHash === 'string' ? transactionHash.trim().toLowerCase() : '';
     if (!/^0x[a-f0-9]{64}$/.test(normalizedHash)) throw new Error('A valid BNB Smart Chain transaction hash is required');

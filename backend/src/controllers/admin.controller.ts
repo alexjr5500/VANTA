@@ -1209,6 +1209,37 @@ export const reserveWithdrawalPayout = async (req: AuthenticatedRequest, res: Re
   }
 };
 
+export const recordWithdrawalRecovery = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { withdrawalId, expectedStatus, outcome, caseReference, notes, candidateHash } = req.body || {};
+    if (typeof withdrawalId !== 'string' || !withdrawalId || withdrawalId.length > 100) {
+      res.status(400).json({ error: 'Valid withdrawalId required' });
+      return;
+    }
+    const review = await walletService.recordWithdrawalRecovery(withdrawalId, req.user!.userId, {
+      expectedStatus, outcome, caseReference, notes, candidateHash,
+    });
+    res.status(201).json({ review, message: 'Recovery evidence recorded; no financial action authorized' });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Recovery review failed' });
+  }
+};
+
+export const getWithdrawalRecoveryHistory = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const withdrawalId = req.params.withdrawalId;
+    if (typeof withdrawalId !== 'string' || !withdrawalId || withdrawalId.length > 100) {
+      res.status(400).json({ error: 'Valid withdrawalId required' });
+      return;
+    }
+    const history = await walletService.getWithdrawalRecoveryHistory(withdrawalId);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.status(200).json(history);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Recovery history unavailable' });
+  }
+};
+
 export const approveWithdrawal = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { withdrawalId, transactionHash } = req.body;

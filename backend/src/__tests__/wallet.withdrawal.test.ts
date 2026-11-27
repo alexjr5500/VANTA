@@ -65,7 +65,7 @@ function txMock() {
       findUniqueOrThrow: jest.fn().mockResolvedValue(pendingWithdrawal),
     },
     walletTransaction: { count: jest.fn().mockResolvedValue(1), create: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-    walletAuditLog: { create: jest.fn().mockResolvedValue({}) },
+    walletAuditLog: { create: jest.fn().mockResolvedValue({ id: 'review1', createdAt: new Date() }), findMany: jest.fn().mockResolvedValue([]) },
   };
 }
 
@@ -320,4 +320,39 @@ test('historical settlement evidence prevents ordinary rejection', async () => {
   (prisma.withdrawal.findUnique as jest.Mock).mockResolvedValue({ ...pendingWithdrawal, transactionHash: validTxHash });
   await expect(walletService.rejectWithdrawal('wd1', 'admin1', 'reason')).rejects.toThrow('without settlement evidence');
   expect(prisma.$transaction).not.toHaveBeenCalled();
+});
+
+describe('Withdrawal recovery review (evidence only)', () => {
+  const review = { expectedStatus: 'PAYOUT_RESERVED', outcome: 'NO_PAYOUT_FOUND', caseReference: 'case-123', notes: 'Reviewed treasury history; no evidence located.' };
+  test('records unverified evidence without moving funds or changing settlement state', async () => {
+    const tx = txMock();
+    tx.withdrawal.findUniqueOrThrow.mockResolvedValue(reservedWithdrawal);
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(walletService.recordWithdrawalRecovery('wd1','admin2',review)).resolves.toMatchObject({ observedStatus: 'PAYOUT_RESERVED', independentlyVerified: false, financialActionAuthorized: false });
+    expect(tx.walletAuditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'WITHDRAWAL_RECOVERY_REVIEW' }) }));
+    expect(tx.withdrawal.updateMany).not.toHaveBeenCalled();
+    expect(tx.wallet.update).not.toHaveBeenCalled();
+    expect(tx.wallet.updateMany).not.toHaveBeenCalled();
+    expect(tx.walletTransaction.updateMany).not.toHaveBeenCalled();
+    expect(blockchainTxVerifier.verifyTransaction).not.toHaveBeenCalled();
+  });
+  test('rejects stale observed status before recording evidence', async () => {
+    const tx = txMock();
+    tx.$queryRaw.mockResolvedValueOnce([]);
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(walletService.recordWithdrawalRecovery('wd1','admin2',review)).rejects.toThrow('state changed');
+    expect(tx.walletAuditLog.create).not.toHaveBeenCalled();
+  });
+  test('rejects final-state review and missing candidate hash for reported payout', async () => {
+    await expect(walletService.recordWithdrawalRecovery('wd1','admin2',{...review,expectedStatus:'COMPLETED'})).rejects.toThrow('Invalid recovery');
+    await expect(walletService.recordWithdrawalRecovery('wd1','admin2',{...review,outcome:'PAYOUT_FOUND'})).rejects.toThrow('candidate hash');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+  test('history is scoped to the exact withdrawal and never authorizes finance', async () => {
+    const tx = txMock();
+    tx.withdrawal.findUnique.mockResolvedValue(reservedWithdrawal);
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(walletService.getWithdrawalRecoveryHistory('wd1')).resolves.toEqual({status:'PAYOUT_RESERVED', entries:[], more:false, financialActionAuthorized:false});
+    expect(tx.walletAuditLog.findMany).toHaveBeenCalledWith(expect.objectContaining({where:{userId:'user1',action:'WITHDRAWAL_RECOVERY_REVIEW',details:{startsWith:'{"withdrawalId":"wd1",'}}}));
+  });
 });

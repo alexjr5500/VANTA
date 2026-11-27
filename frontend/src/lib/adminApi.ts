@@ -441,6 +441,21 @@ export const rejectWithdrawal = (token: string, withdrawalId: string, reason: st
   return apiPost('/api/admin/withdrawals/reject', { withdrawalId, reason }, token, undefined, { noRetry: true });
 };
 
+export type WithdrawalRecoveryOutcome = 'UNKNOWN' | 'PAYOUT_PENDING' | 'PAYOUT_FAILED_REPORTED' | 'PAYOUT_FOUND' | 'NO_PAYOUT_FOUND';
+export type WithdrawalRecoveryReview = {
+  id: string; createdAt: string; withdrawalId: string; adminId: string;
+  observedStatus: string; outcome: WithdrawalRecoveryOutcome; caseReference: string;
+  notes: string; candidateHash: string | null; recordedHash: string | null;
+  exactPendingLedgerCount: number; independentlyVerified: false; financialActionAuthorized: false;
+};
+export const getWithdrawalRecoveryHistory = (token: string, withdrawalId: string) =>
+  apiGet<{ status: string; entries: WithdrawalRecoveryReview[]; more: boolean; financialActionAuthorized: false }>(
+    '/api/admin/withdrawals/' + encodeURIComponent(withdrawalId) + '/recovery', token, { skipCache: true });
+export const recordWithdrawalRecovery = (token: string, withdrawalId: string, input: {
+  expectedStatus: string; outcome: WithdrawalRecoveryOutcome; caseReference: string; notes: string; candidateHash?: string;
+}) => apiPost<{ review: WithdrawalRecoveryReview; message: string }>(
+  '/api/admin/withdrawals/recovery', { withdrawalId, ...input }, token, undefined, { noRetry: true });
+
 // ============================================================================
 // GIFT CATALOG
 // ============================================================================

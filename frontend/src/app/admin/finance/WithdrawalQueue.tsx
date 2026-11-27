@@ -6,6 +6,7 @@ import GlassCard from '@/components/ui/GlassCard';
 import Button from '@/components/ui/Button';
 import { getWithdrawals, reserveWithdrawalPayout, approveWithdrawal, rejectWithdrawal, type AdminWithdrawal } from '@/lib/adminApi';
 import { withdrawalActions, canSubmitWithdrawalAction, type WithdrawalAction } from '@/lib/withdrawalReview';
+import WithdrawalRecoveryPanel from './WithdrawalRecoveryPanel';
 
 const PAGE_SIZE = 25;
 const reviewRoles = ['ADMIN', 'ADMINISTRATOR', 'CEO', 'SUPER_ADMIN'];
@@ -143,6 +144,7 @@ export default function WithdrawalQueue({ onChanged }: { onChanged: () => void }
                 {actions.map(action => <Button key={action} type="button" size="sm" variant={action === 'reject' ? 'danger' : 'outline'} disabled={busy} onClick={() => select(row, action)}>{labels[action]}</Button>)}
               </div> : <p className="text-xs text-gray-400">Read-only. Legacy, final or ambiguous records require reconciliation; no override is available here.</p>}
               {row.status === 'PAYOUT_RESERVED' && <p className="text-xs text-amber-300">Reserved funds cannot be ordinarily refunded. An uncertain settlement remains reserved for reconciliation.</p>}
+              {['PAYOUT_RESERVED', 'PROCESSING', 'APPROVED'].includes(row.status) && !selected && token && <WithdrawalRecoveryPanel key={row.id + ':' + row.status} row={row} token={token} disabled={busy} />}
               {selected?.row.id === row.id && (
                 <div className="space-y-3 rounded-xl border border-amber-400/30 p-3">
                   <h3 className="font-medium text-white">{labels[selected.action]}</h3>
