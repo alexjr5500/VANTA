@@ -52,6 +52,7 @@ async function renderInvoice(i: ShopCryptoInvoice) {
   const order = await orderFor(i);
   if (!network || !order || order.recipientUserId || !shopCryptoAddresses().includes(i.address)) throw new Error('Invoice unavailable');
   if (priceToAtomic(order.amount, network.tokenDecimals) !== i.amountAtomic) throw new Error('Invoice price mismatch');
+  if (!pendingStates.includes(order.status) || Date.now() >= i.expiresAt.getTime()) throw new Error('Invoice closed. Contact support if you already sent payment.');
   const uri = paymentUri(network, i.address, i.amountAtomic);
   return { orderId: i.orderId, product: i.product, amount: order.amount, currency: 'USD', network: i.network,
     mode: 'live' as const, expiresAt: i.expiresAt.toISOString(), address: i.address, paymentUri: uri,
@@ -107,6 +108,24 @@ export async function resumeShopCryptoInvoice(payerId: string, orderId: string) 
   return renderInvoice(invoice);
 }
 
+export async function listShopCryptoInvoices(payerId: string) {
+  const invoices = await prisma.shopCryptoInvoice.findMany({ where: { payerId, settledAt: null, expiresAt: { gt: new Date() } }, orderBy: { createdAt: 'desc' }, take: 10 });
+  const result: { orderId: string; product: string; network: string; amount: number; expiresAt: Date }[] = [];
+  for (const invoice of invoices) {
+    const order = await orderFor(invoice);
+    if (order && pendingStates.includes(order.status) && shopCryptoAddresses().includes(invoice.address)) result.push({ orderId: invoice.orderId, product: invoice.product, network: invoice.network, amount: order.amount, expiresAt: invoice.expiresAt });
+  }
+  return { invoices: result };
+}
+export async function shopCryptoStatus(payerId: string, orderId: string) {
+  const invoice = await prisma.shopCryptoInvoice.findFirst({ where: { payerId, orderId } });
+  if (!invoice) throw new Error('Invoice not found');
+  const order = await orderFor(invoice);
+  if (!order) throw new Error('Order not found');
+  const success = order.status === 'COMPLETED';
+  const status = success ? 'COMPLETED' : !pendingStates.includes(order.status) || Date.now() >= invoice.expiresAt.getTime() ? 'RECONCILIATION' : invoice.transactionHash ? 'PROCESSING' : order.status;
+  return { success, status, ...(success && 'coins' in order ? { coins: order.coins } : {}) };
+}
 const running = new Set<string>();
 async function verifyAndSettle(i: ShopCryptoInvoice, txHash: string) {
   const network = getBlockchainNetwork(i.network);
