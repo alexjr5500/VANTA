@@ -14,7 +14,7 @@
 //   VANTA_BASE_RPC_URL  (default: public Base RPC)
 // ============================================================================
 
-export type BlockchainNetworkId = 'usdt-bep20' | 'usdc-base';
+export type BlockchainNetworkId = 'usdt-bep20' | 'usdc-base' | 'usdt-erc20';
 
 export interface BlockchainNetworkConfig {
   id: BlockchainNetworkId;
@@ -33,9 +33,10 @@ export interface BlockchainNetworkConfig {
 export const ERC20_TRANSFER_EVENT_SIGNATURE = '0xddf252ad1be2c89b69c2b608fc26bd2742204fa22e51d0b52488e1c4bccf45d9b';
 
 export function resolveNetworkRpcUrl(networkId: BlockchainNetworkId): string {
-  const envName = networkId === 'usdt-bep20' ? 'VANTA_BSC_RPC_URL' : 'VANTA_BASE_RPC_URL';
+  const envName = networkId === 'usdt-bep20' ? 'VANTA_BSC_RPC_URL' : networkId === 'usdt-erc20' ? 'VANTA_ETHEREUM_RPC_URL' : 'VANTA_BASE_RPC_URL';
   const configured = (process.env[envName] || '').trim();
   if (configured) return configured;
+  if (networkId === 'usdt-erc20') return ''; // require an explicitly configured Ethereum RPC
   return networkId === 'usdt-bep20' ? 'https://bsc-dataseed1.binance.org' : 'https://mainnet.base.org';
 }
 
@@ -49,6 +50,11 @@ export const BLOCKCHAIN_NETWORKS: Readonly<Record<BlockchainNetworkId, Blockchai
     tokenDecimals: 18,
     rpcUrl: resolveNetworkRpcUrl('usdt-bep20'),
   }),
+  'usdt-erc20': Object.freeze({
+    id: 'usdt-erc20', chainName: 'Ethereum (ERC-20)', chainId: 1, tokenName: 'USDT',
+    tokenContract: '0xdac17f958d2ee523a2206206994597c13d831ec7', tokenDecimals: 6,
+    rpcUrl: resolveNetworkRpcUrl('usdt-erc20'),
+  }),
   'usdc-base': Object.freeze({
     id: 'usdc-base',
     chainName: 'Base',
@@ -61,7 +67,7 @@ export const BLOCKCHAIN_NETWORKS: Readonly<Record<BlockchainNetworkId, Blockchai
 });
 
 export function getBlockchainNetwork(id: unknown): BlockchainNetworkConfig | null {
-  if (typeof id !== 'string') return null;
+  if (typeof id !== 'string' || !Object.prototype.hasOwnProperty.call(BLOCKCHAIN_NETWORKS, id)) return null;
   const network = BLOCKCHAIN_NETWORKS[id as BlockchainNetworkId];
   return network || null;
 }
