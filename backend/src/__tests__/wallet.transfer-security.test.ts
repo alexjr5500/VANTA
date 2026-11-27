@@ -472,3 +472,57 @@ test('valid PIN cannot authorize against a concurrently changed security snapsho
   await expect(walletService.verifyPin('user1', '1234')).rejects.toThrow('PIN security state changed');
   expect(prisma.walletPIN.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ pinHash: 'hashed_pin', failedAttempts: 0, lockedUntil: null }) }));
 });
+
+describe('Transfer OTP challenge state fencing', () => {
+  const challenge = () => ({
+    id: 'challenge1', userId: 'user1', sessionId: 'session1', receiverId: 'user2',
+    amount: 2100, otpHash: 'hashed_otp', expiresAt: new Date(Date.now() + 60_000),
+    maxAttempts: 3, attempts: 2, consumedAt: null,
+  });
+  test('rejects a session-bound challenge when session is omitted', async () => {
+    (prisma.transferLimit.findUnique as jest.Mock).mockResolvedValue({ ...defaultLimit, otpThreshold: 1000 });
+    const tx = txMock();
+    tx.transferOtpChallenge.findUnique.mockResolvedValue(challenge());
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(transferWithPin('user1', 'user2', 2000, undefined, '123456', 'ip', undefined, undefined, 'challenge1'))
+      .rejects.toThrow('bound to another session');
+    expect(tx.wallet.updateMany).not.toHaveBeenCalled();
+  });
+  test('rejects a correct OTP when concurrent consumption or failure changed the snapshot', async () => {
+    (prisma.transferLimit.findUnique as jest.Mock).mockResolvedValue({ ...defaultLimit, otpThreshold: 1000 });
+    const tx = txMock();
+    tx.transferOtpChallenge.findUnique.mockResolvedValue(challenge());
+    tx.transferOtpChallenge.updateMany.mockResolvedValue({ count: 0 });
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(transferWithPin('user1', 'user2', 2000, undefined, '123456', 'ip', undefined, undefined, 'challenge1', 'session1'))
+      .rejects.toThrow('already been used');
+    expect(tx.transferOtpChallenge.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ attempts: 2, maxAttempts: 3, otpHash: 'hashed_otp', sessionId: 'session1', expiresAt: { gte: expect.any(Date) } }),
+    }));
+    expect(tx.wallet.updateMany).not.toHaveBeenCalled();
+  });
+  test('does not increment a stale failed attempt', async () => {
+    (prisma.transferLimit.findUnique as jest.Mock).mockResolvedValue({ ...defaultLimit, otpThreshold: 1000 });
+    (bcrypt.compare as jest.Mock).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    const tx = txMock();
+    tx.transferOtpChallenge.findUnique.mockResolvedValue(challenge());
+    tx.transferOtpChallenge.updateMany.mockResolvedValue({ count: 0 });
+    (prisma.$transaction as jest.Mock).mockImplementation((cb: (t: any) => unknown) => cb(tx));
+    await expect(transferWithPin('user1', 'user2', 2000, undefined, '000000', 'ip', undefined, undefined, 'challenge1', 'session1'))
+      .rejects.toThrow('OTP challenge state changed');
+    expect(tx.wallet.updateMany).not.toHaveBeenCalled();
+    expect(tx.transferOtpChallenge.update).not.toHaveBeenCalled();
+  });
+  test('standalone OTP consumption must win the conditional update', async () => {
+    (prisma.transferOtpChallenge.findUnique as jest.Mock).mockResolvedValue(challenge());
+    (prisma.transferOtpChallenge.updateMany as jest.Mock).mockResolvedValueOnce({ count: 0 });
+    await expect(walletService.verifyTransferOtp({ userId: 'user1', challengeId: 'challenge1', otpCode: '123456', sessionId: 'session1' }))
+      .resolves.toEqual({ valid: false, reason: 'changed' });
+  });
+  test('standalone OTP rejects missing session without consuming', async () => {
+    (prisma.transferOtpChallenge.findUnique as jest.Mock).mockResolvedValue(challenge());
+    await expect(walletService.verifyTransferOtp({ userId: 'user1', challengeId: 'challenge1', otpCode: '123456' }))
+      .resolves.toEqual({ valid: false, reason: 'session' });
+    expect(prisma.transferOtpChallenge.updateMany).not.toHaveBeenCalled();
+  });
+});

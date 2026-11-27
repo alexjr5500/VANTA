@@ -777,8 +777,8 @@ export class WalletService {
     return user?.twoFactorEnabled === true;
   }
 
-  private async verifyWalletTwoFactor(userId: string, token: string | undefined, action: string): Promise<void> {
-    if (!(await this.isTwoFactorEnabled(userId))) return;
+  private async verifyWalletTwoFactor(userId: string, token: string | undefined, action: string, required?: boolean): Promise<void> {
+    if (!(required ?? await this.isTwoFactorEnabled(userId))) return;
     if (typeof token !== 'string' || !token.trim()) throw new Error('Authenticator 2FA code is required for this wallet action');
     const result = await twoFactorAuth.verifyLogin(userId, token.trim(), true);
     if (!result.valid) throw new Error('Invalid authenticator 2FA code');
@@ -891,6 +891,8 @@ export class WalletService {
       };
     }
 
+    let authenticatorRequired = false;
+    let authenticatorChallengeHash: string | undefined;
     // Step-up OTP for high-value transfers (Phase 5).
     // The effective threshold is min(user setting, platform cap) computed by
     // resolveEffectiveTransferLimits — a user can never raise the threshold
@@ -919,15 +921,17 @@ export class WalletService {
         throw new Error("An OTP challenge id is required to complete this transfer");
       }
 
-      if (await this.isTwoFactorEnabled(senderId)) {
+      authenticatorRequired = await this.isTwoFactorEnabled(senderId);
+      if (authenticatorRequired) {
         const challenge = await prisma.transferOtpChallenge.findUnique({ where: { id: challengeId } });
         const challengeMatches = challenge && challenge.userId === senderId &&
           challenge.receiverId === receiverId && challenge.amount === totalDeduction &&
-          (!challenge.sessionId || !sessionId || challenge.sessionId === sessionId) &&
+          (!challenge.sessionId || challenge.sessionId === sessionId) &&
           !challenge.consumedAt && challenge.expiresAt >= new Date() &&
           challenge.attempts < challenge.maxAttempts;
         if (challengeMatches && await bcrypt.compare(otpCode || "", challenge.otpHash)) {
-          await this.verifyWalletTwoFactor(senderId, twoFactorCode, 'high_value_transfer');
+          await this.verifyWalletTwoFactor(senderId, twoFactorCode, 'high_value_transfer', true);
+          authenticatorChallengeHash = challenge.otpHash;
         }
       }
     }
@@ -994,7 +998,7 @@ export class WalletService {
         ) {
           throw new Error("Invalid OTP challenge");
         }
-        if (challenge.sessionId && sessionId && challenge.sessionId !== sessionId) {
+        if (challenge.sessionId && challenge.sessionId !== sessionId) {
           throw new Error("OTP challenge is bound to another session");
         }
         if (challenge.consumedAt) {
@@ -1008,11 +1012,21 @@ export class WalletService {
         }
 
         const valid = await bcrypt.compare(otpCode || "", challenge.otpHash);
+        // Bind either outcome to the exact observed challenge and attempt
+        // counter. A parallel failure, consumption, replacement or expiry
+        // cannot authorize against a stale snapshot.
+        const challengeFence = {
+          id: challenge.id, userId: senderId, receiverId, amount: totalDeduction,
+          sessionId: challenge.sessionId, otpHash: challenge.otpHash,
+          attempts: challenge.attempts, maxAttempts: challenge.maxAttempts,
+          consumedAt: null, expiresAt: { gte: new Date() },
+        };
         if (!valid) {
-          await tx.transferOtpChallenge.update({
-            where: { id: challenge.id },
+          const failed = await tx.transferOtpChallenge.updateMany({
+            where: challengeFence,
             data: { attempts: { increment: 1 } },
           });
+          if (failed.count !== 1) throw new Error("OTP challenge state changed. Please try again.");
           await tx.walletAuditLog.create({
             data: {
               userId: senderId,
@@ -1028,8 +1042,11 @@ export class WalletService {
           return { otpInvalid: true as const };
         }
 
+        if (authenticatorRequired && authenticatorChallengeHash !== challenge.otpHash) {
+          throw new Error("Authenticator 2FA verification is required for this OTP challenge");
+        }
         const consumed = await tx.transferOtpChallenge.updateMany({
-          where: { id: challenge.id, consumedAt: null },
+          where: challengeFence,
           data: { consumedAt: new Date() },
         });
         if (consumed.count !== 1) {
@@ -1372,10 +1389,10 @@ export class WalletService {
   }
 
   /**
-   * Verify a transfer OTP challenge WITHOUT executing a transfer. Intended for
-   * pre-validation UX; the authoritative consumption happens inside the
-   * transfer transaction. Never exposes whether the code was correct — callers
-   * get a boolean `valid` and a challenge that stays unconsumed on failure.
+   * Verify and consume a transfer OTP challenge WITHOUT executing a transfer.
+   * This is not a pre-validation step for transferCoins: a consumed challenge
+   * cannot subsequently authorize a transfer. Both paths share attempt and
+   * session fencing.
    */
   async verifyTransferOtp(input: {
     userId: string;
@@ -1393,23 +1410,23 @@ export class WalletService {
     if (challenge.consumedAt) return { valid: false, reason: "used" };
     if (challenge.expiresAt < new Date()) return { valid: false, reason: "expired" };
     if (challenge.attempts >= challenge.maxAttempts) return { valid: false, reason: "attempts" };
-    if (sessionId && challenge.sessionId && challenge.sessionId !== sessionId) {
+    if (challenge.sessionId && challenge.sessionId !== sessionId) {
       return { valid: false, reason: "session" };
     }
 
     const valid = await bcrypt.compare(otpCode || "", challenge.otpHash);
-    if (valid) {
-      await prisma.transferOtpChallenge.updateMany({
-        where: { id: challenge.id, consumedAt: null },
-        data: { consumedAt: new Date() },
-      });
-      return { valid: true };
-    }
-
-    await prisma.transferOtpChallenge.update({
-      where: { id: challenge.id },
-      data: { attempts: { increment: 1 } },
+    const challengeFence = {
+      id: challenge.id, userId, sessionId: challenge.sessionId,
+      otpHash: challenge.otpHash, attempts: challenge.attempts,
+      maxAttempts: challenge.maxAttempts, consumedAt: null,
+      expiresAt: { gte: new Date() },
+    };
+    const changed = await prisma.transferOtpChallenge.updateMany({
+      where: challengeFence,
+      data: valid ? { consumedAt: new Date() } : { attempts: { increment: 1 } },
     });
+    if (changed.count !== 1) return { valid: false, reason: "changed" };
+    if (valid) return { valid: true };
     await this.logAudit(userId, "OTP_FAILED", {
       challengeId: challenge.id,
       attemptsRemaining: challenge.maxAttempts - challenge.attempts - 1,
