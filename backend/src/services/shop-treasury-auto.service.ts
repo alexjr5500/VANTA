@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { prisma } from '../prisma';
-import type { ShopTreasuryTransfer, ShopCryptoInvoice } from '@prisma/client';
+import type { Prisma, ShopTreasuryTransfer, ShopCryptoInvoice } from '@prisma/client';
 import { appendAuditLog } from '../security/auditLog';
 import { automaticTreasuryConfig, isAutoNetwork, positiveAtomic } from '../config/shop-treasury-auto.config';
 import { getBlockchainNetwork, getMinBlockchainConfirmations, BlockchainNetworkConfig } from '../config/blockchain-networks.config';
@@ -48,6 +48,7 @@ function hex(value: unknown): bigint {
 }
 async function preflight(row: Row, intent: SettlementIntent) {
   const chain = getBlockchainNetwork(row.network)!;
+  if (await prisma.shopCryptoInvoice.findUnique({ where: { address: row.destination }, select: { id: true } })) throw new Error('Treasury destination is a historical invoice address');
   const order = await assertVerifiedInvoice(prisma, row.invoice);
   if (cents(order.amount) !== row.orderAmountCents || expectedAtomic(order.amount, chain.tokenDecimals) !== row.amountAtomic) throw new Error('Invoice amount changed');
   await blockchainTxVerifier.verifyTransaction({ network: row.network, txHash: intent.incomingTransactionHash,
@@ -83,6 +84,7 @@ async function enqueue(config: SignerConfig) {
         const active = automaticTreasuryConfig();
         const policy = active?.networks.find(n => n.network === invoice.network);
         if (!active || active.policyId !== config.policyId || !policy) return;
+        if (await tx.shopCryptoInvoice.findUnique({ where: { address: policy.destination }, select: { id: true } })) return;
         const order = await assertVerifiedInvoice(tx, invoice);
         const usd = cents(order.amount);
         const chain = getBlockchainNetwork(invoice.network);
@@ -102,7 +104,7 @@ async function enqueue(config: SignerConfig) {
     } catch { /* Duplicate or ineligible rows remain unmodified; manual review may be needed. */ }
   }
 }
-async function change(row: Row, lease: string, data: Parameters<typeof prisma.shopTreasuryTransfer.updateMany>[0]['data'], action?: string) {
+async function change(row: Row, lease: string, data: Prisma.ShopTreasuryTransferUpdateManyMutationInput, action?: string) {
   await prisma.$transaction(async tx => {
     const count = await tx.shopTreasuryTransfer.updateMany({ where: { id: row.id, leaseToken: lease, status: row.status, automation: true }, data });
     if (count.count !== 1) throw new Error('Settlement lease lost');
@@ -118,12 +120,28 @@ async function confirmOutgoing(row: Row, lease: string) {
     notBefore: new Date(Math.floor(row.dispatchStartedAt!.getTime() / 1000) * 1000), notAfter: new Date(),
     minConfirmations: Math.max(12, getMinBlockchainConfirmations()) });
   if (!proof.verified || proof.txHash.toLowerCase() !== hash || proof.sender?.toLowerCase() !== row.source) throw new Error('Outgoing proof mismatch');
+  // Do not accept an allowance-based transferFrom, batched transaction or a
+  // different calldata that happens to emit a matching log.
+  const txRaw = await rpc(chain, 'eth_getTransactionByHash', [hash]);
+  if (!txRaw || typeof txRaw !== 'object') throw new Error('Outgoing transaction unavailable');
+  const outgoing = txRaw as Record<string, unknown>;
+  const data = '0xa9059cbb' + row.destination.slice(2).padStart(64, '0') + BigInt(row.amountAtomic).toString(16).padStart(64, '0');
+  if (String(outgoing.hash).toLowerCase() !== hash || String(outgoing.from).toLowerCase() !== row.source ||
+      String(outgoing.to).toLowerCase() !== chain.tokenContract || String(outgoing.input).toLowerCase() !== data ||
+      hex(outgoing.value) !== BigInt(0) || String(outgoing.blockHash).toLowerCase() !== proof.blockHash?.toLowerCase()) {
+    await change(row, lease, { status: 'AUTO_REVIEW', nextAttemptAt: null, lastFailure: 'Outgoing transaction differs from authorized direct transfer; do not rebroadcast.' }, 'TREASURY_AUTO_REVIEW');
+    return;
+  }
   const raw = await rpc(chain, 'eth_getTransactionReceipt', [hash]);
   if (!raw || typeof raw !== 'object') throw new Error('Outgoing receipt unavailable');
   const receipt = raw as Record<string, unknown>;
   if (String(receipt.transactionHash).toLowerCase() !== hash || String(receipt.blockHash).toLowerCase() !== proof.blockHash?.toLowerCase() || receipt.status !== '0x1') throw new Error('Outgoing receipt changed');
   let fee = hex(receipt.gasUsed) * hex(receipt.effectiveGasPrice);
-  if (row.network === 'usdc-base') fee += hex(receipt.l1Fee);
+  if (row.network === 'usdc-base') {
+    fee += hex(receipt.l1Fee);
+    if (receipt.operatorFee !== undefined && receipt.operatorFee !== null) fee += hex(receipt.operatorFee);
+    else if (receipt.operatorFeeScalar != null && receipt.operatorFeeConstant != null) fee += hex(receipt.operatorFeeConstant) + hex(receipt.gasUsed) * hex(receipt.operatorFeeScalar) / BigInt(1000000);
+  }
   if (!row.maxFeeAtomic || fee > BigInt(row.maxFeeAtomic)) {
     await change(row, lease, { status: 'AUTO_REVIEW', lastFailure: 'Verified transfer exceeded fee policy; reconcile without rebroadcast.', nextAttemptAt: null }, 'TREASURY_AUTO_FEE_EXCEPTION');
     return;
@@ -140,7 +158,7 @@ async function applyResult(row: Row, lease: string, result: Awaited<ReturnType<t
     await change(row, lease, { nextAttemptAt: delay(60000), lastFailure: result.status === 'not_found' ? 'Custody status unknown; no automatic resubmission.' : null });
   }
 }
-async function processRow(id: string, config: SignerConfig) {
+export async function processTreasurySettlement(id: string, config: SignerConfig) {
   const lease = randomUUID();
   const now = new Date();
   const locked = await prisma.shopTreasuryTransfer.updateMany({ where: {
@@ -180,6 +198,8 @@ async function processRow(id: string, config: SignerConfig) {
       const final = automaticTreasuryConfig();
       if (!final || final.policyId !== active.policyId || Date.now() >= pending.dispatchDeadline.getTime()) return;
       buildSettlementIntent(row, final);
+      const current = await prisma.shopTreasuryTransfer.findFirst({ where: { id, status: 'AUTO_DISPATCHING', leaseToken: lease, leaseUntil: { gt: new Date() } }, select: { id: true } });
+      if (!current) return;
       await applyResult(row, lease, await requestCustody(final, intent, 'submit'));
       return;
     }
@@ -211,7 +231,7 @@ export function startTreasurySettlementWorker() {
       if (config) {
         await enqueue(config);
         const rows = await prisma.shopTreasuryTransfer.findMany({ where: { automation: true, status: { in: WORK_STATES }, nextAttemptAt: { lte: new Date() } }, orderBy: { nextAttemptAt: 'asc' }, take: 4, select: { id: true } });
-        await Promise.allSettled(rows.map(row => processRow(row.id, config)));
+        await Promise.allSettled(rows.map(row => processTreasurySettlement(row.id, config)));
       }
     } catch { console.warn('[TREASURY] Settlement worker unavailable; no manual fallback broadcast'); }
     finally { setTimeout(tick, 30000).unref(); }

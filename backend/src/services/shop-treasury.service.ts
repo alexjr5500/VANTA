@@ -63,6 +63,7 @@ export async function authorizeTreasuryTransfer(actorId: string, input: Record<s
   return prisma.$transaction(async tx => {
     const current = await tx.shopCryptoInvoice.findUnique({ where: { id: invoice.id } });
     if (!current || current.transactionHash !== invoice.transactionHash || current.address !== invoice.address || current.amountAtomic !== invoice.amountAtomic || treasuryAddress(current.network) !== destination) throw new Error('Invoice or destination changed');
+    if (await tx.shopCryptoInvoice.findUnique({ where: { address: destination }, select: { id: true } })) throw new Error('Treasury destination cannot be a historical invoice address');
     await assertVerifiedInvoice(tx, current);
     const record = await tx.shopTreasuryTransfer.create({ data: {
       invoiceId: current.id, network: current.network, source: current.address, destination,
