@@ -1,4 +1,5 @@
 import * as QRCode from 'qrcode';
+import { quoteEth, ethAtomicFromQuote, atomicDisplay, verifyNativeEth } from './shop-native-eth.service';
 import { prisma } from '../prisma';
 import { ShopCryptoInvoice } from '@prisma/client';
 import { getBlockchainNetwork, getMinBlockchainConfirmations, ERC20_TRANSFER_EVENT_SIGNATURE, BlockchainNetworkConfig } from '../config/blockchain-networks.config';
@@ -19,6 +20,7 @@ export function priceToAtomic(amount: number, decimals: number): string {
 }
 export function paymentUri(network: BlockchainNetworkConfig, address: string, atomic: string): string {
   if (!/^0x[0-9a-f]{40}$/.test(address) || !/^[1-9][0-9]*$/.test(atomic)) throw new Error('Invalid invoice');
+  if (network.native) return 'ethereum:' + address + '@' + network.chainId + '?value=' + atomic;
   return 'ethereum:' + network.tokenContract + '@' + network.chainId + '/transfer?address=' + address + '&uint256=' + atomic;
 }
 function hexNumber(value: unknown): number {
@@ -42,6 +44,13 @@ async function getHead(network: BlockchainNetworkConfig): Promise<number> {
   if (hexNumber(await rpc(network, 'eth_chainId', [])) !== network.chainId) throw new Error('Incorrect chain RPC');
   return hexNumber(await rpc(network, 'eth_blockNumber', []));
 }
+function expectedAtomic(i: ShopCryptoInvoice, network: BlockchainNetworkConfig, amount: number) {
+  if (network.native) {
+    if (!i.quotePrice8 || !i.quoteUpdatedAt || i.quoteUpdatedAt > i.createdAt || i.createdAt.getTime() - i.quoteUpdatedAt.getTime() > 3600000 + 30000) throw new Error('Missing or stale stored ETH quote');
+    return ethAtomicFromQuote(amount, i.quotePrice8);
+  }
+  return priceToAtomic(amount, network.tokenDecimals);
+}
 async function orderFor(i: ShopCryptoInvoice) {
   if (i.product === 'coins') return prisma.purchaseOrder.findFirst({ where: { id: i.orderId, userId: i.payerId, paymentMode: 'live' } });
   if (i.product === 'badge') return prisma.verificationPurchase.findFirst({ where: { id: i.orderId, userId: i.payerId, paymentMode: 'live' } });
@@ -51,13 +60,13 @@ async function renderInvoice(i: ShopCryptoInvoice) {
   const network = getBlockchainNetwork(i.network);
   const order = await orderFor(i);
   if (!network || !shopCryptoNetworks().includes(network.id) || !order || order.recipientUserId || !shopCryptoAddresses().includes(i.address)) throw new Error('Invoice unavailable');
-  if (priceToAtomic(order.amount, network.tokenDecimals) !== i.amountAtomic) throw new Error('Invoice price mismatch');
+  if (expectedAtomic(i, network, order.amount) !== i.amountAtomic) throw new Error('Invoice price mismatch');
   if (!pendingStates.includes(order.status) || Date.now() >= i.expiresAt.getTime()) throw new Error('Invoice closed. Contact support if you already sent payment.');
   const uri = paymentUri(network, i.address, i.amountAtomic);
   return { orderId: i.orderId, product: i.product, amount: order.amount, currency: 'USD', network: i.network,
     mode: 'live' as const, expiresAt: i.expiresAt.toISOString(), address: i.address, paymentUri: uri,
     qrCode: await QRCode.toDataURL(uri, { width: 360, margin: 3, errorCorrectionLevel: 'M' }),
-    token: network.tokenName, tokenAmount: order.amount.toFixed(2), status: order.status,
+    token: network.tokenName, tokenAmount: network.native ? atomicDisplay(i.amountAtomic, network.tokenDecimals) : order.amount.toFixed(2), status: order.status,
     ...(i.product === 'coins' && 'coins' in order ? { coins: order.coins } : {}),
     ...(i.product === 'badge' && 'planId' in order ? { planId: order.planId } : {}),
   };
@@ -79,7 +88,8 @@ export async function createShopCryptoInvoice(payerId: string, input: Record<str
   const amount = Number(data.amount);
   const expiresAt = new Date(String(data.expiresAt));
   if (data.mode !== 'live' || !orderId || !Number.isFinite(expiresAt.getTime())) throw new Error('Order unavailable');
-  const atomic = priceToAtomic(amount, network.tokenDecimals);
+  const quote = network.native ? await quoteEth(network, amount, rpc) : { amountAtomic: priceToAtomic(amount, network.tokenDecimals) };
+  const atomic = quote.amountAtomic;
   // Never reuse a receiving address, even if an earlier order expired.
   const addresses = shopCryptoAddresses();
   const used = await prisma.shopCryptoInvoice.findMany({ where: { address: { in: addresses } }, select: { address: true } });
@@ -87,7 +97,8 @@ export async function createShopCryptoInvoice(payerId: string, input: Record<str
   let invoice: ShopCryptoInvoice | undefined;
   for (const address of addresses.filter(a => !reserved.has(a))) {
     try {
-      invoice = await prisma.shopCryptoInvoice.create({ data: { product, orderId, payerId, network: network.id, address, amountAtomic: atomic, expiresAt, startBlock, scanCursor: startBlock } });
+      if (network.native && await rpc(network, 'eth_getCode', [address, 'latest']) !== '0x') continue;
+      invoice = await prisma.shopCryptoInvoice.create({ data: { product, orderId, payerId, network: network.id, address, ...quote, expiresAt, startBlock, scanCursor: startBlock } });
       break;
     } catch (e) {
       if ((e as { code?: string })?.code !== 'P2002') throw e;
@@ -131,13 +142,13 @@ async function verifyAndSettle(i: ShopCryptoInvoice, txHash: string) {
   const network = getBlockchainNetwork(i.network);
   const order = await orderFor(i);
   if (!network || !order || order.recipientUserId || !shopCryptoAddresses().includes(i.address) ||
-      priceToAtomic(order.amount, network.tokenDecimals) !== i.amountAtomic) throw new Error('Invoice mismatch');
+      expectedAtomic(i, network, order.amount) !== i.amountAtomic) throw new Error('Invoice mismatch');
   if (order.status === 'COMPLETED') {
     await prisma.shopCryptoInvoice.updateMany({ where: { id: i.id, settledAt: null }, data: { settledAt: new Date() } });
     return { success: true, status: 'COMPLETED', ...('coins' in order ? { coins: order.coins } : {}) };
   }
   if (!pendingStates.includes(order.status) || Date.now() >= i.expiresAt.getTime()) return { success: false, status: 'RECONCILIATION', message: 'Invoice closed. If payment was sent, contact support with the order reference and transaction hash.' };
-  const verified = await blockchainTxVerifier.verifyTransaction({
+  const verified = network.native ? await verifyNativeEth(network, i, txHash, rpc) : await blockchainTxVerifier.verifyTransaction({
     txHash, network: i.network, expectedRecipient: i.address, expectedAmountUsd: order.amount,
     expectedAtomicAmount: i.amountAtomic, minConfirmations: confirmations(),
     notBefore: new Date(Math.floor(i.createdAt.getTime() / 1000) * 1000), notAfter: i.expiresAt, minBlock: i.startBlock,
@@ -180,9 +191,34 @@ async function checkInvoice(i: ShopCryptoInvoice, suppliedHash?: string) {
       }
     }
     const head = await getHead(network);
-    const safeHead = head - confirmations() + 1;
+    let safeHead = head - confirmations() + 1;
+    if (network.chainId === 1) {
+      const finalized = await rpc(network, 'eth_getBlockByNumber', ['finalized', false]);
+      if (!finalized || typeof finalized !== 'object') throw new Error('Ethereum finality unavailable');
+      safeHead = Math.min(safeHead, hexNumber((finalized as Record<string, unknown>).number));
+    }
     if (safeHead < i.scanCursor) return { success: false, status: 'PENDING', message: 'Waiting for payment.' };
-    const end = Math.min(safeHead, i.scanCursor + 99);
+    const end = Math.min(safeHead, i.scanCursor + (network.native ? 7 : 99));
+    if (network.native) {
+      // Native ETH has no ERC-20 Transfer event. Scan bounded finalized blocks
+      // for direct transfers only; verify the receipt separately before crediting.
+      for (let height = i.scanCursor; height <= end; height++) {
+        const raw = await rpc(network, 'eth_getBlockByNumber', ['0x' + height.toString(16), true]);
+        if (!raw || typeof raw !== 'object') throw new Error('Finalized block unavailable');
+        const block = raw as Record<string, unknown>;
+        if (hexNumber(block.number) !== height || !Array.isArray(block.transactions)) throw new Error('Invalid finalized block');
+        for (const item of block.transactions) {
+          if (!item || typeof item !== 'object' || typeof item.to !== 'string' || item.to.toLowerCase() !== i.address || item.input !== '0x' || typeof item.value !== 'string' || !/^0x[0-9a-f]+$/i.test(item.value) || BigInt(item.value).toString() !== i.amountAtomic || typeof item.hash !== 'string') continue;
+          try { return await verifyAndSettle(i, item.hash); }
+          catch (e) {
+            if (e instanceof BlockchainTxVerificationError && !e.transient && !['LOW_CONFIRMATIONS', 'TRANSACTION_PENDING', 'TRANSACTION_NOT_FOUND'].includes(e.code)) continue;
+            throw e;
+          }
+        }
+      }
+      await prisma.shopCryptoInvoice.updateMany({ where: { id: i.id, scanCursor: i.scanCursor }, data: { scanCursor: end + 1 } });
+      return { success: false, status: 'PENDING', message: 'Waiting for finalized ETH payment.' };
+    }
     const logs = await rpc(network, 'eth_getLogs', [{
       address: network.tokenContract, fromBlock: '0x' + i.scanCursor.toString(16), toBlock: '0x' + end.toString(16),
       topics: [ERC20_TRANSFER_EVENT_SIGNATURE, null, '0x' + i.address.slice(2).padStart(64, '0')],
