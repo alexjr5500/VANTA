@@ -362,3 +362,6 @@ jobs:
         run: docker build -f backend/Dockerfile.backup -t vanta-maintenance-ci .
       - name: Rehearse volume continuity and refusal without approval
         run: bash backend/scripts/ci-backup-maintenance.sh
+
+      - name: Exercise online encrypted PostgreSQL 18 capture with restricted reader
+        run: bash backend/scripts/ci-backup-database-online.sh
