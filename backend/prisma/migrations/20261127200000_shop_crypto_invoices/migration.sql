@@ -10,6 +10,9 @@ CREATE TABLE "ShopCryptoInvoice" (
   "expiresAt" TIMESTAMP(3) NOT NULL,
   "transactionHash" TEXT,
   "startBlock" INTEGER NOT NULL,
+  "scanCursor" INTEGER NOT NULL,
+  "lastCheckedAt" TIMESTAMP(3),
+  "settledAt" TIMESTAMP(3),
   CONSTRAINT "ShopCryptoInvoice_pkey" PRIMARY KEY ("id")
 );
 CREATE UNIQUE INDEX "ShopCryptoInvoice_orderId_key" ON "ShopCryptoInvoice"("orderId");
@@ -18,3 +21,5 @@ CREATE INDEX "ShopCryptoInvoice_payerId_createdAt_idx" ON "ShopCryptoInvoice"("p
 CREATE INDEX "ShopCryptoInvoice_network_expiresAt_idx" ON "ShopCryptoInvoice"("network","expiresAt");
 
 CREATE UNIQUE INDEX "ShopCryptoInvoice_network_transactionHash_key" ON "ShopCryptoInvoice"("network","transactionHash");
+
+CREATE INDEX "ShopCryptoInvoice_settledAt_lastCheckedAt_idx" ON "ShopCryptoInvoice"("settledAt","lastCheckedAt");
