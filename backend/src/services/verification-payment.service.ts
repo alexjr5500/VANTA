@@ -1,3 +1,4 @@
+import { shopCardEnabled } from '../config/shop-card.config';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 import { prisma } from '../prisma';
 import { resolveShopGiftRecipient } from './shop-gift.service';
@@ -298,6 +299,10 @@ export class VerificationPaymentService {
       throw new Error('This payment session has expired. Please start a new purchase.');
     }
 
+    if (existingAttempt.network === 'stripe-card') {
+      const paid = await prisma.shopCardCheckout.findFirst({ where: { orderId: existingAttempt.id, payerId: userId, product: 'badge', paidAt: { not: null }, paymentIntentId: { not: null } } });
+      if (!shopCardEnabled() || options.mode !== 'test' || !paid || paid.amountCents !== Math.round(existingAttempt.amount * 100)) throw new Error('Card payment has not been verified.');
+    }
     const plan = await prisma.subscriptionPlan.findUnique({ where: { id: existingAttempt.planId } });
     if (!plan || !plan.isActive) {
       throw new Error('The purchased verification plan is no longer available.');
