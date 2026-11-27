@@ -1,5 +1,6 @@
 import { prisma } from '../prisma';
 import { resolveShopGiftRecipient } from './shop-gift.service';
+import { shopLiveCryptoEnabled } from '../config/shop-crypto.config';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 import { coinsToUsd } from '../config/wallet.config';
 import { walletService } from './wallet.service';
@@ -125,8 +126,8 @@ export class CoinPaymentService {
 
     const recipientUserId = await resolveShopGiftRecipient(userId, recipientId);
     const isCustom = packageId === 'custom';
-    if (isCustom && (!shopSandboxEnabled() || typeof customCoins !== 'number' || !Number.isSafeInteger(customCoins) || customCoins < 100 || customCoins > 100000)) {
-      throw new Error('Custom quantity must be a whole number from 100 to 100,000 in the isolated sandbox.');
+    if (isCustom && ((!shopSandboxEnabled() && !shopLiveCryptoEnabled()) || typeof customCoins !== 'number' || !Number.isSafeInteger(customCoins) || customCoins < 100 || customCoins > 100000)) {
+      throw new Error('Custom quantity must be a whole number from 100 to 100,000 in an enabled checkout.');
     }
     const pkg = isCustom
       ? { id: null, name: 'Custom amount', coins: customCoins as number, price: coinsToUsd(customCoins as number), isActive: true }
