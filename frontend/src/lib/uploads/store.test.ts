@@ -327,6 +327,44 @@ describe('uploadManager store (background Story/Reel publishing)', () => {
   });
 
 
+  test.each(['FINALIZING', 'UNRECOGNIZED_STATUS'])('preserves the original session while server reports %s', async (pendingStatus) => {
+    let status = 'ACTIVE';
+    let completeAttempts = 0;
+    (apiPost as any).mockImplementation((route: string) => {
+      if (route.includes('/chunk/init')) return Promise.resolve({ sessionId: 'sess-pending' });
+      if (route.includes('/chunk/complete')) {
+        completeAttempts++;
+        if (completeAttempts === 1) {
+          status = pendingStatus;
+          return Promise.reject(new Error('Completion response lost'));
+        }
+        return Promise.resolve({ id: 'file-original' });
+      }
+      return Promise.resolve({});
+    });
+    (apiGet as any).mockImplementation(async () => ({ status, receivedIndexes: [], complete: false }));
+    const sends = vi.spyOn(FakeXHR.prototype, 'send');
+    try {
+      const job = store.startUpload({
+        kind: 'reel', file: new File(['media'], 'clip.mp4', { type: 'video/mp4' }),
+        draftId: 'reel-pending', token: 'tok', meta: { mimeType: 'video/mp4' },
+      });
+      await vi.waitFor(() => expect(store.getJobs().find(j => j.id === job.id)?.phase).toBe('failed'));
+      store.retryUpload(store.getJobs().find(j => j.id === job.id)!);
+      await vi.waitFor(() => expect(store.getJobs().find(j => j.id === job.id)?.phase).toBe('failed'));
+      expect(store.getJobs().find(j => j.id === job.id)?.sessionId).toBe('sess-pending');
+      expect(completeAttempts).toBe(1);
+      expect(sends).toHaveBeenCalledTimes(1);
+      status = 'COMPLETE';
+      store.retryUpload(store.getJobs().find(j => j.id === job.id)!);
+      await vi.waitFor(() => expect(store.getJobs().find(j => j.id === job.id)?.phase).toBe('completed'));
+      expect((apiPost as any).mock.calls.filter(([route]: [string]) => route.includes('/chunk/init'))).toHaveLength(1);
+      expect(completeAttempts).toBe(2);
+      expect(sends).toHaveBeenCalledTimes(1);
+      expect(apiPost).toHaveBeenCalledWith('/api/reels/reel-pending/finalize', expect.objectContaining({ fileId: 'file-original' }), 'tok');
+    } finally { sends.mockRestore(); }
+  });
+
   test('reuses a token rotated by AuthProvider during an in-flight 401 without another refresh', async () => {
     const { ApiError } = await import('@/lib/api');
     let latestToken = 'old-token';
