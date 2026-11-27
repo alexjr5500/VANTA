@@ -1,4 +1,5 @@
 import { prisma } from '../prisma';
+import { resolveShopGiftRecipient } from './shop-gift.service';
 import { auditLog } from '../security/auditLog';
 import { CryptoUtils } from '../security/crypto';
 import {
@@ -120,7 +121,8 @@ export class VerificationPaymentService {
     userId: string,
     planId: unknown,
     network: unknown,
-    ipAddress?: string
+    ipAddress?: string,
+    recipientId?: unknown
   ): Promise<Record<string, unknown>> {
     if (!userId) throw new Error('Unauthorized');
     if (typeof planId !== 'string' || !planId.trim()) {
@@ -130,6 +132,7 @@ export class VerificationPaymentService {
       throw new Error('Unsupported payment network. Choose USDT (BEP-20) or USDC (Base).');
     }
 
+    const recipientUserId = await resolveShopGiftRecipient(userId, recipientId);
     const catalogPlan = BADGE_PLAN_BY_ID.get(planId);
     if (!catalogPlan) throw new Error('Invalid verification plan');
 
@@ -187,6 +190,7 @@ export class VerificationPaymentService {
     const order = await prisma.verificationPurchase.create({
       data: {
         userId,
+        ...(recipientUserId ? { recipientUserId } : {}),
         planId: catalogPlan.id,
         amount,
         currency: 'USD',
@@ -200,6 +204,7 @@ export class VerificationPaymentService {
     const payload: Record<string, unknown> = {
       address,
       orderId: order.id,
+      recipientUserId,
       network,
       amount,
       currency: 'USD',
