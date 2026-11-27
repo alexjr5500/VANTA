@@ -400,3 +400,27 @@ describe('invoice-specific strict verification', () => {
     await expect(blockchainTxVerifier.verifyTransaction({ ...opts, notAfter: new Date(time - 1) })).rejects.toMatchObject({ code: 'TRANSACTION_FAILED' });
   });
 });
+
+describe('Ethereum mainnet USDT invoice', () => {
+  const contract = '0xdac17f958d2ee523a2206206994597c13d831ec7';
+  const time = 1795800000000;
+  const options = { txHash: TX, network: 'usdt-erc20', expectedAmountUsd: 1.99, expectedRecipient: OFFICIAL_WALLET, expectedAtomicAmount: '1990000', notBefore: new Date(time - 1000), notAfter: new Date(time + 1000), minBlock: 16 };
+  function handlers(finalized = '0x20', amount = 1990000) {
+    return {
+      eth_chainId: () => '0x1',
+      eth_blockNumber: () => '0x30',
+      eth_getTransactionReceipt: () => makeReceipt({ logs: [makeTransferLog(OFFICIAL_WALLET, amount, contract)] }, contract),
+      eth_getBlockByNumber: (params: unknown[]) => params[0] === 'finalized' ? { number: finalized } : { number: '0x10', hash: '0x' + 'f'.repeat(64), timestamp: '0x' + Math.floor(time / 1000).toString(16) },
+    };
+  }
+  test('verifies exact six-decimal USDT on finalized Ethereum mainnet', async () => {
+    mockRpc(handlers());
+    await expect(blockchainTxVerifier.verifyTransaction(options)).resolves.toMatchObject({ verified: true, asset: 'USDT', chainId: 1, tokenContract: contract });
+  });
+  test('rejects an unfinalized block or amount mismatch', async () => {
+    mockRpc(handlers('0xf'));
+    await expect(blockchainTxVerifier.verifyTransaction(options)).rejects.toMatchObject({ code: 'LOW_CONFIRMATIONS' });
+    mockRpc(handlers('0x20', 1989999));
+    await expect(blockchainTxVerifier.verifyTransaction(options)).rejects.toMatchObject({ code: 'AMOUNT_MISMATCH' });
+  });
+});
