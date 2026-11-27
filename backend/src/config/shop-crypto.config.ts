@@ -18,8 +18,11 @@ export function shopLiveCryptoEnabled(): boolean {
 export function shopCryptoNetworks(): string[] {
   const networks = ['usdt-bep20', 'usdc-base'];
   const rpc = process.env.VANTA_ETHEREUM_RPC_URL?.trim();
-  if (process.env.VANTA_SHOP_ERC20_ENABLED === 'true' && rpc) {
-    try { const url = new URL(rpc); if (url.protocol === 'https:' && !url.username && !url.password) networks.push('usdt-erc20'); } catch { /* fail closed */ }
+  if (rpc) {
+    try { const url = new URL(rpc); if (url.protocol === 'https:' && !url.username && !url.password) {
+      if (process.env.VANTA_SHOP_ERC20_ENABLED === 'true') networks.push('usdt-erc20');
+      if (process.env.VANTA_SHOP_NATIVE_ETH_ENABLED === 'true') networks.push('eth-erc20');
+    } } catch { /* fail closed */ }
   }
   return networks;
 }
