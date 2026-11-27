@@ -239,7 +239,7 @@ export function SettingsGroup({
         <div className="flex items-center gap-2 px-1">
           {Icon && (
             <span
-              className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-[var(--settings-accent-soft)] text-[var(--settings-accent-text)]"
+              className="grid h-5 w-5 shrink-0 place-items-center rounded-md text-[var(--vanta-gold)]"
               aria-hidden="true"
             >
               <Icon size={12} strokeWidth={2.5} />
@@ -260,7 +260,7 @@ export function SettingsGroup({
           {right && <span className="shrink-0">{right}</span>}
         </div>
       )}
-      <div className="settings-card">{children}</div>
+      <div className="divide-y divide-white/[0.06]">{children}</div>
     </section>
   );
 }
@@ -294,7 +294,7 @@ export function SettingsLink({
     >
       {Icon && (
         <span
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-white/[0.06] bg-white/[0.03] text-white/40 transition-colors group-hover:text-white/70"
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-[var(--vanta-gold)] transition-colors"
           aria-hidden="true"
         >
           <Icon size={17} strokeWidth={1.9} />
@@ -350,8 +350,8 @@ export function ToggleRow({
       {Icon && (
         <span
           className={cn(
-            'grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-white/[0.06] bg-white/[0.03] transition-colors',
-            checked ? 'text-[var(--settings-accent-text)]' : 'text-white/40'
+            'grid h-9 w-9 shrink-0 place-items-center rounded-[10px] transition-colors',
+            'text-[var(--vanta-gold)]'
           )}
           aria-hidden="true"
         >
@@ -436,7 +436,7 @@ export function SelectRow({
       >
         {Icon && (
           <span
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-white/[0.06] bg-white/[0.03] text-white/40"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-white/40"
             aria-hidden="true"
           >
             <Icon size={17} strokeWidth={1.9} />
