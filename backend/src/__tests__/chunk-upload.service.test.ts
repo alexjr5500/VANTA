@@ -123,6 +123,34 @@ describe('ChunkUploadService', () => {
   });
 
   describe('acceptChunkPart', () => {
+    it('publishes a complete part and does not overwrite it with a short retry', async () => {
+      fs.mkdirSync(stagingDir(baseSession.id), { recursive: true });
+      const staged = path.join(stagingDir(baseSession.id), '000000.0123456789abcdef01234567.pending');
+      const payload = Buffer.alloc(baseSession.fileSize, 7);
+      fs.writeFileSync(staged, payload);
+      await expect(chunkUploadService.acceptChunkPart('user-1', baseSession.id, '0', {
+        path: staged, size: payload.length,
+      } as any)).resolves.toMatchObject({ receivedChunks: 1, complete: true });
+      expect(fs.readFileSync(partPath(baseSession.id, 0))).toEqual(payload);
+      fs.writeFileSync(staged, Buffer.alloc(5, 9));
+      await expect(chunkUploadService.acceptChunkPart('user-1', baseSession.id, '0', {
+        path: staged, size: 5,
+      } as any)).rejects.toThrow('expected size');
+      expect(fs.existsSync(staged)).toBe(false);
+      expect(fs.readFileSync(partPath(baseSession.id, 0))).toEqual(payload);
+    });
+
+    it('rejects a non-owner without changing the accepted part', async () => {
+      fs.mkdirSync(stagingDir(baseSession.id), { recursive: true });
+      const accepted = partPath(baseSession.id, 0);
+      fs.writeFileSync(accepted, Buffer.alloc(baseSession.fileSize, 7));
+      await expect(chunkUploadService.acceptChunkPart('user-2', baseSession.id, '0', {
+        path: accepted, size: baseSession.fileSize,
+      } as any)).rejects.toThrow('Upload session not found');
+      expect(fs.existsSync(accepted)).toBe(true);
+      expect(db.uploadSession.update).not.toHaveBeenCalled();
+    });
+
     it('rejects a chunk whose path is outside the session staging dir', async () => {
       await expect(
         chunkUploadService.acceptChunkPart('user-1', baseSession.id, 0, {
