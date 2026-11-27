@@ -22,6 +22,7 @@ jest.mock('../prisma', () => {
     walletTransaction: { findMany: jest.fn() },
     walletAuditLog: { create: jest.fn() },
     walletReconciliationLog: { create: jest.fn() },
+    $transaction: jest.fn(),
   };
   return { prisma: mock };
 });
@@ -36,6 +37,7 @@ const walletRow = { id: 'wallet1', userId: 'user1', coinBalance: 1_000, earnings
 
 beforeEach(() => {
   jest.clearAllMocks();
+  (prisma.$transaction as jest.Mock).mockImplementation(async (fn: any) => fn(prisma));
   (prisma.wallet.findUnique as jest.Mock).mockResolvedValue(walletRow);
   (prisma.walletReconciliationLog.create as jest.Mock).mockImplementation(
     async ({ data }: { data: any }) => ({ id: 'rec1', ...data })
@@ -119,18 +121,31 @@ describe('WalletService.reconcileWallet', () => {
     expect(prisma.wallet.update).not.toHaveBeenCalled();
   });
 
-  test('reconcileAllWallets can freeze a discrepant wallet with an auditable reason', async () => {
-    (prisma.wallet.findMany as jest.Mock).mockResolvedValue([{ id: 'wallet1', userId: 'user1', coinBalance: 1000 }]);
-    (prisma.walletTransaction.findMany as jest.Mock).mockResolvedValue([{ type: 'PURCHASE', amount: 100 }]);
-    (prisma.wallet.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+  test('uses one repeatable-read snapshot for balance, ledger and audit evidence', async () => {
+    (prisma.walletTransaction.findMany as jest.Mock).mockResolvedValue([
+      { type: 'PURCHASE', amount: 1500, currency: 'VANTA', status: 'COMPLETED' },
+      { type: 'REFUND', amount: -600, currency: 'VANTA', status: 'COMPLETED' },
+      { type: 'REFUND', amount: 100, currency: 'VANTA', status: 'COMPLETED' },
+      { type: 'CREATOR_EARNING', amount: 49.3, currency: 'USD', status: 'COMPLETED' },
+    ]);
+    const result = await walletService.reconcileWallet('user1');
+    expect(result.status).toBe('MATCH');
+    expect(result.ledgerBalance).toBe(1000);
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function),
+      expect.objectContaining({ isolationLevel: 'RepeatableRead' }));
+  });
 
-    const result = await walletService.reconcileAllWallets({ freezeOnDiscrepancy: true });
+  test('rejects automated freezing before any wallet or ledger query', async () => {
+    await expect(walletService.reconcileAllWallets({ freezeOnDiscrepancy: true }))
+      .rejects.toThrow('Automatic reconciliation freeze is disabled');
+    expect(prisma.wallet.findMany).not.toHaveBeenCalled();
+    expect(prisma.wallet.updateMany).not.toHaveBeenCalled();
+  });
 
-    expect(result.checked).toBe(1);
-    expect(result.discrepancies).toBe(1);
-    expect(result.frozen).toBe(1);
-    const freezeCall = (prisma.wallet.updateMany as jest.Mock).mock.calls[0];
-    expect(freezeCall[0].data.isFrozen).toBe(true);
-    expect(freezeCall[0].data.frozenBy).toBe('system:reconciliation');
+  test('does not create a missing wallet during reconciliation', async () => {
+    (prisma.wallet.findUnique as jest.Mock).mockResolvedValue(null);
+    await expect(walletService.reconcileWallet('missing')).rejects.toThrow('Wallet not found');
+    expect(prisma.wallet.create).not.toHaveBeenCalled();
+    expect(prisma.walletReconciliationLog.create).not.toHaveBeenCalled();
   });
 });

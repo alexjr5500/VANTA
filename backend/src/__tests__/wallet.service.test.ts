@@ -382,6 +382,9 @@ describe('WalletService', () => {
   });
 
   describe('reconcileWallet follower reward claim direction', () => {
+    beforeEach(() => {
+      (prisma.$transaction as jest.Mock).mockImplementation(async (fn: any) => fn(prisma));
+    });
     test.each([
       ['creator', 70, 70],
       ['claimant', 30, 30],

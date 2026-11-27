@@ -129,6 +129,8 @@ function resolveWalletTransactionDelta(transaction: {
     if (metadata?.side === 'claimant') return Math.abs(transaction.amount);
     return null;
   }
+  // Purchase refunds debit the coin wallet; historical reservation refunds can credit it.
+  if (transaction.type === TX_TYPES.REFUND) return transaction.amount;
   if (INCOMING_TYPES.has(transaction.type as any)) return Math.abs(transaction.amount);
   if (OUTGOING_TYPES.has(transaction.type as any)) return -Math.abs(transaction.amount);
   return null;
@@ -2355,9 +2357,9 @@ export class WalletService {
   /**
    * Reconcile a single wallet: compute the authoritative balance from the
    * Wallet ledger (WalletTransaction rows) and compare it against the stored
-   * Wallet.coinBalance. Every run records exactly one WalletReconciliationLog
-   * row (MATCH or DISCREPANCY). Discrepancies are NEVER silently fixed — they
-   * are audited and surfaced; a caller can optionally freeze the wallet.
+   * Wallet.coinBalance. One repeatable-read transaction records coin and USD
+   * reconciliation evidence and discrepancy audits. Historical balances are
+   * never silently rewritten; automated freezing is disabled.
    */
   async reconcileWallet(userId: string): Promise<{
     status: 'MATCH' | 'DISCREPANCY';
@@ -2371,8 +2373,10 @@ export class WalletService {
     earningsDifference: number;
     earningsLogId: string;
   }> {
-    const wallet = await this.ensureWallet(userId);
-    const txns = await prisma.walletTransaction.findMany({
+    return prisma.$transaction(async (tx) => {
+    const wallet = await tx.wallet.findUnique({ where: { userId } });
+    if (!wallet) throw new Error('Wallet not found');
+    const txns = await tx.walletTransaction.findMany({
       where: { userId, currency: { in: ["VANTA", "USD"] } },
       select: { type: true, amount: true, currency: true, metadata: true, status: true },
     });
@@ -2409,7 +2413,7 @@ export class WalletService {
     const earningsDifferenceCents = storedEarningsCents - ledgerEarningsCents;
     const earningsStatus: 'MATCH' | 'DISCREPANCY' = earningsDifferenceCents === 0 ? 'MATCH' : 'DISCREPANCY';
 
-    const log = await prisma.walletReconciliationLog.create({
+    const log = await tx.walletReconciliationLog.create({
       data: {
         userId,
         walletId: wallet.id,
@@ -2421,7 +2425,7 @@ export class WalletService {
         details: JSON.stringify({ currency: "VANTA", transactionCount: txns.filter(t => t.currency !== "USD").length, computedAt: new Date().toISOString() }),
       },
     });
-    const earningsLog = await prisma.walletReconciliationLog.create({
+    const earningsLog = await tx.walletReconciliationLog.create({
       data: {
         userId,
         walletId: wallet.id,
@@ -2435,24 +2439,15 @@ export class WalletService {
     });
 
     if (status === 'DISCREPANCY') {
-      await this.logAudit(userId, 'RECONCILIATION_DISCREPANCY', {
-        currency: "VANTA",
-        storedBalance,
-        ledgerBalance,
-        difference,
-        reconciliationLogId: log.id,
-      });
-      this.logTally('reconciliation_discrepancy', { userId, currency: "VANTA", difference });
+      await tx.walletAuditLog.create({ data: { userId, action: 'RECONCILIATION_DISCREPANCY', details: JSON.stringify({
+        currency: "VANTA", storedBalance, ledgerBalance, difference, reconciliationLogId: log.id,
+      }) } });
     }
     if (earningsStatus === 'DISCREPANCY') {
-      await this.logAudit(userId, 'RECONCILIATION_DISCREPANCY', {
-        currency: "USD",
-        storedBalance: storedEarningsCents / 100,
-        ledgerBalance: ledgerEarningsCents / 100,
-        difference: earningsDifferenceCents / 100,
-        reconciliationLogId: earningsLog.id,
-      });
-      this.logTally('reconciliation_discrepancy', { userId, currency: "USD", difference: earningsDifferenceCents / 100 });
+      await tx.walletAuditLog.create({ data: { userId, action: 'RECONCILIATION_DISCREPANCY', details: JSON.stringify({
+        currency: "USD", storedBalance: storedEarningsCents / 100, ledgerBalance: ledgerEarningsCents / 100,
+        difference: earningsDifferenceCents / 100, reconciliationLogId: earningsLog.id,
+      }) } });
     }
 
     return {
@@ -2467,39 +2462,31 @@ export class WalletService {
       earningsDifference: earningsDifferenceCents / 100,
       earningsLogId: earningsLog.id,
     };
+    }, { isolationLevel: 'RepeatableRead', maxWait: 5000, timeout: 15000 });
   }
 
   /**
-   * Reconcile all wallets (manual or periodic run). When
-   * `freezeOnDiscrepancy` is enabled, wallets with a difference are frozen
-   * with an auditable reason rather than silently adjusted.
+   * Reconcile a bounded page of wallets. Snapshot evidence is not a current
+   * authorization decision. Automatic freezing remains disabled until an
+   * independently reviewed fencing and ledger completeness protocol exists.
    */
   async reconcileAllWallets(options?: {
     limit?: number;
     freezeOnDiscrepancy?: boolean;
   }): Promise<{ checked: number; discrepancies: number; frozen: number }> {
+    if (options?.freezeOnDiscrepancy) throw new Error('Automatic reconciliation freeze is disabled; manual review required');
     const wallets = await prisma.wallet.findMany({
       take: Math.min(Math.max(1, options?.limit || 500), 1000),
       select: { id: true, userId: true, coinBalance: true },
     });
     let discrepancies = 0;
-    let frozen = 0;
+    const frozen = 0;
     for (const wallet of wallets) {
       const result = await this.reconcileWallet(wallet.userId);
       const hasDiscrepancy = result.status === 'DISCREPANCY' || result.earningsStatus === 'DISCREPANCY';
       if (hasDiscrepancy) {
         discrepancies++;
-        if (options?.freezeOnDiscrepancy) {
-          const update = await prisma.wallet.updateMany({
-            where: { id: wallet.id, isFrozen: false },
-            data: {
-              isFrozen: true,
-              frozenBy: 'system:reconciliation',
-              freezeReason: `Reconciliation discrepancy: VANTA stored=${result.storedBalance}, ledger=${result.ledgerBalance}; USD stored=${result.storedEarningsBalance}, ledger=${result.ledgerEarningsBalance}`,
-            },
-          });
-          if (update.count === 1) frozen++;
-        }
+
       }
     }
     return { checked: wallets.length, discrepancies, frozen };
