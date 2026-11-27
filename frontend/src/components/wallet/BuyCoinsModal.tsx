@@ -11,6 +11,13 @@ interface BuyCoinsModalProps {
   onSuccess?: (coins: number) => void;
 }
 type CoinPackage = { id: string; coins: number; price: number };
+function isCoinPackage(value: unknown): value is CoinPackage {
+  if (typeof value !== 'object' || value === null) return false;
+  const p = value as Record<string, unknown>;
+  return typeof p.id === 'string' && p.id.length > 0 &&
+    typeof p.coins === 'number' && Number.isSafeInteger(p.coins) && p.coins > 0 &&
+    typeof p.price === 'number' && Number.isFinite(p.price) && p.price > 0;
+}
 export default function BuyCoinsModal({ open, onClose }: BuyCoinsModalProps) {
   const dialogRef = useWalletDialog<HTMLElement>(open, onClose);
   const [packages, setPackages] = useState<CoinPackage[]>([]);
@@ -25,8 +32,8 @@ export default function BuyCoinsModal({ open, onClose }: BuyCoinsModalProps) {
     setLoading(true); setError(false); setPackages([]); setSelected(''); setGift(false); setRecipient('');
     getCoinPackages().then(data => {
       if (!active) return;
-      if (!Array.isArray(data?.packages)) throw new Error('Invalid catalog');
-      const list: CoinPackage[] = data.packages.filter((p: CoinPackage) => p && typeof p.id === 'string' && Number.isSafeInteger(p.coins) && p.coins > 0 && Number.isFinite(p.price) && p.price > 0);
+      if (typeof data !== 'object' || data === null || !('packages' in data) || !Array.isArray(data.packages)) throw new Error('Invalid catalog');
+      const list = (data.packages as unknown[]).filter(isCoinPackage);
       setPackages(list);
       if (!list.length) setError(true);
     }).catch(() => { if (active) setError(true); }).finally(() => { if (active) setLoading(false); });
