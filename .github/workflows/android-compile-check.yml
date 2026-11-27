@@ -44,7 +44,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/vanta-ci-disposable-signing.p12
       ANDROID_KEYSTORE_PASSWORD: vanta-ci-disposable-only
       ANDROID_KEY_ALIAS: vanta-ci-test
       ANDROID_KEY_PASSWORD: vanta-ci-disposable-only
@@ -68,6 +67,8 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
+          export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/vanta-ci-disposable-signing.p12"
+          printf 'ANDROID_KEYSTORE_PATH=%s\n' "$ANDROID_KEYSTORE_PATH" >> "$GITHUB_ENV"
           keytool -genkeypair -storetype PKCS12 -keystore "$ANDROID_KEYSTORE_PATH" -storepass:env ANDROID_KEYSTORE_PASSWORD -keypass:env ANDROID_KEY_PASSWORD -alias "$ANDROID_KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 2 -dname "CN=VANTA CI disposable test key"
       - name: Assemble release variants (not distributable)
         working-directory: android
@@ -85,5 +86,5 @@ jobs:
         if: always()
         shell: bash
         run: |
-          rm -f -- "$ANDROID_KEYSTORE_PATH" android/release-build-info.txt android/release-sha256.txt
+          rm -f -- "$RUNNER_TEMP/vanta-ci-disposable-signing.p12" android/release-build-info.txt android/release-sha256.txt
           rm -rf -- android/app/build/outputs/apk/release android/app/build/outputs/bundle/release
