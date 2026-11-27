@@ -3869,6 +3869,8 @@ model ShopCryptoInvoice {
   createdAt     DateTime @default(now())
   expiresAt     DateTime
   transactionHash String?
+  startBlock Int
+  @@unique([network, transactionHash])
   @@index([payerId, createdAt])
   @@index([network, expiresAt])
 }
