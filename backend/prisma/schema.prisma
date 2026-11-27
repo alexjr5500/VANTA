@@ -3908,10 +3908,22 @@ model ShopTreasuryTransfer {
   status String @default("AUTHORIZED")
   authorizedBy String
   authorizedAt DateTime @default(now())
+  automation Boolean @default(false)
+  maxFeeAtomic String?
+  signerRequestId String? @unique
+  signerPolicyId String?
+  orderAmountCents Int?
+  dispatchStartedAt DateTime?
+  dispatchDeadline DateTime?
+  nextAttemptAt DateTime?
+  lastFailure String?
+  leaseToken String?
+  leaseUntil DateTime?
   transactionHash String?
   submittedAt DateTime?
   verifiedAt DateTime?
   updatedAt DateTime @updatedAt
   @@unique([network, transactionHash])
   @@index([status, authorizedAt])
+  @@index([automation, status, nextAttemptAt])
 }

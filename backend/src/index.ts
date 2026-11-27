@@ -864,6 +864,8 @@ async function startServer() {
     // The new monitor only scans unique invoices when explicitly configured.
     const { startShopCryptoMonitor } = await import('./services/shop-crypto.service');
     startShopCryptoMonitor();
+    const { startTreasurySettlementWorker } = await import('./services/shop-treasury-auto.service');
+    startTreasurySettlementWorker();
 
     // Start HTTP server
     httpServer.listen(PORT, () => {

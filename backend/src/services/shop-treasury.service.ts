@@ -1,4 +1,5 @@
 import { prisma } from '../prisma';
+import { automaticTreasuryPublicStatus } from '../config/shop-treasury-auto.config';
 import type { Prisma, ShopCryptoInvoice } from '@prisma/client';
 import { appendAuditLog } from '../security/auditLog';
 import { twoFactorAuth } from '../security/twoFactorAuth';
@@ -10,7 +11,7 @@ import { tonHashHex } from './shop-ton.service';
 function reference(network: string, hash: string) {
   return network === 'gram-ton' ? 'ton:' + hash : network === 'usdt-trc20' ? 'tron:' + hash : hash;
 }
-async function assertVerifiedInvoice(tx: Prisma.TransactionClient, invoice: ShopCryptoInvoice) {
+export async function assertVerifiedInvoice(tx: Prisma.TransactionClient, invoice: ShopCryptoInvoice) {
   if (!invoice.settledAt || !invoice.transactionHash || !/^[1-9][0-9]*$/.test(invoice.amountAtomic)) throw new Error('Invoice is not verified and fulfilled');
   const expected = 'live:' + reference(invoice.network, invoice.transactionHash);
   const where = { id: invoice.orderId, userId: invoice.payerId, status: 'COMPLETED', paymentMode: 'live', providerOrderId: expected };
@@ -42,7 +43,7 @@ export async function treasuryDashboard(cursor?: string) {
     orderBy: { id: 'asc' }, take: 51, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     select: { id: true, orderId: true, network: true, address: true, amountAtomic: true, transactionHash: true, settledAt: true, treasuryTransfer: true },
   });
-  return { networks, totals, instructionsEnabled: treasuryInstructionsEnabled(), automaticBroadcast: false, invoices: rows.slice(0, 50), nextCursor: rows.length > 50 ? rows[49].id : null };
+  return { networks, totals, instructionsEnabled: treasuryInstructionsEnabled(), ...automaticTreasuryPublicStatus(), invoices: rows.slice(0, 50), nextCursor: rows.length > 50 ? rows[49].id : null };
 }
 async function stepUp(actorId: string, code: unknown) {
   if (typeof code !== 'string' || !/^\d{6}$/.test(code)) throw new Error('Fresh authenticator code required');
@@ -78,12 +79,12 @@ export function treasuryHash(network: string, input: unknown): string | null {
 }
 export async function recordTreasuryBroadcast(actorId: string, id: string, input: Record<string, unknown>) {
   const row = await prisma.shopTreasuryTransfer.findUnique({ where: { id }, include: { invoice: true } });
-  if (!row || row.status !== 'AUTHORIZED') throw new Error('Transfer is not awaiting broadcast record');
+  if (!row || row.automation || row.status !== 'AUTHORIZED') throw new Error('Transfer is not awaiting broadcast record');
   const hash = treasuryHash(row.network, input.transactionHash);
   if (!hash || hash === row.invoice.transactionHash) throw new Error('Invalid outgoing transaction hash');
   await stepUp(actorId, input.code);
   return prisma.$transaction(async tx => {
-    const claim = await tx.shopTreasuryTransfer.updateMany({ where: { id, status: 'AUTHORIZED', transactionHash: null }, data: { status: 'SUBMITTED_UNVERIFIED', transactionHash: hash, submittedAt: new Date() } });
+    const claim = await tx.shopTreasuryTransfer.updateMany({ where: { id, automation: false, status: 'AUTHORIZED', transactionHash: null }, data: { status: 'SUBMITTED_UNVERIFIED', transactionHash: hash, submittedAt: new Date() } });
     if (claim.count !== 1) throw new Error('Transfer already recorded');
     await appendAuditLog(tx, { userId: actorId, action: 'TREASURY_BROADCAST_RECORDED', severity: 'CRITICAL', metadata: { transferId: id, network: row.network, hash } });
     return tx.shopTreasuryTransfer.findUniqueOrThrow({ where: { id } });
@@ -91,7 +92,7 @@ export async function recordTreasuryBroadcast(actorId: string, id: string, input
 }
 export async function verifyTreasuryTransfer(actorId: string, id: string) {
   const row = await prisma.shopTreasuryTransfer.findUnique({ where: { id }, include: { invoice: true } });
-  if (!row || row.status !== 'SUBMITTED_UNVERIFIED' || !row.transactionHash) throw new Error('No submitted transaction to verify');
+  if (!row || row.automation || row.status !== 'SUBMITTED_UNVERIFIED' || !row.transactionHash) throw new Error('No submitted transaction to verify');
   const network = getBlockchainNetwork(row.network);
   // Only EVM stablecoins can currently be independently verified as outgoing
   // transfers. Never mark native ETH, TRON or TON complete from a claimed hash.

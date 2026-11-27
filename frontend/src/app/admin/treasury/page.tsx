@@ -6,10 +6,10 @@ import { useAuth } from '@/context/AuthContext';
 import { apiGet, apiPost } from '@/lib/apiClient';
 
 type Network = { network: string; asset: string; decimals: number; destination: string | null };
-type Transfer = { id: string; network: string; source: string; destination: string; amountAtomic: string; status: string; authorizedAt: string; transactionHash: string | null; verifiedAt: string | null };
+type Transfer = { automation?: boolean; lastFailure?: string | null; maxFeeAtomic?: string | null; id: string; network: string; source: string; destination: string; amountAtomic: string; status: string; authorizedAt: string; transactionHash: string | null; verifiedAt: string | null };
 type Invoice = { id: string; orderId: string; network: string; address: string; amountAtomic: string; transactionHash: string; settledAt: string; treasuryTransfer: Transfer | null };
 type Total = { network: string; amountAtomic: string; count: number; status: string };
-type Snapshot = { networks: Network[]; totals: Total[]; invoices: Invoice[]; nextCursor: string | null; instructionsEnabled: boolean; automaticBroadcast: boolean };
+type Snapshot = { networks: Network[]; totals: Total[]; invoices: Invoice[]; nextCursor: string | null; instructionsEnabled: boolean; automaticBroadcast: boolean; enabled?: boolean; policyId?: string | null };
 function formatAtomic(value: string, decimals: number) {
   if (!/^[0-9]+$/.test(value) || !Number.isInteger(decimals) || decimals < 1 || decimals > 18) return 'Unavailable';
   const padded = value.padStart(decimals + 1, '0');
@@ -67,7 +67,7 @@ export default function TreasuryPage() {
       <div><p className="text-xs uppercase tracking-wider text-gray-400">Finance · custody</p><h1 className="mt-1 text-2xl font-bold">Treasury Management</h1><p className="mt-1 text-sm text-gray-400">Verified shop receipts, transfer instructions and settlement records.</p></div>
       <button className={btn} onClick={() => void load()} disabled={loading}><RefreshCcw size={15} className="mr-2 inline"/>Refresh</button>
     </header>
-    <div className={panel}><ShieldCheck size={20} className="mb-2 text-amber-300"/><p className="font-semibold">External custody required</p><p className="mt-1 text-sm text-gray-400">No private keys are stored or requested. This dashboard does not broadcast transactions. Authorized instructions must be signed by your approved custody wallet. Destination addresses are managed in protected server configuration.</p><p className="mt-2 text-xs">{data?.instructionsEnabled ? 'Manual instruction authorization enabled' : 'Manual instruction authorization disabled'}</p></div>
+    <div className={panel}><ShieldCheck size={20} className="mb-2 text-amber-300"/><p className="font-semibold">External custody required</p><p className="mt-1 text-sm text-gray-400">No private keys are stored or requested. Automatic transfers, when configured, are submitted to an external policy-controlled custody signer. Manual instructions must be signed by your approved custody wallet. Destination addresses are managed in protected server configuration.</p><p className="mt-2 text-xs">Automatic settlement: {data?.automaticBroadcast ? 'Enabled for configured stablecoin networks' : 'Disabled / custody setup required'}</p><p className="mt-2 text-xs">{data?.instructionsEnabled ? 'Manual instruction authorization enabled' : 'Manual instruction authorization disabled'}</p></div>
     {error && <p role="alert" className="rounded-xl bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
     {notice && <p role="status" className="rounded-xl bg-white/5 p-3 text-sm">{notice}</p>}
     {loading && <p role="status" className="text-sm text-gray-400">Loading treasury data…</p>}
@@ -94,13 +94,14 @@ export default function TreasuryPage() {
         </>}
         {selected.treasuryTransfer && <>
           <p className="text-sm">Status: {label(selected.treasuryTransfer.status)}</p>
-          <button className={btn} onClick={() => void copy(JSON.stringify({ network: selected.treasuryTransfer!.network, source: selected.treasuryTransfer!.source, destination: selected.treasuryTransfer!.destination, amountAtomic: selected.treasuryTransfer!.amountAtomic, reference: selected.treasuryTransfer!.id }, null, 2))}>Copy authorized instruction</button>
-          {selected.treasuryTransfer.status === 'AUTHORIZED' && <>
+          <button className={btn} disabled={selected.treasuryTransfer.automation} onClick={() => void copy(JSON.stringify({ network: selected.treasuryTransfer!.network, source: selected.treasuryTransfer!.source, destination: selected.treasuryTransfer!.destination, amountAtomic: selected.treasuryTransfer!.amountAtomic, reference: selected.treasuryTransfer!.id }, null, 2))}>Copy authorized instruction</button>
+          {selected.treasuryTransfer.automation && <p className="text-xs text-amber-200">Managed by the automatic settlement worker. Do not manually broadcast this instruction. {selected.treasuryTransfer.lastFailure || ''}</p>}
+          {!selected.treasuryTransfer.automation && selected.treasuryTransfer.status === 'AUTHORIZED' && <>
             <label className="block text-sm">Externally broadcast transaction hash<input value={hash} onChange={e => setHash(e.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-black/20 p-2" autoComplete="off"/></label>
             <label className="block text-sm">Fresh authenticator code<input type="password" inputMode="numeric" maxLength={6} value={code} onChange={e => setCode(e.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-black/20 p-2" autoComplete="off"/></label>
             <button className={btn} disabled={busy || !hash.trim() || !/^\d{6}$/.test(code)} onClick={() => void submit('broadcast')}>Record external broadcast</button>
           </>}
-          {selected.treasuryTransfer.status === 'SUBMITTED_UNVERIFIED' && <><p className="break-all text-xs">{selected.treasuryTransfer.transactionHash}</p>{['usdt-bep20','usdc-base','usdt-erc20'].includes(selected.network) ? <button className={btn} disabled={busy} onClick={() => void submit('verify')}>Verify outgoing transaction</button> : <p className="text-sm text-amber-200">Outgoing verification for this network is not implemented. Reconcile with the custody wallet; status remains unverified.</p>}</>}
+          {!selected.treasuryTransfer.automation && selected.treasuryTransfer.status === 'SUBMITTED_UNVERIFIED' && <><p className="break-all text-xs">{selected.treasuryTransfer.transactionHash}</p>{['usdt-bep20','usdc-base','usdt-erc20'].includes(selected.network) ? <button className={btn} disabled={busy} onClick={() => void submit('verify')}>Verify outgoing transaction</button> : <p className="text-sm text-amber-200">Outgoing verification for this network is not implemented. Reconcile with the custody wallet; status remains unverified.</p>}</>}
         </>}
         {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
       </div>
