@@ -3878,3 +3878,18 @@ model ShopCryptoInvoice {
   @@index([network, expiresAt])
   @@index([settledAt, lastCheckedAt])
 }
+
+model ShopCardCheckout {
+  id String @id @default(cuid())
+  orderId String @unique
+  payerId String
+  product String
+  amountCents Int
+  sessionId String? @unique
+  paymentIntentId String? @unique
+  paidAt DateTime?
+  settledAt DateTime?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([payerId, createdAt])
+}
