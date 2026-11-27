@@ -13,6 +13,8 @@ import {
 import { authenticateJWT } from '../middleware/auth.middleware';
 import { rateLimiter } from '../security/rateLimiter';
 
+import { shopCoinBadgeEnabled } from '../config/shop-coin-badge.config';
+import { buyBadgeWithCoins } from '../services/shop-coin-badge.service';
 import { shopCardEnabled } from '../config/shop-card.config';
 import { createShopCardCheckout, checkShopCardCheckout, resumeShopCardCheckout, listShopCardCheckouts } from '../services/shop-card.service';
 import { shopLiveCryptoEnabled } from '../config/shop-crypto.config';
@@ -68,9 +70,16 @@ router.post('/address', saveWalletAddress);
 
 // Coin packages (Buy Coins flow)
 router.get('/packages', getCoinPackages);
-router.get('/shop-capabilities', (_req, res) => res.json({ sandbox: shopSandboxEnabled(), liveCrypto: shopLiveCryptoEnabled(), cardTest: shopCardEnabled() }));
+router.get('/shop-capabilities', (_req, res) => res.json({ sandbox: shopSandboxEnabled(), liveCrypto: shopLiveCryptoEnabled(), cardTest: shopCardEnabled(), coinBadge: shopCoinBadgeEnabled() }));
 router.post('/payment-address', rateLimiter.otp, (req, res) => shopSandboxEnabled() ? getPaymentAddress(req, res) : purchasesUnderMaintenance(req, res));
 router.post('/verify-payment', rateLimiter.otp, (req, res) => shopSandboxEnabled() ? verifyPayment(req, res) : purchasesUnderMaintenance(req, res));
+router.post('/shop/badges/coins', rateLimiter.otp, async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
+  if (!shopCoinBadgeEnabled()) { purchasesUnderMaintenance(req, res); return; }
+  if (!req.user?.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(await buyBadgeWithCoins(req.user.userId, req.body || {})); }
+  catch (e) { res.status(400).json({ error: e instanceof Error && !/prisma|invocation|database|constraint/i.test(e.message) && e.message.length < 160 ? e.message : 'Could not complete coin badge purchase' }); }
+});
 // Hosted Stripe test checkout is web-only; Android Play Billing is separate.
 const cardWebOnly = (req: import('../middleware/auth.middleware').AuthRequest, res: import('express').Response): boolean => {
   if (!shopCardEnabled() || /VANTAAndroid/i.test(req.get('user-agent') || '')) { res.status(503).json({ error: 'Web card test checkout unavailable' }); return false; }
