@@ -112,6 +112,7 @@ describe('ChatService security and persistence', () => {
       { id: 'f3', userId: 'sender', url: 'https://cdn/c.mp4', fileType: 'VIDEO', originalName: 'c.mp4', size: 33 },
     ];
     (db.uploadedFile.findMany as jest.Mock).mockResolvedValue(files);
+    (db.uploadedFile.updateMany as jest.Mock).mockResolvedValue({count: files.length});
     (db.message.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: 'msg-1', ...data }));
     (db.conversation.update as jest.Mock).mockResolvedValue({});
 
@@ -136,6 +137,15 @@ describe('ChatService security and persistence', () => {
     expect(db.conversation.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'conversation' }, data: expect.objectContaining({ updatedAt: expect.any(Date) }) })
     );
+  });
+
+  it('rejects a message when a competing send has already bound its attachment', async () => {
+    (db.conversation.findUnique as jest.Mock).mockResolvedValue({id:'conversation',type:'GROUP',participants:[{userId:'sender',role:'MEMBER'}]});
+    (db.uploadedFile.findMany as jest.Mock).mockResolvedValue([{id:'file',userId:'sender',url:'https://cdn/a.jpg',fileType:'IMAGE',originalName:'a.jpg',size:11}]);
+    (db.message.create as jest.Mock).mockImplementation(({data}:any)=>Promise.resolve({id:'new-message',...data}));
+    (db.uploadedFile.updateMany as jest.Mock).mockResolvedValue({count:0});
+    await expect(service.sendMessage('conversation','sender','photo','IMAGE',[{fileId:'file'}])).rejects.toThrow('Attachment already used or no longer available');
+    expect(db.conversation.update).not.toHaveBeenCalled();
   });
 
   it('rejects a reply target from another conversation', async () => {
