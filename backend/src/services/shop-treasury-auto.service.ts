@@ -224,6 +224,7 @@ export async function processTreasurySettlement(id: string, config: SignerConfig
         if (invoice.product === 'coins') await tx.$queryRaw`SELECT "id" FROM "PurchaseOrder" WHERE "id" = ${invoice.orderId} FOR UPDATE`;
         else if (invoice.product === 'badge') await tx.$queryRaw`SELECT "id" FROM "VerificationPurchase" WHERE "id" = ${invoice.orderId} FOR UPDATE`;
         else throw new Error('Unknown invoice product');
+        await tx.$queryRaw`SELECT "id" FROM "ShopCryptoInvoice" WHERE "id" = ${invoice.id} FOR UPDATE`;
         const currentInvoice = await tx.shopCryptoInvoice.findUnique({ where: { id: invoice.id } });
         if (!currentInvoice || currentInvoice.transactionHash !== invoice.transactionHash || currentInvoice.address !== row!.source || currentInvoice.amountAtomic !== row!.amountAtomic || currentInvoice.network !== row!.network) throw new Error('Invoice changed before dispatch');
         const currentOrder = await assertVerifiedInvoice(tx, currentInvoice);

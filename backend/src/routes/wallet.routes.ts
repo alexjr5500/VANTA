@@ -116,7 +116,6 @@ router.post('/shop/crypto/invoices', rateLimiter.otp, async (req: import('../mid
   catch (e) { console.warn('[SHOP-CRYPTO] Invoice creation failed'); res.status(400).json({ error: 'Could not create payment invoice. Check the selection or try again later.' }); }
 });
 router.get('/shop/crypto/invoices', async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
-  if (!shopLiveCryptoEnabled()) { purchasesUnderMaintenance(req, res); return; }
   if (!req.user?.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   res.setHeader('Cache-Control', 'no-store');
   try { res.json(await listShopCryptoInvoices(req.user.userId)); }
@@ -129,7 +128,6 @@ router.get('/shop/crypto/invoices/:orderId/status', async (req: import('../middl
   catch { res.status(404).json({ error: 'Invoice unavailable' }); }
 });
 router.get('/shop/crypto/invoices/:orderId', async (req: import('../middleware/auth.middleware').AuthRequest, res) => {
-  if (!shopLiveCryptoEnabled()) { purchasesUnderMaintenance(req, res); return; }
   if (!req.user?.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   res.setHeader('Cache-Control', 'no-store');
   try { res.json(await resumeShopCryptoInvoice(req.user.userId, req.params.orderId)); }

@@ -63,6 +63,7 @@ export async function authorizeTreasuryTransfer(actorId: string, input: Record<s
   if (!destination || destination !== input.destination || destination === invoice.address) throw new Error('Treasury destination not configured or changed');
   await stepUp(actorId, input.code);
   return prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT "id" FROM "ShopCryptoInvoice" WHERE "id" = ${invoice.id} FOR UPDATE`;
     const current = await tx.shopCryptoInvoice.findUnique({ where: { id: invoice.id } });
     if (!current || current.transactionHash !== invoice.transactionHash || current.address !== invoice.address || current.amountAtomic !== invoice.amountAtomic || treasuryAddress(current.network) !== destination) throw new Error('Invoice or destination changed');
     if (await tx.shopCryptoInvoice.findUnique({ where: { address: destination }, select: { id: true } })) throw new Error('Treasury destination cannot be a historical invoice address');

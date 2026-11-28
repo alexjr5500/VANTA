@@ -74,10 +74,10 @@ async function orderFor(i: ShopCryptoInvoice) {
 async function renderInvoice(i: ShopCryptoInvoice) {
   const network = getBlockchainNetwork(i.network);
   const order = await orderFor(i);
-  if (!network || !shopCryptoNetworks().includes(network.id) || !order || (order.recipientUserId && !shopLiveGiftsEnabled()) || !shopCryptoAddresses(i.network).includes(i.address)) throw new Error('Invoice unavailable');
+  if (!network || !order) throw new Error('Invoice unavailable');
   if (expectedAtomic(i, network, order.amount) !== i.amountAtomic) throw new Error('Invoice price mismatch');
   if (!recoverableStates.includes(order.status) && !['COMPLETED','REFUNDED'].includes(order.status)) throw new Error('Invoice unavailable');
-  const closed=!pendingStates.includes(order.status)||Date.now()>=i.expiresAt.getTime();
+  const closed=!shopLiveCryptoEnabled()||!shopCryptoNetworks().includes(network.id)||!shopCryptoAddresses(i.network).includes(i.address)||(!!order.recipientUserId&&!shopLiveGiftsEnabled())||!pendingStates.includes(order.status)||Date.now()>=i.expiresAt.getTime();
   const uri = paymentUri(network, i.address, i.amountAtomic);
   return { orderId: i.orderId, product: i.product, amount: order.amount, currency: 'USD', network: i.network,
     gift: !!order.recipientUserId, closed, mode: 'live' as const, expiresAt: i.expiresAt.toISOString(), address: network.ton ? tonFriendlyAddress(i.address) : i.address, paymentUri: uri,
@@ -133,7 +133,6 @@ export async function createShopCryptoInvoice(payerId: string, input: Record<str
 }
 
 export async function resumeShopCryptoInvoice(payerId: string, orderId: string) {
-  if (!shopLiveCryptoEnabled()) throw new Error('Live crypto checkout is not configured');
   const invoice = await prisma.shopCryptoInvoice.findFirst({ where: { payerId, orderId } });
   if (!invoice) throw new Error('Invoice not found');
   return renderInvoice(invoice);
@@ -179,9 +178,11 @@ async function verifyAndSettle(i: ShopCryptoInvoice, txHash: string) {
   const sender = 'sender' in verified && typeof verified.sender === 'string' ? verified.sender : null;
   await prisma.$transaction(async tx=>{
     await tx.$queryRaw`SELECT "id" FROM "ShopCryptoInvoice" WHERE "id" = ${i.id} FOR UPDATE`;
-    const claim=await tx.shopCryptoInvoice.updateMany({where:{id:i.id,OR:[{transactionHash:null},{transactionHash:hash}]},data:{transactionHash:hash,verifiedAt:new Date(),paymentSender:sender}});
+    const existing=await tx.shopCryptoInvoice.findUniqueOrThrow({where:{id:i.id}});
+    if(await tx.shopCryptoCase.findFirst({where:{refundHash:hash}}))throw new Error('Hash already recorded as a refund');
+    const claim=await tx.shopCryptoInvoice.updateMany({where:{id:i.id,OR:[{transactionHash:null},{transactionHash:hash}]},data:{transactionHash:hash,verifiedAt:existing.verifiedAt||new Date(),paymentSender:sender||existing.paymentSender}});
     if(claim.count!==1)throw new Error('A different payment is already attached to the invoice');
-    if(!i.verifiedAt)await appendAuditLog(tx,{userId:i.payerId,action:'SHOP_CRYPTO_PAYMENT_VERIFIED',metadata:{invoiceId:i.id,network:i.network,hash}});
+    if(!existing.verifiedAt)await appendAuditLog(tx,{userId:i.payerId,action:'SHOP_CRYPTO_PAYMENT_VERIFIED',metadata:{invoiceId:i.id,network:i.network,hash}});
   });
   const hold=await prisma.shopCryptoCase.findUnique({where:{invoiceId:i.id}});
   if(hold?.kind==='REFUND'&&hold.status!=='REJECTED')return {success:false,status:'RECONCILIATION',message:'Payment verified; refund review pending.'};

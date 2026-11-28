@@ -1,7 +1,7 @@
 import { prisma } from '../prisma';
 import { appendAuditLog } from '../security/auditLog';
 import { treasuryHash } from '../config/shop-treasury-hash';
-import { shopLiveCryptoEnabled } from '../config/shop-crypto.config';
+import { shopLiveCryptoEnabled,shopCryptoAddresses } from '../config/shop-crypto.config';
 import { twoFactorAuth } from '../security/twoFactorAuth';
 import { blockchainTxVerifier } from './blockchain-verifier.service';
 import { getBlockchainNetwork,getMinBlockchainConfirmations } from '../config/blockchain-networks.config';
@@ -51,6 +51,7 @@ export async function reviewShopCryptoCase(actor:string,id:string,input:Record<s
    // Narrow release: verified, unfulfilled, unswept EVM stablecoin invoices
    // only. Never authorize from a user-submitted hash or arbitrary address.
    if(!shopLiveCryptoEnabled()||process.env.VANTA_SHOP_EXTERNAL_REFUNDS_ENABLED!=='true'||record.kind!=='REFUND'||!['usdt-bep20','usdc-base','usdt-erc20'].includes(fresh.network)||!fresh.verifiedAt||!fresh.transactionHash||fresh.settledAt||!fresh.paymentSender||!/^0x[0-9a-f]{40}$/.test(fresh.paymentSender)||fresh.address===fresh.paymentSender||input.destination!==fresh.paymentSender||input.senderOwnershipReviewed!==true)throw new Error('Refund requires verified unfulfilled payment and reviewed original sender');
+   if(shopCryptoAddresses(fresh.network).includes(fresh.paymentSender)||await tx.shopCryptoInvoice.findUnique({where:{address:fresh.paymentSender}}))throw new Error('Original sender is a VANTA invoice address');
    if(await tx.shopTreasuryTransfer.findUnique({where:{invoiceId:i.id}}))throw new Error('Treasury transfer exists; reconcile externally');
    const order=fresh.product==='coins'?await tx.purchaseOrder.findUnique({where:{id:fresh.orderId}}):await tx.verificationPurchase.findUnique({where:{id:fresh.orderId}});
    if(!order||order.userId!==fresh.payerId||order.paymentMode!=='live'||!unfulfilled.includes(order.status))throw new Error('Entitlement already fulfilled or order unavailable');

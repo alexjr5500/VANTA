@@ -779,6 +779,7 @@ export class WalletService {
     }
 
     const recipientId = order.recipientUserId || order.userId;
+    if (order.paymentMode === "live" && await prisma.shopCryptoInvoice.findUnique({where:{orderId}})) throw new Error("Dedicated crypto purchases require payment case reconciliation; a ledger reversal is not a crypto refund.");
     const refundReason = (reason || "").trim().slice(0, 500) || null;
 
     const result = await prisma.$transaction(async (tx) => {
@@ -805,7 +806,7 @@ export class WalletService {
       // the debit. This is checked atomically with the balance update so a
       // concurrent purchase/gift/transfer cannot make the wallet negative.
       const balanceClaim = await tx.wallet.updateMany({
-        where: { userId: recipientId, coinBalance: { gte: order.coins } },
+        where: { userId: recipientId, lockedCoins: walletBefore.lockedCoins, coinBalance: { gte: order.coins + walletBefore.lockedCoins } },
         data: { coinBalance: { decrement: order.coins } },
       });
       if (balanceClaim.count !== 1) {
@@ -862,7 +863,7 @@ export class WalletService {
         recipientId,
         "WALLET_REFUND",
         "Refund Processed",
-        `${order.coins.toLocaleString()} VANTA Coins were returned to your Balance.${refundReason ? ` Reason: ${refundReason}` : ""}`
+        `${order.coins.toLocaleString()} VANTA Coins were reversed from the recipient balance. This is a ledger reversal, not confirmation of an external refund.${refundReason ? ` Reason: ${refundReason}` : ""}`
       );
     } catch {
       // Notification failure must not roll back a completed refund.

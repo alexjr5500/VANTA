@@ -922,6 +922,7 @@ export class VerificationPaymentService {
   async refundPurchase(adminId: string, purchaseId: string, reason: string, ipAddress?: string): Promise<any> {
     const order = await prisma.verificationPurchase.findUnique({ where: { id: purchaseId } });
     if (!order) throw new Error('Purchase not found');
+    if(order.paymentMode==='live' && await prisma.shopCryptoInvoice.findUnique({where:{orderId:purchaseId}}))throw new Error('Dedicated crypto purchases require payment case reconciliation.');
     if (order.status !== VERIFICATION_PURCHASE_STATUS.COMPLETED) {
       throw new Error('Only completed purchases can be refunded');
     }
