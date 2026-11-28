@@ -17,3 +17,12 @@ export function localSettingsValue<T extends Record<string, boolean | string>>(r
 export function settingsScrollKey(pathname:string):string{
   return 'vanta_settings_scroll:'+ (pathname==='/profile/settings'?'/settings':pathname);
 }
+
+/** Both hub URLs are ordinary scroll pages, not immersive profile surfaces. */
+export function isSettingsPage(pathname:string):boolean {
+  return pathname==='/profile/settings'||pathname==='/settings'||pathname.startsWith('/settings/');
+}
+export function parseSettingsScrollOffset(raw:string|null):number {
+  const value=Number(raw);
+  return Number.isFinite(value)&&value>=0?value:0;
+}

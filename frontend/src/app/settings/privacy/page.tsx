@@ -90,10 +90,11 @@ export default function PrivacySettingsPage() {
     setLoading(true); setLoadError(false); setPrivacy(PRIVACY_DEFAULTS); setBlocked([]); setMuted([]);
     if (!token) return;
     let cancel = false;
+    const controller = new AbortController();
     Promise.all([
-      apiGet<PrivacySettings>('/api/settings/privacy', token, { skipCache: true }),
-      apiGet<{ blocked: UserReference[] }>('/api/settings/blocked', token, { skipCache: true }),
-      apiGet<{ muted: UserReference[] }>('/api/settings/muted', token, { skipCache: true }),
+      apiGet<PrivacySettings>('/api/settings/privacy', token, { skipCache: true, signal: controller.signal }),
+      apiGet<{ blocked: UserReference[] }>('/api/settings/blocked', token, { skipCache: true, signal: controller.signal }),
+      apiGet<{ muted: UserReference[] }>('/api/settings/muted', token, { skipCache: true, signal: controller.signal }),
     ])
       .then(([p, b, m]) => {
         if (cancel) return;
@@ -108,7 +109,7 @@ export default function PrivacySettingsPage() {
         if (!cancel) setLoading(false);
       });
     return () => {
-      cancel = true;
+      cancel = true; controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity churns on each render; load-once behaviour is intentional
   }, [token]);

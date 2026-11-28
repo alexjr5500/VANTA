@@ -99,7 +99,8 @@ export default function NotificationSettingsPage() {
     setLoading(true); setLoadError(false); setBackend(BACKEND_DEFAULTS);
     if (!token) return;
     let cancel = false;
-    apiGet<BackendPrefs>('/api/settings/notifications', token, { skipCache: true })
+    const controller = new AbortController();
+    apiGet<BackendPrefs>('/api/settings/notifications', token, { skipCache: true, signal: controller.signal })
       .then((data) => {
         if (cancel) return;
         setBackend({ ...BACKEND_DEFAULTS, ...(data || {}) });
@@ -111,7 +112,7 @@ export default function NotificationSettingsPage() {
         if (!cancel) setLoading(false);
       });
     return () => {
-      cancel = true;
+      cancel = true; controller.abort();
     };
   }, [token]);
 

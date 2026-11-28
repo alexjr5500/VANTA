@@ -61,7 +61,8 @@ export default function ChatSettingsPage() {
     setLoading(true); setLoadError(false); setPrefs(CHAT_DEFAULTS);
     if (!token) return;
     let cancel = false;
-    apiGet<Partial<ChatPrefs>>('/api/settings/privacy', token, { skipCache: true })
+    const controller = new AbortController();
+    apiGet<Partial<ChatPrefs>>('/api/settings/privacy', token, { skipCache: true, signal: controller.signal })
       .then((data) => {
         if (cancel || !data) return;
         setPrefs({
@@ -77,7 +78,7 @@ export default function ChatSettingsPage() {
       .finally(() => {
         if (!cancel) setLoading(false);
       });
-    return () => { cancel = true; };
+    return () => { cancel = true; controller.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity churns; load-once is intentional
   }, [token]);
 

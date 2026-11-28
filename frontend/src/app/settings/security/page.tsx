@@ -173,11 +173,12 @@ export default function SecuritySettingsPage() {
   useEffect(() => {
     if (!token) return;
     let cancel = false;
+    const controller = new AbortController();
     Promise.all([
-      apiGet<{ sessions: SessionItem[] }>('/api/settings/sessions', token, { skipCache: true }).catch(() => null),
-      apiGet<{ logs: SecurityLog[] }>('/api/settings/security-logs', token, { skipCache: true }).catch(() => null),
-      apiGet<{ enabled: boolean }>('/api/auth/2fa/status', token, { skipCache: true }).catch(() => null),
-      apiGet<{ email?: string | null }>('/api/profiles/me', token).catch(() => ({ email: '' })),
+      apiGet<{ sessions: SessionItem[] }>('/api/settings/sessions', token, { skipCache: true, signal: controller.signal }).catch(() => null),
+      apiGet<{ logs: SecurityLog[] }>('/api/settings/security-logs', token, { skipCache: true, signal: controller.signal }).catch(() => null),
+      apiGet<{ enabled: boolean }>('/api/auth/2fa/status', token, { skipCache: true, signal: controller.signal }).catch(() => null),
+      apiGet<{ email?: string | null }>('/api/profiles/me', token, { signal: controller.signal }).catch(() => ({ email: '' })),
     ])
       .then(([s, l, tfa, profile]) => {
         if (cancel) return;
@@ -194,7 +195,7 @@ export default function SecuritySettingsPage() {
       .finally(() => {
         if (!cancel) setLoading(false);
       });
-    return () => { cancel = true; };
+    return () => { cancel = true; controller.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity churns on each render; load-once behaviour is intentional
   }, [token]);
 

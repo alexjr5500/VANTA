@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { notificationDestination } from '@/lib/notificationDestination';
+import { isSettingsPage, settingsScrollKey, parseSettingsScrollOffset } from '@/lib/settingsPersistence';
 import {
   MessageCircle,
   Video,
@@ -367,10 +368,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // document scroll on navigation, so we reset the container here — otherwise
   // a tall page would leave the next page starting mid-scroll. The Settings
   // "return and keep my place" feature intentionally re-applies its saved
-  // offset after this reset (it runs on the child's mount + a 0ms timer).
+  // offset once from the shell. Individual settings links only save offsets.
   useEffect(() => {
     const container = document.querySelector('[data-vanta-scroll]');
-    container?.scrollTo({ top: 0 });
+    let offset = 0;
+    if (pathname && isSettingsPage(pathname)) {
+      try {
+        const key = settingsScrollKey(pathname);
+        offset = parseSettingsScrollOffset(sessionStorage.getItem(key));
+        sessionStorage.removeItem(key);
+      } catch { /* storage unavailable */ }
+    }
+    container?.scrollTo({ top: offset });
     // The Discover menu is page-scoped. Always dismiss it when navigating so
     // its drawer can never linger over Home, Reels, Profile, or another route.
     setMobileMenuOpen(false);
@@ -441,7 +450,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // shared container, so we only zero the container's top inset below — this
   // lets the sticky header sit flush against the shell's top edge (like Home /
   // Discover) while the Settings content scrolls beneath it.
-  const isSettingsRoute = pathname?.startsWith('/settings') || pathname === '/profile/editprofile';
+  const isSettingsRoute = isSettingsPage(pathname || '') || pathname === '/profile/editprofile';
   // Homes and +Property own their page-specific sticky headers and need the
   // same flush-to-top, full-bleed scroll surface as Discover without importing
   // any Discover header content.
@@ -465,7 +474,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     pathname === '/privacy' ||
     pathname === '/community-guidelines';
 
-  const isProfilePage = pathname === '/profile' || pathname?.startsWith('/profile/');
+  const isProfilePage = pathname === '/profile' || (pathname?.startsWith('/profile/') && pathname !== '/profile/settings');
   const isImmersiveSurface = isHomesTaskPage || isChatPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isProfilePage || isPostReplyPage;
   const isScrollPage = !isImmersiveSurface;
 
