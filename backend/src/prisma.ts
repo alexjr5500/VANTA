@@ -1,5 +1,6 @@
 import { loadEnv } from './config/env';
 import { PrismaClient } from '@prisma/client';
+import { configureDatabasePool } from './config/database-pool';
 
 // Deterministic .env loading (see config/env.ts). This matters because the
 // backend can be launched from different working directories (repo root vs
@@ -15,7 +16,7 @@ if (!databaseUrl) {
 export const prisma = new PrismaClient({
   datasources: {
     db: {
-      url: databaseUrl,
+      url: configureDatabasePool(databaseUrl, process.env),
     },
   },
 });

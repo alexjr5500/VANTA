@@ -132,7 +132,7 @@ const [
       prisma.liveStream.count({ where: { active: true, status: 'LIVE' } }),
       prisma.report.count(),
       prisma.report.count({ where: { status: 'PENDING' } }),
-      prisma.withdrawal.count({ where: { status: 'PENDING' } }),
+      prisma.withdrawal.count({ where: { status: { in: ['PENDING', 'PROCESSING', 'APPROVED', 'PAYOUT_RESERVED'] } } }),
       prisma.walletTransaction.count(),
       prisma.purchaseOrder.count({ where: { status: 'COMPLETED' } }),
       prisma.verificationPurchase.count({ where: { status: 'COMPLETED' } }),

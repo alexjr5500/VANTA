@@ -1,3 +1,4 @@
+import type { Messaging } from "firebase-admin/messaging";
 import type { PushDeviceRecord, PushNotificationPayload } from "./push-types";
 import type { PushProvider } from "./push-provider.interface";
 
@@ -22,9 +23,9 @@ import type { PushProvider } from "./push-provider.interface";
 // ============================================================================
 
 let configured: boolean | null = null;
-let admin: any = null;
+let admin: Messaging | null = null;
 
-function loadAdmin(): { admin: any } | null {
+function loadAdmin(): { admin: Messaging | null } | null {
   if (configured !== null) return configured ? { admin } : null;
 
   const projectId = process.env.FIREBASE_PROJECT_ID;
@@ -42,13 +43,8 @@ function loadAdmin(): { admin: any } | null {
     // Import lazily so an FCM-less deployment never pays for firebase-admin
     // at startup and a broken install can never crash the backend.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const firebaseAdmin = require("firebase-admin") as {
-      initializeApp: (opts?: any) => any;
-      apps?: any[];
-      app: () => any;
-      messaging: any;
-      credential: { cert: (data: any) => any; applicationDefault: () => any };
-    };
+    const firebaseAdmin = require("firebase-admin/app") as typeof import("firebase-admin/app");
+    const { getMessaging } = require("firebase-admin/messaging") as typeof import("firebase-admin/messaging");
 
     let certData: any = undefined;
     if (credsJson) {
@@ -68,12 +64,13 @@ function loadAdmin(): { admin: any } | null {
 
     if (certData || googlePath) {
       const credential = certData
-        ? firebaseAdmin.credential.cert(certData)
-        : firebaseAdmin.credential.applicationDefault();
-      const app = firebaseAdmin.apps && firebaseAdmin.apps.length
-        ? firebaseAdmin.app()
+        ? firebaseAdmin.cert(certData)
+        : firebaseAdmin.applicationDefault();
+      const app = firebaseAdmin.getApps().some(app => app.name === "[DEFAULT]")
+        ? firebaseAdmin.getApp()
         : firebaseAdmin.initializeApp({ credential, projectId });
-      admin = { ...firebaseAdmin, app };
+      if (app.options.projectId !== projectId) throw new Error("Firebase project mismatch");
+      admin = getMessaging(app);
     }
     configured = Boolean(admin);
   } catch (error) {
@@ -160,7 +157,7 @@ export const fcmProvider: PushProvider = {
     try {
       // sendEachForMulticast resolves with per-token results (HTTP v1): a dead
       // token surfaces as an error entry instead of throwing the whole batch.
-      const batch = await admin.messaging(admin.app).sendEachForMulticast(message);
+      const batch = await loaded.admin!.sendEachForMulticast(message);
       const response = batch?.responses?.[0];
       if (response?.success) return { ok: true };
 

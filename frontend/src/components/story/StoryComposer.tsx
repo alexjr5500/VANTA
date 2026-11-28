@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   BadgeCheck,
@@ -17,10 +18,17 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
-import StoryComposerTextStory from '@/components/story/TextStoryEditor';
-import StatusComposer from '@/components/story/StatusComposer';
-import StoryMediaEditor, { MediaStorySource } from '@/components/story/StoryMediaEditor';
+import type { MediaStorySource } from '@/components/story/StoryMediaEditor';
 import { fetchStatusUsage, type StoryUsage } from '@/lib/storyApi';
+
+// Keep global open-command registration in the eager shell. Only editor
+// code is deferred; the native picker remains a deliberate in-editor tap.
+function EditorLoading() {
+  return <div className="flex h-full items-center justify-center bg-[#050506] text-[#dfbd55]" role="status" aria-live="polite">Loading Status editor…</div>;
+}
+const StoryComposerTextStory = dynamic(() => import('@/components/story/TextStoryEditor'), { ssr: false, loading: EditorLoading });
+const StatusComposer = dynamic(() => import('@/components/story/StatusComposer'), { ssr: false, loading: EditorLoading });
+const StoryMediaEditor = dynamic(() => import('@/components/story/StoryMediaEditor'), { ssr: false, loading: EditorLoading });
 
 export type StoryComposerMode = 'menu' | 'text' | 'status' | 'media';
 

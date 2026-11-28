@@ -1,7 +1,7 @@
 import { coinPaymentService, CoinPaymentUnavailableError, PaymentWebhookError } from '../services/coin-payment.service';
 import { COIN_PAYMENT_MODE } from '../config/coin-payments.config';
 import { prisma } from '../prisma';
-import { CryptoUtils } from '../security/crypto';
+import { createHmac, createHash } from 'node:crypto';
 
 jest.mock('../prisma', () => ({
   prisma: {
@@ -125,7 +125,7 @@ const TX_HASH = '0x' + 'a'.repeat(64);
 
 function sign(payload: object): string {
   const raw = JSON.stringify(payload);
-  return CryptoUtils.sha256(`${raw}dev-webhook-secret-do-not-use-in-production`);
+  return createHmac('sha256', 'dev-webhook-secret-do-not-use-in-production').update(raw).digest('hex');
 }
 
 function eventBody() {
@@ -295,6 +295,21 @@ describe('CoinPaymentService.processPaymentWebhook', () => {
     expect(walletService.completeCoinPurchase).not.toHaveBeenCalled();
   });
 
+  test('rejects legacy concatenated SHA256 signatures before processing', async () => {
+    const body = eventBody();
+    const rawBody = JSON.stringify(body);
+    const signature = createHash('sha256').update(rawBody + 'dev-webhook-secret-do-not-use-in-production').digest('hex');
+    await expect(coinPaymentService.processPaymentWebhook({ ...body, rawBody, signature })).rejects.toThrow('Invalid webhook signature');
+    expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
+  });
+
+  test.each(['eventId', 'orderId', 'txHash', 'network', 'asset', 'amount', 'status', 'recipient'] as const)('rejects unsigned override of %s before processing', async (key) => {
+    const body = eventBody();
+    const input = { ...body, rawBody: JSON.stringify(body), signature: sign(body), [key]: 'unsigned-override' };
+    await expect(coinPaymentService.processPaymentWebhook(input)).rejects.toThrow('Webhook fields do not match authenticated body');
+    expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
+  });
+
   test('rejects a webhook with an invalid signature', async () => {
     const body = eventBody();
     await expect(coinPaymentService.processPaymentWebhook({
@@ -334,7 +349,7 @@ describe('CoinPaymentService.processPaymentWebhook', () => {
   });
 
   test('a verified tx can credit only once even when a distinct webhook event replays it', async () => {
-    const body = eventBody();
+    const body = { ...eventBody(), eventId: 'evt-duplicate-hash' };
     (walletService.completeCoinPurchase as jest.Mock).mockRejectedValueOnce({ code: 'P2002' });
     const result = await coinPaymentService.processPaymentWebhook({
       rawBody: JSON.stringify(body), signature: sign(body),
@@ -381,13 +396,9 @@ describe('CoinPaymentService.processPaymentWebhook', () => {
   });
 
   test('a recipient that is not the official wallet blocks crediting', async () => {
-    const body = eventBody();
+    const body = { ...eventBody(), recipient: '0x' + 'd'.repeat(40) };
     const result = await coinPaymentService.processPaymentWebhook({
-      rawBody: JSON.stringify(body),
-      signature: sign(body),
-      eventId: body.eventId, orderId: body.orderId, txHash: body.txHash, network: body.network,
-      asset: body.asset, amount: body.amount, status: body.status,
-      recipient: '0x' + 'd'.repeat(40), // attacker-controlled recipient
+      ...body, rawBody: JSON.stringify(body), signature: sign(body),
     });
 
     expect(result.result).toBe('failed');

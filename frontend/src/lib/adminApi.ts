@@ -403,14 +403,58 @@ export const getTransactions = (token: string, params?: {
   return apiGet<any>(`/api/admin/finance/transactions?${query}`, token);
 };
 
-export const getWithdrawals = (token: string, limit = 50): Promise<any[]> => {
-  return apiGet<any[]>(`/api/admin/withdrawals?limit=${limit}`, token);
+export type AdminWithdrawal = {
+  id: string;
+  userId: string;
+  user?: { id: string; username: string };
+  amount: number;
+  fee: number;
+  netAmount: number;
+  method: string;
+  currency: string;
+  cryptoNetwork: string | null;
+  walletAddress: string | null;
+  status: string;
+  transactionHash: string | null;
+  processedBy: string | null;
+  processedAt: string | null;
+  createdAt: string;
 };
 
-/** Complete a withdrawal only after sending USDT and copying its on-chain tx hash. */
-export const approveWithdrawal = (token: string, withdrawalId: string, transactionHash: string): Promise<any> => {
-  return apiPost<any>('/api/admin/withdrawals/approve', { withdrawalId, transactionHash }, token);
+export const getWithdrawals = (token: string, limit = 50, status?: string, offset = 0): Promise<AdminWithdrawal[]> => {
+  const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (status) query.set('status', status);
+  return apiGet<AdminWithdrawal[]>(`/api/admin/withdrawals?${query}`, token, { skipCache: true });
 };
+
+/** Reserve a reconciled, unsent withdrawal before any external settlement. No money is sent. */
+export const reserveWithdrawalPayout = (token: string, withdrawalId: string, reconciledUnsent: boolean): Promise<any> => {
+  return apiPost<{ message: string; withdrawal: AdminWithdrawal }>('/api/admin/withdrawals/reserve-payout', { withdrawalId, reconciledUnsent }, token, undefined, { noRetry: true });
+};
+
+/** Complete a reserved withdrawal only with independently verified on-chain evidence. */
+export const approveWithdrawal = (token: string, withdrawalId: string, transactionHash: string): Promise<any> => {
+  return apiPost<{ message: string; withdrawal: AdminWithdrawal }>('/api/admin/withdrawals/approve', { withdrawalId, transactionHash }, token, undefined, { noRetry: true });
+};
+
+export const rejectWithdrawal = (token: string, withdrawalId: string, reason: string): Promise<{ message: string; withdrawal: AdminWithdrawal }> => {
+  return apiPost('/api/admin/withdrawals/reject', { withdrawalId, reason }, token, undefined, { noRetry: true });
+};
+
+export type WithdrawalRecoveryOutcome = 'UNKNOWN' | 'PAYOUT_PENDING' | 'PAYOUT_FAILED_REPORTED' | 'PAYOUT_FOUND' | 'NO_PAYOUT_FOUND';
+export type WithdrawalRecoveryReview = {
+  id: string; createdAt: string; withdrawalId: string; adminId: string;
+  observedStatus: string; outcome: WithdrawalRecoveryOutcome; caseReference: string;
+  notes: string; candidateHash: string | null; recordedHash: string | null;
+  exactPendingLedgerCount: number; independentlyVerified: false; financialActionAuthorized: false;
+};
+export const getWithdrawalRecoveryHistory = (token: string, withdrawalId: string) =>
+  apiGet<{ status: string; entries: WithdrawalRecoveryReview[]; more: boolean; financialActionAuthorized: false }>(
+    '/api/admin/withdrawals/' + encodeURIComponent(withdrawalId) + '/recovery', token, { skipCache: true });
+export const recordWithdrawalRecovery = (token: string, withdrawalId: string, input: {
+  expectedStatus: string; outcome: WithdrawalRecoveryOutcome; caseReference: string; notes: string; candidateHash?: string;
+}) => apiPost<{ review: WithdrawalRecoveryReview; message: string }>(
+  '/api/admin/withdrawals/recovery', { withdrawalId, ...input }, token, undefined, { noRetry: true });
 
 // ============================================================================
 // GIFT CATALOG

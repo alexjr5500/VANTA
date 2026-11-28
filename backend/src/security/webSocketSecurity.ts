@@ -318,7 +318,7 @@ export const eventSubscriptionManager = new EventSubscriptionManager();
 /**
  * Socket disconnect handler - logs session end
  */
-export function handleDisconnect(socket: AuthenticatedSocket): void {
+export function handleDisconnect(socket: AuthenticatedSocket, managePresence = true): void {
   if (socket.userId) {
     auditLog.log({
       userId: socket.userId,
@@ -326,7 +326,8 @@ export function handleDisconnect(socket: AuthenticatedSocket): void {
       metadata: { socketId: socket.id },
     });
 
-    // Clean up user presence
+    // The chat presence coordinator owns this in the main HTTP process.
+    if (!managePresence) return;
     prisma.userPresence.updateMany({
       where: { userId: socket.userId },
       data: { isOnline: false, lastActive: new Date() },
@@ -337,7 +338,7 @@ export function handleDisconnect(socket: AuthenticatedSocket): void {
 /**
  * Socket connect handler - logs session start
  */
-export function handleConnect(socket: AuthenticatedSocket): void {
+export function handleConnect(socket: AuthenticatedSocket, managePresence = true): void {
   if (socket.userId) {
     auditLog.log({
       userId: socket.userId,
@@ -345,7 +346,8 @@ export function handleConnect(socket: AuthenticatedSocket): void {
       metadata: { socketId: socket.id },
     });
 
-    // Update user presence
+    // Preserve standalone callers; the main server delegates presence to chat.
+    if (!managePresence) return;
     prisma.userPresence.upsert({
       where: { userId: socket.userId },
       update: { isOnline: true, lastActive: new Date() },

@@ -91,11 +91,11 @@ describe('WalletService.completeCoinPurchase (test payment mode)', () => {
     expect(result.alreadyCompleted).toBe(false);
     expect(result.coins).toBe(500);
     expect(prisma.purchaseOrder.updateMany).toHaveBeenCalledWith({
-      where: { id: 'order_test_1', userId: 'user1', status: { in: [...COIN_PAYMENT_CREDITABLE_STATUSES] } },
+      where: expect.objectContaining({ id: 'order_test_1', userId: 'user1', coins: 500, amount: 5, status: { in: [...COIN_PAYMENT_CREDITABLE_STATUSES] } }),
       data: expect.objectContaining({ status: 'COMPLETED' }),
     });
     expect(prisma.wallet.update).toHaveBeenCalledWith({
-      where: { userId: 'user1' },
+      where: { userId: 'user1', isFrozen: false },
       data: { coinBalance: { increment: 500 }, totalCoinsPurchased: { increment: 500 } },
     });
     // Ledger entry created exactly once, with the auditable balanceBefore.
@@ -166,6 +166,28 @@ describe('WalletService.completeCoinPurchase (test payment mode)', () => {
     })).rejects.toThrow('cannot be completed');
     expect(prisma.wallet.update).not.toHaveBeenCalled();
     expect(prisma.walletTransaction.create).not.toHaveBeenCalled();
+  });
+
+  test('legacy deposit service is disabled before any database mutation', async () => {
+    await expect(walletService.processDeposit('user1', 5, 500, 'legacy', 'synthetic-order')).rejects.toThrow('Legacy deposits are disabled');
+    expect(prisma.wallet.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  test('live completion requires explicit verified reference and live order', async () => {
+    (prisma.purchaseOrder.findFirst as jest.Mock).mockResolvedValue({ ...PENDING_ORDER, paymentMode: 'live' });
+    await expect(walletService.completeCoinPurchase('user1', PENDING_ORDER.id, { mode: 'live' }))
+      .rejects.toThrow('Verified live payment reference is required');
+    await expect(walletService.completeCoinPurchase('user1', PENDING_ORDER.id, { mode: 'unknown' }))
+      .rejects.toThrow('Unsupported purchase completion mode');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  test('invalid coin quantities cannot reach crediting', async () => {
+    (prisma.purchaseOrder.findFirst as jest.Mock).mockResolvedValue({ ...PENDING_ORDER, coins: -1 });
+    await expect(walletService.completeCoinPurchase('user1', PENDING_ORDER.id, { mode: 'test' }))
+      .rejects.toThrow('Invalid purchase order amount');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   test('database-transaction failure rolls back and never credits', async () => {

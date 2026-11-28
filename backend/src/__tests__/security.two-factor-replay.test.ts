@@ -51,6 +51,7 @@ describe('TOTP replay protection', () => {
       where: expect.objectContaining({
         id: 'user1',
         twoFactorEnabled: true,
+        twoFactorSecret: 'BASE32SECRET',
         OR: [
           { twoFactorLastUsedStep: null },
           { twoFactorLastUsedStep: { lt: expect.any(Number) } },
@@ -86,7 +87,7 @@ describe('TOTP replay protection', () => {
     const result = await twoFactorAuth.verifyLogin('user1', 'RECOVERY1');
     expect(result).toEqual({ valid: false, isBackupCode: false });
     expect(prisma.user.updateMany).toHaveBeenCalledWith({
-      where: { id: 'user1', twoFactorEnabled: true, backupCodes },
+      where: { id: 'user1', twoFactorEnabled: true, twoFactorSecret: 'BASE32SECRET', backupCodes },
       data: { backupCodes: JSON.stringify(['hash:RECOVERY2']) },
     });
   });
@@ -99,10 +100,33 @@ describe('TOTP replay protection', () => {
     });
     const result = await twoFactorAuth.enable('user1', '123456');
     expect(result).toEqual({ success: true });
-    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'user1' },
-      data: { twoFactorEnabled: true },
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(prisma.user.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'user1', twoFactorSecret: 'BASE32SECRET', twoFactorEnabled: false }),
+      data: { twoFactorEnabled: true, twoFactorLastUsedStep: expect.any(Number) },
     }));
-    expect(prisma.user.updateMany).toHaveBeenCalled();
   });
+});
+
+describe('2FA credential state fencing', () => {
+  test('does not enable an enrollment replaced during verification', async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ twoFactorSecret: 'OLDSECRET', twoFactorEnabled: false });
+    (prisma.user.updateMany as jest.Mock).mockResolvedValueOnce({ count: 0 });
+    await expect(twoFactorAuth.enable('user1', '123456')).resolves.toMatchObject({ success: false });
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+  test('required verification rejects a concurrently disabled authenticator', async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ twoFactorEnabled: false });
+    await expect(twoFactorAuth.verifyLogin('user1', '123456', true)).resolves.toEqual({ valid: false, isBackupCode: false });
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+  test('missing user cannot pass verification', async () => {
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
+    await expect(twoFactorAuth.verifyLogin('user1', '123456')).resolves.toEqual({ valid: false, isBackupCode: false });
+  });
+});
+
+test('strict wallet verification rejects a replaced expected secret before consuming a code', async () => {
+  await expect(twoFactorAuth.verifyLogin('user1', '123456', true, 'OLDSECRET')).resolves.toEqual({ valid: false, isBackupCode: false });
+  expect(prisma.user.updateMany).not.toHaveBeenCalled();
 });

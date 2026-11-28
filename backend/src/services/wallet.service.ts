@@ -1,4 +1,8 @@
 import { prisma } from "../prisma";
+import type { Prisma } from "@prisma/client";
+
+type WalletPinProof = { id: string; walletId: string; pinHash: string };
+type WalletTwoFactorState = { enabled: boolean; secret: string | null };
 import { notificationService } from "./notification.service";
 import { emailService } from "./email.service";
 import * as crypto from "crypto";
@@ -129,6 +133,8 @@ function resolveWalletTransactionDelta(transaction: {
     if (metadata?.side === 'claimant') return Math.abs(transaction.amount);
     return null;
   }
+  // Purchase refunds debit the coin wallet; historical reservation refunds can credit it.
+  if (transaction.type === TX_TYPES.REFUND) return transaction.amount;
   if (INCOMING_TYPES.has(transaction.type as any)) return Math.abs(transaction.amount);
   if (OUTGOING_TYPES.has(transaction.type as any)) return -Math.abs(transaction.amount);
   return null;
@@ -291,7 +297,7 @@ export class WalletService {
         _count: { _all: true }, _sum: { amount: true },
       }),
       prisma.withdrawal.aggregate({
-        where: { userId, status: { in: ["PENDING", "PROCESSING", "APPROVED"] } },
+        where: { userId, status: { in: ["PENDING", "PROCESSING", "APPROVED", "PAYOUT_RESERVED"] } },
         _count: { _all: true }, _sum: { amount: true, netAmount: true },
       }),
       prisma.withdrawal.aggregate({
@@ -380,14 +386,13 @@ export class WalletService {
     reference?: string;
     metadata?: any;
   }) {
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
+      throw new Error("Amount must be a positive whole number of coins");
+    }
     const wallet = await this.ensureWallet(userId);
 
     if (wallet.isFrozen) {
       throw new Error("Wallet is frozen. Contact support.");
-    }
-
-    if (amount <= 0) {
-      throw new Error("Amount must be positive");
     }
 
     // Reserved coins (Follower Rewards, etc.) are never spendable elsewhere:
@@ -448,103 +453,17 @@ export class WalletService {
   // COIN DEPOSITS (0% Platform Fee)
   // ============================================================
 
+  // Retained for older imports only. The legacy controller already returns 410.
+  // Never credit an unverified deposit, even from an internal caller.
   async processDeposit(
-    userId: string,
-    amount: number,
-    coins: number,
-    paymentMethod: string,
-    providerOrderId: string,
-    ipAddress?: string
-  ) {
-    // Check if wallet is frozen
-    const wallet = await this.ensureWallet(userId);
-    if (wallet.isFrozen) {
-      throw new Error("Wallet is frozen. Contact support.");
-    }
-
-    // Check for duplicate provider order ID
-    const existingOrder = await prisma.purchaseOrder.findUnique({
-      where: { providerOrderId },
-    });
-    if (existingOrder?.status === "COMPLETED") {
-      throw new Error("Duplicate payment detected. This order has already been processed.");
-    }
-
-    // Atomic transaction: create order + update wallet + create transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // Record purchase order
-      const orderData = {
-          userId,
-          coins,
-          amount,
-          currency: "USD",
-          provider: "stripe",
-          status: "COMPLETED",
-          providerOrderId,
-          paymentMethod,
-      };
-      const purchaseOrder = existingOrder
-        ? await tx.purchaseOrder.update({ where: { id: existingOrder.id }, data: { status: "COMPLETED", paymentMethod } })
-        : await tx.purchaseOrder.create({ data: orderData });
-
-      // Update wallet balance - 0% platform fee, user gets full coins
-      const updatedWallet = await tx.wallet.update({
-        where: { userId },
-        data: {
-          coinBalance: { increment: coins },
-          totalCoinsPurchased: { increment: coins },
-        },
-      });
-
-      // Create transaction record - positive amount for incoming
-      await tx.walletTransaction.create({
-        data: {
-          walletId: wallet.id,
-          userId,
-          type: "DEPOSIT",
-          amount: coins,
-          fee: 0,
-          balance: updatedWallet.coinBalance,
-          status: "COMPLETED",
-          description: `Purchased ${coins.toLocaleString()} VANTA Coins for $${amount.toFixed(2)}`,
-          reference: purchaseOrder.id,
-          metadata: JSON.stringify({
-            paymentMethod,
-            providerOrderId,
-            amountUSD: amount,
-          }),
-        },
-      });
-
-      // Log audit
-      await tx.walletAuditLog.create({
-        data: {
-          userId,
-          action: "DEPOSIT",
-          details: JSON.stringify({
-            amount,
-            coins,
-            paymentMethod,
-            providerOrderId,
-            ipAddress,
-          }),
-          ipAddress,
-        },
-      });
-
-      return { purchaseOrder, updatedWallet };
-    });
-
-    // Send notification (outside transaction)
-    await notificationService.createNotification(
-      userId,
-      "WALLET_DEPOSIT",
-      "Deposit Successful",
-      `${coins.toLocaleString()} VANTA Coins have been added to your Balance.`,
-      { coins, amount }
-    );
-
-    return result.updatedWallet;
+    _userId: string,
+    _amount: number,
+    _coins: number,
+    _paymentMethod: string,
+    _providerOrderId: string,
+    _ipAddress?: string
+  ): Promise<never> {
+    throw new Error("Legacy deposits are disabled; verified purchase fulfillment is required.");
   }
 
   // ============================================================
@@ -580,6 +499,9 @@ export class WalletService {
       ipAddress?: string;
     } = { mode: "live" }
   ) {
+    if (options.mode !== "live" && options.mode !== "test") {
+      throw new Error("Unsupported purchase completion mode.");
+    }
     const order = await prisma.purchaseOrder.findFirst({ where: { id: orderId, userId } });
     if (!order) throw new Error("Purchase order not found.");
     if (order.status === COIN_PAYMENT_STATUS.COMPLETED) {
@@ -597,6 +519,17 @@ export class WalletService {
       if (Date.now() - createdAt > COIN_PAYMENT_ORDER_TTL_SECONDS * 1000) {
         throw new Error("This payment session has expired. Please start a new purchase.");
       }
+    }
+
+    if (!Number.isSafeInteger(order.coins) || order.coins <= 0 ||
+        !Number.isFinite(order.amount) || order.amount <= 0) {
+      throw new Error("Invalid purchase order amount.");
+    }
+    if (options.mode === "live" && (order.paymentMode !== "live" ||
+        typeof options.providerOrderId !== "string" ||
+        !/^0x[a-fA-F0-9]{64}$/.test(options.providerOrderId.trim()) ||
+        !options.verification || typeof options.verification !== "object")) {
+      throw new Error("Verified live payment reference is required.");
     }
 
     if (options.mode === "test") {
@@ -618,16 +551,18 @@ export class WalletService {
     // The providerOrderId is the strongest duplicate guard: in live mode it is
     // the blockchain transaction hash, and PurchaseOrder.providerOrderId has a
     // UNIQUE constraint at the database level.
-    const providerReference = options.providerOrderId?.trim() || order.providerReference || "";
+    const providerReference = options.mode === "live" ? options.providerOrderId!.trim().toLowerCase() : "";
     const providerOrderId = options.mode === "test"
       ? `test:${orderId}`
-      : `live:${providerReference || orderId}`;
+      : `live:${providerReference}`;
 
     // Conditional status flip makes the completion idempotent under concurrency:
     // a second request finds 0 rows updated and cannot credit twice.
     const result = await prisma.$transaction(async (tx) => {
       const claimed = await tx.purchaseOrder.updateMany({
-        where: { id: orderId, userId, status: { in: [...COIN_PAYMENT_CREDITABLE_STATUSES] } },
+        where: { id: orderId, userId, coins: order.coins, amount: order.amount,
+          paymentMode: order.paymentMode, paymentMethod: order.paymentMethod,
+          status: { in: [...COIN_PAYMENT_CREDITABLE_STATUSES] } },
         data: {
           status: COIN_PAYMENT_STATUS.COMPLETED,
           providerOrderId,
@@ -645,7 +580,7 @@ export class WalletService {
       }
 
       const updatedWallet = await tx.wallet.update({
-        where: { userId },
+        where: { userId, isFrozen: false },
         data: {
           coinBalance: { increment: order.coins },
           totalCoinsPurchased: { increment: order.coins },
@@ -659,7 +594,7 @@ export class WalletService {
           type: TX_TYPES.PURCHASE,
           amount: order.coins,
           fee: 0,
-          balanceBefore: updatedWallet.coinBalance + order.coins,
+          balanceBefore: updatedWallet.coinBalance - order.coins,
           balance: updatedWallet.coinBalance,
           status: "COMPLETED",
           description: `Purchased ${order.coins.toLocaleString()} VANTA Coins for $${order.amount.toFixed(2)}`,
@@ -722,7 +657,7 @@ export class WalletService {
    * Safety:
    *  - The original PurchaseOrder row is NEVER deleted — it is marked REFUNDED
    *    and a separate negative REFUND ledger entry is created.
-   *  - Refund claim is conditional (`status` in [COMPLETED, PAID]), so a
+   *  - Refund claim is conditional (status COMPLETED only), so a
    *    repeated refund request can never run twice.
    *  - The user's spendable balance must cover the refund; otherwise the
    *    refund is rejected so a user cannot end up with unlimited coins by
@@ -739,7 +674,7 @@ export class WalletService {
     if (order.status === "REFUNDED") {
       return { order, alreadyRefunded: true };
     }
-    if (order.status !== "COMPLETED" && order.status !== "PAID") {
+    if (order.status !== "COMPLETED") {
       throw new Error(
         `Only completed purchases can be refunded (current status: ${order.status}).`
       );
@@ -749,7 +684,7 @@ export class WalletService {
 
     const result = await prisma.$transaction(async (tx) => {
       const claimed = await tx.purchaseOrder.updateMany({
-        where: { id: orderId, status: { in: ["COMPLETED", "PAID"] } },
+        where: { id: orderId, status: "COMPLETED", coins: order.coins, userId: order.userId },
         data: {
           status: "REFUNDED",
           refundedAt: new Date(),
@@ -846,10 +781,43 @@ export class WalletService {
     return user?.twoFactorEnabled === true;
   }
 
-  private async verifyWalletTwoFactor(userId: string, token: string | undefined, action: string): Promise<void> {
-    if (!(await this.isTwoFactorEnabled(userId))) return;
+  private async readWalletTwoFactorState(userId: string): Promise<WalletTwoFactorState> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId }, select: { twoFactorEnabled: true, twoFactorSecret: true },
+    });
+    if (!user) throw new Error("Wallet authentication state unavailable");
+    return { enabled: user.twoFactorEnabled === true, secret: user.twoFactorSecret ?? null };
+  }
+
+  // Hold the verified credential rows until the financial transaction commits.
+  // NO KEY UPDATE serializes credential changes without conflicting with
+  // ordinary foreign-key key-share locks. Never return proof material to clients.
+  private async fenceWalletAuthorization(
+    tx: Prisma.TransactionClient, userId: string, pin: WalletPinProof,
+    factor?: WalletTwoFactorState,
+  ): Promise<void> {
+    if (factor) {
+      const users = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "User" WHERE "id" = ${userId}
+          AND "twoFactorEnabled" = ${factor.enabled}
+          AND "twoFactorSecret" IS NOT DISTINCT FROM ${factor.secret}::text
+        FOR NO KEY UPDATE
+      `;
+      if (users.length !== 1) throw new Error("Authenticator security state changed. Please try again.");
+    }
+    const pins = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "WalletPIN" WHERE "id" = ${pin.id}
+        AND "walletId" = ${pin.walletId} AND "pinHash" = ${pin.pinHash}
+        AND "failedAttempts" = 0 AND "lockedUntil" IS NULL
+      FOR NO KEY UPDATE
+    `;
+    if (pins.length !== 1) throw new Error("PIN security state changed. Please try again.");
+  }
+
+  private async verifyWalletTwoFactor(userId: string, token: string | undefined, action: string, state: WalletTwoFactorState): Promise<void> {
+    if (!state.enabled) return;
     if (typeof token !== 'string' || !token.trim()) throw new Error('Authenticator 2FA code is required for this wallet action');
-    const result = await twoFactorAuth.verifyLogin(userId, token.trim());
+    const result = await twoFactorAuth.verifyLogin(userId, token.trim(), true, state.secret);
     if (!result.valid) throw new Error('Invalid authenticator 2FA code');
     await this.logAudit(userId, 'WALLET_2FA_VERIFIED', { action, isBackupCode: result.isBackupCode });
   }
@@ -878,7 +846,7 @@ export class WalletService {
       throw new Error("Transfer amount must be a positive whole number");
     }
     if (typeof pinCode !== 'string' || !/^\d{4,6}$/.test(pinCode)) throw new Error("A valid 4-6 digit wallet PIN is required");
-    await this.verifyPin(senderId, pinCode);
+    const pinProof = await this.verifyPinProof(senderId, pinCode);
 
     // Every transfer must carry a stable idempotency key. This is enforced
     // in the service as well as the HTTP controller so non-HTTP callers and
@@ -960,6 +928,8 @@ export class WalletService {
       };
     }
 
+    let authenticatorState: WalletTwoFactorState | undefined;
+    let authenticatorChallengeHash: string | undefined;
     // Step-up OTP for high-value transfers (Phase 5).
     // The effective threshold is min(user setting, platform cap) computed by
     // resolveEffectiveTransferLimits — a user can never raise the threshold
@@ -988,15 +958,17 @@ export class WalletService {
         throw new Error("An OTP challenge id is required to complete this transfer");
       }
 
-      if (await this.isTwoFactorEnabled(senderId)) {
+      authenticatorState = await this.readWalletTwoFactorState(senderId);
+      if (authenticatorState.enabled) {
         const challenge = await prisma.transferOtpChallenge.findUnique({ where: { id: challengeId } });
         const challengeMatches = challenge && challenge.userId === senderId &&
           challenge.receiverId === receiverId && challenge.amount === totalDeduction &&
-          (!challenge.sessionId || !sessionId || challenge.sessionId === sessionId) &&
+          (!challenge.sessionId || challenge.sessionId === sessionId) &&
           !challenge.consumedAt && challenge.expiresAt >= new Date() &&
           challenge.attempts < challenge.maxAttempts;
         if (challengeMatches && await bcrypt.compare(otpCode || "", challenge.otpHash)) {
-          await this.verifyWalletTwoFactor(senderId, twoFactorCode, 'high_value_transfer');
+          await this.verifyWalletTwoFactor(senderId, twoFactorCode, 'high_value_transfer', authenticatorState);
+          authenticatorChallengeHash = challenge.otpHash;
         }
       }
     }
@@ -1044,6 +1016,7 @@ export class WalletService {
     // sequence, so concurrent transfers / retries / double-submits can never
     // overspend or drive a balance negative.
     const result = await prisma.$transaction(async (tx) => {
+      await this.fenceWalletAuthorization(tx, senderId, pinProof, authenticatorState);
       // Re-read the sender inside the transaction for authoritative checks.
       const senderCurrent = await tx.wallet.findUniqueOrThrow({ where: { userId: senderId } });
       if (senderCurrent.isFrozen || resolveAvailableCoins(senderCurrent) < totalDeduction) {
@@ -1063,7 +1036,7 @@ export class WalletService {
         ) {
           throw new Error("Invalid OTP challenge");
         }
-        if (challenge.sessionId && sessionId && challenge.sessionId !== sessionId) {
+        if (challenge.sessionId && challenge.sessionId !== sessionId) {
           throw new Error("OTP challenge is bound to another session");
         }
         if (challenge.consumedAt) {
@@ -1077,11 +1050,21 @@ export class WalletService {
         }
 
         const valid = await bcrypt.compare(otpCode || "", challenge.otpHash);
+        // Bind either outcome to the exact observed challenge and attempt
+        // counter. A parallel failure, consumption, replacement or expiry
+        // cannot authorize against a stale snapshot.
+        const challengeFence = {
+          id: challenge.id, userId: senderId, receiverId, amount: totalDeduction,
+          sessionId: challenge.sessionId, otpHash: challenge.otpHash,
+          attempts: challenge.attempts, maxAttempts: challenge.maxAttempts,
+          consumedAt: null, expiresAt: { gte: new Date() },
+        };
         if (!valid) {
-          await tx.transferOtpChallenge.update({
-            where: { id: challenge.id },
+          const failed = await tx.transferOtpChallenge.updateMany({
+            where: challengeFence,
             data: { attempts: { increment: 1 } },
           });
+          if (failed.count !== 1) throw new Error("OTP challenge state changed. Please try again.");
           await tx.walletAuditLog.create({
             data: {
               userId: senderId,
@@ -1097,8 +1080,11 @@ export class WalletService {
           return { otpInvalid: true as const };
         }
 
+        if (authenticatorState?.enabled && authenticatorChallengeHash !== challenge.otpHash) {
+          throw new Error("Authenticator 2FA verification is required for this OTP challenge");
+        }
         const consumed = await tx.transferOtpChallenge.updateMany({
-          where: { id: challenge.id, consumedAt: null },
+          where: challengeFence,
           data: { consumedAt: new Date() },
         });
         if (consumed.count !== 1) {
@@ -1441,10 +1427,10 @@ export class WalletService {
   }
 
   /**
-   * Verify a transfer OTP challenge WITHOUT executing a transfer. Intended for
-   * pre-validation UX; the authoritative consumption happens inside the
-   * transfer transaction. Never exposes whether the code was correct — callers
-   * get a boolean `valid` and a challenge that stays unconsumed on failure.
+   * Verify and consume a transfer OTP challenge WITHOUT executing a transfer.
+   * This is not a pre-validation step for transferCoins: a consumed challenge
+   * cannot subsequently authorize a transfer. Both paths share attempt and
+   * session fencing.
    */
   async verifyTransferOtp(input: {
     userId: string;
@@ -1462,23 +1448,23 @@ export class WalletService {
     if (challenge.consumedAt) return { valid: false, reason: "used" };
     if (challenge.expiresAt < new Date()) return { valid: false, reason: "expired" };
     if (challenge.attempts >= challenge.maxAttempts) return { valid: false, reason: "attempts" };
-    if (sessionId && challenge.sessionId && challenge.sessionId !== sessionId) {
+    if (challenge.sessionId && challenge.sessionId !== sessionId) {
       return { valid: false, reason: "session" };
     }
 
     const valid = await bcrypt.compare(otpCode || "", challenge.otpHash);
-    if (valid) {
-      await prisma.transferOtpChallenge.updateMany({
-        where: { id: challenge.id, consumedAt: null },
-        data: { consumedAt: new Date() },
-      });
-      return { valid: true };
-    }
-
-    await prisma.transferOtpChallenge.update({
-      where: { id: challenge.id },
-      data: { attempts: { increment: 1 } },
+    const challengeFence = {
+      id: challenge.id, userId, sessionId: challenge.sessionId,
+      otpHash: challenge.otpHash, attempts: challenge.attempts,
+      maxAttempts: challenge.maxAttempts, consumedAt: null,
+      expiresAt: { gte: new Date() },
+    };
+    const changed = await prisma.transferOtpChallenge.updateMany({
+      where: challengeFence,
+      data: valid ? { consumedAt: new Date() } : { attempts: { increment: 1 } },
     });
+    if (changed.count !== 1) return { valid: false, reason: "changed" };
+    if (valid) return { valid: true };
     await this.logAudit(userId, "OTP_FAILED", {
       challengeId: challenge.id,
       attemptsRemaining: challenge.maxAttempts - challenge.attempts - 1,
@@ -1541,7 +1527,7 @@ export class WalletService {
     const updated = await prisma.walletPIN.updateMany({
       // Compare-and-swap prevents two concurrent PIN changes from both
       // succeeding against the same previously verified PIN.
-      where: { id: pinRecord.id, pinHash: pinRecord.pinHash },
+      where: { id: pinRecord.id, pinHash: pinRecord.pinHash, failedAttempts: 0, lockedUntil: null },
       data: { pinHash: newPinHash, failedAttempts: 0, lockedUntil: null },
     });
     if (updated.count !== 1) {
@@ -1554,6 +1540,11 @@ export class WalletService {
   }
 
   async verifyPin(userId: string, pin: string) {
+    await this.verifyPinProof(userId, pin);
+    return { success: true, message: "PIN verified" };
+  }
+
+  private async verifyPinProof(userId: string, pin: string): Promise<WalletPinProof> {
     if (typeof pin !== 'string' || !/^\d{4,6}$/.test(pin)) throw new Error('Invalid PIN format');
     const wallet = await this.ensureWallet(userId);
     const pinRecord = await prisma.walletPIN.findUnique({ where: { walletId: wallet.id } });
@@ -1567,7 +1558,7 @@ export class WalletService {
         SET "failedAttempts" = CASE WHEN "lockedUntil" IS NOT NULL AND "lockedUntil" <= NOW() THEN 1 ELSE "failedAttempts" + 1 END,
             "lockedUntil" = CASE WHEN (CASE WHEN "lockedUntil" IS NOT NULL AND "lockedUntil" <= NOW() THEN 0 ELSE "failedAttempts" END) + 1 >= 5
               THEN NOW() + INTERVAL '15 minutes' ELSE NULL END
-        WHERE "id" = ${pinRecord.id} AND ("lockedUntil" IS NULL OR "lockedUntil" <= NOW())
+        WHERE "id" = ${pinRecord.id} AND "pinHash" = ${pinRecord.pinHash} AND ("lockedUntil" IS NULL OR "lockedUntil" <= NOW())
         RETURNING "failedAttempts", "lockedUntil"
       `;
       const attempt = attempts[0];
@@ -1576,14 +1567,16 @@ export class WalletService {
       if (attempt.lockedUntil) throw new Error("PIN locked after 5 failed attempts. Please try again in 15 minutes.");
       throw new Error(`Invalid PIN. ${5 - attempt.failedAttempts} attempts remaining.`);
     }
-    if (pinRecord.failedAttempts > 0 || pinRecord.lockedUntil) {
-      await prisma.walletPIN.updateMany({
-        where: { id: pinRecord.id, failedAttempts: pinRecord.failedAttempts, lockedUntil: pinRecord.lockedUntil },
-        data: { failedAttempts: 0, lockedUntil: null },
-      });
-    }
+    // Always compare-and-swap the verified hash and lockout snapshot,
+    // including a clean initial counter. A concurrent reset/lock/change
+    // must invalidate this authentication attempt rather than succeed stale.
+    const verified = await prisma.walletPIN.updateMany({
+      where: { id: pinRecord.id, pinHash: pinRecord.pinHash, failedAttempts: pinRecord.failedAttempts, lockedUntil: pinRecord.lockedUntil },
+      data: { failedAttempts: 0, lockedUntil: null },
+    });
+    if (verified.count !== 1) throw new Error("PIN security state changed. Please try again.");
     await this.logAudit(userId, "PIN_VERIFY", { walletId: wallet.id });
-    return { success: true, message: "PIN verified" };
+    return { id: pinRecord.id, walletId: wallet.id, pinHash: pinRecord.pinHash };
   }
 
   // ============================================================
@@ -1597,8 +1590,9 @@ export class WalletService {
     amount = validated.amount;
     walletAddress = validated.walletAddress;
     if (typeof pinCode !== 'string' || !/^\d{4,6}$/.test(pinCode)) throw new Error('A valid 4-6 digit wallet PIN is required');
-    await this.verifyPin(userId, pinCode);
-    await this.verifyWalletTwoFactor(userId, twoFactorCode, 'withdrawal');
+    const pinProof = await this.verifyPinProof(userId, pinCode);
+    const authenticatorState = await this.readWalletTwoFactorState(userId);
+    await this.verifyWalletTwoFactor(userId, twoFactorCode, 'withdrawal', authenticatorState);
 
     const wallet = await this.ensureWallet(userId);
 
@@ -1627,7 +1621,7 @@ export class WalletService {
     const pendingWithdrawal = await prisma.withdrawal.findFirst({
       where: {
         userId,
-        status: "PENDING",
+        status: { in: ["PENDING", "PROCESSING", "APPROVED", "PAYOUT_RESERVED"] },
       },
     });
     if (pendingWithdrawal) {
@@ -1639,6 +1633,7 @@ export class WalletService {
     // INSIDE the transaction (serialized), and the earnings debit is a
     // compare-and-swap so two concurrent requests can never both succeed.
     const result = await prisma.$transaction(async (tx) => {
+      await this.fenceWalletAuthorization(tx, userId, pinProof, authenticatorState);
       // Re-check single-PENDING invariant inside the transaction: two
       // concurrent requests can both pass the preflight lookup above.
       // Serialize withdrawal creation per wallet before checking the
@@ -1646,7 +1641,7 @@ export class WalletService {
       // zero pending rows and both reserve earnings.
       await tx.$queryRaw`SELECT "id" FROM "Wallet" WHERE "userId" = ${userId} FOR UPDATE`;
       const existingPending = await tx.withdrawal.count({
-        where: { userId, status: "PENDING" },
+        where: { userId, status: { in: ["PENDING", "PROCESSING", "APPROVED", "PAYOUT_RESERVED"] } },
       });
       if (existingPending > 0) {
         throw new Error("You already have a pending withdrawal request. Please wait for it to be processed.");
@@ -1746,13 +1741,124 @@ export class WalletService {
     return result.withdrawal;
   }
 
+  /**
+   * Reserve an explicitly reviewed, unsent withdrawal BEFORE any external
+   * payout. This only changes local state; it never sends money. An ambiguous
+   * or abandoned reservation stays fenced for reconciliation, not auto-refund.
+   */
+  async reserveWithdrawalPayout(withdrawalId: string, adminId: string, reconciledUnsent: boolean) {
+    if (reconciledUnsent !== true) throw new Error('Confirm reconciliation found no prior payout before reserving');
+    const payoutSender = (process.env.VANTA_USDT_WITHDRAWAL_SENDER_ADDRESS || '').trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(payoutSender)) throw new Error('Authorized payout wallet must be configured');
+    return prisma.$transaction(async (tx) => {
+      const withdrawal = await tx.withdrawal.findUnique({ where: { id: withdrawalId } });
+      if (!withdrawal || withdrawal.status !== 'PENDING' || withdrawal.transactionHash !== null) {
+        throw new Error('Only an unreserved pending withdrawal can be reserved');
+      }
+      if (withdrawal.method !== 'USDT_BEP20' || withdrawal.currency !== 'USDT' ||
+          withdrawal.cryptoNetwork !== 'BNB_SMART_CHAIN' || !withdrawal.walletAddress ||
+          !/^0x[a-fA-F0-9]{40}$/.test(withdrawal.walletAddress) ||
+          !Number.isFinite(withdrawal.netAmount) || withdrawal.netAmount <= 0) {
+        throw new Error('Withdrawal settlement details are invalid');
+      }
+      const claimed = await tx.withdrawal.updateMany({
+        where: { id: withdrawalId, status: 'PENDING', transactionHash: null,
+          userId: withdrawal.userId, amount: withdrawal.amount, fee: withdrawal.fee,
+          netAmount: withdrawal.netAmount, walletAddress: withdrawal.walletAddress,
+          method: withdrawal.method, currency: withdrawal.currency, cryptoNetwork: withdrawal.cryptoNetwork },
+        data: { status: 'PAYOUT_RESERVED', processedBy: adminId },
+      });
+      if (claimed.count !== 1) throw new Error('Withdrawal reservation already changed');
+      const ledgerCount = await tx.walletTransaction.count({
+        where: { reference: withdrawalId, userId: withdrawal.userId, type: 'WITHDRAWAL', status: 'PENDING',
+          currency: 'USD', amount: withdrawal.amount, fee: withdrawal.fee },
+      });
+      if (ledgerCount !== 1) throw new Error('Exact pending withdrawal ledger entry is missing');
+      await tx.walletAuditLog.create({ data: {
+        userId: withdrawal.userId, action: 'WITHDRAWAL_PAYOUT_RESERVED',
+        details: JSON.stringify({ withdrawalId, adminId, reconciledUnsent: true }),
+      } });
+      return tx.withdrawal.findUniqueOrThrow({ where: { id: withdrawalId } });
+    });
+  }
+
+  /**
+   * Recovery evidence is operator-reported, never authorization to pay/refund.
+   * Keep a reserved or legacy unresolved payout fenced until independent
+   * settlement or a separately approved recovery policy exists.
+   */
+  async recordWithdrawalRecovery(withdrawalId: string, adminId: string, input: {
+    expectedStatus: unknown; outcome: unknown; caseReference: unknown; notes: unknown;
+    candidateHash?: unknown;
+  }) {
+    const outcomes = ['UNKNOWN', 'PAYOUT_PENDING', 'PAYOUT_FAILED_REPORTED', 'PAYOUT_FOUND', 'NO_PAYOUT_FOUND'];
+    const active = ['PAYOUT_RESERVED', 'PROCESSING', 'APPROVED'];
+    if (typeof input.expectedStatus !== 'string' || !active.includes(input.expectedStatus) ||
+        typeof input.outcome !== 'string' || !outcomes.includes(input.outcome)) {
+      throw new Error('Invalid recovery status or reported outcome');
+    }
+    const caseReference = typeof input.caseReference === 'string' ? input.caseReference.trim() : '';
+    const notes = typeof input.notes === 'string' ? input.notes.trim() : '';
+    const candidateHash = typeof input.candidateHash === 'string' ? input.candidateHash.trim().toLowerCase() : '';
+    if (!/^[A-Za-z0-9._-]{5,80}$/.test(caseReference) || notes.length < 20 || notes.length > 1000 ||
+        (input.candidateHash !== undefined && typeof input.candidateHash !== 'string') ||
+        (candidateHash && !/^0x[a-f0-9]{64}$/.test(candidateHash)) ||
+        (input.outcome === 'PAYOUT_FOUND' && !candidateHash)) {
+      throw new Error('Valid case reference, reconciliation notes and applicable candidate hash required');
+    }
+    return prisma.$transaction(async (tx) => {
+      const lock = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "Withdrawal" WHERE "id" = ${withdrawalId}
+          AND status = ${input.expectedStatus} FOR NO KEY UPDATE
+      `;
+      if (lock.length !== 1) throw new Error('Withdrawal recovery state changed; refresh before reviewing');
+      const row = await tx.withdrawal.findUniqueOrThrow({ where: { id: withdrawalId } });
+      const ledgerCount = await tx.walletTransaction.count({
+        where: { reference: withdrawalId, userId: row.userId, type: 'WITHDRAWAL',
+          status: 'PENDING', currency: 'USD', amount: row.amount, fee: row.fee },
+      });
+      const evidence = {
+        withdrawalId, adminId, observedStatus: row.status, outcome: input.outcome,
+        caseReference, notes, candidateHash: candidateHash || null,
+        recordedHash: row.transactionHash, exactPendingLedgerCount: ledgerCount,
+        independentlyVerified: false, financialActionAuthorized: false,
+      };
+      const entry = await tx.walletAuditLog.create({ data: {
+        userId: row.userId, action: 'WITHDRAWAL_RECOVERY_REVIEW', details: JSON.stringify(evidence),
+      } });
+      return { id: entry.id, createdAt: entry.createdAt, ...evidence };
+    });
+  }
+
+  async getWithdrawalRecoveryHistory(withdrawalId: string) {
+    return prisma.$transaction(async (tx) => {
+      const row = await tx.withdrawal.findUnique({ where: { id: withdrawalId } });
+      if (!row) throw new Error('Withdrawal not found');
+      // Only this event type and exact serialized first property; no broad
+      // user-history disclosure. Return recent reviews, not payment proof.
+      const prefix = '{"withdrawalId":' + JSON.stringify(withdrawalId) + ',';
+      const logs = await tx.walletAuditLog.findMany({
+        where: { userId: row.userId, action: 'WITHDRAWAL_RECOVERY_REVIEW', details: { startsWith: prefix } },
+        select: { id: true, createdAt: true, details: true },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 21,
+      });
+      const entries = logs.slice(0, 20).map(log => {
+        const details = JSON.parse(log.details || '{}');
+        if (details.withdrawalId !== withdrawalId || details.financialActionAuthorized !== false ||
+            details.independentlyVerified !== false) throw new Error('Recovery history requires manual audit review');
+        return { id: log.id, createdAt: log.createdAt, ...details };
+      });
+      return { status: row.status, entries, more: logs.length > 20, financialActionAuthorized: false };
+    }, { isolationLevel: 'RepeatableRead' });
+  }
+
   async processWithdrawal(withdrawalId: string, adminId: string, transactionHash: string) {
     const normalizedHash = typeof transactionHash === 'string' ? transactionHash.trim().toLowerCase() : '';
     if (!/^0x[a-f0-9]{64}$/.test(normalizedHash)) throw new Error('A valid BNB Smart Chain transaction hash is required');
 
     const withdrawal = await prisma.withdrawal.findUnique({ where: { id: withdrawalId } });
     if (!withdrawal) throw new Error('Withdrawal not found');
-    if (withdrawal.status !== 'PENDING') throw new Error('Only pending withdrawals can be processed');
+    if (withdrawal.status !== 'PAYOUT_RESERVED' || !withdrawal.processedBy) throw new Error('Withdrawal must be reserved before settlement');
     if (!withdrawal.walletAddress) throw new Error('Withdrawal destination address is missing');
 
     // A manual admin click or client-supplied hash is not proof of payment.
@@ -1774,7 +1880,10 @@ export class WalletService {
 
     const result = await prisma.$transaction(async (tx) => {
       const claim = await tx.withdrawal.updateMany({
-        where: { id: withdrawalId, status: 'PENDING', transactionHash: null },
+        where: { id: withdrawalId, status: 'PAYOUT_RESERVED', transactionHash: null, processedBy: withdrawal.processedBy,
+          userId: withdrawal.userId, amount: withdrawal.amount, fee: withdrawal.fee,
+          netAmount: withdrawal.netAmount, walletAddress: withdrawal.walletAddress,
+          method: withdrawal.method, currency: withdrawal.currency, cryptoNetwork: withdrawal.cryptoNetwork },
         data: {
           status: 'COMPLETED',
           transactionHash: normalizedHash,
@@ -1786,7 +1895,7 @@ export class WalletService {
 
       const updated = await tx.withdrawal.findUniqueOrThrow({ where: { id: withdrawalId } });
       const ledgerUpdate = await tx.walletTransaction.updateMany({
-        where: { reference: withdrawalId, type: 'WITHDRAWAL', status: 'PENDING' },
+        where: { reference: withdrawalId, userId: withdrawal.userId, type: 'WITHDRAWAL', status: 'PENDING', currency: 'USD', amount: withdrawal.amount, fee: withdrawal.fee },
         data: {
           status: 'COMPLETED',
           metadata: JSON.stringify({
@@ -1847,8 +1956,8 @@ export class WalletService {
       throw new Error("Withdrawal not found");
     }
 
-    if (withdrawal.status !== "PENDING") {
-      throw new Error("Only pending withdrawals can be rejected");
+    if (withdrawal.status !== "PENDING" || withdrawal.transactionHash !== null) {
+      throw new Error("Only pending withdrawals without settlement evidence can be rejected");
     }
 
     // Atomic transaction: conditionally flip PENDING -> FAILED + refund once.
@@ -1856,7 +1965,8 @@ export class WalletService {
     // a process + reject race) — only the first transition wins.
     const result = await prisma.$transaction(async (tx) => {
       const claim = await tx.withdrawal.updateMany({
-        where: { id: withdrawalId, status: "PENDING" },
+        where: { id: withdrawalId, status: "PENDING", transactionHash: null,
+          userId: withdrawal.userId, amount: withdrawal.amount, fee: withdrawal.fee, netAmount: withdrawal.netAmount },
         data: {
           status: "FAILED",
           processedBy: adminId,
@@ -1873,7 +1983,7 @@ export class WalletService {
       // refunding earnings. This keeps even the transaction's operation order
       // fail-closed when the ledger row is missing.
       const ledgerUpdate = await tx.walletTransaction.updateMany({
-        where: { reference: withdrawalId, type: "WITHDRAWAL", status: "PENDING" },
+        where: { reference: withdrawalId, userId: withdrawal.userId, type: "WITHDRAWAL", status: "PENDING", currency: "USD", amount: withdrawal.amount, fee: withdrawal.fee },
         data: { status: "FAILED" },
       });
       if (ledgerUpdate.count !== 1) {
@@ -1940,7 +2050,8 @@ export class WalletService {
 
     const result = await prisma.$transaction(async (tx) => {
       const claim = await tx.withdrawal.updateMany({
-        where: { id: withdrawalId, userId, status: "PENDING" },
+        where: { id: withdrawalId, userId, status: "PENDING", transactionHash: null,
+          amount: withdrawal.amount, fee: withdrawal.fee, netAmount: withdrawal.netAmount },
         data: {
           status: "CANCELLED",
           processedBy: userId,
@@ -1955,7 +2066,7 @@ export class WalletService {
 
       // Transition the reservation ledger before refunding the balance.
       const ledgerUpdate = await tx.walletTransaction.updateMany({
-        where: { reference: withdrawalId, type: "WITHDRAWAL", status: "PENDING" },
+        where: { reference: withdrawalId, userId: withdrawal.userId, type: "WITHDRAWAL", status: "PENDING", currency: "USD", amount: withdrawal.amount, fee: withdrawal.fee },
         data: { status: "CANCELLED" },
       });
       if (ledgerUpdate.count !== 1) {
@@ -2426,9 +2537,9 @@ export class WalletService {
   /**
    * Reconcile a single wallet: compute the authoritative balance from the
    * Wallet ledger (WalletTransaction rows) and compare it against the stored
-   * Wallet.coinBalance. Every run records exactly one WalletReconciliationLog
-   * row (MATCH or DISCREPANCY). Discrepancies are NEVER silently fixed — they
-   * are audited and surfaced; a caller can optionally freeze the wallet.
+   * Wallet.coinBalance. One repeatable-read transaction records coin and USD
+   * reconciliation evidence and discrepancy audits. Historical balances are
+   * never silently rewritten; automated freezing is disabled.
    */
   async reconcileWallet(userId: string): Promise<{
     status: 'MATCH' | 'DISCREPANCY';
@@ -2442,8 +2553,10 @@ export class WalletService {
     earningsDifference: number;
     earningsLogId: string;
   }> {
-    const wallet = await this.ensureWallet(userId);
-    const txns = await prisma.walletTransaction.findMany({
+    return prisma.$transaction(async (tx) => {
+    const wallet = await tx.wallet.findUnique({ where: { userId } });
+    if (!wallet) throw new Error('Wallet not found');
+    const txns = await tx.walletTransaction.findMany({
       where: { userId, currency: { in: ["VANTA", "USD"] } },
       select: { type: true, amount: true, currency: true, metadata: true, status: true },
     });
@@ -2480,7 +2593,7 @@ export class WalletService {
     const earningsDifferenceCents = storedEarningsCents - ledgerEarningsCents;
     const earningsStatus: 'MATCH' | 'DISCREPANCY' = earningsDifferenceCents === 0 ? 'MATCH' : 'DISCREPANCY';
 
-    const log = await prisma.walletReconciliationLog.create({
+    const log = await tx.walletReconciliationLog.create({
       data: {
         userId,
         walletId: wallet.id,
@@ -2492,7 +2605,7 @@ export class WalletService {
         details: JSON.stringify({ currency: "VANTA", transactionCount: txns.filter(t => t.currency !== "USD").length, computedAt: new Date().toISOString() }),
       },
     });
-    const earningsLog = await prisma.walletReconciliationLog.create({
+    const earningsLog = await tx.walletReconciliationLog.create({
       data: {
         userId,
         walletId: wallet.id,
@@ -2506,24 +2619,15 @@ export class WalletService {
     });
 
     if (status === 'DISCREPANCY') {
-      await this.logAudit(userId, 'RECONCILIATION_DISCREPANCY', {
-        currency: "VANTA",
-        storedBalance,
-        ledgerBalance,
-        difference,
-        reconciliationLogId: log.id,
-      });
-      this.logTally('reconciliation_discrepancy', { userId, currency: "VANTA", difference });
+      await tx.walletAuditLog.create({ data: { userId, action: 'RECONCILIATION_DISCREPANCY', details: JSON.stringify({
+        currency: "VANTA", storedBalance, ledgerBalance, difference, reconciliationLogId: log.id,
+      }) } });
     }
     if (earningsStatus === 'DISCREPANCY') {
-      await this.logAudit(userId, 'RECONCILIATION_DISCREPANCY', {
-        currency: "USD",
-        storedBalance: storedEarningsCents / 100,
-        ledgerBalance: ledgerEarningsCents / 100,
-        difference: earningsDifferenceCents / 100,
-        reconciliationLogId: earningsLog.id,
-      });
-      this.logTally('reconciliation_discrepancy', { userId, currency: "USD", difference: earningsDifferenceCents / 100 });
+      await tx.walletAuditLog.create({ data: { userId, action: 'RECONCILIATION_DISCREPANCY', details: JSON.stringify({
+        currency: "USD", storedBalance: storedEarningsCents / 100, ledgerBalance: ledgerEarningsCents / 100,
+        difference: earningsDifferenceCents / 100, reconciliationLogId: earningsLog.id,
+      }) } });
     }
 
     return {
@@ -2538,39 +2642,31 @@ export class WalletService {
       earningsDifference: earningsDifferenceCents / 100,
       earningsLogId: earningsLog.id,
     };
+    }, { isolationLevel: 'RepeatableRead', maxWait: 5000, timeout: 15000 });
   }
 
   /**
-   * Reconcile all wallets (manual or periodic run). When
-   * `freezeOnDiscrepancy` is enabled, wallets with a difference are frozen
-   * with an auditable reason rather than silently adjusted.
+   * Reconcile a bounded page of wallets. Snapshot evidence is not a current
+   * authorization decision. Automatic freezing remains disabled until an
+   * independently reviewed fencing and ledger completeness protocol exists.
    */
   async reconcileAllWallets(options?: {
     limit?: number;
     freezeOnDiscrepancy?: boolean;
   }): Promise<{ checked: number; discrepancies: number; frozen: number }> {
+    if (options?.freezeOnDiscrepancy) throw new Error('Automatic reconciliation freeze is disabled; manual review required');
     const wallets = await prisma.wallet.findMany({
       take: Math.min(Math.max(1, options?.limit || 500), 1000),
       select: { id: true, userId: true, coinBalance: true },
     });
     let discrepancies = 0;
-    let frozen = 0;
+    const frozen = 0;
     for (const wallet of wallets) {
       const result = await this.reconcileWallet(wallet.userId);
       const hasDiscrepancy = result.status === 'DISCREPANCY' || result.earningsStatus === 'DISCREPANCY';
       if (hasDiscrepancy) {
         discrepancies++;
-        if (options?.freezeOnDiscrepancy) {
-          const update = await prisma.wallet.updateMany({
-            where: { id: wallet.id, isFrozen: false },
-            data: {
-              isFrozen: true,
-              frozenBy: 'system:reconciliation',
-              freezeReason: `Reconciliation discrepancy: VANTA stored=${result.storedBalance}, ledger=${result.ledgerBalance}; USD stored=${result.storedEarningsBalance}, ledger=${result.ledgerEarningsBalance}`,
-            },
-          });
-          if (update.count === 1) frozen++;
-        }
+
       }
     }
     return { checked: wallets.length, discrepancies, frozen };

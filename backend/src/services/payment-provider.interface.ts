@@ -39,7 +39,7 @@ export class USDTBEP20Provider implements PaymentProvider {
     // Do not fabricate a transaction ID or pretend a payout was sent. The
     // current product flow requires an operator to send USDT and then submit
     // the real transaction hash for independent on-chain verification.
-    throw new Error('Automated USDT payouts are not configured. Send the payout externally and verify its on-chain transaction hash.');
+    throw new Error('Automated USDT payouts are not configured. Reconcile and reserve the withdrawal through the authorized settlement workflow before any external payout.');
   }
 
   async getTransactionStatus(txId: string): Promise<{ status: string; confirmations: number }> {

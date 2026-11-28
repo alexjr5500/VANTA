@@ -8,6 +8,9 @@ import { v2 as cloudinary } from "cloudinary";
 import { prisma } from "../prisma";
 import { imageOptimizer } from "./image-optimizer.service";
 import { createPrivateMediaUrl } from "./private-media.service";
+import { assertVerificationUploadAvailable, isCloudinaryStorageConfigured } from "./cloudinary-storage-config";
+import { DurableQueueRepository } from "./durable-queue.repository";
+import { enqueueCloudinaryMediaForUpload } from "./cloudinary-media-producer";
 
 const configuredUploadDir = process.env.UPLOAD_STORAGE_DIR;
 // Resolve relative storage paths against the backend project, not process.cwd().
@@ -117,9 +120,11 @@ if (!fs.existsSync(optimizedDir)) {
 }
 
 const uploadPublicBaseUrl = (process.env.UPLOAD_PUBLIC_BASE_URL || "").replace(/\/$/, "");
-const useCloudinary = Boolean(
-  process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET
-);
+const useCloudinary = isCloudinaryStorageConfigured(process.env);
+const cloudinaryMediaProducerEnabled = process.env.VANTA_DURABLE_QUEUE_MEDIA_PRODUCER === "true";
+if (cloudinaryMediaProducerEnabled && !useCloudinary) {
+  throw new Error("Durable Cloudinary media producer requires configured Cloudinary storage");
+}
 const execFileAsync = promisify(execFile);
 const maxVideoDurationSeconds = Number(process.env.MAX_VIDEO_DURATION_SECONDS || 600);
 export const STATUS_MAX_VIDEO_SECONDS = 120;
@@ -225,13 +230,20 @@ export interface MediaStorageDiagnostics {
   storageDirEnv: string | null;
   /** Newest non-deleted uploadedFile rows inspected (bounded). */
   dbReferencedUploads: number;
-  /** Of the inspected rows, how many files exist on disk. */
+  /** Of sampled rows, local assets that need filesystem access. */
+  localReferencedUploads: number;
+  /** Of sampled rows, Cloudinary assets (not verified by this filesystem probe). */
+  cloudinaryReferencedUploads: number;
+  /** Only local assets are counted for present/missing on disk. */
   presentOnDisk: number;
-  /** Of the inspected rows, how many files are missing from disk. */
   missingOnDisk: number;
+  /** Remote asset availability is NOT verified by this local health check. */
+  remotePresenceVerified: false;
+  /** Whether the metadata sample could be read at all. */
+  metadataProbeSucceeded: boolean;
   /** Total non-optimized files found in uploadStorageDir. */
   filesOnDisk: number | null;
-  /** true when every referenced file is present (or Cloudinary is used). */
+  /** True when metadata was sampled and no sampled local upload was missing. */
   healthy: boolean;
 }
 
@@ -239,23 +251,37 @@ export const STORAGE_DIAGNOSIS_SAMPLE_LIMIT = 500;
 
 export async function getStorageDiagnostics(): Promise<MediaStorageDiagnostics> {
   let referenced = 0;
+  let localReferenced = 0;
+  let cloudinaryReferenced = 0;
   let present = 0;
   let missing = 0;
+  let metadataProbeSucceeded = false;
   try {
     const rows = await prisma.uploadedFile.findMany({
       where: { deletedAt: null },
-      select: { filename: true },
+      select: { filename: true, path: true },
       orderBy: { createdAt: "desc" },
       take: STORAGE_DIAGNOSIS_SAMPLE_LIMIT,
     });
+    metadataProbeSucceeded = true;
     referenced = rows.length;
     for (const row of rows) {
-      const assetPath = path.join(uploadStorageDir, path.basename(row.filename));
+      if (typeof row.path === "string" && row.path.startsWith("cloudinary:")) {
+        cloudinaryReferenced += 1;
+        continue;
+      }
+      localReferenced += 1;
+      const filename = row.filename;
+      if (typeof filename !== "string" || !filename || filename !== path.basename(filename)) {
+        missing += 1;
+        continue;
+      }
+      const assetPath = path.join(uploadStorageDir, filename);
       if (fs.existsSync(assetPath)) present += 1;
       else missing += 1;
     }
   } catch (error) {
-    // Database may be unavailable (pre-provision, first boot). Report what we can.
+    // A DB failure is not evidence of healthy storage.
     console.warn("[StorageDiagnostics] Could not inspect uploadedFile rows:", error);
   }
 
@@ -282,10 +308,14 @@ export async function getStorageDiagnostics(): Promise<MediaStorageDiagnostics> 
     storageDirEnvConfigured: Boolean(process.env.UPLOAD_STORAGE_DIR),
     storageDirEnv: process.env.UPLOAD_STORAGE_DIR || null,
     dbReferencedUploads: referenced,
+    localReferencedUploads: localReferenced,
+    cloudinaryReferencedUploads: cloudinaryReferenced,
     presentOnDisk: present,
     missingOnDisk: missing,
+    remotePresenceVerified: false,
+    metadataProbeSucceeded,
     filesOnDisk: diskCount,
-    healthy: mode === "cloudinary" || missing === 0,
+    healthy: metadataProbeSucceeded && missing === 0 && (localReferenced === 0 || diskCount !== null),
   };
 }
 
@@ -529,6 +559,8 @@ export class UploadService {
       recordId?: string;
       optimize?: boolean;
       generateThumbnail?: boolean;
+      /** Internal only: bind a claimed resumable session to its file atomically. */
+      chunkSessionId?: string;
     } = {}
   ): Promise<UploadedFileResult> {
     const {
@@ -537,6 +569,7 @@ export class UploadService {
       recordId,
       optimize = true,
       generateThumbnail = false,
+      chunkSessionId,
     } = options;
 
     const userId = req.user?.userId;
@@ -549,6 +582,7 @@ export class UploadService {
       throw new Error("Invalid upload path.");
     }
     try {
+      assertVerificationUploadAvailable(category, recordType);
       verifyFileContent(file);
     } catch (error) {
       removeLocalFile(file.path);
@@ -625,26 +659,57 @@ export class UploadService {
       }
     }
 
-    // Persist only after storage succeeds; remove the asset if database persistence fails.
+    // Persist metadata and queue work atomically when Cloudinary media processing
+    // is explicitly enabled. The feature is disabled by default, including prod.
+    // Cloudinary has already accepted the original upload at this point.
+    const metadata = {
+      userId,
+      filename: file.filename,
+      originalName: file.originalname,
+      url: finalUrl,
+      path: storagePath,
+      mimeType: normalizeMimeType(file.mimetype),
+      fileType,
+      size: file.size,
+      category,
+      recordType: recordType || null,
+      recordId: recordId || null,
+    };
     let record;
     try {
-      record = await prisma.uploadedFile.create({
-        data: {
-        userId,
-        filename: file.filename,
-        originalName: file.originalname,
-        url: finalUrl,
-        path: storagePath,
-        mimeType: normalizeMimeType(file.mimetype),
-        fileType,
-        size: file.size,
-        category,
-        recordType: recordType || null,
-        recordId: recordId || null,
-        },
-      });
+      if (cloudinaryMediaProducerEnabled || chunkSessionId) {
+        record = await prisma.$transaction(async tx => {
+          const created = await tx.uploadedFile.create({ data: metadata });
+          if (chunkSessionId) {
+            const bound = await tx.uploadSession.updateMany({
+              where: { id: chunkSessionId, userId, status: "FINALIZING", category,
+                recordType: recordType || null, recordId: recordId || null },
+              data: { status: "COMPLETE", completedFileId: created.id },
+            });
+            if (bound.count !== 1) throw new Error("Upload session finalization claim lost.");
+          }
+          if (cloudinaryMediaProducerEnabled) {
+            const repository = new DurableQueueRepository(tx);
+            await enqueueCloudinaryMediaForUpload(
+              { id: created.id, fileType, category },
+              { optimize, generateThumbnail },
+              repository,
+            );
+          }
+          return created;
+        });
+      } else {
+        record = await prisma.uploadedFile.create({ data: metadata });
+      }
     } catch (error) {
-      await this.deleteStorageAsset(file.filename, storagePath);
+      // A lost commit response is ambiguous. Retain a chunk asset for
+      // reconciliation instead of deleting a potentially committed original.
+      if (chunkSessionId) throw new Error("Upload finalization requires reconciliation.");
+      try {
+        await this.deleteStorageAsset(file.filename, storagePath);
+      } finally {
+        removeLocalFile(file.path);
+      }
       throw new Error(`Could not save uploaded file metadata: ${error instanceof Error ? error.message : "database error"}`);
     }
 

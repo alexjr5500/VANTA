@@ -12,13 +12,21 @@
     "build": "tsc -p tsconfig.build.json",
     "prestart": "prisma generate",
     "start": "node dist/index.js",
+    "worker:durable": "node dist/durable-worker.js",
+    "queue:monitor": "node dist/durable-queue-monitor.js",
+    "media:verify-hls": "node dist/media-hls-acceptance-cli.js",
+    "media:audit-storage": "node dist/media-storage-audit-cli.js",
+    "db:verify-replica": "node dist/database-replica-readiness-cli.js",
+    "db:assess-sharding": "node dist/sharding-assessment-cli.js",
+    "load:staging": "node scripts/staging-load-test.mjs",
     "test": "jest --config jest.config.js",
     "test:coverage": "jest --config jest.config.js --coverage",
     "test:watch": "jest --config jest.config.js --watch",
     "test:ci": "jest --config jest.config.js --ci --coverage --maxWorkers=2",
     "seed": "prisma db seed",
     "seed:gifts": "ts-node --transpile-only prisma/seed-gift-catalog.ts",
-    "seed:dev-wallet": "ts-node --transpile-only prisma/seed-dev-wallet.ts"
+    "seed:dev-wallet": "ts-node --transpile-only prisma/seed-dev-wallet.ts",
+    "prebuild": "npm --prefix backup-runtime ci --omit=dev --ignore-scripts --no-audit --no-fund"
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"
@@ -28,8 +36,9 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@livekit/protocol": "^1.50.4",
+    "@livekit/protocol": "1.50.4",
     "@prisma/client": "^5.22.0",
+    "@socket.io/redis-adapter": "^8.3.0",
     "argon2": "^0.41.1",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.10.0",
@@ -39,18 +48,20 @@
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
     "find-up": "^8.0.0",
-    "firebase-admin": "^13.4.0",
+    "firebase-admin": "14.5.1",
     "helmet": "^7.1.0",
+    "ioredis": "^5.4.2",
     "jsonwebtoken": "^9.0.2",
-    "livekit-server-sdk": "^2.17.0",
+    "livekit-server-sdk": "2.17.0",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
     "pg": "^8.13.0",
     "qrcode": "^1.5.3",
+    "sharp": "^0.35.5",
     "socket.io": "^4.7.5",
     "speakeasy": "^2.0.0",
     "stripe": "^16.11.0",
-    "uuid": "^10.0.0",
+    "uuid": "11.1.1",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
@@ -72,12 +83,15 @@
     "@types/range-parser": "^1.2.7",
     "@types/send": "^1.2.1",
     "@types/speakeasy": "^2.0.10",
-    "@types/uuid": "^10.0.0",
     "jest": "^30.0.0",
+    "socket.io-client": "^4.7.5",
     "nodemon": "^3.1.7",
     "prisma": "^5.22.0",
     "ts-jest": "^29.4.12",
     "ts-node": "^10.9.2",
     "typescript": "^5.6.3"
+  },
+  "overrides": {
+    "@livekit/protocol": "1.50.4"
   }
 }

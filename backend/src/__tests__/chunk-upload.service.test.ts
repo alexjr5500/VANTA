@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import express from 'express';
 
 jest.mock('../prisma', () => ({
   prisma: {
@@ -7,6 +8,7 @@ jest.mock('../prisma', () => ({
       create: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     uploadedFile: {
       findFirst: jest.fn(),
@@ -15,7 +17,7 @@ jest.mock('../prisma', () => ({
 }));
 
 import { prisma } from '../prisma';
-import { chunkUploadService, UPLOAD_CHUNK_SIZE } from '../services/chunk-upload.service';
+import { chunkUploadService, uploadChunk, UPLOAD_CHUNK_SIZE } from '../services/chunk-upload.service';
 import { uploadService, uploadStorageDir } from '../services/upload.service';
 
 const db = prisma as jest.Mocked<typeof prisma>;
@@ -47,6 +49,7 @@ const req = { user: { userId: 'user-1', role: 'USER' } } as any;
 beforeEach(() => {
   jest.clearAllMocks();
   (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession });
+  (db.uploadSession.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
 });
 
 afterEach(() => {
@@ -69,6 +72,13 @@ describe('ChunkUploadService', () => {
   });
 
   describe('initChunkSession', () => {
+    it('rejects verification documents before creating a session', async () => {
+      await expect(chunkUploadService.initChunkSession('user-1', {
+        fileName: 'synthetic.pdf', fileSize: 100, mimeType: 'application/pdf', category: 'verification',
+      })).rejects.toThrow('Secure verification document storage');
+      expect(db.uploadSession.create).not.toHaveBeenCalled();
+    });
+
     it('rejects a disallowed mime type before any bytes transfer', async () => {
       (db.uploadSession.create as jest.Mock).mockResolvedValue({ ...baseSession });
       await expect(
@@ -115,7 +125,84 @@ describe('ChunkUploadService', () => {
     expect(state.complete).toBe(false); // byte-staging flag is not the persistence status
   });
 
+  it('accepts a full-size multipart part and denies a non-owner before writing', async () => {
+    (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({
+      ...baseSession, fileSize: UPLOAD_CHUNK_SIZE, totalChunks: 1,
+    });
+    const app = express();
+    app.post('/part', (request, _response, next) => {
+      (request as any).user = { userId: request.header('x-fixture-user') };
+      next();
+    }, uploadChunk.single('chunk'), async (request, response) => {
+      try {
+        response.json(await chunkUploadService.acceptChunkPart(
+          (request as any).user.userId, request.body.sessionId, request.body.index, request.file,
+        ));
+      } catch { response.status(400).end(); }
+    });
+    app.use((_error: any, _request: any, response: any, _next: any) => response.status(400).end());
+    const server = app.listen(0, '127.0.0.1');
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('listening', resolve);
+        server.once('error', reject);
+      });
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing listener');
+      const send = (user: string, value: number) => {
+        const data = new FormData();
+        data.append('sessionId', baseSession.id);
+        data.append('index', '0');
+        data.append('chunk', new Blob([new Uint8Array(UPLOAD_CHUNK_SIZE).fill(value)]), 'part');
+        return fetch(`http://127.0.0.1:${address.port}/part`, {
+          method: 'POST', headers: { 'x-fixture-user': user }, body: data,
+        });
+      };
+      const valid = await send('user-1', 7);
+      expect(valid.status).toBe(200);
+      expect(await valid.json()).toMatchObject({ receivedChunks: 1 });
+      const accepted = partPath(baseSession.id, 0);
+      expect(fs.statSync(accepted).size).toBe(UPLOAD_CHUNK_SIZE);
+      const denied = await send('user-2', 9);
+      expect(denied.status).toBe(400);
+      await denied.arrayBuffer();
+      expect(fs.readFileSync(accepted)).toEqual(Buffer.alloc(UPLOAD_CHUNK_SIZE, 7));
+      expect(fs.readdirSync(stagingDir(baseSession.id))).toEqual(['000000.part']);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }, 20000);
+
   describe('acceptChunkPart', () => {
+    it('publishes a complete part and does not overwrite it with a short retry', async () => {
+      fs.mkdirSync(stagingDir(baseSession.id), { recursive: true });
+      const staged = path.join(stagingDir(baseSession.id), '000000.0123456789abcdef01234567.pending');
+      const payload = Buffer.alloc(baseSession.fileSize, 7);
+      fs.writeFileSync(staged, payload);
+      await expect(chunkUploadService.acceptChunkPart('user-1', baseSession.id, '0', {
+        path: staged, size: payload.length,
+      } as any)).resolves.toMatchObject({ receivedChunks: 1, complete: true });
+      expect(fs.readFileSync(partPath(baseSession.id, 0))).toEqual(payload);
+      fs.writeFileSync(staged, Buffer.alloc(5, 9));
+      await expect(chunkUploadService.acceptChunkPart('user-1', baseSession.id, '0', {
+        path: staged, size: 5,
+      } as any)).rejects.toThrow('expected size');
+      expect(fs.existsSync(staged)).toBe(false);
+      expect(fs.readFileSync(partPath(baseSession.id, 0))).toEqual(payload);
+    });
+
+    it('rejects a non-owner without changing the accepted part', async () => {
+      fs.mkdirSync(stagingDir(baseSession.id), { recursive: true });
+      const accepted = partPath(baseSession.id, 0);
+      fs.writeFileSync(accepted, Buffer.alloc(baseSession.fileSize, 7));
+      await expect(chunkUploadService.acceptChunkPart('user-2', baseSession.id, '0', {
+        path: accepted, size: baseSession.fileSize,
+      } as any)).rejects.toThrow('Upload session not found');
+      expect(fs.existsSync(accepted)).toBe(true);
+      expect(db.uploadSession.update).not.toHaveBeenCalled();
+    });
+
     it('rejects a chunk whose path is outside the session staging dir', async () => {
       await expect(
         chunkUploadService.acceptChunkPart('user-1', baseSession.id, 0, {
@@ -136,6 +223,68 @@ describe('ChunkUploadService', () => {
   });
 
   describe('completeChunkSession', () => {
+    it('returns only the exact completed file, never the newest matching record', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, status: 'COMPLETE', completedFileId: 'file-original' });
+      (db.uploadedFile.findFirst as jest.Mock).mockResolvedValue({ id: 'file-original', category: 'reel', url: '/uploads/original.mp4' });
+      await expect(chunkUploadService.completeChunkSession(req, baseSession.id)).resolves.toMatchObject({ id: 'file-original' });
+      expect(db.uploadedFile.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 'file-original', userId: 'user-1' }) }));
+    });
+
+    it('fails closed for legacy completed sessions without a verified file binding', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, status: 'COMPLETE' });
+      await expect(chunkUploadService.completeChunkSession(req, baseSession.id)).rejects.toThrow('no verified file binding');
+      expect(db.uploadedFile.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('does not invoke the provider if the atomic completion claim loses', async () => {
+      fs.mkdirSync(stagingDir(baseSession.id), { recursive: true });
+      fs.writeFileSync(partPath(baseSession.id, 0), Buffer.alloc(baseSession.fileSize));
+      (db.uploadSession.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+      const spy = jest.spyOn(uploadService, 'uploadFile');
+      try {
+        await expect(chunkUploadService.completeChunkSession(req, baseSession.id)).rejects.toThrow('already in progress');
+        expect(spy).not.toHaveBeenCalled();
+      } finally { spy.mockRestore(); }
+    });
+
+    it('does not downgrade a finalizing session on late abort or failure', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, status: 'FINALIZING' });
+      (db.uploadSession.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+      await expect(chunkUploadService.cancelChunkSession('user-1', baseSession.id)).resolves.toEqual({ cancelled: false });
+      await expect(chunkUploadService.failChunkSession('user-1', baseSession.id)).resolves.toEqual({ failed: false });
+    });
+
+    it('rejects an existing verification session before returning a completed file', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, category: 'verification', status: 'COMPLETE' });
+      await expect(chunkUploadService.completeChunkSession(req, baseSession.id)).rejects.toThrow('Secure verification document storage');
+      expect(db.uploadedFile.findFirst).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { category: 'post-image' },
+      { recordType: 'Post' },
+      { recordId: 'other-record' },
+    ])('rejects changed session metadata %j before assembly', async options => {
+      const spy = jest.spyOn(uploadService, 'uploadFile');
+      try {
+        await expect(chunkUploadService.completeChunkSession(req, baseSession.id, options)).rejects.toThrow('original session');
+        expect(spy).not.toHaveBeenCalled();
+        expect(db.uploadSession.update).not.toHaveBeenCalled();
+      } finally { spy.mockRestore(); }
+    });
+
+    it('does not reclassify a verification document session as public media', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, category: 'verification', recordType: 'VerificationRequest', recordId: 'user-1' });
+      await expect(chunkUploadService.completeChunkSession(req, baseSession.id, { category: 'post-image' })).rejects.toThrow('original session');
+      expect(db.uploadSession.update).not.toHaveBeenCalled();
+    });
+
+    it('checks the original binding before returning a completed upload', async () => {
+      (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, status: 'COMPLETE' });
+      await expect(chunkUploadService.completeChunkSession(req, baseSession.id, { recordId: 'other-record' })).rejects.toThrow('original session');
+      expect(db.uploadedFile.findFirst).not.toHaveBeenCalled();
+    });
+
     it('throws when not all parts have arrived (incomplete upload)', async () => {
       (db.uploadSession.findUnique as jest.Mock).mockResolvedValue({ ...baseSession, totalChunks: 2, fileSize: 8 });
       fs.mkdirSync(stagingDir(baseSession.id), { recursive: true });
@@ -165,9 +314,12 @@ describe('ChunkUploadService', () => {
 
       expect(result.url).toContain('/uploads/');
       expect(spy).toHaveBeenCalled();
-      expect(db.uploadSession.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ status: 'COMPLETE' }) })
+      expect(db.uploadSession.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ status: 'ACTIVE' }), data: { status: 'FINALIZING' } })
       );
+      expect(spy).toHaveBeenCalledWith(req, expect.anything(), expect.objectContaining({ chunkSessionId: baseSession.id }));
+      expect(spy.mock.calls[0][1].stream).toBeUndefined();
+      fs.rmSync(path.join(uploadStorageDir, result.filename), { force: true });
       // Staging is cleaned up after a successful compose.
       expect(fs.existsSync(stagingDir(baseSession.id))).toBe(false);
       spy.mockRestore();

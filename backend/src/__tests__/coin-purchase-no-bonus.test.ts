@@ -151,7 +151,7 @@ it.each(EXACT_PACKAGE_CASES)(
 
       // User balance increases by EXACTLY the purchased amount.
       expect(prisma.wallet.update).toHaveBeenCalledWith({
-        where: { userId: 'user1' },
+        where: { userId: 'user1', isFrozen: false },
         data: { coinBalance: { increment: pkg.coins }, totalCoinsPurchased: { increment: pkg.coins } },
       });
 
@@ -236,11 +236,13 @@ it('the completion path never writes a bonus amount to the order, wallet or ledg
     // The order status flip carries only the coin count that already equals the
     // package amount (never a client-supplied or additive bonus).
     const claimUpdate = (prisma.purchaseOrder.updateMany as jest.Mock).mock.calls[0][0];
-    expect(claimUpdate.where).toEqual({
+    expect(claimUpdate.where).toEqual(expect.objectContaining({
       id: rawOrder.id,
       userId: 'user1',
+      coins: rawOrder.coins,
+      amount: rawOrder.amount,
       status: { in: [...COIN_PAYMENT_CREDITABLE_STATUSES] },
-    });
+    }));
 
     const updateData = (prisma.wallet.update as jest.Mock).mock.calls[0][0].data;
     const ledgerData = (prisma.walletTransaction.create as jest.Mock).mock.calls[0][0].data;

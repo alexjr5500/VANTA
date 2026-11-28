@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { randomUUID } from 'crypto';
 import { DurableQueueRepository, DurableQueueClient } from '../services/durable-queue.repository';
+import { getDurableQueueHealth } from '../services/durable-queue.health';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeWithDatabase = databaseUrl ? describe : describe.skip;
@@ -9,6 +10,7 @@ describeWithDatabase('DurableQueueRepository PostgreSQL integration', () => {
   let admin: Pool;
   let pool: Pool;
   let repository: DurableQueueRepository;
+  let queueClient: DurableQueueClient;
   let schema: string;
 
   beforeAll(async () => {
@@ -32,6 +34,7 @@ describeWithDatabase('DurableQueueRepository PostgreSQL integration', () => {
       $executeRawUnsafe: async (query, ...values) => (await pool.query(query, values)).rowCount ?? 0,
       $queryRawUnsafe: async <T>(query: string, ...values: unknown[]) => (await pool.query(query, values)).rows as T,
     };
+    queueClient = client;
     repository = new DurableQueueRepository(client);
   });
 
@@ -44,6 +47,107 @@ describeWithDatabase('DurableQueueRepository PostgreSQL integration', () => {
   });
 
   beforeEach(async () => { if (pool) await pool.query('TRUNCATE TABLE "QueueJob"'); });
+
+  it('monitors only claimable job types and counts recent terminal failures', async () => {
+    await repository.enqueue('image:optimize', {}, { id: 'disabled-media', runAt: new Date(Date.now() - 1800000) });
+    await repository.enqueue('push:deliver', {}, { id: 'due-push', runAt: new Date(Date.now() - 90000) });
+    await repository.enqueue('push:deliver', {}, { id: 'recent-failure' });
+    await pool.query(`UPDATE "QueueJob" SET "status" = 'failed', "updatedAt" = NOW()
+      WHERE "id" = $1`, ['recent-failure']);
+    await repository.enqueue('push:deliver', {}, { id: 'expired-lease' });
+    await pool.query(`UPDATE "QueueJob" SET "status" = 'active', "lockedUntil" = NOW() - INTERVAL '1 second'
+      WHERE "id" = $1`, ['expired-lease']);
+
+    const monitored = await getDurableQueueHealth(queueClient, ['image:optimize']);
+    expect(monitored).toMatchObject({
+      pending: 1, active: 1, completed: 0, failed: 1, expiredLeases: 1, recentFailures: 1,
+    });
+    expect(monitored.oldestPendingAgeSeconds).toBeGreaterThan(80);
+
+    const unfiltered = await getDurableQueueHealth(queueClient);
+    expect(unfiltered.pending).toBe(2);
+    expect(unfiltered.oldestPendingAgeSeconds).toBeGreaterThan(1000);
+  });
+
+  it('measures due work, retry pressure and recent completions without counting historical throughput', async () => {
+    await repository.enqueue('push:deliver', {}, { id: 'due' });
+    await repository.enqueue('push:deliver', {}, { id: 'future', runAt: new Date(Date.now() + 3600000) });
+    await repository.enqueue('push:deliver', {}, { id: 'retry' });
+    await repository.enqueue('push:deliver', {}, { id: 'recent' });
+    await repository.enqueue('push:deliver', {}, { id: 'historical' });
+    await repository.enqueue('image:optimize', {}, { id: 'excluded' });
+    await pool.query(`UPDATE "QueueJob" SET "attempts" = 1, "runAt" = NOW() + INTERVAL '1 hour' WHERE "id" = 'retry'`);
+    await pool.query(`UPDATE "QueueJob" SET "status" = 'completed', "createdAt" = NOW() - INTERVAL '10 seconds',
+      "completedAt" = NOW() WHERE "id" = 'recent'`);
+    await pool.query(`UPDATE "QueueJob" SET "status" = 'completed', "createdAt" = NOW() - INTERVAL '2 hours',
+      "completedAt" = NOW() - INTERVAL '1 hour' WHERE "id" = 'historical'`);
+    const health = await getDurableQueueHealth(queueClient, ['image:optimize']);
+    expect(health).toMatchObject({ pending: 3, duePending: 1, retryPending: 1, completed: 2,
+      recentCompletions: 1, recentCompletionLatencySeconds: 10 });
+    await pool.query(`DELETE FROM "QueueJob" WHERE "id" = 'recent'`);
+    await expect(getDurableQueueHealth(queueClient, ['image:optimize'])).resolves.toMatchObject({
+      recentCompletions: 0, recentCompletionLatencySeconds: null,
+    });
+  });
+
+  it('drains a bounded burst concurrently without duplicate claims or lost completions', async () => {
+    const count = 64;
+    await Promise.all(Array.from({ length: count }, (_, i) =>
+      repository.enqueue('integration:burst', {}, { id: 'burst-' + i })));
+    const claimed: string[] = [];
+    await Promise.all(Array.from({ length: 8 }, async (_, i) => {
+      const worker = 'burst-worker-' + i;
+      while (true) {
+        const job = await repository.claim(worker);
+        if (!job) break;
+        claimed.push(job.id);
+        expect(await repository.complete(job.id, worker)).toBe(true);
+      }
+    }));
+    expect(claimed).toHaveLength(count);
+    expect(new Set(claimed).size).toBe(count);
+    const health = await getDurableQueueHealth(queueClient);
+    expect(health).toMatchObject({ pending: 0, duePending: 0, retryPending: 0, active: 0,
+      completed: count, recentCompletions: count, failed: 0 });
+  });
+
+  it('leaves disabled media jobs pending while claiming eligible jobs', async () => {
+    await repository.enqueue('image:optimize', {}, { id: 'media-job', priority: 10 });
+    await repository.enqueue('push:deliver', {}, { id: 'push-job', priority: 0 });
+    const excluded = ['image:optimize', 'thumbnail:generate', 'video:transcode', 'cleanup:temp'];
+    await expect(repository.claim('worker-a', 60_000, excluded)).resolves.toMatchObject({
+      id: 'push-job', type: 'push:deliver',
+    });
+    const media = await pool.query('SELECT "status", "attempts" FROM "QueueJob" WHERE "id" = $1', ['media-job']);
+    expect(media.rows[0]).toMatchObject({ status: 'pending', attempts: 0 });
+    await expect(repository.claim('worker-b', 60_000, excluded)).resolves.toBeNull();
+    await expect(repository.claim('media-enabled-worker')).resolves.toMatchObject({
+      id: 'media-job', type: 'image:optimize',
+    });
+  });
+
+  it('does not exhaust disabled media jobs with expired leases', async () => {
+    await repository.enqueue('video:transcode', {}, { id: 'expired-media', maxAttempts: 1 });
+    await expect(repository.claim('media-worker')).resolves.toMatchObject({ id: 'expired-media' });
+    await pool.query(
+      `UPDATE "QueueJob" SET "lockedUntil" = NOW() - INTERVAL '1 second' WHERE "id" = $1`,
+      ['expired-media'],
+    );
+    await expect(repository.claim('disabled-worker', 60_000, ['video:transcode'])).resolves.toBeNull();
+    const media = await pool.query('SELECT "status", "attempts" FROM "QueueJob" WHERE "id" = $1', ['expired-media']);
+    expect(media.rows[0]).toMatchObject({ status: 'active', attempts: 1 });
+  });
+
+  it('keeps local and Cloudinary jobs isolated between storage modes', async () => {
+    await repository.enqueue('image:optimize', { inputPath: 'source.jpg', outputName: 'local' }, { id: 'local-job', priority: 5 });
+    await repository.enqueue('cloudinary:image:optimize', { fileId: 'asset_123' }, { id: 'cloud-job', priority: 10 });
+    const localExcluded = ['cloudinary:image:optimize', 'cloudinary:thumbnail:generate', 'cloudinary:video:transcode'];
+    const remoteExcluded = ['image:optimize', 'thumbnail:generate', 'video:transcode', 'cleanup:temp'];
+    await expect(repository.claim('local-worker', 60_000, localExcluded)).resolves.toMatchObject({ id: 'local-job' });
+    await expect(repository.claim('cloud-worker', 60_000, remoteExcluded)).resolves.toMatchObject({ id: 'cloud-job' });
+    await expect(repository.claim('local-worker', 60_000, localExcluded)).resolves.toBeNull();
+    await expect(repository.claim('cloud-worker', 60_000, remoteExcluded)).resolves.toBeNull();
+  });
 
   it('allows only one worker to claim a single job under concurrent contention', async () => {
     await repository.enqueue('integration:once', { value: 42 }, { id: 'single-job' });
@@ -64,6 +168,21 @@ describeWithDatabase('DurableQueueRepository PostgreSQL integration', () => {
     await expect(repository.renewLease('lease-job', 'worker-b', 60_000)).resolves.toBe(true);
     await expect(repository.complete('lease-job', 'worker-a')).resolves.toBe(false);
     await expect(repository.complete('lease-job', 'worker-b')).resolves.toBe(true);
+  });
+
+  it('refuses all terminal updates when the owner lease has expired but is not yet reclaimed', async () => {
+    await repository.enqueue('integration:expired', {}, { id: 'expired-job', maxAttempts: 2 });
+    await expect(repository.claim('worker-a')).resolves.toMatchObject({ id: 'expired-job' });
+    await pool.query(
+      `UPDATE "QueueJob" SET "lockedUntil" = NOW() - INTERVAL '1 second' WHERE "id" = $1`,
+      ['expired-job'],
+    );
+    await expect(repository.complete('expired-job', 'worker-a')).resolves.toBe(false);
+    await expect(repository.fail('expired-job', 'worker-a', 'stale failure')).resolves.toBe(false);
+    await expect(repository.failPermanently('expired-job', 'worker-a', 'stale permanent failure')).resolves.toBe(false);
+    const state = await pool.query('SELECT "status", "attempts" FROM "QueueJob" WHERE "id" = $1', ['expired-job']);
+    expect(state.rows[0]).toMatchObject({ status: 'active', attempts: 1 });
+    await expect(repository.claim('worker-b')).resolves.toMatchObject({ id: 'expired-job', attempts: 2 });
   });
 
   it('persists retry scheduling and marks a job failed after its final attempt', async () => {
