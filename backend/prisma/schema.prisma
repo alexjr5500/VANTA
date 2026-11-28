@@ -62,6 +62,10 @@ model User {
   // [provider, providerAccountId] constraint below).
   providerAccounts ProviderAccount[]
 
+  delegationGrants AccountDelegation[] @relation("DelegationOwner")
+  delegatedAccess AccountDelegation[] @relation("DelegationRecipient")
+  sentChatRequests  ChatContactRequest[] @relation("ChatRequestSender")
+  receivedChatRequests ChatContactRequest[] @relation("ChatRequestRecipient")
   profile           Profile?
   photos            Photo[]
   notifications     Notification[]           @relation("UserNotifications")
@@ -277,6 +281,7 @@ model UploadedFile {
   @@index([userId, createdAt])
   @@index([recordType, recordId])
   @@index([filename, category])
+  @@index([category, recordType, updatedAt])
   @@index([category, createdAt])
   @@index([deletedAt])
 }
@@ -664,6 +669,7 @@ model Video {
   // Publishing lifecycle, mirroring Story.publishStatus. Legacy rows default to
   // "PUBLISHED" so existing production data needs no migration value.
   publishStatus String         @default("PUBLISHED")
+  sensitiveContent Boolean @default(false)
   moderationRemovedAt DateTime?
   creatorId     String
   creator       User           @relation("CreatorVideos", fields: [creatorId], references: [id], onDelete: Cascade)
@@ -797,6 +803,7 @@ model Post {
   reposts    PostRepost[]
   shareCount Int           @default(0)
   views      Int           @default(0)
+  sensitiveContent Boolean @default(false)
   moderationRemovedAt DateTime?
   createdAt  DateTime      @default(now())
   updatedAt  DateTime      @updatedAt
@@ -881,6 +888,40 @@ model PostCommentLike {
   @@unique([userId, commentId])
   @@index([commentId, createdAt])
   @@index([userId, createdAt])
+}
+
+model AccountDelegation {
+  id String @id @default(cuid())
+  ownerId String
+  delegateId String
+  owner User @relation("DelegationOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  delegate User @relation("DelegationRecipient", fields: [delegateId], references: [id], onDelete: Cascade)
+  scope String @default("CONTENT_ANALYTICS")
+  status String @default("PENDING")
+  createdAt DateTime @default(now())
+  invitationExpiresAt DateTime
+  acceptedAt DateTime?
+  expiresAt DateTime?
+  endedAt DateTime?
+
+  @@index([ownerId, status, createdAt])
+  @@index([delegateId, status, createdAt])
+  @@index([ownerId, delegateId, status])
+}
+
+model ChatContactRequest {
+  id          String   @id @default(cuid())
+  senderId    String
+  recipientId String
+  sender      User     @relation("ChatRequestSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient   User     @relation("ChatRequestRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  status      String   @default("PENDING")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([senderId, recipientId])
+  @@index([recipientId, status, createdAt])
+  @@index([senderId, createdAt])
 }
 
 model Conversation {
@@ -1165,6 +1206,8 @@ model UserSettings {
   typingIndicators  Boolean  @default(true)
   messagePreviews   Boolean  @default(true)
   chatNotifications Boolean  @default(true)
+  requireChatRequest Boolean @default(false)
+  hideSensitiveContent Boolean @default(true)
   privacyProfile    String   @default("public")
   privacyMessages   String   @default("everyone")
   privacyFollows    String   @default("everyone")
@@ -1212,6 +1255,9 @@ model NotificationPreferences {
   groupAlerts            Boolean  @default(true)
   channelAlerts          Boolean  @default(true)
   liveInteractionsAlerts Boolean  @default(true)
+  followingOnlySocialAlerts Boolean @default(false)
+  chatRequestAlerts Boolean @default(true)
+  muteSocialAlerts Boolean @default(false)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 }
@@ -1390,6 +1436,9 @@ model OAuthState {
   redirect      String
   codeVerifier  String?
   linkingUserId String?
+  linkingSessionId String?
+  verifiedLinkIdentity String?
+  linkedAt DateTime?
   createdAt     DateTime  @default(now())
   expiresAt     DateTime
   consumedAt    DateTime?

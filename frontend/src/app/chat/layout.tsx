@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import ChatPasscodeGate from '@/components/messages/ChatPasscodeGate';
 
 export const metadata: Metadata = {
   title: { absolute: 'Chat | VANTA' },
@@ -6,5 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default function ChatLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return children;
+  return <ChatPasscodeGate>{children}</ChatPasscodeGate>;
 }

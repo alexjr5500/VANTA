@@ -81,13 +81,13 @@ router.post('/sessions/revoke-all', authenticate, revokeAllSessions);
 router.post('/change-password', authenticate, changePassword);
 
 // 2FA Management
-router.get('/2fa/setup', authenticate, setup2FA);
+router.post('/2fa/setup', authenticate, rateLimiter.login2fa, setup2FA);
 router.post('/2fa/enable', authenticate, enable2FA);
 router.post('/2fa/verify', authenticate, rateLimiter.login2fa, verify2FA);
 router.post('/2fa/disable', authenticate, disable2FA);
 router.get('/2fa/status', authenticate, get2FAStatus);
 router.get('/2fa/backup-codes', authenticate, getBackupCodes);
-router.post('/2fa/regenerate-backup-codes', authenticate, regenerateBackupCodes);
+router.post('/2fa/regenerate-backup-codes', authenticate, rateLimiter.login2fa, regenerateBackupCodes);
 
 // Privacy & Security
 router.get('/security/logs', authenticate, getSecurityLogs);

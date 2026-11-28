@@ -796,8 +796,9 @@ export class UserService {
     }
 
     if (data.language !== undefined) {
-      const language = data.language.trim().toLowerCase();
-      if (!language || language.length > 32) {
+      const raw = typeof data.language === 'string' ? data.language.trim().toLowerCase() : '';
+      const language = ['en','fr','es','pt','ar','de','it','tr','ru','hi','ur','bn','id','vi','th','zh','zh-TW','ja','ko'].find(code => code.toLowerCase() === raw);
+      if (!language) {
         throw new Error('Language must be a valid locale code');
       }
       settings.language = language;
@@ -805,8 +806,21 @@ export class UserService {
 
     for (const key of ['readReceipts', 'activityStatus', 'typingIndicators', 'messagePreviews', 'chatNotifications'] as const) {
       if (data[key] !== undefined) {
-        settings[key] = Boolean(data[key]);
+        if (typeof data[key] !== 'boolean') throw new Error(`Invalid boolean preference: ${key}`);
+        settings[key] = data[key];
       }
+    }
+
+    if (data.activityStatus !== undefined) { settings.onlineStatus = data.activityStatus ? 'everyone' : 'nobody'; settings.lastSeen = data.activityStatus ? 'everyone' : 'nobody'; }
+    if (data.readReceipts !== undefined) settings.privacyReadReceipts = data.readReceipts ? 'everyone' : 'nobody';
+
+    if (data.hideSensitiveContent !== undefined) {
+      if (typeof data.hideSensitiveContent !== 'boolean') throw new Error('Sensitive content preference must be boolean');
+      settings.hideSensitiveContent = data.hideSensitiveContent;
+    }
+    if (data.requireChatRequest !== undefined) {
+      if (typeof data.requireChatRequest !== 'boolean') throw new Error('Message request preference must be a boolean');
+      settings.requireChatRequest = data.requireChatRequest;
     }
 
     if (data.privacyProfile !== undefined) {
@@ -815,6 +829,11 @@ export class UserService {
         throw new Error('Profile privacy must be public or private');
       }
       settings.privacyProfile = value;
+      if (value === 'private') settings.accountType = 'PRIVATE';
+      else {
+        const current = await prisma.userSettings.findUnique({where:{userId},select:{accountType:true}});
+        settings.accountType = current?.accountType === 'CREATOR' ? 'CREATOR' : 'PUBLIC';
+      }
     }
 
     if (data.privacyMessages !== undefined) {
@@ -823,6 +842,7 @@ export class UserService {
         throw new Error('Message privacy must be everyone, followers, following, or noone');
       }
       settings.privacyMessages = value;
+      settings.messagePermissions = value === 'noone' ? 'nobody' : value;
     }
 
     if (data.privacyFollows !== undefined) {
@@ -857,12 +877,10 @@ export class UserService {
 
   async updateNotificationPreferences(userId: string, data: any) {
     const updates: any = {};
-    if (data.emailAlerts !== undefined) updates.emailAlerts = Boolean(data.emailAlerts);
-    if (data.pushAlerts !== undefined) updates.pushAlerts = Boolean(data.pushAlerts);
-    if (data.chatAlerts !== undefined) updates.chatAlerts = Boolean(data.chatAlerts);
-    if (data.liveAlerts !== undefined) updates.liveAlerts = Boolean(data.liveAlerts);
-    for (const key of ['likesAlerts', 'commentsAlerts', 'mentionsAlerts', 'followersAlerts', 'groupAlerts', 'channelAlerts', 'liveInteractionsAlerts'] as const) {
-      if (data[key] !== undefined) updates[key] = Boolean(data[key]);
+    for (const key of ['emailAlerts','pushAlerts','chatAlerts','liveAlerts','likesAlerts','commentsAlerts','mentionsAlerts','followersAlerts','groupAlerts','channelAlerts','liveInteractionsAlerts','followingOnlySocialAlerts','chatRequestAlerts','muteSocialAlerts'] as const) {
+      if (data[key] === undefined) continue;
+      if (typeof data[key] !== 'boolean') throw new Error('Invalid boolean notification preference: ' + key);
+      updates[key] = data[key];
     }
 
     return prisma.notificationPreferences.upsert({

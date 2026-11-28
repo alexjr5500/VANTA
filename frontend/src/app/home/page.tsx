@@ -3,6 +3,7 @@
 import DeleteConfirmDialog from '@/components/ui/DeleteConfirmDialog';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { readDefaultSection } from '@/lib/defaultSection';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Bookmark, ChevronRight, Eye, Gift, Heart, Image as ImageIcon, Loader2,
@@ -89,6 +90,8 @@ export default function HomePage() {
   const downloadPost = async (target: Item) => { if (downloadingId) return; setDownloadingId(target.id); await downloadPostVideo(target, toast, p => { if (p === null) { setDownloadingId(null); setMoreFor(undefined); } }); };
   const { openPostModal, openStoryModal, openQuotePost } = useContentCreation();
   const [tab, setTab] = useState<FeedTab>('forYou');
+  const [sectionReady, setSectionReady] = useState(false);
+  useEffect(() => { setTab(readDefaultSection('timeline')); setSectionReady(true); }, []);
   const [items, setItems] = useState<Item[]>([]);
   const [live, setLive] = useState<Item[]>([]);
   const [storyRefreshKey, setStoryRefreshKey] = useState(0);
@@ -117,7 +120,7 @@ export default function HomePage() {
   const pendingActionsRef = useRef(new Set<string>());
 
   const fetchFeed = useCallback(async (reset = true, requestedCursor?: string, nextSeed?: string) => {
-    if (!token) return;
+    if (!token || !sectionReady) return;
     reset ? setLoading(true) : setLoadingMore(true);
     if (reset) { setError(''); setLoadMoreError(false); }
     else setLoadMoreError(false);
@@ -135,7 +138,7 @@ export default function HomePage() {
       setHasMore(Boolean(data?.nextCursor));
     } catch { if (reset) setError("Couldn't load your feed."); else setLoadMoreError(true); }
     finally { setLoading(false); setLoadingMore(false); }
-  }, [token, tab]);
+  }, [token, tab, sectionReady]);
 
   // Explicit refresh: start a NEW feed session (new seed) so the discovery
   // content reorders, and refresh the story tray too.

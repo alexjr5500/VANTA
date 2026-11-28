@@ -1,291 +1,136 @@
 'use client';
 
-/* ═══════════════════════════════════════════════════════════════
-   Settings — hub
-   Clean, premium category navigation. Every category opens its own
-   focused page, and returning restores your scroll position.
-   Accent tokens follow the user's selected accent (Gold/Monochrome).
-   ═══════════════════════════════════════════════════════════════ */
-
 import { useEffect, useState } from 'react';
-import {
-  Bell,
-  ChevronRight,
-  Info,
-  Lock,
-  LogOut,
-  MessageCircle,
-  Palette,
-  Play,
-  Shield,
-  User,
-} from 'lucide-react';
-import PageHeader from '@/components/ui/PageHeader';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { Accessibility, ArrowLeft, Bell, ChevronRight, CircleEllipsis, Database, Globe, LockKeyhole, MessageCircle, Mic, Newspaper, Search, ShieldCheck, SlidersHorizontal, User, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
-import { useToast } from '@/components/ui/Toast';
-import { SettingsGroup, SettingsLink } from '@/components/settings/SettingsUI';
-import Avatar from '@/components/ui/Avatar';
 import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
-import { useI18n } from '@/lib/i18n/context';
-import { localeNames } from '@/lib/i18n/config';
+import { useScrollRestore } from '@/components/settings/SettingsUI';
 
-interface ProfileData {
-  username: string;
-  fullName?: string | null;
-  avatarUrl?: string | null;
-}
+const categories = [
+  { title: 'Account', href: '/settings/account', icon: User },
+  { title: 'Security and access', href: '/settings/security', icon: LockKeyhole },
+  { title: 'Privacy and safety', href: '/settings/privacy', icon: ShieldCheck },
+  { title: 'Notifications', href: '/settings/notifications', icon: Bell },
+  { title: 'Timeline', href: '/settings/content', icon: Newspaper },
+  { title: 'Chat', href: '/settings/chat', icon: MessageCircle },
+  { title: 'Explore', href: '/settings/explore', icon: Search },
+  { title: 'Spaces', href: '/settings/spaces', icon: Mic },
+  { title: 'Accessibility', href: '/settings/accessibility', icon: Accessibility },
+  { title: 'Appearance', href: '/settings/appearance', icon: SlidersHorizontal },
+  { title: 'Languages', href: '/settings/language', icon: Globe },
+  { title: 'Storage and Data', href: '/settings/storage', icon: Database },
+  { title: 'Additional resources', href: '/settings/about', icon: CircleEllipsis },
+];
 
-interface PrivacyData {
-  accent?: string;
-  density?: string;
-  language?: string;
-  privacyProfile?: string;
-}
+const searchable = [
+  { title: 'Edit profile', href: '/profile/editprofile', icon: User },
+  { title: 'Username and account information', href: '/settings/account', icon: User },
+  { title: 'Payments and wallet security', href: '/settings/payments', icon: LockKeyhole },
+  { title: 'Verified Badge', href: '/verification/badge', icon: ShieldCheck },
+  { title: 'Change password, email and two-factor authentication', href: '/settings/security', icon: LockKeyhole },
+  { title: 'Delegated access and invitations', href: '/settings/security/delegation', icon: LockKeyhole },
+  { title: 'Connected sign-in accounts', href: '/settings/security/connected', icon: LockKeyhole },
+  { title: 'Two-factor recovery codes', href: '/settings/security/recovery', icon: LockKeyhole },
+  { title: 'Trusted devices', href: '/settings/security/trusted', icon: LockKeyhole },
+  { title: 'Active sessions and login activity', href: '/settings/security', icon: LockKeyhole },
+  { title: 'Blocked and muted accounts', href: '/settings/privacy', icon: ShieldCheck },
+  { title: 'Account privacy, messaging, follows and read receipts', href: '/settings/privacy', icon: ShieldCheck },
+  { title: 'Audience, invitations and discoverability', href: '/settings/privacy/audience', icon: ShieldCheck },
+  { title: 'Data sharing and consent', href: '/privacy-center?tab=consent', icon: ShieldCheck },
+  { title: 'Notification filters and accounts you follow', href: '/settings/notifications', icon: Bell },
+  { title: 'Push and email notifications', href: '/settings/notifications', icon: Bell },
+  { title: 'Chat notifications, message previews and typing indicators', href: '/settings/chat', icon: MessageCircle },
+  { title: 'Voice note playback speed', href: '/settings/chat', icon: Mic },
+  { title: 'Message requests and contact approval', href: '/chat/requests', icon: MessageCircle },
+  { title: 'Chat passcode and screen lock', href: '/settings/chat/passcode', icon: LockKeyhole },
+  { title: 'Call history', href: '/settings/chat/history', icon: MessageCircle },
+  { title: 'Chat storage and data', href: '/settings/chat/storage', icon: Database },
+  { title: 'Chat and call troubleshooting', href: '/settings/chat/troubleshooting', icon: MessageCircle },
+  { title: 'Autoplay, media quality and data usage', href: '/settings/content', icon: Newspaper },
+  { title: 'Sensitive content feed filter', href: '/settings/content', icon: ShieldCheck },
+  { title: 'External link opening preferences', href: '/settings/content/external-links', icon: Newspaper },
+  { title: 'Chat home screen widget', href: '/settings/chat/widget', icon: MessageCircle },
+  { title: 'Default timeline feed', href: '/settings/content', icon: Newspaper },
+  { title: 'Default Explore category', href: '/settings/explore', icon: Search },
+  { title: 'Default live tab and live audience', href: '/settings/spaces', icon: Mic },
+  { title: 'Data usage', href: '/settings/content', icon: Database },
+  { title: 'Clear cache', href: '/settings/device', icon: Database },
+  { title: 'High contrast, font size and reduced motion', href: '/settings/accessibility', icon: Accessibility },
+  { title: 'Accent color and reading layout', href: '/settings/appearance', icon: SlidersHorizontal },
+  { title: 'Web app version and diagnostics', href: '/settings/about', icon: CircleEllipsis },
+  { title: 'Help Center', href: '/settings/help', icon: CircleEllipsis },
+  { title: 'Terms of Service', href: '/terms', icon: CircleEllipsis },
+  { title: 'Privacy Policy', href: '/privacy', icon: ShieldCheck },
+  { title: 'Community Guidelines', href: '/community-guidelines', icon: CircleEllipsis },
+  { title: "What's New", href: '/settings/whats-new', icon: CircleEllipsis },
+  { title: 'Download an archive of your data', href: '/settings/account/archive', icon: User },
+  { title: 'Deactivate your account', href: '/settings/account/deactivate', icon: User },
+  { title: 'Delete account and log out', href: '/settings/account', icon: User },
+];
 
 export default function SettingsPage() {
-  const { token, logout } = useAuth();
+  const { token } = useAuth();
+  const router = useRouter();
   const tr = useLocalizedUiText();
-  const { locale } = useI18n();
-  const toast = useToast();
-
-  const [profile, setProfile] = useState<ProfileData | null>(null);
-  const [privacy, setPrivacy] = useState<PrivacyData>({});
-  const [notif, setNotif] = useState<Record<string, boolean>>({});
-  const [loading, setLoading] = useState(true);
+  const saveScroll = useScrollRestore();
+  const [query, setQuery] = useState('');
+  const [username, setUsername] = useState('');
 
   useEffect(() => {
+    setUsername('');
     if (!token) return;
-    let cancel = false;
-    Promise.all([
-      apiGet<ProfileData>('/api/profiles/me', token),
-      apiGet<PrivacyData>('/api/settings/privacy', token),
-      apiGet<Record<string, boolean>>('/api/settings/notifications', token),
-    ])
-      .then(([p, pri, notif]) => {
-        if (cancel) return;
-        setProfile(p);
-        setPrivacy(pri || {});
-        setNotif(notif || {});
-      })
-      .catch(() => {
-        if (!cancel) toast.error('Could not load settings');
-      })
-      .finally(() => {
-        if (!cancel) setLoading(false);
-      });
-    return () => {
-      cancel = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity churns on each render; load-once behaviour is intentional
+    let active = true;
+    apiGet<{ username: string }>('/api/profiles/me', token)
+      .then((profile) => { if (active) setUsername(profile.username || ''); })
+      .catch(() => { /* A profile failure must not block settings navigation. */ });
+    return () => { active = false; };
   }, [token]);
 
-  const privacyValue = privacy.privacyProfile === 'private' ? 'Private' : 'Public';
-
-  const accentLabel = privacy.accent === 'gold' ? 'Gold' : 'Monochrome';
-  const densityLabel = privacy.density === 'compact' ? 'Compact' : 'Comfortable';
-  const languageLabel = localeNames[locale] || locale;
+  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const searching = terms.length > 0;
+  const rows = searching
+    ? [...categories, ...searchable].filter(({ title }) => {
+        const haystack = (title + ' ' + tr(title)).toLocaleLowerCase();
+        return terms.every((term) => haystack.includes(term));
+      })
+    : categories;
 
   return (
-    <div className="space-y-3 pb-[calc(5rem+env(safe-area-inset-bottom))]">
-      <PageHeader
-        sticky
-        bleed
-        title="Settings"
-        back="/profile"
-      />
-
-      {loading ? (
-        <div className="space-y-3 px-1">
-          <div className="skeleton h-20 w-full rounded-xl" />
-          <div className="skeleton h-44 w-full rounded-xl" />
-          <div className="skeleton h-44 w-full rounded-xl" />
+    <div className="min-h-[70vh] pb-[calc(5rem+env(safe-area-inset-bottom))] bg-[var(--background)]">
+      <header className="sticky top-0 z-30 -mx-4 flex h-14 items-center gap-2 bg-[var(--header-surface)] px-3">
+        <button type="button" aria-label={tr('Go back')} onClick={() => router.push('/profile')}
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-[var(--vanta-gold)] focus-visible:ring-2 focus-visible:ring-[var(--vanta-gold)]">
+          <ArrowLeft size={21} aria-hidden="true" />
+        </button>
+        <div role="search" className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full bg-[var(--surface-active)] px-3">
+          <Search size={18} className="shrink-0 text-[var(--vanta-gold)]" aria-hidden="true" />
+          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)}
+            aria-label={tr('Search settings')} placeholder={tr('Search settings')}
+            className="min-w-0 flex-1 bg-transparent text-sm text-[var(--foreground)] placeholder:text-white/45 outline-none [&::-webkit-search-cancel-button]:hidden" />
+          {query && <button type="button" aria-label={tr('Clear search')} onClick={() => setQuery('')}
+            className="grid h-9 w-9 shrink-0 place-items-center text-[var(--vanta-gold)]"><X size={17} /></button>}
         </div>
-      ) : (
-        <div className="space-y-3 px-1">
-          {/* ── Account hero ── */}
-          <SettingsGroup>
-            <a
-              href="/settings/account"
-              className="group flex items-center gap-3 px-3 py-2.5"
-            >
-              <Avatar
-                src={profile?.avatarUrl || undefined}
-                alt={profile?.username || 'User'}
-                size="lg"
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-base font-semibold text-white">
-                  {profile?.fullName || profile?.username || tr('Your account')}
-                </span>
-                <span className="mt-0.5 block truncate text-sm text-white/40">
-                  @{profile?.username || 'username'}
-                </span>
-              </span>
-              <span className="shrink-0 rounded-full bg-[var(--settings-accent-soft)] px-3 py-1 text-[10px] font-semibold text-[var(--settings-accent-text)]">
-                {tr('View profile')}
-              </span>
-              <ChevronRight
-                className="shrink-0 text-white/20 group-hover:text-white/50"
-                size={15}
-                aria-hidden="true"
-              />
-            </a>
-          </SettingsGroup>
-{/* ── Account ── */}
-          <SettingsGroup icon={User} title="Account">
-            <SettingsLink
-              href="/profile/editprofile"
-              icon={User}
-              title="Edit profile"
-              description="Name, bio, photo and cover"
-              value={profile?.username ? `@${profile.username}` : undefined}
-            />
-            <SettingsLink
-              href="/settings/security"
-              icon={Shield}
-              title="Password & security"
-              description="Change your password and turn on 2FA"
-            />
-            <SettingsLink
-              href="/settings/payments"
-              icon={Play}
-              title="Payments"
-              description="Coins, subscriptions and balance"
-            />
-          </SettingsGroup>
-
-          {/* ── Privacy & safety ── */}
-          <SettingsGroup icon={Lock} title="Privacy & Safety">
-            <SettingsLink
-              href="/settings/privacy"
-              icon={Lock}
-              title="Account privacy"
-              description="Profile visibility and who can reach you"
-              value={privacyValue}
-            />
-            <SettingsLink
-              href="/settings/privacy"
-              icon={MessageCircle}
-              title="Messaging & follows"
-              description="Who can message or follow you"
-            />
-            <SettingsLink
-              href="/settings/privacy"
-              icon={Shield}
-              title="Blocked accounts"
-              description="People you've blocked"
-            />
-          </SettingsGroup>
-
-          {/* ── Notifications ── */}
-          <SettingsGroup
-            icon={Bell}
-            title="Notifications"
-            description="What you hear about"
-          >
-            <SettingsLink
-              href="/settings/notifications"
-              icon={Bell}
-              title="Notifications"
-              description="Push, messages, live and more"
-              value={notif.pushAlerts ? 'On' : 'Off'}
-            />
-          </SettingsGroup>
-
-          {/* ── Appearance ── */}
-          <SettingsGroup icon={Palette} title="Appearance">
-            <SettingsLink
-              href="/settings/appearance"
-              icon={Palette}
-              title="Appearance"
-              description="Accent color and reading layout"
-              value={`${accentLabel} · ${densityLabel}`}
-            />
-          <SettingsLink
-              href="/settings/language"
-              icon={Palette}
-              title="Language"
-              description="Display language"
-              value={languageLabel}
-            />
-          </SettingsGroup>
-
-          {/* ── Content & media ── */}
-          <SettingsGroup icon={Play} title="Content & Media">
-            <SettingsLink
-              href="/settings/content"
-              icon={Play}
-              title="Content & media"
-              description="Autoplay, quality and data usage"
-            />
-            <SettingsLink
-              href="/settings/device"
-              icon={Info}
-              title="Device & storage"
-              description="Clear cache and manage stored data"
-            />
-          </SettingsGroup>
-
-          {/* ── Chat ── */}
-          <SettingsGroup icon={MessageCircle} title="Chat">
-            <SettingsLink
-              href="/settings/chat"
-              icon={MessageCircle}
-              title="Chat preferences"
-              description="Previews, typing indicators and voice"
-            />
-          </SettingsGroup>
-
-          {/* ── About ── */}
-          <SettingsGroup icon={Info} title="About">
-            <SettingsLink
-              href="/settings/help"
-              icon={Info}
-              title="Help Center"
-              description="Guides and support"
-            />
-            <SettingsLink
-              href="/terms"
-              icon={Play}
-              title="Terms of Service"
-              description="VANTA terms"
-            />
-            <SettingsLink
-              href="/privacy"
-              icon={Shield}
-              title="Privacy Policy"
-              description="Your data, your rules"
-            />
-            <SettingsLink
-              href="/community-guidelines"
-              icon={Lock}
-              title="Community Guidelines"
-              description="What's allowed on VANTA"
-            />
-            <SettingsLink
-              href="/settings/about"
-              icon={Info}
-              title="About VANTA"
-              description="App version and more"
-            />
-          </SettingsGroup>
-
-          {/* ── Sign out ── */}
-          <div className="pt-1">
-            <button
-              type="button"
-              onClick={() => {
-                if (window.confirm('Log out of VANTA?')) logout();
-              }}
-              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-[var(--surface)] text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white"
-            >
-              <LogOut size={15} aria-hidden="true" />
-              {tr('Log out')}
-            </button>
-          </div>
-        </div>
-      )}
+      </header>
+      <h1 className="sr-only">{tr('Settings')}</h1>
+      <nav aria-label={tr('Settings')} className="-mx-4">
+        {rows.map(({ title, href, icon: Icon }) => (
+          <Link key={title} href={href} onClick={saveScroll}
+            className="flex min-h-[58px] items-center gap-4 px-5 py-3 text-[var(--foreground)] transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vanta-gold)]">
+            <Icon size={21} strokeWidth={1.8} className="shrink-0 text-[var(--vanta-gold)]" aria-hidden="true" />
+            <span className="min-w-0 flex-1 text-[15px] font-medium">{tr(title)}</span>
+            {!searching && title === 'Account' && username && <span className="max-w-[35%] truncate text-xs opacity-60">@{username}</span>}
+            <ChevronRight size={17} className="shrink-0 opacity-40" aria-hidden="true" />
+          </Link>
+        ))}
+      </nav>
+      {searching && rows.length === 0 && <p role="status" className="py-10 text-center text-sm text-[var(--foreground)] opacity-70">{tr('No matching settings')}</p>}
+      {!searching && <footer className="mt-5 text-center text-xs text-[var(--foreground)] opacity-65">
+        <Link href="/settings/about" onClick={saveScroll} className="block py-2">VANTA · {tr('App version')}</Link>
+        <Link href="/settings/whats-new" onClick={saveScroll} className="block py-2 underline">{tr("What's New")}</Link>
+      </footer>}
     </div>
   );
 }

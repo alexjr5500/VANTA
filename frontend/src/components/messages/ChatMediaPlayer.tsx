@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Pause, Play } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useChatDataSaver } from '@/lib/chatDataSaver';
+import { getVoicePlaybackRate } from '@/lib/voicePlayback';
 import { getVoiceNoteFooterLabels } from './voiceNoteLayout';
 export { getVoiceNoteFooterLabels } from './voiceNoteLayout';
 
@@ -45,6 +47,7 @@ export interface ChatMediaAttachment {
 /** Compact inline voice-note player used for AUDIO message attachments. */
 export function VoiceNotePlayer({ src, name, sentAt, isOwn = false }: { src: string; name?: string; sentAt?: string; isOwn?: boolean }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const dataSaver = useChatDataSaver();
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -77,8 +80,10 @@ export function VoiceNotePlayer({ src, name, sentAt, isOwn = false }: { src: str
   const togglePlay = () => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (audio.paused) void audio.play().catch(() => undefined);
-    else audio.pause();
+    if (audio.paused) {
+      audio.playbackRate = getVoicePlaybackRate();
+      void audio.play().catch(() => undefined);
+    } else audio.pause();
   };
 
   const activeBars = duration > 0 ? Math.round((progress / duration) * VOICE_WAVE_BARS.length) : 0;
@@ -87,7 +92,7 @@ export function VoiceNotePlayer({ src, name, sentAt, isOwn = false }: { src: str
   return (
     <div className="flex w-full max-w-[212px] select-none items-center gap-2">
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-      <audio ref={audioRef} src={src} preload="metadata" className="hidden" />
+      <audio ref={audioRef} src={src} preload={dataSaver ? 'none' : 'metadata'} className="hidden" />
       <button
         type="button"
         onClick={togglePlay}
@@ -141,6 +146,7 @@ export function VideoMessagePreview({
   onOpen: (_attachment: ChatMediaAttachment) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const dataSaver = useChatDataSaver();
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [duration, setDuration] = useState(0);
 
@@ -179,10 +185,10 @@ export function VideoMessagePreview({
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <video
         ref={videoRef}
-        src={attachment.url}
+        src={dataSaver ? undefined : attachment.url}
         muted
         playsInline
-        preload="metadata"
+        preload={dataSaver ? 'none' : 'metadata'}
         className="h-full w-full object-contain"
       />
       {/* Centered play affordance */}

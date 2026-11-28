@@ -252,7 +252,7 @@ describe('compliance privacy settings on the active Prisma schema', () => {
   });
   test('persists validated privacy controls to UserSettings', async () => {
     await complianceService.updatePrivacySettings('user-1', { accountType: 'PRIVATE', onlineStatus: 'followers', readReceipts: 'nobody', discoverability: false });
-    expect(userSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'user-1' }, update: { accountType: 'PRIVATE', privacyProfile: 'private', onlineStatus: 'followers', privacyReadReceipts: 'nobody', discoverability: false } }));
+    expect(userSettings.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'user-1' }, update: { accountType: 'PRIVATE', privacyProfile: 'private', onlineStatus: 'followers', privacyReadReceipts: 'nobody', readReceipts: false, discoverability: false } }));
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user-1', action: 'PRIVACY_SETTINGS_UPDATE' }));
   });
   test('keeps essential functional cookies enabled and rejects disabling them', async () => {

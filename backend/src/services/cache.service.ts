@@ -616,9 +616,10 @@ export const CACHE_KEYS = {
   USER_FOLLOWING: (userId: string) => `user:following:${userId}`,
   FEED: (userId: string, cursor?: string) => `feed:${userId}:${cursor || 'latest'}`,
   HOME_FEED: (userId: string, cursor?: string) => `homefeed:${userId}:${cursor || 'latest'}`,
-  TRENDING: 'trending',
+  // Version the canonical feed keys so pre-filter caches cannot be reused by restrictive viewers.
+  TRENDING: 'trending:sensitive-v1:restricted',
   TRENDING_CREATORS: 'trending:creators',
-  EXPLORE: 'explore',
+  EXPLORE: 'explore:sensitive-v1:restricted',
   EXPLORE_VIDEOS: 'explore:videos',
   LIVE_STREAMS: 'live:active',
   LIVE_STREAMS_BY_CATEGORY: (category: string) => `live:category:${category}`,

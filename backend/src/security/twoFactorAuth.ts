@@ -27,6 +27,7 @@ try {
 export interface TwoFactorSetupResult {
   secret: string;
   qrCodeUrl: string;
+  qrCodeImage?: string;
   backupCodes: string[];
 }
 
@@ -119,6 +120,7 @@ export class TwoFactorAuth {
     return {
       secret: secret.base32,
       qrCodeUrl,
+      qrCodeImage: QRCode ? await QRCode.toDataURL(qrCodeUrl).catch(() => undefined) : undefined,
       backupCodes,
     };
   }
@@ -263,7 +265,9 @@ export class TwoFactorAuth {
   /**
    * Generate new backup codes
    */
-  async regenerateBackupCodes(userId: string): Promise<string[]> {
+  async regenerateBackupCodes(userId: string, token?: string): Promise<string[]> {
+    const account = await prisma.user.findUnique({ where: { id: userId }, select: { twoFactorEnabled: true, twoFactorSecret: true } });
+    if (!account?.twoFactorEnabled || !account.twoFactorSecret || !speakeasy || typeof token !== 'string' || !/^\d{6}$/.test(token) || !await this.verifyAndConsumeTotp(userId, account.twoFactorSecret, token, true)) throw new Error('A fresh authenticator code is required.');
     const newCodes: string[] = [];
     const hashedCodes: string[] = [];
 
@@ -273,10 +277,11 @@ export class TwoFactorAuth {
       hashedCodes.push(CryptoUtils.sha256(code));
     }
 
-    await prisma.user.update({
-      where: { id: userId },
+    const updated = await prisma.user.updateMany({
+      where: { id: userId, twoFactorEnabled: true, twoFactorSecret: account.twoFactorSecret },
       data: { backupCodes: JSON.stringify(hashedCodes) },
     });
+    if (!updated.count) throw new Error('Two-factor configuration changed.');
 
     auditLog.log({
       userId,

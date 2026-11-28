@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
+import { readDefaultSection } from '@/lib/defaultSection';
 import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { Radio, RefreshCw, Users, WifiOff, Heart, TrendingUp, Sparkles } from 'lucide-react';
@@ -45,11 +46,16 @@ export default function LivePage() {
   const { token } = useAuth();
   const router = useRouter();
   const [tab, setTab] = useState<LiveTab>('forYou');
+  const [sectionReady, setSectionReady] = useState(false);
+  const requestId = useRef(0);
+  useEffect(() => { setTab(readDefaultSection('live')); setSectionReady(true); }, []);
   const [streams, setStreams] = useState<LiveStream[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(async (active: LiveTab, silent = false) => {
+    if (!sectionReady) return;
+    const request = ++requestId.current;
     if (!token) {
       setLoading(false);
       return;
@@ -66,14 +72,15 @@ export default function LivePage() {
       const items: LiveStream[] = Array.isArray(data)
         ? data
         : data?.items || data?.streams || data?.data || [];
+      if (request !== requestId.current) return;
       setStreams(items);
       setLoadError(false);
     } catch {
-      if (!silent) setLoadError(true);
+      if (!silent && request === requestId.current) setLoadError(true);
     } finally {
-      if (!silent) setLoading(false);
+      if (request === requestId.current) setLoading(false);
     }
-  }, [token]);
+  }, [token, sectionReady]);
 
   useEffect(() => { void load(tab); }, [load, tab]);
 

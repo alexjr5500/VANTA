@@ -4,7 +4,7 @@
    Each control is applied live to the whole app via ThemeContext and
    persisted to the account through /api/settings/privacy. */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Monitor, Palette, SlidersHorizontal } from 'lucide-react';
 import Link from 'next/link';
 import PageHeader from '@/components/ui/PageHeader';
@@ -24,40 +24,46 @@ export default function AppearanceSettingsPage() {
   const { accent, setAccent, density, setDensity } = useTheme();
   const { reducedMotion, toggleReducedMotion } = useAccessibility();
   const [saving, setSaving] = useState(false);
+  const [ready, setReady] = useState(false);
+  const busy = useRef(false);
 
   useEffect(() => {
+    setReady(false);
     if (!token) return;
     let cancel = false;
-    apiGet<{ accent?: string; density?: string }>('/api/settings/privacy', token)
+    apiGet<{ accent?: string; density?: string }>('/api/settings/privacy', token, { skipCache: true })
       .then((data) => {
         if (cancel || !data) return;
         if (data.accent === 'gold' || data.accent === 'monochrome') setAccent(data.accent);
         if (data.density === 'compact' || data.density === 'comfortable') setDensity(data.density);
       })
-      .catch(() => {});
+      .catch(() => { if (!cancel) toast.error('Could not load saved appearance'); })
+      .finally(() => { if (!cancel) setReady(true); });
     return () => { cancel = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrate once on open
   }, [token]);
 
   const persistAppearance = async (patch: Record<string, string>) => {
-    if (!token) return;
+    if (!token || busy.current) return;
+    busy.current = true;
     setSaving(true);
     try {
       await apiPut('/api/settings/privacy', patch, token);
+      if (patch.accent) setAccent(patch.accent as Accent);
+      if (patch.density) setDensity(patch.density as Density);
     } catch {
       toast.error('Could not save appearance', 'Please try again.');
     } finally {
+      busy.current = false;
       setSaving(false);
     }
   };
 
   const chooseAccent = (value: Accent) => {
-    setAccent(value);
     void persistAppearance({ accent: value });
   };
 
   const chooseDensity = (value: Density) => {
-    setDensity(value);
     void persistAppearance({ density: value });
   };
 
@@ -75,13 +81,16 @@ export default function AppearanceSettingsPage() {
     <div className="space-y-6 pb-24">
       <PageHeader sticky bleed title="Appearance" back="/settings" />
 
-      <SettingsGroup icon={Palette} title="Accent Color" description="Applies across buttons, links and active states">
+      <p className="text-sm opacity-70">VANTA uses its slate dark theme. Accent and density changes are saved to your account before being applied.</p>
+      <SettingsGroup icon={Palette} title="Accent Color" description="Choose accent colors for supported controls">
         {accentOptions.map((option) => {
           const active = accent === option.value;
           return (
             <button
               key={option.value}
               type="button"
+              disabled={!ready || saving}
+              aria-pressed={active}
               onClick={() => chooseAccent(option.value as Accent)}
               className="flex w-full min-h-[58px] items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-[var(--surface)]"
             >
@@ -106,6 +115,8 @@ export default function AppearanceSettingsPage() {
             <button
               key={option.value}
               type="button"
+              disabled={!ready || saving}
+              aria-pressed={active}
               onClick={() => chooseDensity(option.value as Density)}
               className="flex w-full min-h-[58px] items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-[var(--surface)]"
             >

@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { notificationDestination } from './notificationDestination';
 
 describe('notification destinations', () => {
+  it('opens the protected message request inbox', () => {
+    expect(notificationDestination({ type: 'chat_request' })).toBe('/chat/requests');
+  });
   it('opens the original post from legacy and modern like notifications', () => {
     expect(notificationDestination({ type: 'like', data: '{"postId":"p1"}' })).toBe('/post/p1');
     expect(notificationDestination({ type: 'LIKE', entityType: 'POST', entityId: 'p1', data: { destination: '/home?post=p1' } })).toBe('/post/p1');

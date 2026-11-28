@@ -1,3 +1,4 @@
+import { sensitiveFilter, hideSensitiveForViewer } from "../services/sensitive-content.service";
 import { Request, Response } from "express";
 import { AuthRequest } from "../middleware/auth.middleware";
 import { prisma } from "../prisma";
@@ -168,7 +169,9 @@ export const getReels = async (req: AuthRequest, res: Response): Promise<void> =
       return;
     }
 
+    const hide = await hideSensitiveForViewer(userId);
     const { seed: resolvedSeed, nextStart, items: pageItems, followedCreators } = await buildReelFeed({
+      hideSensitive: hide,
       userId,
       feed,
       seed,
@@ -179,7 +182,7 @@ export const getReels = async (req: AuthRequest, res: Response): Promise<void> =
     const pageReelIds = pageItems.map((item) => item.id);
 
     const reels = await prisma.video.findMany({
-      where: { id: { in: pageReelIds }, moderationRemovedAt: null },
+      where: { id: { in: pageReelIds }, moderationRemovedAt: null, publishStatus: 'PUBLISHED', ...sensitiveFilter(hide) },
       include: {
         creator: {
           select: {

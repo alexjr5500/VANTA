@@ -28,6 +28,7 @@
 
 import { createElement, Fragment, type ReactNode, type MouseEvent as ReactMouseEvent } from 'react';
 import LinkPreviewContent from '@/components/social/LinkPreviewContent';
+import {readWebLinkMode,shouldUseSameTab} from './externalLinkPreferences';
 
 // Matches http(s)://host/path or bare www.host/path. The match is permissive on
 // the trailing boundary (whitespace, punctuation, end-of-line) so embedded URLs
@@ -144,7 +145,13 @@ export function renderTextWithLinks(text: string, linkClassName?: string, option
           href,
           target: '_blank',
           rel: 'noopener noreferrer',
-          onClick: (event: ReactMouseEvent) => event.stopPropagation(),
+          onClick: (event: ReactMouseEvent) => {
+            event.stopPropagation();
+            if(event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+            if(shouldUseSameTab(readWebLinkMode(),href,window.location.origin,/VANTAAndroid/.test(navigator.userAgent))){
+              event.preventDefault();window.location.assign(href);
+            }
+          },
           className: [linkClassName, 'vanta-link-preview'].filter(Boolean).join(' '),
           title: href,
           'aria-label': `Open link to ${linkPreviewLabel(href)}`,

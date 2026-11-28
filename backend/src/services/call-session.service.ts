@@ -36,6 +36,30 @@ interface StartCallInput {
 }
 
 export class CallSessionService {
+  async getRecentHistory(userId: string) {
+    // Derive the identity from authenticated request context, never a query param.
+    // Signaling data and ICE candidates must not be returned in history.
+    const rows = await prisma.callSession.findMany({
+      where: { OR: [{ callerId: userId }, { calleeId: userId }] },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 50,
+      select: {
+        id: true, callerId: true, calleeId: true, type: true, status: true,
+        createdAt: true, answeredAt: true, endedAt: true, expiresAt: true,
+        caller: { select: { username: true } },
+        callee: { select: { username: true } },
+      },
+    });
+    return rows.map(row => ({
+      id: row.id, direction: row.callerId === userId ? "outgoing" : "incoming",
+      username: row.callerId === userId ? row.callee.username : row.caller.username,
+      type: row.type,
+      status: row.status === "RINGING" && row.expiresAt <= new Date() ? "EXPIRED" : row.status,
+      createdAt: row.createdAt,
+      durationSeconds: row.answeredAt && row.endedAt ? Math.max(0, Math.floor((row.endedAt.getTime() - row.answeredAt.getTime()) / 1000)) : null,
+    }));
+  }
+
   async startCall(input: StartCallInput) {
     if (input.callerId === input.calleeId) throw new Error("You cannot call yourself");
     const settings = await prisma.userSettings.findUnique({

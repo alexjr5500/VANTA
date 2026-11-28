@@ -6,6 +6,7 @@ import "@/components/landing/landing.css";
 import "@/components/profile/v2/creator-hub.css";
 import AppLayout from "@/components/AppLayout";
 import { AuthProvider } from "@/context/AuthContext";
+import AccountSettingsSync from "@/components/settings/AccountSettingsSync";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { ToastProvider } from "@/components/ui/Toast";
 import { AccessibilityProvider } from "@/context/AccessibilityContext";
@@ -143,6 +144,7 @@ export default async function RootLayout({
           <AccessibilityProvider>
             <ThemeProvider>
               <AuthProvider>
+                <AccountSettingsSync />
                 <AnalyticsWrapper />
                 <PushProvider>
                   <CallProvider>

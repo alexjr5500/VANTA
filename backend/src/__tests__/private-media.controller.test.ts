@@ -62,6 +62,16 @@ describe('private media membership enforcement', () => {
     expect(res.headers['Cache-Control']).toBe('private, no-store');
   });
 
+  test('denies a previously signed attachment URL after group message expiry', async () => {
+    (verifyPrivateMediaToken as jest.Mock).mockReturnValue('user-1');
+    (prisma.uploadedFile.findUnique as jest.Mock).mockResolvedValue({id:'file-1',category:'message',recordType:'Message',recordId:'old-message',path:'/tmp/private-uploads/secret.jpg'});
+    (prisma.message.findUnique as jest.Mock).mockResolvedValue({id:'old-message',createdAt:new Date(Date.now()-7200000),conversation:{permissions:JSON.stringify({autoDeleteSeconds:3600}),participants:[{userId:'user-1'}]}});
+    const res=response();
+    await getPrivateMedia(request(),res);
+    expect(res.statusCode).toBe(404);
+    expect(res.sendFile).not.toHaveBeenCalled();
+  });
+
   test('denies access after the user account is deactivated', async () => {
     (verifyPrivateMediaToken as jest.Mock).mockReturnValue('user-1');
     (prisma.user.findUnique as jest.Mock).mockResolvedValue({ status: 'SUSPENDED' });

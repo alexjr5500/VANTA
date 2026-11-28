@@ -137,6 +137,11 @@ useEffect(() => { if (!isLoading && token) router.replace(destination); }, [isLo
     void oauthExchange(oauth.code)
       .then(async (response) => {
         if (cancelled) return;
+        if (response.requiresTwoFactor && response.userId && response.twoFactorChallenge) {
+          setTwoFactorUserId(response.userId);
+          setTwoFactorChallenge(response.twoFactorChallenge);
+          return;
+        }
         if (!response.user || !response.token) throw new Error('Invalid authentication response');
         await login(response.user, response.token, response.refreshToken);
         window.history.replaceState(null, '', window.location.pathname);
