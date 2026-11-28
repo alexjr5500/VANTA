@@ -505,10 +505,14 @@ export class ChatService {
         reactions: { include: { user: { select: { id: true, username: true } } } },
         replyTo: { include: { sender: { select: { id: true, username: true } }, attachments: true } },
       } });
-      if (safeAttachments.length) await tx.uploadedFile.updateMany({
-        where: { id: { in: safeAttachments.map(item => item.fileId) }, userId: senderId },
-        data: { recordType: "Message", recordId: created.id },
-      });
+      if (safeAttachments.length) {
+        const ids = [...new Set(safeAttachments.map(item => item.fileId))];
+        const bound = await tx.uploadedFile.updateMany({
+          where: { id: { in: ids }, userId: senderId, category: "message", recordType: "Conversation", recordId: conversationId, deletedAt: null },
+          data: { recordType: "Message", recordId: created.id },
+        });
+        if (bound.count !== ids.length) throw new Error("Attachment already used or no longer available");
+      }
       await tx.conversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
       return created;
     });

@@ -751,6 +751,20 @@ async function startServer() {
     const statusExpiryTimer = setInterval(expireStatuses, 60_000);
     statusExpiryTimer.unref();
 
+    // Expired group chat attachments: bounded, evidence-aware physical cleanup.
+    // Storage failures retain their metadata for retry; no new deletion policy
+    // is applied to direct chats or groups whose owner left expiry disabled.
+    const expireChatMedia = async (): Promise<void> => {
+      try {
+        const { sweepExpiredChatMedia } = await import('./services/chat-media-expiry.service');
+        const result = await sweepExpiredChatMedia();
+        if (result.files || result.failed) console.log('[ChatMediaExpiry]', result);
+      } catch (error) { console.warn('[ChatMediaExpiry] Sweep failed; will retry:', error); }
+    };
+    void expireChatMedia();
+    const chatMediaExpiryTimer = setInterval(expireChatMedia, 5 * 60_000);
+    chatMediaExpiryTimer.unref();
+
     // Gold Verified Follower Rewards: expire due campaigns (refund unused
     // reservation to the creator's available balance). Runs at startup and on
     // an interval; claims also lazily enforce expiration so a downtime window

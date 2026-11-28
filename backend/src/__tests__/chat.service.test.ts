@@ -78,7 +78,7 @@ describe('ChatService security and persistence', () => {
       content: 'hello', type: 'IMAGE', attachments: { create: [{ url: 'https://cdn.test/photo.jpg', fileType: 'IMAGE', fileName: 'photo.jpg', fileSize: 42 }] },
     }) }));
     expect(db.uploadedFile.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ['file'] }, userId: 'sender' },
+      where: { id: { in: ['file'] }, userId: 'sender', category: 'message', recordType: 'Conversation', recordId: 'conversation', deletedAt: null },
       data: { recordType: 'Message', recordId: 'message' },
     });
   });

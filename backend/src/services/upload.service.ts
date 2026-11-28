@@ -675,6 +675,45 @@ export class UploadService {
     assertStatusVideoDuration(await probeVideoDuration(path.join(uploadDir, file.filename)));
   }
 
+  /**
+   * Purge only a verified private chat asset. The caller holds the metadata
+   * row lock and checks reference/evidence holds. Never fall back to deleting
+   * a public Cloudinary asset; legacy public records need manual migration.
+   * Missing objects are successful retries only on a known storage backend.
+   */
+  async purgeExpiredChatAsset(file: { filename: string; path: string | null }): Promise<void> {
+    if (!file.path || !file.filename || path.basename(file.filename) !== file.filename) throw new Error("Invalid chat storage reference");
+    const cloud = /^cloudinary:(image|video|raw):(vanta\/message\/[A-Za-z0-9_./-]+)$/.exec(file.path);
+    if (cloud) {
+      if (!useCloudinary) throw new Error("Cloudinary credentials unavailable");
+      const result = await cloudinary.uploader.destroy(cloud[2], {
+        resource_type: cloud[1] as "image" | "video" | "raw",
+        type: "authenticated", invalidate: true, timeout: 10000,
+      });
+      if (result.result === "ok") return;
+      if (result.result !== "not found") throw new Error("Storage provider did not confirm deletion");
+      // A legacy public object with the same id must not be mistaken for a
+      // successful authenticated deletion. Preserve it for admin migration.
+      try {
+        await cloudinary.api.resource(cloud[2], { resource_type: cloud[1], type: "upload", timeout: 10000 });
+      } catch (error: any) {
+        if (error?.http_code === 404 || error?.error?.http_code === 404) return;
+        throw error;
+      }
+      throw new Error("Legacy public chat asset requires secure migration");
+    }
+    // A replica's ephemeral disk cannot prove that an object is gone from
+    // another replica. Local purging requires an explicitly shared mount.
+    if (process.env.CHAT_MEDIA_CLEANUP_LOCAL_SHARED_STORAGE !== "true") throw new Error("Shared local chat storage not configured");
+    const root = path.resolve(uploadDir);
+    if (path.resolve(file.path) !== path.join(root, file.filename)) throw new Error("Unsafe local chat storage path");
+    const base = path.parse(file.filename).name;
+    const names = [base+".webp",base+".avif",...["AVATAR","THUMBNAIL","SMALL","MEDIUM","LARGE","BANNER"].map(suffix=>base+"_"+suffix+".webp")];
+    for (const target of [path.join(root,file.filename),...names.map(name=>path.join(root,"optimized",name))]) {
+      try { fs.unlinkSync(target); } catch (error: any) { if (error?.code !== "ENOENT") throw error; }
+    }
+  }
+
   private async deleteStorageAsset(filename: string, storagePath?: string | null): Promise<boolean> {
     if (storagePath?.startsWith("cloudinary:")) {
       const [, resourceType, ...publicIdParts] = storagePath.split(":");
