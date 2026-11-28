@@ -55,6 +55,15 @@ describe('ChatService security and persistence', () => {
     expect(result.messages[0].attachments[0].url).toBe('/api/media/private/private-file-1?token=test-token');
   });
 
+  it('omits expired replies and excludes old messages from history queries', async () => {
+    (db.conversation.findUnique as jest.Mock).mockResolvedValue({ id: 'conversation', permissions: JSON.stringify({autoDeleteSeconds: 3600}), participants: [{userId:'reader'}] });
+    (db.message.findMany as jest.Mock).mockResolvedValue([{id:'fresh',createdAt:new Date(),senderId:'sender',reads:[],attachments:[],replyTo:{id:'old',createdAt:new Date(Date.now()-7200000),content:'expired',attachments:[]}}]);
+    (db.uploadedFile.findMany as jest.Mock).mockResolvedValue([]);
+    const result=await service.getMessages('conversation','reader');
+    expect(result.messages[0].replyTo).toBeNull();
+    expect(db.message.findMany).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({createdAt:{gte:expect.any(Date)}})}));
+  });
+
   it('sanitizes content and persists attachment metadata', async () => {
     (db.conversation.findUnique as jest.Mock).mockResolvedValue({ id: 'conversation', participants: [{ userId: 'sender' }] });
     (db.uploadedFile.findMany as jest.Mock).mockResolvedValue([{
@@ -85,7 +94,7 @@ describe('ChatService security and persistence', () => {
     await service.sendMessage('conversation', 'sender', 'I will be there.', 'TEXT', [], 'other-message');
 
     expect(db.message.findFirst).toHaveBeenCalledWith({
-      where: { id: 'other-message', conversationId: 'conversation', moderationRemovedAt: null, deletedAt: null },
+      where: { id: 'other-message', conversationId: 'conversation', moderationRemovedAt: null, deletedAt: null, OR: [{ deletedFor: null }, { deletedFor: { not: 'sender' } }] },
       select: { id: true },
     });
     expect(db.message.create).toHaveBeenCalledWith(expect.objectContaining({

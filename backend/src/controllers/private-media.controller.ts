@@ -1,3 +1,4 @@
+import { messageIsVisible, retentionCutoff } from '../services/chat-retention';
 import { Request, Response } from 'express';
 import path from 'path';
 import { prisma } from '../prisma';
@@ -22,7 +23,7 @@ export async function getPrivateMedia(req: Request, res: Response): Promise<void
       allowed = Boolean(conversation?.participants.some((participant: any) => participant.userId === userId));
     } else if (file.recordType === 'Message' && file.recordId) {
       const message = await prisma.message.findUnique({ where: { id: file.recordId, moderationRemovedAt: null }, include: { conversation: { include: { participants: { select: { userId: true } } } } } });
-      allowed = Boolean(message && !message.deletedAt && !message.moderationRemovedAt && message.conversation.participants.some((participant: any) => participant.userId === userId));
+      allowed = Boolean(message && messageIsVisible(message, userId, retentionCutoff(message.conversation.permissions)) && message.conversation.participants.some((participant: any) => participant.userId === userId));
     }
     if (!allowed) { notFound(res); return; }
     const storagePath = String(file.path || '');

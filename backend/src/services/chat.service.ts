@@ -1,3 +1,4 @@
+import { retentionCutoff, visibleMessageWhere, messageIsVisible, removeHiddenReply } from "./chat-retention";
 import { prisma } from "../prisma";
 import { assertChatContactApproved } from "./chat-contact.service";
 import { notificationService } from "./notification.service";
@@ -179,8 +180,8 @@ function protectMessageMedia(message: any, files: Array<{ id: string; url: strin
   return formatted;
 }
 
-async function protectPersistedMessage(message: any, userId: string): Promise<any> {
-  if (message?.replyTo?.moderationRemovedAt) message = { ...message, replyTo: null };
+async function protectPersistedMessage(message: any, userId: string, cutoff?: Date): Promise<any> {
+  if (message?.replyTo && !messageIsVisible(message.replyTo, userId, cutoff)) message = { ...message, replyTo: null };
   const recordIds = [message?.id, message?.replyTo?.id].filter((id): id is string => typeof id === "string" && id.length > 0);
   const attachmentUrls = [
     ...(Array.isArray(message?.attachments) ? message.attachments : []),
@@ -234,7 +235,7 @@ export class ChatService {
           },
         },
         messages: {
-          where: { deletedAt: null, moderationRemovedAt: null },
+          where: visibleMessageWhere(userId),
           orderBy: { createdAt: "desc" },
           take: 1,
           include: {
@@ -307,11 +308,11 @@ export class ChatService {
             ...(canSeeLastSeen && userPresence?.lastActive ? { lastActive: userPresence.lastActive } : {}),
           };
         }
-          const unreadCount = await prisma.message.count({
+        const cutoff = retentionCutoff(conversation.permissions);
+        const unreadCount = await prisma.message.count({
           where: {
             conversationId: conversation.id,
-            deletedAt: null,
-            moderationRemovedAt: null,
+            ...visibleMessageWhere(userId, cutoff),
             senderId: { not: userId },
             reads: { none: { userId } },
           },
@@ -335,7 +336,7 @@ export class ChatService {
           mutedAt: conversation.participants.find((p: any) => p.userId === userId)?.mutedAt || null,
           memberCount: conversation.participants.length,
           partner: visiblePartner,
-          lastMessage: conversation.messages[0] || null,
+          lastMessage: messageIsVisible(conversation.messages[0], userId, cutoff) ? conversation.messages[0] : null,
           unreadCount,
           participants,
           updatedAt: conversation.updatedAt,
@@ -365,15 +366,13 @@ export class ChatService {
     }
 
     const pageSize = Math.min(Math.max(limit, 1), 100);
-    let retentionSeconds = 0;
-    try { retentionSeconds = Math.max(0, Math.floor(Number(JSON.parse(conversation.permissions || "{}")?.autoDeleteSeconds) || 0)); } catch { retentionSeconds = 0; }
-    const retentionCutoff = retentionSeconds > 0 ? new Date(Date.now() - retentionSeconds * 1000) : undefined;
+    const cutoff = retentionCutoff(conversation.permissions);
     const messages = await prisma.message.findMany({
       // Soft-deleted messages are wiped from the conversation entirely — the
       // product treats "delete for everyone" as a hard removal, so we never
       // return deleted rows (no placeholders survive a refresh or a reload on
       // any device).
-      where: { conversationId, deletedAt: null, moderationRemovedAt: null, OR: [{ deletedFor: null }, { deletedFor: { not: userId } }], ...(retentionCutoff ? { createdAt: { gte: retentionCutoff } } : {}) },
+      where: { conversationId, ...visibleMessageWhere(userId, cutoff) },
       include: {
         sender: {
           select: userSelect,
@@ -391,7 +390,7 @@ export class ChatService {
     let page = hasMore ? messages.slice(0, -1) : messages;
     const nextCursor = hasMore ? page[page.length - 1]?.id : null;
     // Remove read-receipt entries from participants who disabled read receipts.
-    page = await sanitizeReadReceipts(page, userId);
+    page = await sanitizeReadReceipts(page.map(message => removeHiddenReply(message, userId, cutoff)), userId);
     const messageIds = [...new Set(page.flatMap((message: any) => [message.id, message.replyTo?.id].filter(Boolean)))];
     const privateFiles = messageIds.length ? await prisma.uploadedFile.findMany({
       where: { category: 'message', recordType: 'Message', recordId: { in: messageIds }, deletedAt: null },
@@ -470,7 +469,7 @@ export class ChatService {
     }).filter((item): item is NonNullable<typeof item> => Boolean(item));
     if (!safeContent && safeAttachments.length === 0) throw new Error("Message content or attachment is required");
     if (replyToId) {
-      const replyTarget = await prisma.message.findFirst({ where: { id: replyToId, conversationId, moderationRemovedAt: null, deletedAt: null }, select: { id: true } });
+      const replyTarget = await prisma.message.findFirst({ where: { id: replyToId, conversationId, ...visibleMessageWhere(senderId, retentionCutoff(conversation.permissions)) }, select: { id: true } });
       if (!replyTarget) throw new Error("Reply target not found");
     }
     const allowedTypes = new Set(["TEXT", "IMAGE", "VIDEO", "AUDIO", "FILE", "STORY_REPLY", "CONTACT", "LOCATION", "WALLET", "POLL"]);
@@ -513,7 +512,7 @@ export class ChatService {
       await tx.conversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
       return created;
     });
-    return protectMessageMedia(message, uploadedFiles, senderId);
+    return protectMessageMedia(removeHiddenReply(message, senderId, retentionCutoff(conversation.permissions)), uploadedFiles, senderId);
   }
 
   async voteOnPoll(messageId: string, userId: string, optionIndex: number) {
@@ -527,7 +526,7 @@ export class ChatService {
         where: { id: messageId, type: "POLL", deletedAt: null, moderationRemovedAt: null },
         include: { conversation: { include: { participants: { select: { userId: true } } } } },
       });
-      if (!message || !message.conversation.participants.some((participant: any) => participant.userId === userId)) {
+      if (!message || !messageIsVisible(message, userId, retentionCutoff(message.conversation.permissions)) || !message.conversation.participants.some((participant: any) => participant.userId === userId)) {
         throw new Error("Poll not found or unauthorized");
       }
       let payload: any;
@@ -571,7 +570,7 @@ export class ChatService {
 
   async editMessage(messageId: string, userId: string, content: string) {
     const message: any = await prisma.message.findUnique({ where: { id: messageId, moderationRemovedAt: null }, include: { conversation: { include: { participants: true } } } });
-    if (!message || message.deletedAt) throw new Error("Message not found or unauthorized");
+    if (!message || !messageIsVisible(message, userId, retentionCutoff(message.conversation.permissions))) throw new Error("Message not found or unauthorized");
     const participant = message.conversation.participants.find((p: any) => p.userId === userId);
     // A sender who has been removed from the conversation no longer has
     // permission to mutate messages in that private space.
@@ -585,7 +584,7 @@ export class ChatService {
     if (message.senderId !== userId && !canModerateEdit) throw new Error("Message not found or unauthorized");
     const safeContent = cleanContent(content);
     if (!safeContent) throw new Error("Message content is required");
-    return protectPersistedMessage(await prisma.message.update({ where: { id: messageId, moderationRemovedAt: null }, data: { content: safeContent, editedAt: new Date() }, include: { sender: { select: userSelect }, reads: true, attachments: true, reactions: { include: { user: { select: { id: true, username: true } } } }, replyTo: { include: { sender: { select: { id: true, username: true } }, attachments: true } } } }), userId);
+    return protectPersistedMessage(await prisma.message.update({ where: { id: messageId, moderationRemovedAt: null }, data: { content: safeContent, editedAt: new Date() }, include: { sender: { select: userSelect }, reads: true, attachments: true, reactions: { include: { user: { select: { id: true, username: true } } } }, replyTo: { include: { sender: { select: { id: true, username: true } }, attachments: true } } } }), userId, retentionCutoff(message.conversation?.permissions));
   }
 
   async deleteMessage(messageId: string, userId: string, everyone = false) {
@@ -623,24 +622,24 @@ export class ChatService {
   async reactToMessage(messageId: string, userId: string, reaction: string) {
     const allowed = new Set<string>(COMMUNITY_REACTIONS);
     if (!allowed.has(reaction)) throw new Error("Unsupported reaction");
-    const message = await prisma.message.findUnique({ where: { id: messageId, moderationRemovedAt: null, deletedAt: null }, select: { conversationId: true, conversation: { select: { type: true, permissions: true } } } });
-    if (!message || !(await this.isParticipant(message.conversationId, userId))) throw new Error("Message not found or unauthorized");
+    const message = await prisma.message.findUnique({ where: { id: messageId, moderationRemovedAt: null, deletedAt: null }, select: { conversationId: true, createdAt: true, deletedFor: true, conversation: { select: { type: true, permissions: true } } } });
+    if (!message || !messageIsVisible(message, userId, retentionCutoff(message.conversation?.permissions)) || !(await this.isParticipant(message.conversationId, userId))) throw new Error("Message not found or unauthorized");
     const existing = await prisma.messageReaction.findUnique({ where: { messageId_userId: { messageId, userId } } });
     if (existing?.reaction !== reaction && ["GROUP", "CHANNEL"].includes(message.conversation?.type || "") && !allowedCommunityReactions(message.conversation.permissions).includes(reaction)) throw new Error("This reaction is disabled by community settings");
     if (existing?.reaction === reaction) await prisma.messageReaction.delete({ where: { id: existing.id } });
     else await prisma.messageReaction.upsert({ where: { messageId_userId: { messageId, userId } }, update: { reaction }, create: { messageId, userId, reaction } });
-    return protectPersistedMessage(await prisma.message.findUnique({ where: { id: messageId, moderationRemovedAt: null }, include: { sender: { select: userSelect }, reads: true, attachments: true, reactions: { include: { user: { select: { id: true, username: true } } } }, replyTo: { include: { sender: { select: { id: true, username: true } }, attachments: true } } } }), userId);
+    return protectPersistedMessage(await prisma.message.findUnique({ where: { id: messageId, moderationRemovedAt: null }, include: { sender: { select: userSelect }, reads: true, attachments: true, reactions: { include: { user: { select: { id: true, username: true } } } }, replyTo: { include: { sender: { select: { id: true, username: true } }, attachments: true } } } }), userId, retentionCutoff(message.conversation?.permissions));
   }
 
   async setMessagePinned(messageId: string, userId: string, pinned: boolean) {
     const message = await prisma.message.findUnique({ where: { id: messageId, moderationRemovedAt: null }, include: { conversation: { include: { participants: true } } } });
     const participant = message?.conversation.participants.find(p => p.userId === userId);
-    if (!message || !participant) throw new Error("Message not found or unauthorized");
+    if (!message || !participant || !messageIsVisible(message, userId, retentionCutoff(message.conversation.permissions))) throw new Error("Message not found or unauthorized");
     const isAdministrator = ["OWNER", "ADMIN", "MODERATOR"].includes(participant.role);
     const permissions = conversationPermissions(message.conversation.permissions);
     if (message.conversation.type === "CHANNEL" && !isAdministrator) throw new Error("Only channel administrators can pin messages");
     if (message.conversation.type === "GROUP" && !isAdministrator && permissions.pinMessages !== true) throw new Error("You do not have permission to pin messages");
-    return protectPersistedMessage(await prisma.message.update({ where: { id: messageId, moderationRemovedAt: null }, data: { pinnedAt: pinned ? new Date() : null, pinnedById: pinned ? userId : null }, include: { sender: { select: userSelect }, reads: true, attachments: true, reactions: { include: { user: { select: { id: true, username: true } } } }, replyTo: { include: { sender: { select: { id: true, username: true } }, attachments: true } } } }), userId);
+    return protectPersistedMessage(await prisma.message.update({ where: { id: messageId, moderationRemovedAt: null }, data: { pinnedAt: pinned ? new Date() : null, pinnedById: pinned ? userId : null }, include: { sender: { select: userSelect }, reads: true, attachments: true, reactions: { include: { user: { select: { id: true, username: true } } } }, replyTo: { include: { sender: { select: { id: true, username: true } }, attachments: true } } } }), userId, retentionCutoff(message.conversation?.permissions));
   }
 
   async setConversationMuted(conversationId: string, userId: string, muted: boolean) {
@@ -796,13 +795,22 @@ export class ChatService {
   }
 
   async getUnreadCount(userId: string) {
+    const now = Date.now();
+    const retentionChats = await prisma.conversation.findMany({
+      where: { participants: { some: { userId } }, permissions: { contains: 'autoDeleteSeconds' } },
+      select: { id: true, permissions: true },
+    });
+    const expired = retentionChats.flatMap(chat => {
+      const cutoff = retentionCutoff(chat.permissions, now);
+      return cutoff ? [{ conversationId: chat.id, createdAt: { lt: cutoff } }] : [];
+    });
     return prisma.message.count({
       where: {
         senderId: { not: userId },
         conversation: { participants: { some: { userId } } },
-        deletedAt: null,
-        moderationRemovedAt: null,
+        ...visibleMessageWhere(userId),
         reads: { none: { userId } },
+        ...(expired.length ? { NOT: expired } : {}),
       },
     });
   }
@@ -821,8 +829,7 @@ export class ChatService {
       where: {
         conversationId,
         senderId: { not: userId },
-        moderationRemovedAt: null,
-        deletedAt: null,
+        ...visibleMessageWhere(userId, retentionCutoff(conversation.permissions)),
         reads: { none: { userId } },
       },
       select: { id: true },
@@ -879,8 +886,7 @@ export class ChatService {
     const messages = await prisma.message.findMany({
       where: {
         conversationId,
-        deletedAt: null,
-        moderationRemovedAt: null,
+        ...visibleMessageWhere(userId, retentionCutoff(conversation.permissions)),
         content: {
           contains: safeQuery,
         },
