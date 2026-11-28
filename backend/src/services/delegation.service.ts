@@ -26,11 +26,19 @@ export async function listDelegations(userId:string){
   const normalize=(item:typeof outgoing[number])=>({...item,status:(item.status==='PENDING'&&item.invitationExpiresAt<=now)||(item.status==='ACTIVE'&&(!item.expiresAt||item.expiresAt<=now))?'EXPIRED':item.status});
   return {outgoing:outgoing.map(normalize),incoming:incoming.map(normalize)};
 }
-export async function inviteDelegate(ownerId:string,username:string){
+export type DelegationApproval={sessionId:string;passwordHash:string;twoFactorEnabled:boolean;twoFactorSecret:string|null};
+export async function inviteDelegate(ownerId:string,username:string,approval:DelegationApproval){
   return prisma.$transaction(async tx=>{
     // Serialize issuance per owner. No duplicate active grants or unlimited
     // outstanding invitations even when requests arrive concurrently.
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${'delegation:'+ownerId})::bigint)`;
+    // Fence the password and authenticator snapshot inside the same transaction
+    // that creates the grant. A concurrently disabled/replaced 2FA or changed
+    // password cannot authorize a new invitation.
+    const credential=await tx.user.updateMany({where:{id:ownerId,status:'ACTIVE',passwordHash:approval.passwordHash,twoFactorEnabled:approval.twoFactorEnabled,twoFactorSecret:approval.twoFactorSecret,OR:[{lockedUntil:null},{lockedUntil:{lte:new Date()}}]},data:{status:'ACTIVE'}});
+    if(credential.count!==1)throw new Error('Credentials changed');
+    const sessions=await tx.$queryRaw<Array<{id:string}>>`SELECT id FROM "Session" WHERE id=${approval.sessionId} AND "userId"=${ownerId} AND "expiresAt">CURRENT_TIMESTAMP FOR SHARE`;
+    if(!sessions.length)throw new Error('Session expired');
     const target=await tx.user.findFirst({where:{username:{equals:username,mode:'insensitive'},status:'ACTIVE'},select:identity});
     if(!target)throw new Error('Account unavailable');
     await assertAccounts(tx,ownerId,target.id);

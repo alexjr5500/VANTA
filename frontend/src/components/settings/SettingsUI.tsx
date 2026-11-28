@@ -19,7 +19,8 @@ import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { storage } from '@/lib/platformStorage';
+import { usePathname } from 'next/navigation';
+import { localSettingsValue, settingsScrollKey } from '@/lib/settingsPersistence';
 import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 
 /* Accent — driven by the user's selected Accent setting (Gold/Monochrome).
@@ -45,8 +46,6 @@ type IconComponent = React.ComponentType<{
    Scroll restoration — returning from a sub-page keeps your place.
    ──────────────────────────────────────────────────────────────── */
 
-const SCROLL_KEY = 'vanta_settings_scroll';
-
 /** The app's single mobile scroll container (see AppLayout [data-vanta-scroll]). */
 function findScrollContainer(): HTMLElement | null {
   if (typeof document === 'undefined') return null;
@@ -54,41 +53,31 @@ function findScrollContainer(): HTMLElement | null {
 }
 
 export function useScrollRestore() {
+  const pathname = usePathname();
+  const key = settingsScrollKey(pathname || '/settings');
   const save = useCallback(() => {
-    if (typeof window === 'undefined') return;
     try {
       const container = findScrollContainer();
       const offset = container ? container.scrollTop : Math.max(0, window.scrollY);
-      sessionStorage.setItem(SCROLL_KEY, String(offset));
-    } catch {
-      /* private mode — ignore */
-    }
-  }, []);
-
+      sessionStorage.setItem(key, String(offset));
+    } catch { /* private browsing */ }
+  }, [key]);
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    let target = 0;
-    try {
-      target = Number(sessionStorage.getItem(SCROLL_KEY));
-    } catch {
-      /* ignore */
-    }
-    if (target > 0) {
-      // Runs after AppLayout's route-change reset so the saved position wins.
-      const t = window.setTimeout(() => {
+    let raw: string | null = null;
+    try { raw = sessionStorage.getItem(key); } catch { return; }
+    const target = Number(raw);
+    if (!raw || !Number.isFinite(target) || target < 0) return;
+    const timer = window.setTimeout(() => {
+      try {
+        if (sessionStorage.getItem(key) !== raw) return;
         const container = findScrollContainer();
         if (container) container.scrollTo({ top: target });
         else window.scrollTo(0, target);
-      }, 0);
-      try {
-        sessionStorage.removeItem(SCROLL_KEY);
-      } catch {
-        /* ignore */
-      }
-      return () => window.clearTimeout(t);
-    }
-  }, []);
-
+        sessionStorage.removeItem(key);
+      } catch { /* storage unavailable */ }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [key]);
   return save;
 }
 
@@ -98,57 +87,43 @@ export function useScrollRestore() {
    column so the experience still feels instant and durable.
    ──────────────────────────────────────────────────────────────── */
 
-export function useLocalPrefs<T extends Record<string, boolean | string>>(
-  key: string,
-  defaults: T
-) {
-  type K = keyof T;
+export function useLocalPrefs<T extends Record<string, boolean | string>>(key: string, defaults: T) {
   const [prefs, setPrefs] = useState<T>(defaults);
   const [hydrated, setHydrated] = useState(false);
   const [savedVisible, setSavedVisible] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const current = useRef(defaults);
+  const initial = useRef(defaults);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   useEffect(() => {
-    let cancel = false;
-    (async () => {
-      const raw = await storage.getItem(key);
-      if (!cancel && raw) {
-        try {
-          const parsed = JSON.parse(raw) as Partial<T>;
-          setPrefs((prev) => ({ ...prev, ...parsed }));
-        } catch {
-          /* corrupted — fall back to defaults */
-        }
-      }
-      if (!cancel) setHydrated(true);
-    })();
-    return () => {
-      cancel = true;
-    };
+    setHydrated(false);
+    setSavedVisible(false);
+    setSaveError('');
+    let next = initial.current;
+    try { next = localSettingsValue(localStorage.getItem(key), initial.current); }
+    catch { setSaveError('Device storage is unavailable.'); }
+    current.current = next;
+    setPrefs(next);
+    setHydrated(true);
+    return () => { if (savedTimer.current) clearTimeout(savedTimer.current); };
   }, [key]);
-
-  const set = useCallback(
-    (k: K, value: T[K]) => {
-      setPrefs((prev) => {
-        const next = { ...prev, [k]: value } as T;
-        void storage.setItem(key, JSON.stringify(next));
-        return next;
-      });
+  const set = useCallback((k: keyof T, value: T[keyof T]) => {
+    if (!hydrated) return;
+    const next = { ...current.current, [k]: value } as T;
+    try {
+      localStorage.setItem(key, JSON.stringify(next));
+      current.current = next;
+      setPrefs(next);
+      setSaveError('');
       setSavedVisible(true);
       if (savedTimer.current) clearTimeout(savedTimer.current);
       savedTimer.current = setTimeout(() => setSavedVisible(false), 1400);
-    },
-    [key]
-  );
-
-  useEffect(
-    () => () => {
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-    },
-    []
-  );
-
-  return { prefs, set, hydrated, savedVisible };
+    } catch {
+      setSavedVisible(false);
+      setSaveError('Could not save on this device. Try again.');
+    }
+  }, [key, hydrated]);
+  return { prefs, set, hydrated, savedVisible, saveError };
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -485,7 +460,10 @@ export function SelectRow({
                   <button
                     key={option.value}
                     type="button"
+                    aria-pressed={selected}
+                    disabled={disabled}
                     onClick={() => {
+                      if (disabled) return;
                       onSelect(option.value);
                       setOpen(false);
                     }}

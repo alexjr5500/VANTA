@@ -48,7 +48,7 @@ export default function ChatSettingsPage() {
   const [saving, setSaving] = useState<ChatPrefKey[]>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { prefs: voice, set: setVoice, hydrated: voiceLoaded } = useLocalPrefs('vanta_voice_playback', VOICE_DEFAULTS);
+  const { prefs: voice, set: setVoice, hydrated: voiceLoaded, saveError: voiceError } = useLocalPrefs('vanta_voice_playback', VOICE_DEFAULTS);
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
 
   const flagSaved = (key: string) => {
@@ -175,6 +175,7 @@ export default function ChatSettingsPage() {
               ]}
             />
           </SettingsGroup>
+          {voiceError && <p role="alert" className="px-4 text-sm text-red-400">{voiceError}</p>}
           <SettingsGroup title="Security">
             <SettingsLink href="/settings/chat/passcode" title="Chat passcode" description="Lock the chat screen on this device" />
           </SettingsGroup>
