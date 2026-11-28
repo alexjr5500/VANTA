@@ -91,7 +91,7 @@ export default function AboutPage() {
           description="Recent features and updates"
         />
         <div className="flex min-h-[62px] items-center gap-3.5 px-4 py-3">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-white/[0.06] bg-white/[0.03] text-white/40">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-[var(--vanta-gold)]">
             <Info size={17} strokeWidth={1.9} />
           </span>
           <div className="min-w-0 flex-1">

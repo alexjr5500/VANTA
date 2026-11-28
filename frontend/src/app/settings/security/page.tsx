@@ -390,7 +390,7 @@ export default function SecuritySettingsPage() {
             description="Extra security for your account"
           >
             <div className="flex items-center gap-3.5 px-4 py-3">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-white/[0.06] bg-white/[0.03] text-white/40">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-[var(--vanta-gold)]">
                 <ShieldCheck size={17} strokeWidth={1.9} />
               </span>
               <div className="min-w-0 flex-1">
@@ -425,7 +425,7 @@ export default function SecuritySettingsPage() {
             )}
 
             {setup && (
-              <div className="space-y-3 border-t border-white/[0.06] px-4 py-4">
+              <div className="space-y-3 px-4 py-4">
                 <p className="text-sm text-white/70">
                   Scan the code with your authenticator app, or enter this secret manually:
                 </p>
@@ -485,7 +485,7 @@ export default function SecuritySettingsPage() {
             )}
 
             {twoFactorEnabled && (
-              <div className="space-y-3 border-t border-white/[0.06] px-4 py-4">
+              <div className="space-y-3 px-4 py-4">
                 <input
                   type="password"
                   value={disablePassword}
@@ -569,7 +569,7 @@ export default function SecuritySettingsPage() {
             ) : (
               sessions.map((session) => (
                 <div key={session.id} className="flex items-center gap-3.5 px-4 py-3">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-white/[0.06] bg-white/[0.03] text-white/40">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-[var(--vanta-gold)]">
                     <Laptop size={17} strokeWidth={1.9} />
                   </span>
                   <div className="min-w-0 flex-1">
@@ -600,7 +600,7 @@ export default function SecuritySettingsPage() {
             ) : (
               logs.filter((log) => isLoginActivity(log.action)).slice(0, 10).map((log) => (
                 <div key={log.id} className="flex items-center gap-3.5 px-4 py-3">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-white/[0.06] bg-white/[0.03] text-white/40">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-[var(--vanta-gold)]">
                     <EyeOff size={17} strokeWidth={1.9} />
                   </span>
                   <div className="min-w-0 flex-1">

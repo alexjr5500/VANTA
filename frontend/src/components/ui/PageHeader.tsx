@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { ArrowLeft, Menu } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
@@ -48,6 +48,8 @@ export default function PageHeader({
   className,
 }: PageHeaderProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const settingsPage = pathname === '/settings' || pathname?.startsWith('/settings/');
   const tr = useLocalizedUiText();
 
   const handleBack = () => {
@@ -65,8 +67,9 @@ export default function PageHeader({
         'relative flex h-14 max-h-14 min-h-14 w-full shrink-0 items-center gap-2 overflow-hidden',
         bleed && '-mx-4 w-[calc(100%+2rem)]',
         sticky
-          ? 'sticky top-0 z-30 border-b border-white/[0.08] bg-[var(--header-surface)] backdrop-blur-xl'
-          : 'border-b border-white/[0.08]',
+          ? 'sticky top-0 z-30 bg-[var(--header-surface)] backdrop-blur-xl'
+          : '',
+        !settingsPage && 'border-b border-white/[0.08]',
         className,
       )}
     >
@@ -91,7 +94,7 @@ export default function PageHeader({
                     type="button"
                     onClick={handleBack}
                     aria-label="Go back"
-                    className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[#8a8a8a] transition hover:bg-white/[0.05] hover:text-white"
+                    className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-lg transition hover:bg-white/[0.05] hover:text-white",settingsPage?"text-[var(--vanta-gold)]":"text-[#8a8a8a]")}
                   >
                     <ArrowLeft size={19} />
                   </button>

@@ -335,7 +335,7 @@ return (
                   {blocked.map((user) => (
                     <div
                       key={user.id}
-                      className="flex items-center justify-between gap-3 rounded-[10px] border border-white/[0.06] bg-white/[0.02] px-3.5 py-2.5"
+                      className="flex items-center justify-between gap-3 rounded-[10px] bg-white/[0.025] px-3.5 py-2.5"
                     >
                       <span className="truncate text-sm text-white/80">
                         @{user.username}
@@ -401,7 +401,7 @@ return (
                   {muted.map((user) => (
                     <div
                       key={user.id}
-                      className="flex items-center justify-between gap-3 rounded-[10px] border border-white/[0.06] bg-white/[0.02] px-3.5 py-2.5"
+                      className="flex items-center justify-between gap-3 rounded-[10px] bg-white/[0.025] px-3.5 py-2.5"
                     >
                       <span className="truncate text-sm text-white/80">
                         @{user.username}

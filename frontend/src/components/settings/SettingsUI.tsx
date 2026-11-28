@@ -216,7 +216,7 @@ export function SettingsToggle({
   );
 }
 /* ────────────────────────────────────────────────────────────────
-   SettingsGroup — one logical section header + one quiet card
+   SettingsGroup — one logical section header, separated by whitespace
    ──────────────────────────────────────────────────────────────── */
 
 export function SettingsGroup({
@@ -252,7 +252,7 @@ export function SettingsGroup({
               </h2>
             )}
             {description && (
-              <p className="mt-0.5 text-xs leading-relaxed text-white/30">
+              <p className="mt-0.5 text-xs leading-relaxed text-white/55">
                 {tr(description)}
               </p>
             )}
@@ -260,7 +260,7 @@ export function SettingsGroup({
           {right && <span className="shrink-0">{right}</span>}
         </div>
       )}
-      <div className="divide-y divide-white/[0.06]">{children}</div>
+      <div className="space-y-0.5">{children}</div>
     </section>
   );
 }
@@ -301,11 +301,11 @@ export function SettingsLink({
         </span>
       )}
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-white">
+        <span className="block break-words text-sm font-medium text-white">
           {tr(title)}
         </span>
         {description && (
-          <span className="mt-0.5 block truncate text-xs text-white/30">
+          <span className="mt-0.5 block text-xs leading-relaxed text-white/55">
             {tr(description)}
           </span>
         )}
@@ -362,7 +362,7 @@ export function ToggleRow({
         <span className="flex items-center gap-2">
           <span
             className={cn(
-              'truncate text-sm font-medium text-white',
+              'break-words text-sm font-medium text-white',
               disabled && 'text-white/40'
             )}
           >
@@ -371,7 +371,7 @@ export function ToggleRow({
           {saved && <SavedChip />}
         </span>
         {description && (
-          <span className="mt-0.5 block text-xs leading-relaxed text-white/30">
+          <span className="mt-0.5 block text-xs leading-relaxed text-white/55">
             {description}
           </span>
         )}
@@ -436,18 +436,18 @@ export function SelectRow({
       >
         {Icon && (
           <span
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-white/40"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-[var(--vanta-gold)]"
             aria-hidden="true"
           >
             <Icon size={17} strokeWidth={1.9} />
           </span>
         )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-white">
+          <span className="block break-words text-sm font-medium text-white">
             {title}
           </span>
           {description && (
-            <span className="mt-0.5 block text-xs text-white/30">
+            <span className="mt-0.5 block text-xs leading-relaxed text-white/55">
               {description}
             </span>
           )}
@@ -490,10 +490,10 @@ export function SelectRow({
                       setOpen(false);
                     }}
                     className={cn(
-                      'flex w-full items-center justify-between gap-3 rounded-[10px] border px-3.5 py-3 text-left transition-colors',
+                      'flex w-full items-center justify-between gap-3 rounded-[10px] px-3.5 py-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--settings-accent)]',
                       selected
-                        ? 'border-[var(--active-border)] bg-[var(--active-soft)]'
-                        : 'border-[var(--border)] bg-transparent hover:bg-[var(--surface-hover)]'
+                        ? 'bg-[var(--active-soft)]'
+                        : 'bg-transparent hover:bg-[var(--surface-hover)]'
                     )}
                   >
                     <span className="min-w-0">
@@ -501,7 +501,7 @@ export function SelectRow({
                         {option.label}
                       </span>
                       {option.description && (
-                        <span className="mt-0.5 block text-xs text-white/30">
+                        <span className="mt-0.5 block text-xs leading-relaxed text-white/55">
                           {option.description}
                         </span>
                       )}
