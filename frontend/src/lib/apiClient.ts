@@ -93,7 +93,7 @@ const makeRequestInternal = async <T>(
   const cacheKey = getCacheKey(method, url, options.token);
   const now = Date.now();
   // Explicit cancellation and custom headers are never shared with another caller.
-  const shareable = method === 'GET' && !options.skipCache && !options.signal && !options.headers && !bodyStr;
+  const shareable = method === 'GET' && !options.skipCache && !options.signal && !options.headers && !bodyStr && !options.noRetry;
   const generation = cacheGeneration;
 
   // Return cached data for GET requests if valid
@@ -267,7 +267,8 @@ export const prefetchData = (path: string, token?: string): void => {
     if (generation !== cacheGeneration || document.hidden || !navigator.onLine) return;
     const cached = requestCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) return;
-    void makeRequestInternal('GET', path, { token, cacheTTL: CACHE_TTL, noRetry: true }).catch(() => {});
+    if (pendingRequests.has(cacheKey)) return;
+    void makeRequestInternal('GET', path, { token, cacheTTL: CACHE_TTL }).catch(() => {});
   };
   if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 2000 });
   else setTimeout(run, 1000);

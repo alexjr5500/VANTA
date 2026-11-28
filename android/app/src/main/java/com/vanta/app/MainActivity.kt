@@ -55,6 +55,11 @@ import org.json.JSONObject
  */
 class MainActivity : Activity() {
     private lateinit var webView: WebView
+    private var lastTrustedUrl: String = VANTA_ORIGIN
+    private var lastRendererRecoveryMs: Long? = null
+    private var recoveryPanel: View? = null
+    private var pickerInFlight = false
+    private var destroying = false
     private val nativeShareNonce = UUID.randomUUID().toString()
     private val nativeGallery by lazy { NativeStatusGallery(this, VANTA_ORIGIN) }
     @Volatile private var galleryPageTrusted = false
@@ -145,7 +150,8 @@ class MainActivity : Activity() {
                 }
                 // FrameLayout lays its MATCH_PARENT WebView inside this
                 // padding, leaving the system navigation region native-owned.
-                if (view.paddingLeft != left || view.paddingTop != top || view.paddingRight != right || view.paddingBottom != bottom) {
+                if (view.paddingLeft != left || view.paddingTop != top ||
+                    view.paddingRight != right || view.paddingBottom != bottom) {
                     view.setPadding(left, top, right, bottom)
                 }
                 insets
@@ -181,7 +187,10 @@ class MainActivity : Activity() {
         setIntent(intent)
         val route = intent?.getStringExtra(VantaFirebaseMessagingService.EXTRA_NOTIFICATION_ROUTE)
         if (!route.isNullOrBlank() && route.startsWith("/") && !route.startsWith("//")) {
-            webView.post { webView.loadUrl(VANTA_ORIGIN + route) }
+            val target = webView
+            target.post {
+                if (!destroying && target === webView && recoveryPanel == null) target.loadUrl(VANTA_ORIGIN + route)
+            }
         }
     }
 
@@ -222,14 +231,17 @@ class MainActivity : Activity() {
 
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                    if (destroying || view !== webView) return
                     galleryPageTrusted = false
                     pendingNativeLocationId = null
+                    if (isTrustedPage(url)) lastTrustedUrl = url!!
                     super.onPageStarted(view, url, favicon)
                 }
 
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                    // Ordinary page assets must not instantiate the gallery or check OS permissions.
-                    if (request.url.path?.startsWith("/__vanta_native_gallery/") != true) return null
+                    // Ordinary assets and API calls never need MediaStore permission
+                    // checks or initialization of the native gallery.
+                    if (!NativeStatusGallery.isGalleryPath(request.url.path)) return null
                     return nativeGallery.intercept(request, galleryPageTrusted, hasStatusGalleryAccess())
                 }
 
@@ -239,7 +251,7 @@ class MainActivity : Activity() {
                 ): Boolean {
                     if (!request.isForMainFrame) return false
                     val uri = request.url
-                    if (uri.scheme == "https" && uri.host in VANTA_HOSTS) return false
+                    if (isTrustedPage(uri.toString())) return false
 
                     if (uri.scheme == "https") {
                         runCatching { startActivity(Intent(Intent.ACTION_VIEW, uri)) }
@@ -248,8 +260,10 @@ class MainActivity : Activity() {
                 }
 
                 override fun onPageFinished(view: WebView, url: String?) {
+                    if (destroying || view !== webView || recoveryPanel != null) return
                     super.onPageFinished(view, url)
                     galleryPageTrusted = isTrustedPage(url)
+                    if (galleryPageTrusted) lastTrustedUrl = url!!
                     applySystemBottomInset()
                     publishNativeShareNonce(view, url)
                     publishNativeGalleryNonce(view, url)
@@ -275,27 +289,69 @@ class MainActivity : Activity() {
                     view: WebView,
                     detail: android.webkit.RenderProcessGoneDetail
                 ): Boolean {
-                    val parent = view.parent as? ViewGroup ?: return false
-                    val childIndex = parent.indexOfChild(view)
+                    // A dead renderer must never be reused or queried for its URL.
+                    if (destroying || view !== webView) {
+                        (view.parent as? ViewGroup)?.removeView(view)
+                        runCatching { view.destroy() }
+                        return true
+                    }
+                    val parent = view.parent as? ViewGroup
+                    val childIndex = parent?.indexOfChild(view) ?: -1
                     val layoutParams = view.layoutParams
-                    val currentUrl = view.url?.takeIf(::isTrustedPage) ?: VANTA_ORIGIN
-
-                    pendingFileCallback?.onReceiveValue(null)
+                    galleryPageTrusted = false
+                    pendingNativeLocationId = null
+                    runCatching { pendingFileCallback?.onReceiveValue(null) }
                     pendingFileCallback = null
-                    pendingGeolocationCallback?.invoke(pendingGeolocationOrigin, false, false)
+                    runCatching { pendingGeolocationCallback?.invoke(pendingGeolocationOrigin, false, false) }
                     pendingGeolocationCallback = null
                     pendingGeolocationOrigin = null
                     denyAllPendingWebPermissions()
-
-                    view.stopLoading()
-                    view.webChromeClient = null
-                    view.webViewClient = WebViewClient()
-                    parent.removeView(view)
-                    view.destroy()
+                    parent?.removeView(view)
+                    runCatching { view.destroy() }
+                    if (parent == null || childIndex < 0 || isFinishing) {
+                        finish()
+                        return true
+                    }
 
                     webView = createWebView()
                     parent.addView(webView, childIndex, layoutParams)
-                    webView.loadUrl(currentUrl)
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    val previous = lastRendererRecoveryMs
+                    lastRendererRecoveryMs = now
+                    // One automatic recovery per minute, then an explicit
+                    // native retry. No endless reload loop on low-memory devices.
+                    if (previous == null || now - previous >= 60_000L) {
+                        webView.loadUrl(lastTrustedUrl)
+                    } else {
+                        val retryTarget = webView
+                        retryTarget.visibility = View.INVISIBLE
+                        val panel = LinearLayout(this@MainActivity).apply {
+                            orientation = LinearLayout.VERTICAL
+                            gravity = Gravity.CENTER
+                            setPadding(dp(24), dp(24), dp(24), dp(24))
+                            setBackgroundColor(Color.rgb(31, 38, 48))
+                            addView(TextView(this@MainActivity).apply {
+                                text = "VANTA needs to reload. An interrupted action may not have finished."
+                                setTextColor(Color.WHITE)
+                                gravity = Gravity.CENTER
+                                textSize = 16f
+                            })
+                            addView(android.widget.Button(this@MainActivity).apply {
+                                text = "Reload VANTA"
+                                setOnClickListener {
+                                    if (destroying || isFinishing || retryTarget !== webView) return@setOnClickListener
+                                    recoveryPanel?.let { parent.removeView(it) }
+                                    recoveryPanel = null
+                                    retryTarget.visibility = View.VISIBLE
+                                    retryTarget.loadUrl(lastTrustedUrl)
+                                }
+                            })
+                        }
+                        recoveryPanel = panel
+                        parent.addView(panel, ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+                        ))
+                    }
                     return true
                 }
             }
@@ -354,7 +410,7 @@ class MainActivity : Activity() {
                     filePathCallback: android.webkit.ValueCallback<Array<Uri>>,
                     fileChooserParams: FileChooserParams
                 ): Boolean {
-                    if (!isTrustedPage(view.url)) {
+                    if (destroying || view !== webView || pickerInFlight || !isTrustedPage(view.url)) {
                         filePathCallback.onReceiveValue(null)
                         return true
                     }
@@ -387,13 +443,15 @@ class MainActivity : Activity() {
     }
 
     private fun publishNativeFcmToken(tokenOverride: String? = null) {
-        if (!::webView.isInitialized || webView.url.isNullOrBlank() || !isTrustedPage(webView.url)) return
+        if (isDestroyed || isFinishing || !::webView.isInitialized || webView.url.isNullOrBlank() || !isTrustedPage(webView.url)) return
         val token = tokenOverride ?: getSharedPreferences(VantaFirebaseMessagingService.PREFS, MODE_PRIVATE)
             .getString(VantaFirebaseMessagingService.KEY_FCM_TOKEN, null)
         if (token.isNullOrBlank()) return
         val safeToken = org.json.JSONObject.quote(token)
-        webView.post {
-            webView.evaluateJavascript("window.__VANTA_NATIVE_FCM_TOKEN__ = " + safeToken + "; window.dispatchEvent(new CustomEvent('vanta-native-fcm-token', { detail: { token: " + safeToken + " } }));", null)
+        val target = webView
+        target.post {
+            if (isDestroyed || isFinishing || target !== webView || !isTrustedPage(target.url)) return@post
+            target.evaluateJavascript("window.__VANTA_NATIVE_FCM_TOKEN__ = " + safeToken + "; window.dispatchEvent(new CustomEvent('vanta-native-fcm-token', { detail: { token: " + safeToken + " } }));", null)
         }
     }
 
@@ -619,7 +677,7 @@ class MainActivity : Activity() {
     }
 
     private fun denyAllPendingWebPermissions() {
-        pendingWebPermissions.toList().forEach { it.deny() }
+        pendingWebPermissions.toList().forEach { runCatching { it.deny() } }
         pendingWebPermissions.clear()
         webPermissionsAsked = emptySet()
     }
@@ -773,7 +831,7 @@ class MainActivity : Activity() {
     private fun isTrustedPage(url: String?): Boolean {
         if (url.isNullOrBlank()) return false
         val uri = Uri.parse(url)
-        return uri.scheme == "https" && uri.host in VANTA_HOSTS
+        return uri.scheme == "https" && uri.host in VANTA_HOSTS && (uri.port == -1 || uri.port == 443) && uri.userInfo == null
     }
 
     private fun showNativeAttachmentPicker() {
@@ -1030,12 +1088,15 @@ class MainActivity : Activity() {
 
     private fun launchIntent(intent: Intent, requestCode: Int) {
         try {
+            pickerInFlight = true
             startActivityForResult(intent, requestCode)
         } catch (_: ActivityNotFoundException) {
+            pickerInFlight = false
             pendingCameraUri?.let { runCatching { contentResolver.delete(it, null, null) } }
             pendingCameraUri = null
             completeFileSelection(null)
         } catch (_: SecurityException) {
+            pickerInFlight = false
             pendingCameraUri?.let { runCatching { contentResolver.delete(it, null, null) } }
             pendingCameraUri = null
             completeFileSelection(null)
@@ -1051,6 +1112,7 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated by Android; retained for broad device compatibility.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == CAMERA_REQUEST || requestCode == FILE_CHOOSER_REQUEST) pickerInFlight = false
 
         if (requestCode == CAMERA_REQUEST) {
             val cameraUri = pendingCameraUri
@@ -1086,7 +1148,7 @@ class MainActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         pendingCameraUri?.let { outState.putString(CAMERA_URI_STATE, it.toString()) }
-        webView.saveState(outState)
+        if (!destroying && recoveryPanel == null && ::webView.isInitialized) webView.saveState(outState)
         super.onSaveInstanceState(outState)
     }
 
@@ -1099,17 +1161,22 @@ class MainActivity : Activity() {
         // Next.js overlays generally do not create a WebView history entry.
         // Ask the active page to close its topmost sheet/dialog first so Android
         // Back never silently navigates the page behind the visible overlay.
-        webView.evaluateJavascript(
+        val target = webView
+        target.evaluateJavascript(
             "(function(){var event=new Event('vanta-native-back',{cancelable:true});" +
                 "window.dispatchEvent(event);return event.defaultPrevented;})()"
         ) { handled ->
-            if (handled == "true") return@evaluateJavascript
-            if (::webView.isInitialized && webView.canGoBack()) webView.goBack()
+            if (destroying || isFinishing || target !== webView || handled == "true") return@evaluateJavascript
+            if (target.canGoBack()) target.goBack()
             else super.onBackPressed()
         }
     }
 
     override fun onDestroy() {
+        destroying = true
+        recoveryPanel?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        recoveryPanel = null
+        galleryPageTrusted = false
         pendingFileCallback?.onReceiveValue(null)
         pendingFileCallback = null
         pendingGeolocationCallback?.invoke(pendingGeolocationOrigin, false, false)
@@ -1124,6 +1191,7 @@ class MainActivity : Activity() {
             webView.stopLoading()
             webView.webChromeClient = null
             webView.webViewClient = WebViewClient()
+            (webView.parent as? ViewGroup)?.removeView(webView)
             webView.destroy()
         }
         super.onDestroy()

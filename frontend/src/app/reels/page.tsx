@@ -47,6 +47,8 @@ import GiftPickerBoundary from '@/components/social/GiftPickerBoundary';
 import { normalizeGiftCatalog } from '@/lib/giftCatalog';
 import { cn } from '@/lib/utils';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
+import { chooseReelPlaybackSource } from '@/lib/reelPlaybackSource';
+import { shouldMountReelVideo } from '@/lib/reelMediaPolicy';
 import { renderTextWithLinks } from '@/lib/linkify';
 import { REEL_TAP_WINDOW_MS, isReelTap, isReelDoubleTap, reelPreload, reelIndexAtScroll, nextReelLike, type ReelTap } from '@/lib/reelPlayback';
 import { feedFromSwipe, settleFeedSwipe, startFeedSwipe, trackFeedSwipe } from '@/lib/feedSwipe';
@@ -74,6 +76,7 @@ type Reel = {
   title?: string;
   description?: string;
   videoUrl: string;
+  hlsUrl?: string | null;
   thumbnailUrl?: string;
   duration?: number;
   views: number;
@@ -135,6 +138,15 @@ export default function ReelsPage() {
   const [visiblePage, setVisiblePage] = useState(true);
   const [feedRevision, setFeedRevision] = useState(0);
   const { prefs: contentPrefs, hydrated: contentPrefsReady } = useContentPrefs();
+  const [networkSaveData, setNetworkSaveData] = useState(false);
+  const lowerData = contentPrefs.lowerData || networkSaveData;
+  useEffect(() => {
+    const connection = (navigator as Navigator & { connection?: EventTarget & { saveData?: boolean } }).connection;
+    const sync = () => setNetworkSaveData(connection?.saveData === true);
+    sync();
+    connection?.addEventListener('change', sync);
+    return () => connection?.removeEventListener('change', sync);
+  }, []);
   const [commentsFor, setCommentsFor] = useState<Reel | null>(null);
   const [shareFor, setShareFor] = useState<Reel | null>(null);
   const [moreFor, setMoreFor] = useState<Reel | null>(null);
@@ -190,6 +202,7 @@ export default function ReelsPage() {
       const items = (Array.isArray(result) ? result : result.items || []).map(reel => ({
         ...reel,
         videoUrl: resolveMediaUrl(reel.videoUrl),
+        hlsUrl: resolveMediaUrl(reel.hlsUrl) || undefined,
         thumbnailUrl: resolveMediaUrl(reel.thumbnailUrl) || undefined,
         author: { ...reel.author, isFollowing: reel.author?.isFollowing ?? reel.isFollowing },
       }));
@@ -246,7 +259,7 @@ export default function ReelsPage() {
       }
     };
     const onPageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) void refreshReels();
+      if (event.persisted) void refreshReels().catch(() => undefined);
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('pageshow', onPageShow);
@@ -274,8 +287,8 @@ export default function ReelsPage() {
   // loaded Reels. The order stays stable because the session seed is fixed and the
   // server returns the same deterministic shuffle for every page request.
   useEffect(() => {
-    if (visiblePage && active >= reels.length - 3) void loadMore();
-  }, [active, reels.length, loadMore, visiblePage]);
+    if (visiblePage && active >= reels.length - (lowerData ? 1 : 3)) void loadMore();
+  }, [active, reels.length, loadMore, visiblePage, lowerData]);
 
   // Every page is exactly the scrollport height. Choose the nearest snap
   // position on scroll rather than guessing from partial observer entries.
@@ -751,7 +764,7 @@ export default function ReelsPage() {
             isOwn={Boolean(user && ((user.id && String(reel.author.id) === String(user.id)) || (user.username && reel.author.username?.toLowerCase() === user.username.toLowerCase())))}
             index={index}
             active={active === index}
-            preload={reelPreload(index, active, contentPrefs.lowerData, visiblePage, playingId === activeId)}
+            preload={shouldMountReelVideo(index, active, visiblePage, lowerData) ? reelPreload(index, active, lowerData, visiblePage, playingId === activeId) : null}
             muted={muted}
             shouldPlay={active === index && shouldPlay}
             blocked={blockedId === reel.id}
@@ -830,6 +843,12 @@ function ReelCard({ reel, isOwn, index, active, preload, muted, shouldPlay, bloc
   const [hasFrame, setHasFrame] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const [posterFailed, setPosterFailed] = useState(false);
+  const [nativeHlsSupported, setNativeHlsSupported] = useState(false);
+  const [failedHlsUrl, setFailedHlsUrl] = useState<string | null>(null);
+  useEffect(() => {
+    setNativeHlsSupported(Boolean(document.createElement('video').canPlayType('application/vnd.apple.mpegurl')));
+  }, []);
+  const playbackSource = chooseReelPlaybackSource(reel.videoUrl, reel.hlsUrl, nativeHlsSupported, failedHlsUrl === reel.hlsUrl);
   const pulseTimer = useRef<number>();
   const tapTimer = useRef<number>();
   const lastTap = useRef<ReelTap | null>(null);
@@ -855,7 +874,7 @@ function ReelCard({ reel, isOwn, index, active, preload, muted, shouldPlay, bloc
   useEffect(() => () => { if (pulseTimer.current) window.clearTimeout(pulseTimer.current); }, []);
   useEffect(() => {
     setHasFrame(false); setVideoLoading(true); setVideoFailed(false); setVideoError(''); setProgress(0);
-  }, [reel.videoUrl, preload === null, retryKey]);
+  }, [playbackSource, preload === null, retryKey]);
   useEffect(() => { setPosterFailed(false); }, [reel.thumbnailUrl]);
 
   const attachVideo = useCallback((node: HTMLVideoElement | null) => {
@@ -925,12 +944,12 @@ function ReelCard({ reel, isOwn, index, active, preload, muted, shouldPlay, bloc
               className="pointer-events-none absolute inset-0 z-0 h-full w-full scale-110 object-cover blur-[28px]"
             />
           ) : null}
-          {reel.thumbnailUrl && !posterFailed && <img loading={active ? 'eager' : 'lazy'} decoding="async" src={resolveMediaUrl(reel.thumbnailUrl)} alt="" onError={() => setPosterFailed(true)} className={cn('pointer-events-none absolute inset-0 z-[2] h-full w-full object-contain transition-opacity duration-150', hasFrame && !videoFailed && 'opacity-0')} />}
+          {reel.thumbnailUrl && !posterFailed && <img src={resolveMediaUrl(reel.thumbnailUrl)} alt="" loading={active ? 'eager' : 'lazy'} decoding="async" onError={() => setPosterFailed(true)} className={cn('pointer-events-none absolute inset-0 z-[2] h-full w-full object-contain transition-opacity duration-150', hasFrame && !videoFailed && 'opacity-0')} />}
           {preload && (
             <video
               key={retryKey}
               ref={attachVideo}
-              src={resolveMediaUrl(reel.videoUrl)}
+              src={resolveMediaUrl(playbackSource)}
               poster={reel.thumbnailUrl && !posterFailed ? reel.thumbnailUrl : 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%221%22 height=%221%22/%3E'}
               preload={preload}
               loop
@@ -941,6 +960,13 @@ function ReelCard({ reel, isOwn, index, active, preload, muted, shouldPlay, bloc
               disableRemotePlayback
               onLoadStart={() => { setHasFrame(false); setVideoLoading(true); setVideoError(''); }}
               onError={(event) => {
+                if (nativeHlsSupported && reel.hlsUrl && playbackSource === reel.hlsUrl && failedHlsUrl !== reel.hlsUrl) {
+                  onStopped(reel.id);
+                  setFailedHlsUrl(reel.hlsUrl);
+                  setHasFrame(false);
+                  setVideoLoading(true);
+                  return;
+                }
                 const mediaError = event.currentTarget.error;
                 const code = mediaError?.code;
                 const detail = mediaError?.message || '';

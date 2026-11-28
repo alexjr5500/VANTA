@@ -70,6 +70,46 @@ describe('getStorageDiagnostics', () => {
     expect(diag.healthy).toBe(false);
   });
 
+  test('does not count cloud-hosted assets as missing from the local uploads directory', async () => {
+    (prisma.uploadedFile.findMany as jest.Mock).mockResolvedValue([
+      { filename: 'remote.jpg', path: 'cloudinary:image:vanta/post-image/example' },
+      { filename: 'remote-video.mp4', path: 'cloudinary:video:vanta/reel/clip' },
+      { filename: 'local.jpg', path: '/data/uploads/local.jpg' },
+    ]);
+    existsSyncMock().mockImplementation((filename: string) => String(filename).endsWith('local.jpg'));
+    readdirSyncMock().mockReturnValue(['local.jpg']);
+
+    const diag = await getStorageDiagnostics();
+
+    expect(prisma.uploadedFile.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      select: { filename: true, path: true },
+    }));
+    expect(diag).toMatchObject({
+      dbReferencedUploads: 3,
+      cloudinaryReferencedUploads: 2,
+      localReferencedUploads: 1,
+      presentOnDisk: 1,
+      missingOnDisk: 0,
+      remotePresenceVerified: false,
+      metadataProbeSucceeded: true,
+      healthy: true,
+    });
+  });
+
+  test('still flags missing local uploads when Cloudinary references are present', async () => {
+    (prisma.uploadedFile.findMany as jest.Mock).mockResolvedValue([
+      { filename: 'remote.jpg', path: 'cloudinary:image:vanta/post-image/example' },
+      { filename: 'gone.mp4', path: '/data/uploads/gone.mp4' },
+    ]);
+    existsSyncMock().mockReturnValue(false);
+    readdirSyncMock().mockReturnValue([]);
+    const diag = await getStorageDiagnostics();
+    expect(diag).toMatchObject({
+      dbReferencedUploads: 2, cloudinaryReferencedUploads: 1,
+      localReferencedUploads: 1, missingOnDisk: 1, healthy: false,
+    });
+  });
+
   test('warns when the storage directory is not explicitly configured', async () => {
     (prisma.uploadedFile.findMany as jest.Mock).mockResolvedValue([]);
     existsSyncMock().mockReturnValue(true);
@@ -94,6 +134,8 @@ describe('getStorageDiagnostics', () => {
       expect(diag.dbReferencedUploads).toBe(0);
       expect(diag.presentOnDisk).toBe(0);
       expect(diag.missingOnDisk).toBe(0);
+      expect(diag.metadataProbeSucceeded).toBe(false);
+      expect(diag.healthy).toBe(false);
     } finally {
       warnSpy.mockRestore();
     }

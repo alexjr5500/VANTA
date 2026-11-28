@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
 import { createSocket } from '@/lib/socketClient';
@@ -41,6 +41,9 @@ const isChatNotification = (notification: VantaNotification) => CHAT_NOTIFICATIO
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
   const { token, user } = useAuth();
   const userId = user?.id;
+  const scope = useMemo(() => ({ token, userId }), [token, userId]);
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
   const [unreadCount, setUnreadCount] = useState(0);
   const [latestNotification, setLatestNotification] = useState<VantaNotification | null>(null);
   const [notificationRevision, setNotificationRevision] = useState(0);
@@ -48,8 +51,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const reconcileUnreadCount = useCallback(async () => {
     if (!token || !userId) { setUnreadCount(0); return; }
     const response = await apiGet<{ unreadCount?: number; count?: number }>('/api/notifications/unread-count', token, { skipCache: true });
-    setUnreadCount(safeCount(response.unreadCount ?? response.count));
-  }, [token, userId]);
+    if (currentScope.current === scope) setUnreadCount(safeCount(response.unreadCount ?? response.count));
+  }, [token, userId, scope]);
 
   useEffect(() => {
     if (!token || !userId) { setUnreadCount(0); setLatestNotification(null); return; }

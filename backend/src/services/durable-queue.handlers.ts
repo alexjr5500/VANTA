@@ -1,3 +1,11 @@
+import { v2 as cloudinary } from 'cloudinary';
+import { prisma } from '../prisma';
+import { isCloudinaryStorageConfigured } from './cloudinary-storage-config';
+import { prepareCloudinaryMedia, CloudinaryJobKind, CloudinaryMediaJob } from './cloudinary-media-job';
+import { optimizeLocalImage } from './media-image-job';
+import { cleanupExpiredMediaTemp } from './media-cleanup-job';
+import { generateLocalThumbnail } from './media-thumbnail-job';
+import { transcodeLocalHls } from './media-hls-job';
 import { DurableJob } from './durable-queue.repository';
 import { DurableJobHandler } from './durable-queue.worker';
 import { pushNotificationService } from './push/push-notification.service';
@@ -36,6 +44,92 @@ export function createDurableQueueHandlers(
       throw new Error(result.error || 'Push delivery failed');
     }
   });
+
+  // Media jobs are explicitly opt-in and require a separately provisioned worker
+  // image with Sharp/FFmpeg and a shared persistent upload volume.
+  if (process.env.VANTA_DURABLE_QUEUE_MEDIA_HANDLERS === 'true') {
+    const mode = process.env.VANTA_DURABLE_QUEUE_MEDIA_STORAGE || 'local';
+    if (mode === 'cloudinary') {
+      if (!isCloudinaryStorageConfigured(process.env)) {
+        throw new Error('Cloudinary media jobs require all Cloudinary credentials');
+      }
+      cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET,
+        secure: true,
+      });
+      const store = {
+        findById: (id: string) => prisma.uploadedFile.findUnique({
+          where: { id },
+          select: { id: true, path: true, category: true, fileType: true, deletedAt: true },
+        }),
+        saveDerivative: async (source: { id: string; path: string | null; category: string; fileType: string }, kind: CloudinaryJobKind, url: string) => {
+          const data = kind === 'cloudinary:image:optimize' ? { optimizedUrl: url }
+            : kind === 'cloudinary:thumbnail:generate' ? { thumbnailUrl: url }
+            : { hlsUrl: url };
+          const result = await prisma.uploadedFile.updateMany({
+            // The asset must still be the *same* public source. A category or
+            // type change during processing must not publish an old public URL.
+            where: { id: source.id, path: source.path, category: source.category,
+              fileType: source.fileType, deletedAt: null },
+            data,
+          });
+          return result.count === 1;
+        },
+      };
+      const client = {
+        cloudName: process.env.CLOUDINARY_CLOUD_NAME!,
+        explicit: (id: string, options: Parameters<typeof cloudinary.uploader.explicit>[1]) =>
+          cloudinary.uploader.explicit(id, options),
+      };
+      for (const kind of ['cloudinary:image:optimize', 'cloudinary:thumbnail:generate', 'cloudinary:video:transcode'] as CloudinaryJobKind[]) {
+        handlers.set(kind, async (job: DurableJob): Promise<void> => {
+          await prepareCloudinaryMedia(kind, job.payload as CloudinaryMediaJob, store, client);
+        });
+      }
+      return handlers;
+    }
+    if (mode !== 'local') throw new Error('Unsupported durable media storage mode');
+    const root = process.env.UPLOAD_STORAGE_DIR;
+    if (!root) throw new Error('UPLOAD_STORAGE_DIR is required for durable media jobs');
+    handlers.set('image:optimize', async (job: DurableJob): Promise<void> => {
+      const data = job.payload as { inputPath?: unknown; outputName?: unknown; maxWidth?: unknown } | null;
+      if (!data || typeof data.inputPath !== 'string' || typeof data.outputName !== 'string' ||
+          (data.maxWidth !== undefined && typeof data.maxWidth !== 'number')) {
+        throw new Error('Invalid image:optimize payload');
+      }
+      await optimizeLocalImage(root, {
+        inputPath: data.inputPath, outputName: data.outputName, maxWidth: data.maxWidth as number | undefined,
+      });
+    });
+    handlers.set('cleanup:temp', async (job: DurableJob): Promise<void> => {
+      const data = job.payload as { relativePath?: unknown; olderThanMs?: unknown } | null;
+      if (!data || typeof data.relativePath !== 'string' ||
+          (data.olderThanMs !== undefined && typeof data.olderThanMs !== 'number')) {
+        throw new Error('Invalid cleanup:temp payload');
+      }
+      cleanupExpiredMediaTemp(root, data.relativePath, data.olderThanMs as number | undefined);
+    });
+    handlers.set('thumbnail:generate', async (job: DurableJob): Promise<void> => {
+      const data = job.payload as { inputPath?: unknown; outputName?: unknown } | null;
+      if (!data || typeof data.inputPath !== 'string' || typeof data.outputName !== 'string') {
+        throw new Error('Invalid thumbnail:generate payload');
+      }
+      await generateLocalThumbnail(root, { inputPath: data.inputPath, outputName: data.outputName });
+    });
+    handlers.set('video:transcode', async (job: DurableJob): Promise<void> => {
+      const data = job.payload as { inputPath?: unknown; outputName?: unknown; qualities?: unknown } | null;
+      if (!data || typeof data.inputPath !== 'string' || typeof data.outputName !== 'string' ||
+          (data.qualities !== undefined && (!Array.isArray(data.qualities) ||
+           !data.qualities.every(q => typeof q === 'string')))) {
+        throw new Error('Invalid video:transcode payload');
+      }
+      await transcodeLocalHls(root, {
+        inputPath: data.inputPath, outputName: data.outputName, qualities: data.qualities as string[] | undefined,
+      });
+    });
+  }
 
   return handlers;
 }

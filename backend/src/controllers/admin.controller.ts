@@ -1166,19 +1166,77 @@ export const decideAppeal = async (req: AuthenticatedRequest, res: Response): Pr
 export const getWithdrawals = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const limit = parseAdminQueryInt(req.query.limit, 20, 1, 200);
-
+    const offset = parseAdminQueryInt(req.query.offset, 0, 0, 1_000_000);
+    const status = req.query.status;
+    const allowed = ['PENDING', 'PAYOUT_RESERVED', 'PROCESSING', 'APPROVED', 'COMPLETED', 'FAILED', 'CANCELLED'];
+    if (status !== undefined && (typeof status !== 'string' || (status !== 'active' && status !== 'all' && !allowed.includes(status)))) {
+      res.status(400).json({ error: 'Invalid withdrawal status filter' });
+      return;
+    }
+    const where = status === 'active'
+      ? { status: { in: ['PENDING', 'PAYOUT_RESERVED', 'PROCESSING', 'APPROVED'] } }
+      : typeof status === 'string' && status !== 'all' ? { status } : {};
     const withdrawals = await prisma.withdrawal.findMany({
+      where,
       include: {
         user: { select: { id: true, username: true, email: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: offset,
       take: limit,
     });
 
+    res.setHeader('Cache-Control', 'private, no-store');
     res.status(200).json(withdrawals);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Internal server error';
     res.status(400).json({ error: message });
+  }
+};
+
+export const reserveWithdrawalPayout = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { withdrawalId, reconciledUnsent } = req.body;
+    if (typeof withdrawalId !== 'string' || !withdrawalId || reconciledUnsent !== true) {
+      res.status(400).json({ error: 'withdrawalId and explicit unsent reconciliation confirmation are required' });
+      return;
+    }
+    const withdrawal = await walletService.reserveWithdrawalPayout(withdrawalId, req.user!.userId, reconciledUnsent);
+    res.status(200).json({ message: 'Payout reserved; no funds have been sent by VANTA', withdrawal });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    res.status(400).json({ error: message });
+  }
+};
+
+export const recordWithdrawalRecovery = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { withdrawalId, expectedStatus, outcome, caseReference, notes, candidateHash } = req.body || {};
+    if (typeof withdrawalId !== 'string' || !withdrawalId || withdrawalId.length > 100) {
+      res.status(400).json({ error: 'Valid withdrawalId required' });
+      return;
+    }
+    const review = await walletService.recordWithdrawalRecovery(withdrawalId, req.user!.userId, {
+      expectedStatus, outcome, caseReference, notes, candidateHash,
+    });
+    res.status(201).json({ review, message: 'Recovery evidence recorded; no financial action authorized' });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Recovery review failed' });
+  }
+};
+
+export const getWithdrawalRecoveryHistory = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const withdrawalId = req.params.withdrawalId;
+    if (typeof withdrawalId !== 'string' || !withdrawalId || withdrawalId.length > 100) {
+      res.status(400).json({ error: 'Valid withdrawalId required' });
+      return;
+    }
+    const history = await walletService.getWithdrawalRecoveryHistory(withdrawalId);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.status(200).json(history);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Recovery history unavailable' });
   }
 };
 

@@ -9,6 +9,7 @@ import {
 import GlassCard from '@/components/ui/GlassCard';
 import Button from '@/components/ui/Button';
 import { getTransactions } from '@/lib/adminApi';
+import WithdrawalQueue from './WithdrawalQueue';
 
 const fmtUsd = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtVanta = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 0 }) + ' VANTA';
@@ -113,6 +114,8 @@ return (
       <SummaryCard label="Refunds / Reversals" value={fmtPair(summary?.refundsUsd ?? 0, summary?.refundsVanta ?? 0)} icon={<RotateCcw size={16} />} cls="bg-orange-500/15 text-orange-400" />
       <SummaryCard label="Purchase Revenue" value={fmtUsd(summary?.totalPurchaseRevenue ?? 0)} icon={<ArrowDownRight size={16} />} cls="bg-sky-500/15 text-sky-400" />
     </div>
+
+    <WithdrawalQueue onChanged={() => void fetchData()} />
 
     {/* Filters */}
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">

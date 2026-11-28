@@ -1,4 +1,5 @@
 import { prisma } from "../prisma";
+import { finishCursorPage } from "./feed-read-optimization";
 import { canReceiveMention } from "../security/privacyPermissions";
 import { postMentionNames } from "./post-mentions";
 import { BADGE_USER_SELECT, enrichPublicUser } from "./public-verification";
@@ -101,14 +102,17 @@ export class NotificationService {
       type: typeFilter,
       ...(filters.unreadOnly ? { read: false } : {}),
     };
-    const notifications = await prisma.notification.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      take: limit + 1,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    });
+    const [notifications, unreadCount] = await Promise.all([
+      prisma.notification.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: limit + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      }),
+      this.getUnreadCount(userId),
+    ]);
 
-    const nextCursor = notifications.length > limit ? notifications.pop()?.id : undefined;
+    const nextCursor = finishCursorPage(notifications, limit);
     const actorIds = [...new Set(notifications.map(item => item.actorId).filter((id): id is string => Boolean(id)))];
     const actors = actorIds.length
       ? await prisma.user.findMany({
@@ -122,7 +126,6 @@ export class NotificationService {
       data: parseMetadata(notification.data),
       actor: notification.actorId ? actorById.get(notification.actorId) ?? null : null,
     }));
-    const unreadCount = await this.getUnreadCount(userId);
     return { items, nextCursor, unreadCount };
   }
 

@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { useAuth } from '@/context/AuthContext';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
+import { startVisiblePolling } from '@/lib/visiblePolling';
 import { createSocket } from '@/lib/socketClient';
 import { useToast } from '@/components/ui/Toast';
 import { canDownloadPostVideo, downloadPostVideo } from '@/lib/postVideoDownload';
@@ -178,23 +179,22 @@ export default function HomePage() {
   }, [token, user?.id]);
   useEffect(() => {
     if (!token) { setLive([]); return; }
+    // Clear previous account's discovery data, then refresh only while visible/online.
     setLive([]);
-    let current = true;
-    let busy = false;
-    const refreshLive = async () => {
-      if (!current || busy || document.hidden || !navigator.onLine) return;
-      busy = true;
-      try {
-        const result = await apiGet<any>('/api/live/discover?limit=6&sort=viewerCount', token, { skipCache: true });
-        if (current) setLive(unwrap(result));
-      } catch { /* keep the last confirmed live list during temporary network failures */ }
-      finally { busy = false; }
-    };
-    void refreshLive();
-    document.addEventListener('visibilitychange', refreshLive);
-    window.addEventListener('online', refreshLive);
-    const interval = window.setInterval(() => { void refreshLive(); }, 15_000);
-    return () => { current = false; window.clearInterval(interval); document.removeEventListener('visibilitychange', refreshLive); window.removeEventListener('online', refreshLive); };
+    return startVisiblePolling({
+      intervalMs: 15_000,
+      isAvailable: () => document.visibilityState === 'visible' && navigator.onLine,
+      subscribe: notify => {
+        document.addEventListener('visibilitychange', notify);
+        window.addEventListener('online', notify);
+        return () => {
+          document.removeEventListener('visibilitychange', notify);
+          window.removeEventListener('online', notify);
+        };
+      },
+      load: () => apiGet<any>('/api/live/discover?limit=6&sort=viewerCount', token, { skipCache: true }),
+      onValue: result => setLive(unwrap(result)),
+    });
   }, [token]);
   useEffect(() => { const element = sentinel.current; if (!element) return; const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting && hasMore && !loading && !loadingMore && !loadMoreError) void fetchFeed(false, cursor); }, { rootMargin: '500px' }); observer.observe(element); return () => observer.disconnect(); }, [cursor, fetchFeed, hasMore, loading, loadingMore, loadMoreError]);
 
@@ -210,7 +210,6 @@ export default function HomePage() {
       setItems(previous => previous.filter(entry => entry.id !== item.id));
       setStoryRefreshKey(key => key + 1);
       setLive(previous => previous.filter(stream => stream.id !== item.id));
-      setTrending(previous => previous.filter(entry => entry.id !== item.id));
       setDeletePostFor(undefined);
       toast.success(isVideoItem(item) ? 'Reel deleted' : 'Post deleted');
     } catch (reason: any) {
@@ -285,7 +284,6 @@ export default function HomePage() {
     pendingActionsRef.current.add(actionKey);
     const was = Boolean(profile.following || profile.isFollowing);
     const updateFollowing = (value: boolean) => {
-      setSuggested(previous => previous.map(entry => entry.id === profile.id ? { ...entry, following: value, isFollowing: value } : entry));
       setItems(previous => previous.map(entry => getAuthor(entry).id === profile.id ? { ...entry, following: value, isFollowing: value } : entry));
     };
     updateFollowing(!was);

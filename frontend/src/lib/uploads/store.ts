@@ -263,8 +263,14 @@ async function runUpload(
         if (!state || !Array.isArray(state.receivedIndexes)) {
           throw new Error('Could not verify the current upload session. Retry to resume your upload.');
         }
-        if (state.status && state.status !== 'ACTIVE' && state.status !== 'COMPLETE') {
+        if (state.status === 'FAILED' || state.status === 'CANCELLED') {
           job.sessionId = undefined;
+        } else if (state.status === 'FINALIZING') {
+          // The original provider write may still finish. Never start a new
+          // session while its outcome is unresolved.
+          throw new Error('Upload completion is still pending. Retry to check the same upload.');
+        } else if (state.status && state.status !== 'ACTIVE' && state.status !== 'COMPLETE') {
+          throw new Error('Upload session status could not be verified. Retry to check the same upload.');
         } else if (state.status === 'COMPLETE') {
           // Completion/finalization errors must NOT reset the persisted session.
           // A subsequent retry can safely recover the same uploaded file.
@@ -367,7 +373,7 @@ async function runUpload(
       } catch {
         // If offline, the user can still retry or dismiss the cancelled job.
       }
-      patchJob(job.id, { phase: 'cancelled', disabled: false });
+      patchJob(job.id, { phase: 'cancelled', sessionId: job.sessionId, disabled: false });
     } else {
       const message = error instanceof Error ? error.message : 'Upload failed unexpectedly';
       try {
@@ -466,8 +472,9 @@ export function retryUpload(job: UploadJob): void {
     return;
   }
 
-  // Cancelled sessions cannot be resumed; a failed session is probed first.
-  if (existing.phase === 'cancelled') job.sessionId = undefined;
+  // Even a local cancellation can race a server completion or lose its
+  // abort response. Only the server's confirmed terminal state permits reset.
+  job.sessionId = existing.sessionId ?? job.sessionId;
   patchJob(job.id, { phase: 'starting', progress: 0, bytesSent: 0, sessionId: job.sessionId, error: undefined, disabled: true });
   const controller = new AbortController();
   running.set(job.id, controller);

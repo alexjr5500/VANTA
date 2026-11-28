@@ -1,0 +1,12 @@
+{
+  "name": "vanta-offline-backup-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": "22.x"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1178.0",
+    "pg": "8.16.3"
+  }
+}

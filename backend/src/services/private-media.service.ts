@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import path from 'path';
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../prisma';
+import { isVerificationDocument } from './cloudinary-storage-config';
 
 type PrivateMediaClaims = { userId: string; fileId: string; scope: 'private-media' };
 function signingSecret(): string {
@@ -24,16 +25,23 @@ export async function privateMediaStaticGuard(req: Request, res: Response, next:
     const baseName = path.parse(filename).name.replace(/_(AVATAR|THUMBNAIL|SMALL|MEDIUM|LARGE|BANNER)$/i, '');
     const file = await prisma.uploadedFile.findFirst({
       where: {
-        OR: [
-          { filename },
-          ...(baseName ? [{ filename: { startsWith: `${baseName}.` } }] : []),
+        AND: [
+          { OR: [
+            { filename },
+            ...(baseName ? [{ filename: { startsWith: `${baseName}.` } }] : []),
+          ] },
+          { OR: [
+            { category: { in: ['message', 'verification', 'identity', 'kyc'], mode: 'insensitive' } },
+            { recordType: { equals: 'VerificationRequest', mode: 'insensitive' } },
+            { deletedAt: { not: null } },
+          ] },
         ],
       },
-      select: { id: true, category: true, deletedAt: true },
+      select: { id: true, category: true, recordType: true, deletedAt: true },
     });
     // Message media is private by design; moderated/deleted uploads must also
     // stop resolving through the public static path, including optimized URLs.
-    if (file?.category === 'message' || file?.deletedAt) {
+    if (file && (file.category.toLowerCase() === 'message' || isVerificationDocument(file.category, file.recordType) || file.deletedAt)) {
       res.status(404).json({ error: 'Not found' });
       return;
     }

@@ -54,6 +54,9 @@ jobs:
         env:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_test?schema=public
         run: npx prisma generate
+      - name: Verify bounded encrypted backup envelope
+        run: node --test backend/scripts/backup-envelope.test.mjs backend/scripts/backup-r2-multipart.test.mjs backend/scripts/backup-run-policy.test.mjs backend/scripts/backup-orchestrator.test.mjs backend/scripts/backup-operational-adapters.test.mjs backend/scripts/backup-offline-runner.test.mjs backend/scripts/backup-operations.test.mjs backend/scripts/backup-monitor.test.mjs backend/scripts/backup-remote-audit.test.mjs backend/scripts/backup-daily-window.test.mjs backend/scripts/backup-transfer-watch.test.mjs backend/scripts/backup-database-daily.test.mjs backend/scripts/backup-media-retention-alert.test.mjs
+
       - name: Run targeted backend security regression tests
         env:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_test?schema=public
@@ -75,7 +78,9 @@ jobs:
           src/__tests__/chat.service.test.ts
           src/__tests__/upload.service.test.ts
           src/__tests__/chunk-upload.service.test.ts
-          src/__tests__/wallet.transfer-security.test.ts
+          src/__tests__/reel-media-finalization.test.ts
+          src/__tests__/fcm-provider-modular.test.ts
+          src/__tests__/wallet.transfer-security.test.ts src/__tests__/security.two-factor-replay.test.ts
           src/__tests__/wallet.withdrawal.test.ts
           src/__tests__/wallet.reconciliation.test.ts
           src/__tests__/monetization.earnings-ledger.test.ts
@@ -90,6 +95,8 @@ jobs:
           src/__tests__/security.verification-admin-routes.test.ts
           src/__tests__/security.audit-log-hash.test.ts
           src/__tests__/wallet.service.test.ts
+          src/__tests__/wallet.coin-purchase.test.ts
+          src/__tests__/coin-purchase-no-bonus.test.ts
           src/__tests__/admin.finance-currency.test.ts
           src/__tests__/account-status.test.ts
           src/__tests__/call-session.service.test.ts
@@ -103,6 +110,7 @@ jobs:
           src/__tests__/group-ownership.test.ts
           src/__tests__/channel-ownership.test.ts src/__tests__/community-settings.test.ts src/__tests__/community-insights.test.ts
           src/__tests__/feed.moderation-guards.test.ts
+          src/__tests__/feed-read-optimization.test.ts
           src/__tests__/feed.video-publication.test.ts
           src/__tests__/replyAudience.test.ts
           src/__tests__/post.service.test.ts
@@ -178,8 +186,190 @@ jobs:
       - name: Run PostgreSQL integration and concurrency tests
         env:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
-        run: npm --prefix backend run test -- --runInBand src/__tests__/durable-queue.postgres.integration.test.ts
+          VANTA_CI_MAINTENANCE_DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
+          VANTA_CI_SHARDING_DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
+        run: npm --prefix backend run test -- --runInBand src/__tests__/durable-queue.postgres.integration.test.ts src/__tests__/database-replica.postgres.integration.test.ts src/__tests__/distributed-maintenance.postgres.integration.test.ts src/__tests__/sharding-assessment.postgres.integration.test.ts
+      - name: Verify withdrawal replay registry migration
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
+        run: node backend/scripts/verify-withdrawal-claim-migration.cjs
       - name: Verify approved gift catalog migration and historical records
         env:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
         run: node backend/scripts/verify-reference-gift-migration.cjs
+
+  durable-media:
+    name: Durable media handlers and real FFmpeg integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install backend dependencies
+        run: npm --prefix backend install
+      - name: Install FFmpeg for real video integration
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Verify FFmpeg exists
+        run: ffmpeg -version
+      - name: Verify Sharp native runtime loads
+        run: cd backend && node -e "const sharp = require('sharp'); console.log('Sharp', sharp.versions.sharp);"
+      - name: Run durable media and queue unit tests
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_test?schema=public
+        run: >
+          npm --prefix backend run test -- --runInBand
+          src/__tests__/media-hls.ffmpeg.integration.test.ts
+          src/__tests__/media-operations.test.ts
+          src/__tests__/media-thumbnail-job.test.ts
+          src/__tests__/media-storage-readiness.test.ts
+          src/__tests__/media-storage-audit.test.ts
+          src/__tests__/cloudinary-storage-config.test.ts
+          src/__tests__/cloudinary-media-job.test.ts
+          src/__tests__/cloudinary-hls-acceptance.test.ts
+          src/__tests__/cloudinary-media-producer.test.ts
+          src/__tests__/cloudinary-media-categories.test.ts
+          src/__tests__/durable-media-job-routing.test.ts
+          src/__tests__/reel-hls-mapping.test.ts
+          src/__tests__/storage-diagnostics.test.ts
+          src/__tests__/durable-media-handlers.test.ts
+          src/__tests__/durable-queue.repository.test.ts
+          src/__tests__/durable-worker-shutdown.test.ts
+          src/__tests__/durable-queue.health.test.ts
+          src/__tests__/durable-queue.alerts.test.ts
+          src/__tests__/durable-queue.worker.test.ts
+          src/__tests__/cache.local.test.ts
+          src/__tests__/database-pool-readiness.test.ts
+          src/__tests__/server-lifecycle.test.ts
+          src/__tests__/multi-replica-http.integration.test.ts
+          src/__tests__/realtime-presence.test.ts
+          src/__tests__/http-telemetry.test.ts
+          src/__tests__/dependency-telemetry.test.ts
+          src/__tests__/alert-delivery.test.ts
+
+  redis-cache:
+    name: Redis cache adapter integration
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install backend dependencies
+        run: npm --prefix backend install
+      - name: Run isolated Redis integration tests
+        env:
+          VANTA_REDIS_CACHE_ENABLED: "true"
+          REDIS_URL: redis://127.0.0.1:6379
+          VANTA_CI_REDIS_URL: redis://127.0.0.1:6379
+        run: npm --prefix backend run test -- --runInBand src/__tests__/cache.redis.integration.test.ts
+      - name: Verify shared cache behavior across independent clients
+        env:
+          VANTA_REDIS_CACHE_ENABLED: "true"
+          VANTA_REDIS_CACHE_SHARED_ONLY: "true"
+          REDIS_URL: redis://127.0.0.1:6379
+          VANTA_CI_REDIS_URL: redis://127.0.0.1:6379
+        run: npm --prefix backend run test -- --runInBand src/__tests__/cache.shared.redis.integration.test.ts
+      - name: Verify cross-server Socket.IO delivery
+        env:
+          VANTA_CI_REDIS_URL: redis://127.0.0.1:6379
+        run: npm --prefix backend run test -- --runInBand src/__tests__/realtime-redis.integration.test.ts
+
+  staging-load-harness:
+    name: Staging load harness safety tests (no external traffic)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test backend/scripts/staging-load-test.test.mjs backend/scripts/evaluate-performance.test.mjs backend/scripts/acceptance-preflight.test.mjs backend/scripts/acceptance-migrate.test.mjs backend/scripts/acceptance-provider-probe.test.mjs
+
+  database-streaming-replication:
+    name: Disposable PostgreSQL streaming replica and fenced failover
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm --prefix backend install
+      - name: Verify real streaming standby and fenced promotion
+        env:
+          VANTA_CI_DISPOSABLE_REPLICATION: "yes"
+        run: bash backend/scripts/ci-streaming-replication.sh
+
+  database-backup-restore:
+    name: Disposable VANTA schema backup and media restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm --prefix backend install
+      - name: Install age encryption tool
+        run: sudo apt-get update && sudo apt-get install -y age
+      - name: Rehearse encrypted media capture and restoration
+        env:
+          VANTA_CI_MEDIA_CAPTURE: "yes"
+        run: node --test backend/scripts/backup-media-retention-alert.test.mjs
+      - name: Verify streaming public-key backup encryption
+        run: bash backend/scripts/ci-backup-age.sh
+      - name: Verify hard encrypted capture byte limits and failure cleanup
+        run: node --test backend/scripts/backup-bounded-capture.test.mjs
+      - name: Exercise isolated database and media recovery
+        env:
+          VANTA_CI_DISPOSABLE_RESTORE: "yes"
+        run: bash backend/scripts/ci-backup-restore.sh
+
+  backup-runtime-lock:
+    name: Backup runtime dependency lock and image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check runtime dependency lock
+        run: |
+          test -f backend/backup-runtime/package-lock.json
+          npm --prefix backend/backup-runtime ci --omit=dev --ignore-scripts --no-audit --no-fund
+          npm --prefix backend/backup-runtime audit --omit=dev --audit-level=high
+          docker build -f backend/Dockerfile.backup -t vanta-backup-ci .
+          docker run --rm vanta-backup-ci node --version
+          docker run --rm vanta-backup-ci pg_dump --version
+          docker run --rm vanta-backup-ci age --version
+          if docker run --rm vanta-backup-ci; then
+            echo "Unapproved backup runner unexpectedly succeeded"
+            exit 1
+          fi
+
+  backup-maintenance-volume-rehearsal:
+    name: Disposable backup maintenance and volume rollback rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build isolated maintenance image
+        run: docker build -f backend/Dockerfile.backup -t vanta-maintenance-ci .
+      - name: Rehearse volume continuity and refusal without approval
+        run: bash backend/scripts/ci-backup-maintenance.sh
+
+      - name: Exercise online encrypted PostgreSQL 18 capture with restricted reader
+        run: bash backend/scripts/ci-backup-database-online.sh

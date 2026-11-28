@@ -40,6 +40,24 @@ describe('private message media access tokens', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  test.each(['verification', 'identity', 'KYC'])('blocks legacy %s documents from the public static path', async category => {
+    (prisma.uploadedFile.findFirst as jest.Mock).mockResolvedValue({ id: 'legacy-document', category, deletedAt: null });
+    const next = jest.fn();
+    const res = response();
+    await privateMediaStaticGuard({ path: '/synthetic.pdf' } as any, res, next);
+    expect(res.statusCode).toBe(404);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  test('blocks legacy verification record bindings even with a generic category', async () => {
+    (prisma.uploadedFile.findFirst as jest.Mock).mockResolvedValue({ id: 'legacy-document', category: 'generic', recordType: 'VerificationRequest', deletedAt: null });
+    const next = jest.fn();
+    const res = response();
+    await privateMediaStaticGuard({ path: '/synthetic.pdf' } as any, res, next);
+    expect(res.statusCode).toBe(404);
+    expect(next).not.toHaveBeenCalled();
+  });
+
   test('allows public media through the static path', async () => {
     (prisma.uploadedFile.findFirst as jest.Mock).mockResolvedValue(null);
     const next = jest.fn();

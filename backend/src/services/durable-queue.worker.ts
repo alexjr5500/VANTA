@@ -10,6 +10,7 @@ export interface DurableWorkerOptions {
   pollIntervalMs?: number;
   retryBaseMs?: number;
   retryMaxMs?: number;
+  excludedJobTypes?: readonly string[];
 }
 
 const sleep = (ms: number): Promise<void> =>
@@ -26,6 +27,7 @@ export class DurableQueueWorker {
   private readonly pollIntervalMs: number;
   private readonly retryBaseMs: number;
   private readonly retryMaxMs: number;
+  private readonly excludedJobTypes: readonly string[];
   private stopping = false;
   private started = false;
   private loops: Promise<void>[] = [];
@@ -41,6 +43,7 @@ export class DurableQueueWorker {
     this.pollIntervalMs = options.pollIntervalMs ?? 1_000;
     this.retryBaseMs = options.retryBaseMs ?? 1_000;
     this.retryMaxMs = options.retryMaxMs ?? 30_000;
+    this.excludedJobTypes = options.excludedJobTypes ?? [];
 
     if (!this.workerId.trim()) throw new Error('workerId is required');
     if (!Number.isInteger(this.concurrency) || this.concurrency < 1) throw new Error('concurrency must be a positive integer');
@@ -72,13 +75,15 @@ export class DurableQueueWorker {
     while (!this.stopping) {
       let job: DurableJob | null = null;
       try {
-        job = await this.repository.claim(this.workerId, this.leaseMs);
+        job = await this.repository.claim(this.workerId, this.leaseMs, this.excludedJobTypes);
       } catch (error) {
         console.error('[DurableQueueWorker] Claim failed:', error);
       }
 
-      if (this.stopping) break;
+      // A claim already in flight can succeed after stop() is called.
+      // Finish that leased job instead of wasting its attempt on shutdown.
       if (!job) {
+        if (this.stopping) break;
         await sleep(this.pollIntervalMs);
         continue;
       }
