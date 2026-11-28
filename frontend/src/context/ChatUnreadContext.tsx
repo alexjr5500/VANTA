@@ -24,11 +24,12 @@ const safeCount = (value: unknown) => Number.isFinite(Number(value)) ? Math.max(
  */
 export function ChatUnreadProvider({ children }: { children: React.ReactNode }) {
   const { token, user } = useAuth();
+  const userId = user?.id;
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const fetchingRef = useRef(false);
 
   const refreshChatUnread = useCallback(async () => {
-    if (!token || !user) { setChatUnreadCount(0); return; }
+    if (!token || !userId) { setChatUnreadCount(0); return; }
     if (fetchingRef.current) return;
     fetchingRef.current = true;
     try {
@@ -39,10 +40,10 @@ export function ChatUnreadProvider({ children }: { children: React.ReactNode }) 
     } finally {
       fetchingRef.current = false;
     }
-  }, [token, user]);
+  }, [token, userId]);
 
   useEffect(() => {
-    if (!token || !user) { setChatUnreadCount(0); return; }
+    if (!token || !userId) { setChatUnreadCount(0); return; }
     void refreshChatUnread();
     const onFocus = () => void refreshChatUnread();
     window.addEventListener('focus', onFocus);
@@ -64,7 +65,7 @@ export function ChatUnreadProvider({ children }: { children: React.ReactNode }) 
       socket.off('conversations:refresh', onAnyRefresh);
       socket.disconnect();
     };
-  }, [refreshChatUnread, token, user]);
+  }, [refreshChatUnread, token, userId]);
 
   const value = useMemo<ChatUnreadContextValue>(() => ({
     chatUnreadCount,
