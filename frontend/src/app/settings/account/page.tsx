@@ -11,8 +11,9 @@ import { useEffect, useState } from 'react';
 import {
   BadgeCheck,
   CreditCard,
+  Download,
+  UserMinus,
   KeyRound,
-  Link2,
   LogOut,
   Mail,
   Pencil,
@@ -93,7 +94,7 @@ export default function AccountSettingsPage() {
       <PageHeader
         sticky
         bleed
-        title="Account"
+        title="Your account"
         back="/settings"
       />
 
@@ -140,7 +141,7 @@ export default function AccountSettingsPage() {
             <SettingsLink
               href="/settings/security"
               icon={KeyRound}
-              title="Password & security"
+              title="Change your password"
               description="Update your password, sessions and login activity"
             />
           </SettingsGroup>
@@ -155,34 +156,9 @@ export default function AccountSettingsPage() {
             />
           </SettingsGroup>
 
-          {/* ── Connected accounts ── */}
-          <SettingsGroup
-            icon={Link2}
-            title="Connected Accounts"
-            description="Sign in faster with your other accounts"
-          >
-            <div className="flex min-h-14 items-center gap-3 px-3.5 py-2.5">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-white/[0.06] bg-white/[0.03] text-white/40">
-                <Link2 size={17} strokeWidth={1.9} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-white">Google</p>
-                <p className="mt-0.5 text-xs text-white/30">
-                  Coming soon
-                </p>
-              </div>
-            </div>
-            <div className="flex min-h-14 items-center gap-3 px-3.5 py-2.5">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border border-white/[0.06] bg-white/[0.03] text-white/40">
-                <Link2 size={17} strokeWidth={1.9} />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-white">Apple</p>
-                <p className="mt-0.5 text-xs text-white/30">
-                  Coming soon
-                </p>
-              </div>
-            </div>
+          <SettingsGroup icon={User} title="Your data and account">
+            <SettingsLink href="/settings/account/archive" icon={Download} title="Download an archive of your data" description="Request and download a copy of your VANTA data" />
+            <SettingsLink href="/settings/account/deactivate" icon={UserMinus} title="Deactivate your account" description="Temporarily disable your account" />
           </SettingsGroup>
 
           {/* ── Payments ── */}

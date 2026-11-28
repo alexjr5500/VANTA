@@ -51,7 +51,7 @@ export const getTrendingFeed = async (req: AuthRequest, res: Response): Promise<
   try {
     const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
     const limit = parseLimit(req.query.limit, 20);
-    const feed = await feedService.getTrendingFeed(cursor, limit);
+    const feed = await feedService.getTrendingFeed(cursor, limit, req.user?.userId);
     res.status(200).json(feed);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
@@ -63,7 +63,7 @@ export const getExploreFeed = async (req: AuthRequest, res: Response): Promise<v
   try {
     const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
     const limit = parseLimit(req.query.limit, 30);
-    const feed = await feedService.getExploreFeed(cursor, limit);
+    const feed = await feedService.getExploreFeed(cursor, limit, req.user?.userId);
     res.status(200).json(feed);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";

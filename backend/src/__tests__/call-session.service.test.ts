@@ -12,6 +12,7 @@ jest.mock("../prisma", () => ({
     follow: { findUnique: jest.fn() },
     callSession: {
       findUnique: jest.fn(),
+      findMany: jest.fn(),
       upsert: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn(),
@@ -45,6 +46,22 @@ describe("CallSessionService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (prisma.userSettings.findUnique as jest.Mock).mockResolvedValue({ callPermissions: "everyone", privacyCalls: "everyone" });
+  });
+
+  test("history scopes calls to the authenticated participant and excludes signaling data", async () => {
+    (prisma.callSession.findMany as jest.Mock).mockResolvedValue([ring({
+      caller: { username: "alice" }, callee: { username: "bob" },
+      status: "ENDED", answeredAt: new Date(1000), endedAt: new Date(11000),
+    })]);
+    const history = await service.getRecentHistory("alice");
+    expect(prisma.callSession.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { OR: [{ callerId: "alice" }, { calleeId: "alice" }] }, take: 50,
+    }));
+    const select = (prisma.callSession.findMany as jest.Mock).mock.calls[0][0].select;
+    expect(select.offerSdp).toBeUndefined();
+    expect(select.iceCandidates).toBeUndefined();
+    expect(history[0]).toMatchObject({ username: "bob", direction: "outgoing", durationSeconds: 10 });
+    expect(history[0]).not.toHaveProperty("offerSdp");
   });
 
   test("startCall persists a RINGING session with an expiry", async () => {

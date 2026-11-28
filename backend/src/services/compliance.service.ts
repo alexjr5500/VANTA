@@ -60,12 +60,13 @@ class ComplianceService {
     for (const key of this.privacyVisibilityKeys) {
       const value = data[key];
       if (value === undefined) continue;
-      if (typeof value !== 'string' || !['everyone', 'followers', 'nobody'].includes(value)) throw new Error(`Invalid privacy value for ${key}.`);
+      if (typeof value !== 'string' || !['everyone', 'followers', 'nobody', ...(key === 'messagePermissions' ? ['following'] : [])].includes(value)) throw new Error(`Invalid privacy value for ${key}.`);
       updates[key === 'readReceipts' ? 'privacyReadReceipts' : key] = value;
+      if (key === 'readReceipts') updates.readReceipts = value !== 'nobody';
       // Chat creation still enforces the legacy privacyMessages field. Map
       // the new Privacy Center values to that established contract.
       if (key === 'messagePermissions') {
-        updates.privacyMessages = value === 'nobody' ? 'noone' : value === 'followers' ? 'followers' : 'everyone';
+        updates.privacyMessages = value === 'nobody' ? 'noone' : value;
       }
       if (key === 'callPermissions') {
         updates.privacyCalls = value === 'nobody' ? 'noone' : value === 'followers' ? 'following' : 'everyone';

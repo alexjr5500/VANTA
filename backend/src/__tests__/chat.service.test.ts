@@ -56,6 +56,15 @@ describe('ChatService security and persistence', () => {
     expect(result.messages[0].attachments[0].url).toBe('/api/media/private/private-file-1?token=test-token');
   });
 
+  it('omits expired replies and excludes old messages from history queries', async () => {
+    (db.conversation.findUnique as jest.Mock).mockResolvedValue({ id: 'conversation', permissions: JSON.stringify({autoDeleteSeconds: 3600}), participants: [{userId:'reader'}] });
+    (db.message.findMany as jest.Mock).mockResolvedValue([{id:'fresh',createdAt:new Date(),senderId:'sender',reads:[],attachments:[],replyTo:{id:'old',createdAt:new Date(Date.now()-7200000),content:'expired',attachments:[]}}]);
+    (db.uploadedFile.findMany as jest.Mock).mockResolvedValue([]);
+    const result=await service.getMessages('conversation','reader');
+    expect(result.messages[0].replyTo).toBeNull();
+    expect(db.message.findMany).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({createdAt:{gte:expect.any(Date)}})}));
+  });
+
   it('sanitizes content and persists attachment metadata', async () => {
     (db.conversation.findUnique as jest.Mock).mockResolvedValue({ id: 'conversation', participants: [{ userId: 'sender' }] });
     (db.uploadedFile.findMany as jest.Mock).mockResolvedValue([{
@@ -70,7 +79,7 @@ describe('ChatService security and persistence', () => {
       content: 'hello', type: 'IMAGE', attachments: { create: [{ url: 'https://cdn.test/photo.jpg', fileType: 'IMAGE', fileName: 'photo.jpg', fileSize: 42 }] },
     }) }));
     expect(db.uploadedFile.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ['file'] }, userId: 'sender' },
+      where: { id: { in: ['file'] }, userId: 'sender', category: 'message', recordType: 'Conversation', recordId: 'conversation', deletedAt: null },
       data: { recordType: 'Message', recordId: 'message' },
     });
   });
@@ -86,7 +95,7 @@ describe('ChatService security and persistence', () => {
     await service.sendMessage('conversation', 'sender', 'I will be there.', 'TEXT', [], 'other-message');
 
     expect(db.message.findFirst).toHaveBeenCalledWith({
-      where: { id: 'other-message', conversationId: 'conversation', moderationRemovedAt: null, deletedAt: null },
+      where: { id: 'other-message', conversationId: 'conversation', moderationRemovedAt: null, deletedAt: null, OR: [{ deletedFor: null }, { deletedFor: { not: 'sender' } }] },
       select: { id: true },
     });
     expect(db.message.create).toHaveBeenCalledWith(expect.objectContaining({
@@ -104,6 +113,7 @@ describe('ChatService security and persistence', () => {
       { id: 'f3', userId: 'sender', url: 'https://cdn/c.mp4', fileType: 'VIDEO', originalName: 'c.mp4', size: 33 },
     ];
     (db.uploadedFile.findMany as jest.Mock).mockResolvedValue(files);
+    (db.uploadedFile.updateMany as jest.Mock).mockResolvedValue({count: files.length});
     (db.message.create as jest.Mock).mockImplementation(({ data }: any) => Promise.resolve({ id: 'msg-1', ...data }));
     (db.conversation.update as jest.Mock).mockResolvedValue({});
 
@@ -128,6 +138,15 @@ describe('ChatService security and persistence', () => {
     expect(db.conversation.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'conversation' }, data: expect.objectContaining({ updatedAt: expect.any(Date) }) })
     );
+  });
+
+  it('rejects a message when a competing send has already bound its attachment', async () => {
+    (db.conversation.findUnique as jest.Mock).mockResolvedValue({id:'conversation',type:'GROUP',participants:[{userId:'sender',role:'MEMBER'}]});
+    (db.uploadedFile.findMany as jest.Mock).mockResolvedValue([{id:'file',userId:'sender',url:'https://cdn/a.jpg',fileType:'IMAGE',originalName:'a.jpg',size:11}]);
+    (db.message.create as jest.Mock).mockImplementation(({data}:any)=>Promise.resolve({id:'new-message',...data}));
+    (db.uploadedFile.updateMany as jest.Mock).mockResolvedValue({count:0});
+    await expect(service.sendMessage('conversation','sender','photo','IMAGE',[{fileId:'file'}])).rejects.toThrow('Attachment already used or no longer available');
+    expect(db.conversation.update).not.toHaveBeenCalled();
   });
 
   it('rejects a reply target from another conversation', async () => {
@@ -428,7 +447,7 @@ describe('ChatService conversation list batching', () => {
     expect(db.message.groupBy).toHaveBeenCalledTimes(1);
     expect(db.message.groupBy).toHaveBeenCalledWith(expect.objectContaining({
       where: { conversationId: { in: ['c1', 'c2'] }, deletedAt: null, moderationRemovedAt: null,
-        senderId: { not: 'viewer' }, reads: { none: { userId: 'viewer' } } },
+        OR: [{ deletedFor: null }, { deletedFor: { not: 'viewer' } }], senderId: { not: 'viewer' }, reads: { none: { userId: 'viewer' } } },
     }));
     expect(db.follow.findMany).toHaveBeenCalledTimes(1);
     expect(db.userSettings.findMany).toHaveBeenCalledTimes(1);

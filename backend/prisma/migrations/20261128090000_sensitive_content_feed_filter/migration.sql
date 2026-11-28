@@ -1,0 +1,3 @@
+ALTER TABLE "Post" ADD COLUMN "sensitiveContent" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Video" ADD COLUMN "sensitiveContent" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "UserSettings" ADD COLUMN "hideSensitiveContent" BOOLEAN NOT NULL DEFAULT true;

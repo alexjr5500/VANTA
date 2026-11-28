@@ -96,6 +96,8 @@ function appOrigin() {
 function buildTargetUrl(data) {
   var origin = appOrigin();
   if (!data) return origin + '/notifications';
+  if (data.type === 'chat_request' || data.entityType === 'chat_request') return origin + '/chat/requests';
+  if (data.type === 'delegation_invite' || data.entityType === 'account_delegation') return origin + '/settings/security/delegation';
   if (data.conversationId) return origin + '/chat?conversation=' + encodeURIComponent(data.conversationId);
   if (data.streamId) return origin + '/live/' + encodeURIComponent(data.streamId);
   if (data.reelId || data.videoId) return origin + '/reels/' + encodeURIComponent(data.reelId || data.videoId);

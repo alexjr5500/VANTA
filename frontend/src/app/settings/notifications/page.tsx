@@ -26,6 +26,7 @@ import { usePush } from '@/context/PushContext';
 import { useToast } from '@/components/ui/Toast';
 import {
   SettingsGroup,
+  SettingsLink,
   ToggleRow,
 } from '@/components/settings/SettingsUI';
 
@@ -44,6 +45,9 @@ interface BackendPrefs {
   groupAlerts: boolean;
   channelAlerts: boolean;
   liveInteractionsAlerts: boolean;
+  followingOnlySocialAlerts: boolean;
+  chatRequestAlerts: boolean;
+  muteSocialAlerts: boolean;
 }
 
 const BACKEND_DEFAULTS: BackendPrefs = {
@@ -58,6 +62,9 @@ const BACKEND_DEFAULTS: BackendPrefs = {
   groupAlerts: true,
   channelAlerts: true,
   liveInteractionsAlerts: true,
+  followingOnlySocialAlerts: false,
+  chatRequestAlerts: true,
+  muteSocialAlerts: false,
 };
 
 type BackendKey = keyof BackendPrefs;
@@ -71,6 +78,8 @@ export default function NotificationSettingsPage() {
   const [loadError, setLoadError] = useState(false);
   const [savedKey, setSavedKey] = useState<string | null>(null);
 
+  const pendingKeys = useRef(new Set<BackendKey>());
+  const [saving, setSaving] = useState<BackendKey[]>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flagSaved = (key: string) => {
@@ -87,9 +96,10 @@ export default function NotificationSettingsPage() {
   );
 
   useEffect(() => {
+    setLoading(true); setLoadError(false); setBackend(BACKEND_DEFAULTS);
     if (!token) return;
     let cancel = false;
-    apiGet<any>('/api/settings/notifications', token)
+    apiGet<BackendPrefs>('/api/settings/notifications', token, { skipCache: true })
       .then((data) => {
         if (cancel) return;
         setBackend({ ...BACKEND_DEFAULTS, ...(data || {}) });
@@ -106,21 +116,20 @@ export default function NotificationSettingsPage() {
   }, [token]);
 
   /* Toggle a backend-persisted channel (immediate update + debounced PUT) */
-  const toggleBackend = (key: BackendKey, value: boolean) => {
-    if (!token) return;
-    const next = { ...backend, [key]: value };
-    setBackend(next);
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        await apiPut('/api/settings/notifications', { [key]: value }, token);
-        flagSaved(key);
-      } catch {
-        // Revert the UI to the actual saved value on failure.
-        setBackend((prev) => ({ ...prev, [key]: !value }));
-        toast.error('Could not save', 'Please try again.');
-      }
-    }, 320);
+  const toggleBackend = async (key: BackendKey, value: boolean) => {
+    if (!token || loadError || pendingKeys.current.has(key)) return;
+    pendingKeys.current.add(key);
+    setSaving((prev) => [...prev, key]);
+    try {
+      await apiPut('/api/settings/notifications', { [key]: value }, token);
+      setBackend((prev) => ({ ...prev, [key]: value }));
+      flagSaved(key);
+    } catch {
+      toast.error('Could not save', 'Please try again.');
+    } finally {
+      pendingKeys.current.delete(key);
+      setSaving((prev) => prev.filter((item) => item !== key));
+    }
   };
 
   const paused = !backend.pushAlerts;
@@ -130,8 +139,8 @@ export default function NotificationSettingsPage() {
   const pushDescription =
     push.status === 'unsupported' || !push.supported
       ? (typeof navigator !== 'undefined' && /VANTAAndroid/i.test(navigator.userAgent)
-          ? "Native Android notifications aren't connected yet. This app runs inside WebView, which cannot use the browser Web Push setup. VANTA needs Firebase Cloud Messaging (FCM) integration for Android OS notifications."
-          : "OS notifications aren't available in this browser context. Open VANTA in a supported browser, or use the native app once Android push is connected.")
+          ? "Native notification registration is not available in this session. Check Android notification permission and reopen the app."
+          : "OS notifications aren't available in this browser context. Try a supported browser or the VANTA Android app.")
       : push.status === 'unconfigured'
         ? "Push notifications aren't set up on the VANTA server yet. Your browser and app are working — this just needs the server's push keys configured once."
         : push.status === 'network-error'
@@ -193,18 +202,18 @@ export default function NotificationSettingsPage() {
           >
             <ToggleRow
               icon={BellRing}
-              title="Allow Notifications"
-              description="Receive push notifications for your activity."
+              title="Social and general alerts"
+              description="Controls device push delivery and new social/general activity notifications. Chat and live in-app preferences are separate."
               checked={backend.pushAlerts}
               onChange={(v) => toggleBackend('pushAlerts', v)}
+              disabled={loadError || saving.includes('pushAlerts')}
               saved={savedKey === 'pushAlerts'}
             />
             {paused && (
               <div className="flex items-center gap-2.5 bg-[var(--settings-accent-softer)] px-4 py-3">
                 <Info size={13} className="shrink-0 text-[var(--settings-accent-text)]" aria-hidden="true" />
                 <p className="text-xs leading-relaxed text-white/40">
-                  Notifications are paused. Turn on Allow Notifications to
-                  manage the categories below.
+                  Social alerts are paused. Chat and live categories have their own controls.
                 </p>
               </div>
             )}
@@ -233,14 +242,24 @@ export default function NotificationSettingsPage() {
             <ToggleRow
               icon={Mail}
               title="Email Notifications"
-              description="Get email updates for messages and activity you miss."
+              description="Save your email notification preference. Security and transactional emails are separate."
               checked={backend.emailAlerts}
               onChange={(v) => toggleBackend('emailAlerts', v)}
+              disabled={loadError || saving.includes('emailAlerts')}
               saved={savedKey === 'emailAlerts'}
             />
           </SettingsGroup>
 
           {/* â”€â”€ Social Activity â”€â”€ */}
+          <SettingsGroup title="Filters" description="Control new social notifications">
+            <ToggleRow icon={UserPlus} title="Only accounts you follow" description="Only receive new likes, comments, mentions and follower notifications from accounts you follow. Does not affect chats, payments or security alerts."
+              checked={backend.followingOnlySocialAlerts}
+              onChange={(value) => toggleBackend('followingOnlySocialAlerts', value)}
+              disabled={loadError || saving.includes('followingOnlySocialAlerts')}
+              saved={savedKey === 'followingOnlySocialAlerts'} />
+            <ToggleRow icon={UserPlus} title="Mute social alerts from muted accounts" description="Suppress new likes, follows, comments and mentions from muted accounts. Chats and financial alerts are unaffected." checked={backend.muteSocialAlerts} disabled={loadError || saving.includes('muteSocialAlerts')} onChange={value => void toggleBackend('muteSocialAlerts',value)} />
+            <SettingsLink href="/settings/privacy" title="Mute and block accounts" description="Manage accounts you have muted or blocked" />
+          </SettingsGroup>
           <SettingsGroup
             icon={Heart}
             title="Social Activity"
@@ -252,7 +271,7 @@ export default function NotificationSettingsPage() {
               description="When someone likes or reacts to your content."
               checked={backend.likesAlerts}
               onChange={(v) => toggleBackend('likesAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('likesAlerts')}
               saved={savedKey === 'likesAlerts'}
             />
             <ToggleRow
@@ -261,7 +280,7 @@ export default function NotificationSettingsPage() {
               description="When someone comments on your posts."
               checked={backend.commentsAlerts}
               onChange={(v) => toggleBackend('commentsAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('commentsAlerts')}
               saved={savedKey === 'commentsAlerts'}
             />
             <ToggleRow
@@ -270,7 +289,7 @@ export default function NotificationSettingsPage() {
               description="When someone mentions you."
               checked={backend.mentionsAlerts}
               onChange={(v) => toggleBackend('mentionsAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('mentionsAlerts')}
               saved={savedKey === 'mentionsAlerts'}
             />
             <ToggleRow
@@ -279,7 +298,7 @@ export default function NotificationSettingsPage() {
               description="When someone follows you."
               checked={backend.followersAlerts}
               onChange={(v) => toggleBackend('followersAlerts', v)}
-              disabled={paused}
+              disabled={paused || loadError || saving.includes('followersAlerts')}
               saved={savedKey === 'followersAlerts'}
             />
           </SettingsGroup>
@@ -295,16 +314,17 @@ export default function NotificationSettingsPage() {
               description="When someone sends you a message."
               checked={backend.chatAlerts}
               onChange={(v) => toggleBackend('chatAlerts', v)}
-              disabled={paused}
+              disabled={loadError || saving.includes('chatAlerts')}
               saved={savedKey === 'chatAlerts'}
             />
+            <ToggleRow icon={MessageSquare} title="Message request alerts" description="Notify me about new contact requests and acceptances." checked={backend.chatRequestAlerts} disabled={!backend.chatAlerts || loadError || saving.includes('chatRequestAlerts')} onChange={value => void toggleBackend('chatRequestAlerts',value)} />
             <ToggleRow
               icon={UserPlus}
               title="Group Messages"
               description="Notifications from groups you're a member of."
               checked={backend.groupAlerts}
               onChange={(v) => toggleBackend('groupAlerts', v)}
-              disabled={paused}
+              disabled={!backend.chatAlerts || loadError || saving.includes('groupAlerts')}
               saved={savedKey === 'groupAlerts'}
             />
             <ToggleRow
@@ -313,7 +333,7 @@ export default function NotificationSettingsPage() {
               description="Notifications from channels you follow."
               checked={backend.channelAlerts}
               onChange={(v) => toggleBackend('channelAlerts', v)}
-              disabled={paused}
+              disabled={!backend.chatAlerts || loadError || saving.includes('channelAlerts')}
               saved={savedKey === 'channelAlerts'}
             />
           </SettingsGroup>
@@ -326,7 +346,7 @@ export default function NotificationSettingsPage() {
               description="When creators you follow go live."
               checked={backend.liveAlerts}
               onChange={(v) => toggleBackend('liveAlerts', v)}
-              disabled={paused}
+              disabled={loadError || saving.includes('liveAlerts')}
               saved={savedKey === 'liveAlerts'}
             />
             <ToggleRow
@@ -335,7 +355,7 @@ export default function NotificationSettingsPage() {
               description="Important interactions involving your live streams."
               checked={backend.liveInteractionsAlerts}
               onChange={(v) => toggleBackend('liveInteractionsAlerts', v)}
-              disabled={paused}
+              disabled={!backend.liveAlerts || loadError || saving.includes('liveInteractionsAlerts')}
               saved={savedKey === 'liveInteractionsAlerts'}
             />
           </SettingsGroup>

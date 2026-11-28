@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getConversations, getMessages, startConversation, sendMessage, markMessagesRead, searchMessages, editMessage, deleteMessage, getUnreadCount, reactToMessage, setMessagePinned, setConversationMuted, recordCallMessage, voteOnPoll } from '../controllers/message.controller';
 import { authenticateJWT } from '../middleware/auth.middleware';
 import { rateLimiter } from '../security/rateLimiter';
+import { chatContactRoutes } from './chat-contact.routes';
 
 const router = Router();
 
@@ -9,6 +10,7 @@ router.use(authenticateJWT);
 // Authenticate first so messaging rate limits are keyed to the real user, not a shared 'unknown' key.
 router.use(rateLimiter.messaging);
 
+router.use(chatContactRoutes);
 router.get('/', getConversations);
 router.get('/unread/count', getUnreadCount);
 router.post('/start', startConversation);

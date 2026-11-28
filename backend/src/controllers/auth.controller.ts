@@ -327,7 +327,7 @@ export const completeLogin2FA = async (req: Request, res: Response): Promise<voi
 
     const user = await prisma.user.findUnique({
       where: { id: challenge.userId },
-      select: { id: true, email: true, username: true, fullName: true, role: true, status: true, twoFactorEnabled: true, emailVerified: true, lockedUntil: true },
+      select: { id: true, email: true, username: true, fullName: true, role: true, status: true, twoFactorEnabled: true, twoFactorSecret: true, emailVerified: true, lockedUntil: true },
     });
 
     if (!user) {
@@ -364,7 +364,7 @@ export const completeLogin2FA = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const result = await twoFactorAuth.verifyLogin(user.id, token.trim());
+    const result = await twoFactorAuth.verifyLogin(user.id, token.trim(), true, user.twoFactorSecret);
     if (!result.valid) {
       res.status(401).json({ error: 'Invalid verification code' });
       return;
@@ -772,7 +772,8 @@ export const setup2FA = async (req: AuthenticatedRequest, res: Response): Promis
     const user = await prisma.user.findUnique({ where: { id: req.user.userId }, select: { email: true } });
     if (!user) { res.status(404).json({ error: 'User not found' }); return; }
     const result = await twoFactorAuth.setup(req.user.userId, user.email!);
-    res.status(200).json({ secret: result.secret, qrCodeUrl: result.qrCodeUrl, backupCodes: result.backupCodes });
+    res.set('Cache-Control', 'private, no-store');
+    res.status(200).json({ secret: result.secret, qrCodeUrl: result.qrCodeUrl, qrCodeImage: result.qrCodeImage, backupCodes: result.backupCodes });
   } catch (error) {
     res.status(400).json({ error: 'Failed to setup 2FA' });
   }
@@ -798,7 +799,7 @@ export const verify2FA = async (req: AuthenticatedRequest, res: Response): Promi
   try {
     if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
     const { token } = req.body;
-    const result = await twoFactorAuth.verifyLogin(req.user.userId, token);
+    const result = await twoFactorAuth.verifyLogin(req.user.userId, token, true);
     if (result.valid) {
       res.status(200).json({ verified: true, isBackupCode: result.isBackupCode, remainingBackupCodes: result.remainingBackupCodes });
     } else {
@@ -831,6 +832,7 @@ export const get2FAStatus = async (req: AuthenticatedRequest, res: Response): Pr
   try {
     if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
     const user = await prisma.user.findUnique({ where: { id: req.user.userId }, select: { twoFactorEnabled: true } });
+    res.set('Cache-Control','private, no-store');
     res.status(200).json({ enabled: user?.twoFactorEnabled || false });
   } catch (error) {
     res.status(400).json({ error: 'Failed to get 2FA status' });
@@ -841,6 +843,7 @@ export const getBackupCodes = async (req: AuthenticatedRequest, res: Response): 
   try {
     if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
     const count = await twoFactorAuth.getRemainingBackupCodes(req.user.userId);
+    res.set('Cache-Control','private, no-store');
     res.status(200).json({ remainingCodes: count });
   } catch (error) {
     res.status(400).json({ error: 'Failed to get backup codes' });
@@ -850,7 +853,8 @@ export const getBackupCodes = async (req: AuthenticatedRequest, res: Response): 
 export const regenerateBackupCodes = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
-    const codes = await twoFactorAuth.regenerateBackupCodes(req.user.userId);
+    const codes = await twoFactorAuth.regenerateBackupCodes(req.user.userId, req.body?.token);
+    res.set('Cache-Control', 'private, no-store');
     res.status(200).json({ backupCodes: codes });
   } catch (error) {
     res.status(400).json({ error: 'Failed to regenerate backup codes' });

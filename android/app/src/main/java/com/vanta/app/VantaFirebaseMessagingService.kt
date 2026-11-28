@@ -28,7 +28,11 @@ class VantaFirebaseMessagingService : FirebaseMessagingService() {
         val body = message.notification?.body
             ?: message.data["body"]
             ?: "You have a new notification."
-        val route = message.data["route"] ?: message.data["url"] ?: "/notifications"
+        val route = when (message.data["type"]) {
+            "chat_request" -> "/chat/requests"
+            "delegation_invite" -> "/settings/security/delegation"
+            else -> message.data["route"] ?: message.data["url"] ?: "/notifications"
+        }
 
         createNotificationChannel()
         val intent = Intent(this, MainActivity::class.java).apply {

@@ -36,6 +36,8 @@ const PUSHABLE_TYPES = new Set([
   "comment",
   "mention",
   "message",
+  "chat_request",
+  "delegation_invite",
   "group",
   "channel",
   "live",
@@ -251,6 +253,7 @@ async sendToToken(
     try {
       const type = normalizeType(notification.type);
       if (!PUSHABLE_TYPES.has(type)) return []; // e.g. live_interaction noise
+      if (!(await this.pushEnabledForUser(notification.userId))) return [];
       const data = parseMetadata(notification.data || null);
 
       return await this.sendToUser(notification.userId, {

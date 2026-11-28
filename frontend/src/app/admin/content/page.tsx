@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import GlassCard from '@/components/ui/GlassCard';
 import Button from '@/components/ui/Button';
-import { getContentItems, reviewContentItem } from '@/lib/adminApi';
+import { getContentItems, reviewContentItem, setContentSensitivity } from '@/lib/adminApi';
 
 interface QueueItem {
   id: string;
@@ -101,6 +101,19 @@ export default function ContentPage() {
     }
   };
 
+  const [labelType,setLabelType]=useState<'post'|'reel'>('post');
+  const [labelId,setLabelId]=useState('');
+  const [labelReason,setLabelReason]=useState('');
+  const [labelBusy,setLabelBusy]=useState(false);
+  const changeLabel=async(sensitive:boolean)=>{
+    const token=localStorage.getItem('vanta_token')||localStorage.getItem('token');
+    if(!token||!labelId.trim()||!labelReason.trim()||labelBusy)return;
+    if(!window.confirm(sensitive?'Label this allowed content as sensitive? Prohibited material must be removed instead.':'Remove the sensitive-content label?'))return;
+    setLabelBusy(true);setNotice(null);
+    try{await setContentSensitivity(token,labelType,labelId.trim(),sensitive,labelReason.trim());setNotice(sensitive?'Sensitive label applied.':'Sensitive label removed.');setLabelReason('');}
+    catch(error){setNotice('Action failed: '+(error instanceof Error?error.message:'please retry'));}
+    finally{setLabelBusy(false);}
+  };
   const typeIcon = (type: string) => {
     const t = (type || '').toLowerCase();
     if (t.includes('video') || t.includes('short') || t.includes('reel')) return <Video size={14} />;
@@ -129,6 +142,16 @@ export default function ContentPage() {
         </div>
       )}
 
+      <GlassCard>
+        <h3 className="text-sm font-bold mb-3">Sensitive-content labels</h3>
+        <p className="text-xs opacity-75 mb-3">For permitted but sensitive posts and reels. Labels affect feeds; remove prohibited content through moderation instead.</p>
+        <div className="grid gap-3">
+          <select aria-label="Content type" value={labelType} onChange={event=>setLabelType(event.target.value as 'post'|'reel')} className="settings-input"><option value="post">Post</option><option value="reel">Reel</option></select>
+          <input aria-label="Content ID" value={labelId} onChange={event=>setLabelId(event.target.value)} placeholder="Content ID from moderation queue" className="settings-input" />
+          <input aria-label="Reason" maxLength={500} value={labelReason} onChange={event=>setLabelReason(event.target.value)} placeholder="Moderation reason" className="settings-input" />
+          <div className="flex flex-wrap gap-2"><Button size="sm" disabled={labelBusy||!labelId.trim()||!labelReason.trim()} onClick={()=>void changeLabel(true)}>Mark sensitive</Button><Button variant="ghost" size="sm" disabled={labelBusy||!labelId.trim()||!labelReason.trim()} onClick={()=>void changeLabel(false)}>Remove label</Button></div>
+        </div>
+      </GlassCard>
       {/* Totals */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <CountCard label="Posts" value={counts?.posts ?? 0} icon={<FileText size={16} />} cls="bg-[#d9a83f]/15 text-[#d9a83f]" />

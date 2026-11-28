@@ -340,6 +340,9 @@ export const getContentItems = (token: string): Promise<any> => {
   return apiGet<any>('/api/admin/content', token);
 };
 
+export const setContentSensitivity = (token: string, targetType: 'post' | 'reel', targetId: string, sensitive: boolean, reason: string): Promise<unknown> =>
+  apiPost('/api/admin/content/sensitivity', { targetType, targetId, sensitive, reason }, token);
+
 export const reviewContentItem = (token: string, queueId: string, action: 'APPROVED' | 'REMOVED', reason?: string): Promise<any> => {
   return apiPost<any>(`/api/admin/content/${queueId}/review`, { action, reason }, token);
 };
