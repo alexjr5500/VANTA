@@ -10,10 +10,11 @@ export function isReelDoubleTap(first: ReelTap | null, second: ReelTap): boolean
   return !!first && second.at >= first.at && second.at - first.at <= REEL_TAP_WINDOW_MS &&
     Math.hypot(second.x - first.x, second.y - first.y) <= 48;
 }
-export function reelPreload(index: number, active: number, lowerData: boolean): 'auto' | 'metadata' | null {
+export function reelPreload(index: number, active: number, lowerData: boolean, visible = true, activePlaying = true): 'auto' | 'metadata' | null {
+  if (!visible) return null;
   if (index === active) return 'auto';
-  if (Math.abs(index - active) !== 1) return null;
-  return !lowerData && index === active + 1 ? 'auto' : 'metadata';
+  if (lowerData || index !== active + 1 || !activePlaying) return null;
+  return 'metadata';
 }
 export function reelIndexAtScroll(scrollTop: number, pageHeight: number, count: number): number {
   if (!count || !Number.isFinite(pageHeight) || pageHeight <= 0 || !Number.isFinite(scrollTop)) return 0;

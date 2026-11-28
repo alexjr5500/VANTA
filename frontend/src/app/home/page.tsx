@@ -90,8 +90,6 @@ export default function HomePage() {
   const [tab, setTab] = useState<FeedTab>('forYou');
   const [items, setItems] = useState<Item[]>([]);
   const [live, setLive] = useState<Item[]>([]);
-  const [trending, setTrending] = useState<Item[]>([]);
-  const [suggested, setSuggested] = useState<Item[]>([]);
   const [storyRefreshKey, setStoryRefreshKey] = useState(0);
   // Per-session feed seed. A stable seed keeps pagination consistent within a
   // visit; a refresh generates a NEW seed so the discovery content reorders.
@@ -116,9 +114,13 @@ export default function HomePage() {
   const sentinel = useRef<HTMLDivElement>(null);
   const pageScrollRef = useRef<HTMLDivElement>(null);
   const pendingActionsRef = useRef(new Set<string>());
+  const feedRequest = useRef(0);
+  const feedBusy = useRef(false);
 
   const fetchFeed = useCallback(async (reset = true, requestedCursor?: string, nextSeed?: string) => {
-    if (!token) return;
+    if (!token || (!reset && feedBusy.current)) return;
+    const request = ++feedRequest.current;
+    feedBusy.current = true;
     reset ? setLoading(true) : setLoadingMore(true);
     if (reset) { setError(''); setLoadMoreError(false); }
     else setLoadMoreError(false);
@@ -130,12 +132,17 @@ export default function HomePage() {
       if (tab !== 'following') query.set('seed', seedToUse);
       const endpoint = tab === 'following' ? '/api/feed' : '/api/feed/home';
       const data = await apiGet<any>(`${endpoint}?${query}`, token, { skipCache: reset });
+      if (request !== feedRequest.current) return;
       const next: Item[] = unwrap(data).map((item): Item => ({ ...item, liked: typeof item.liked === 'boolean' ? item.liked : typeof item.isLiked === 'boolean' ? item.isLiked : false, likes: item.likes ?? item.likesCount ?? item._count?.likes ?? 0 }));
-      setItems(previous => reset ? next : [...previous, ...next.filter(item => !previous.some(existing => existing.id === item.id))]);
+      setItems(previous => {
+        if (reset) return next;
+        const ids = new Set(previous.map(item => item.id));
+        return [...previous, ...next.filter(item => { if (ids.has(item.id)) return false; ids.add(item.id); return true; })];
+      });
       setCursor(data?.nextCursor);
       setHasMore(Boolean(data?.nextCursor));
-    } catch { if (reset) setError("Couldn't load your feed."); else setLoadMoreError(true); }
-    finally { setLoading(false); setLoadingMore(false); }
+    } catch { if (request === feedRequest.current) { if (reset) setError("Couldn't load your feed."); else setLoadMoreError(true); } }
+    finally { if (request === feedRequest.current) { feedBusy.current = false; setLoading(false); setLoadingMore(false); } }
   }, [token, tab]);
 
   // Explicit refresh: start a NEW feed session (new seed) so the discovery
@@ -149,15 +156,13 @@ export default function HomePage() {
     await fetchFeed(true, undefined, nextSeed);
   }, [fetchFeed]);
 
-  useEffect(() => { setCursor(undefined); setHasMore(true); void fetchFeed(true); }, [fetchFeed]);
+  useEffect(() => {
+    setItems([]); setCursor(undefined); setHasMore(true); void fetchFeed(true);
+    return () => { feedRequest.current += 1; feedBusy.current = false; };
+  }, [fetchFeed]);
   useEffect(() => { const on = () => setOnline(true); const off = () => setOnline(false); setOnline(navigator.onLine); addEventListener('online', on); addEventListener('offline', off); return () => { removeEventListener('online', on); removeEventListener('offline', off); }; }, []);
   useEffect(() => {
     if (!token) return;
-    Promise.allSettled([apiGet<any>('/api/live/discover?limit=6&sort=viewerCount', token), apiGet<any>('/api/feed/trending?limit=5', token), apiGet<any>('/api/profiles/discover?limit=5', token)]).then(([liveResult, trendResult, suggestedResult]) => {
-      if (liveResult.status === 'fulfilled') setLive(unwrap(liveResult.value));
-      if (trendResult.status === 'fulfilled') setTrending(unwrap(trendResult.value));
-      if (suggestedResult.status === 'fulfilled') setSuggested(unwrap(suggestedResult.value));
-    });
     const socket = createSocket(token, 'home-social');
     const update = (data: any) => setItems(previous => previous.map(item => item.id === data.postId ? {
       ...item,
@@ -172,16 +177,24 @@ export default function HomePage() {
     return () => { socket.off('social:post-updated', update); socket.off('social:comment-created', update); socket.disconnect(); };
   }, [token, user?.id]);
   useEffect(() => {
-    if (!token) return;
+    if (!token) { setLive([]); return; }
+    setLive([]);
     let current = true;
+    let busy = false;
     const refreshLive = async () => {
+      if (!current || busy || document.hidden || !navigator.onLine) return;
+      busy = true;
       try {
         const result = await apiGet<any>('/api/live/discover?limit=6&sort=viewerCount', token, { skipCache: true });
         if (current) setLive(unwrap(result));
       } catch { /* keep the last confirmed live list during temporary network failures */ }
+      finally { busy = false; }
     };
+    void refreshLive();
+    document.addEventListener('visibilitychange', refreshLive);
+    window.addEventListener('online', refreshLive);
     const interval = window.setInterval(() => { void refreshLive(); }, 15_000);
-    return () => { current = false; window.clearInterval(interval); };
+    return () => { current = false; window.clearInterval(interval); document.removeEventListener('visibilitychange', refreshLive); window.removeEventListener('online', refreshLive); };
   }, [token]);
   useEffect(() => { const element = sentinel.current; if (!element) return; const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting && hasMore && !loading && !loadingMore && !loadMoreError) void fetchFeed(false, cursor); }, { rootMargin: '500px' }); observer.observe(element); return () => observer.disconnect(); }, [cursor, fetchFeed, hasMore, loading, loadingMore, loadMoreError]);
 
@@ -348,7 +361,7 @@ export default function HomePage() {
         <div className="mb-2 grid grid-cols-3 gap-1 rounded-lg border border-white/[.06] bg-[var(--surface)] p-0.5" role="tablist" aria-label="Feed filters">{([['forYou', 'For you'], ['following', 'Following'], ['latest', 'Latest']] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={cn('min-h-9 min-w-0 rounded-md px-1 text-xs font-medium transition sm:text-sm', tab === id ? 'bg-[#c9a227] text-black shadow-sm' : 'text-[#858585] hover:bg-white/[.04] hover:text-white')}>{label}</button>)}</div>
         <button type="button" onClick={openPostModal} className="mb-4 hidden w-full items-center gap-3 rounded-lg border border-white/[.08] bg-[#0d0d0f] px-4 py-3 text-left text-sm text-[#666] transition hover:border-white/[.14] hover:bg-[#151517] hover:text-[#b8b8b8] "><Avatar src={user?.avatar || user?.avatarUrl || (user?.profile as any)?.avatar || (user?.profile as any)?.avatarUrl} alt={user?.username || 'You'} size="md"/><span className="flex-1">Share something with VANTA...</span><span className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/[.08] text-[#b8b8b8]"><ImageIcon size={17}/></span></button>
         {!online && <div className="mb-4 flex items-center gap-2 rounded-lg border border-white/[.08] bg-[var(--surface)] px-3 py-2.5 text-xs text-[#b8b8b8]"><WifiOff size={14}/>You are offline. Some actions are unavailable.</div>}
-        {loading && !items.length ? <FeedSkeleton/> : error && !items.length ? <ErrorState retry={() => fetchFeed(true)}/> : !visible.length ? <EmptyFeed discover={() => router.push('/discover')}/> : <div className="space-y-2">{visible.map(item => <FeedPostCard key={item.id} item={item} currentUserId={user?.id} onLike={() => optimistic(item, 'like')} onSave={() => optimistic(item, 'save')} onComment={item => { if (isVideoItem(item)) { if (token) setReelCommentsFor(item); else router.push('/login'); } else router.push(`/post/${encodeURIComponent(cleanId(item))}/reply`); }} onShare={setRepostFor} onGift={openGift} onFollow={follow} onMore={setMoreFor} compactCaption feedCompactMedia hideFollowButton/>)}<div ref={sentinel} className="flex justify-center py-6">{loadingMore && <Loader2 className="animate-spin text-[#666]"/>}{loadMoreError && <button type="button" onClick={() => void fetchFeed(false, cursor)} className="rounded-lg px-4 py-2 text-xs text-[#c9a227] hover:bg-white/[.05]">Couldn't load more posts. Retry</button>}{!hasMore && <span className="text-xs text-[#666]">You&apos;re all caught up.</span>}</div></div>}
+        {loading && !items.length ? <FeedSkeleton/> : error && !items.length ? <ErrorState retry={() => fetchFeed(true)}/> : !visible.length ? <EmptyFeed discover={() => router.push('/discover')}/> : <div className="space-y-2">{visible.map(item => <div key={item.id} className="[content-visibility:auto] [contain-intrinsic-size:auto_400px]"><FeedPostCard item={item} currentUserId={user?.id} onLike={() => optimistic(item, 'like')} onSave={() => optimistic(item, 'save')} onComment={item => { if (isVideoItem(item)) { if (token) setReelCommentsFor(item); else router.push('/login'); } else router.push(`/post/${encodeURIComponent(cleanId(item))}/reply`); }} onShare={setRepostFor} onGift={openGift} onFollow={follow} onMore={setMoreFor} compactCaption feedCompactMedia hideFollowButton/></div>)}<div ref={sentinel} className="flex justify-center py-6">{loadingMore && <Loader2 className="animate-spin text-[#666]"/>}{loadMoreError && <button type="button" onClick={() => void fetchFeed(false, cursor)} className="rounded-lg px-4 py-2 text-xs text-[#c9a227] hover:bg-white/[.05]">Couldn't load more posts. Retry</button>}{!hasMore && <span className="text-xs text-[#666]">You&apos;re all caught up.</span>}</div></div>}
       </main>
       </div>
     </PullToRefresh>

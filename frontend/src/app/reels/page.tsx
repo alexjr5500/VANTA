@@ -274,8 +274,8 @@ export default function ReelsPage() {
   // loaded Reels. The order stays stable because the session seed is fixed and the
   // server returns the same deterministic shuffle for every page request.
   useEffect(() => {
-    if (active >= reels.length - 3) void loadMore();
-  }, [active, reels.length, loadMore]);
+    if (visiblePage && active >= reels.length - 3) void loadMore();
+  }, [active, reels.length, loadMore, visiblePage]);
 
   // Every page is exactly the scrollport height. Choose the nearest snap
   // position on scroll rather than guessing from partial observer entries.
@@ -751,7 +751,7 @@ export default function ReelsPage() {
             isOwn={Boolean(user && ((user.id && String(reel.author.id) === String(user.id)) || (user.username && reel.author.username?.toLowerCase() === user.username.toLowerCase())))}
             index={index}
             active={active === index}
-            preload={reelPreload(index, active, contentPrefs.lowerData)}
+            preload={reelPreload(index, active, contentPrefs.lowerData, visiblePage, playingId === activeId)}
             muted={muted}
             shouldPlay={active === index && shouldPlay}
             blocked={blockedId === reel.id}
@@ -916,7 +916,7 @@ function ReelCard({ reel, isOwn, index, active, preload, muted, shouldPlay, bloc
         <div className="relative h-full w-full overflow-hidden bg-black md:max-w-[480px]">
           {/* Keep the ambient fill as a thumbnail only. A second video decoder
               is unnecessary and can compete with the active Reel on Android. */}
-          {reel.thumbnailUrl && !posterFailed ? (
+          {active && reel.thumbnailUrl && !posterFailed ? (
             <img
               src={resolveMediaUrl(reel.thumbnailUrl)}
               alt=""
@@ -925,7 +925,7 @@ function ReelCard({ reel, isOwn, index, active, preload, muted, shouldPlay, bloc
               className="pointer-events-none absolute inset-0 z-0 h-full w-full scale-110 object-cover blur-[28px]"
             />
           ) : null}
-          {reel.thumbnailUrl && !posterFailed && <img src={resolveMediaUrl(reel.thumbnailUrl)} alt="" onError={() => setPosterFailed(true)} className={cn('pointer-events-none absolute inset-0 z-[2] h-full w-full object-contain transition-opacity duration-150', hasFrame && !videoFailed && 'opacity-0')} />}
+          {reel.thumbnailUrl && !posterFailed && <img loading={active ? 'eager' : 'lazy'} decoding="async" src={resolveMediaUrl(reel.thumbnailUrl)} alt="" onError={() => setPosterFailed(true)} className={cn('pointer-events-none absolute inset-0 z-[2] h-full w-full object-contain transition-opacity duration-150', hasFrame && !videoFailed && 'opacity-0')} />}
           {preload && (
             <video
               key={retryKey}

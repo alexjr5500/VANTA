@@ -145,7 +145,9 @@ class MainActivity : Activity() {
                 }
                 // FrameLayout lays its MATCH_PARENT WebView inside this
                 // padding, leaving the system navigation region native-owned.
-                view.setPadding(left, top, right, bottom)
+                if (view.paddingLeft != left || view.paddingTop != top || view.paddingRight != right || view.paddingBottom != bottom) {
+                    view.setPadding(left, top, right, bottom)
+                }
                 insets
             }
         }
@@ -225,8 +227,11 @@ class MainActivity : Activity() {
                     super.onPageStarted(view, url, favicon)
                 }
 
-                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-                    nativeGallery.intercept(request, galleryPageTrusted, hasStatusGalleryAccess())
+                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                    // Ordinary page assets must not instantiate the gallery or check OS permissions.
+                    if (request.url.path?.startsWith("/__vanta_native_gallery/") != true) return null
+                    return nativeGallery.intercept(request, galleryPageTrusted, hasStatusGalleryAccess())
+                }
 
                 override fun shouldOverrideUrlLoading(
                     view: WebView,

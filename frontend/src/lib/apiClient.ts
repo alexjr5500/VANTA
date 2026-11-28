@@ -4,27 +4,18 @@ import { API_BASE_URL, authHeaders, ApiError, type ApiResponse } from './api';
 const requestCache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_TTL = 30_000; // 30 seconds default cache
 const pendingRequests = new Map<string, Promise<any>>(); // Request deduplication
-const inflightControllers = new Map<string, AbortController>(); // In-flight request cancellation
+const inflightControllers = new Map<AbortController, string>(); // Independent request cancellation
+const MAX_CACHE_ENTRIES = 128;
+let cacheGeneration = 0;
 
 // Retry configuration
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second base delay
 const RETRY_BACKOFF = 2; // Exponential backoff multiplier
 
-// Request batching
-interface BatchEntry {
-  path: string;
-  resolve: (value: any) => void;
-  reject: (reason: any) => void;
-}
-const batchQueue = new Map<string, BatchEntry[]>();
-const BATCH_WINDOW_MS = 50; // 50ms bat
-const BATCH_ENDPOINTS = ['/api/feed', '/api/notifications', '/api/messages']; // Batchable endpoints
-
-const getCacheKey = (method: string, url: string, body?: string): string => {
-  if (body) return `${method}:${url}:${body}`;
-  return `${method}:${url}`;
-};
+// Memory-only key includes the exact session token. Never log or persist keys.
+const getCacheKey = (method: string, url: string, token?: string): string =>
+  JSON.stringify([method, url, token ?? '']);
 
 const readJson = async (response: Response) => {
   const contentType = response.headers.get('content-type');
@@ -68,59 +59,20 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Cancel an active request by URL pattern
 export const cancelRequest = (pathPattern: string): void => {
-  for (const [key, controller] of inflightControllers) {
+  for (const [controller, key] of inflightControllers) {
     if (key.includes(pathPattern)) {
       controller.abort();
-      inflightControllers.delete(key);
+      inflightControllers.delete(controller);
     }
   }
 };
 
 // Cancel all active requests
 export const cancelAllRequests = (): void => {
-  for (const [, controller] of inflightControllers) {
+  for (const [controller] of inflightControllers) {
     controller.abort();
   }
   inflightControllers.clear();
-};
-
-// Request batching for specific endpoints
-const tryBatchRequest = async <T>(
-  method: string,
-  path: string,
-  options: { body?: unknown; token?: string; skipCache?: boolean }
-): Promise<T | null> => {
-  // Only batch cacheable GET requests to specific endpoints. A skipCache
-  // caller explicitly requests an independent fresh network read.
-  if (method !== 'GET' || options.skipCache) return null;
-  
-  const basePath = '/' + path.split('/').slice(1, 3).join('/');
-  if (!BATCH_ENDPOINTS.includes(basePath)) return null;
-
-  return new Promise<T>((resolve, reject) => {
-    if (!batchQueue.has(path)) {
-      batchQueue.set(path, []);
-      
-      // Schedule batch processing after a short delay
-      setTimeout(() => {
-        const entries = batchQueue.get(path) || [];
-        batchQueue.delete(path);
-        
-        if (entries.length === 0) return;
-        
-        // Execute single request for all batched entries
-        makeRequestInternal<T>(method, path, options)
-          .then((data) => {
-            entries.forEach((entry) => entry.resolve(data));
-          })
-          .catch((error) => {
-            entries.forEach((entry) => entry.reject(error));
-          });
-      }, BATCH_WINDOW_MS);
-    }
-    
-    batchQueue.get(path)!.push({ path, resolve, reject } as BatchEntry);
-  });
 };
 
 const makeRequestInternal = async <T>(
@@ -138,13 +90,16 @@ const makeRequestInternal = async <T>(
 ): Promise<T> => {
   const url = `${API_BASE_URL}${path}`;
   const bodyStr = options.body ? JSON.stringify(options.body) : undefined;
-  const cacheKey = getCacheKey(method, url, bodyStr);
+  const cacheKey = getCacheKey(method, url, options.token);
   const now = Date.now();
+  // Explicit cancellation and custom headers are never shared with another caller.
+  const shareable = method === 'GET' && !options.skipCache && !options.signal && !options.headers && !bodyStr;
+  const generation = cacheGeneration;
 
   // Return cached data for GET requests if valid
-  if (method === 'GET' && !options.skipCache) {
+  if (shareable) {
     const cached = requestCache.get(cacheKey);
-    if (cached && (now - cached.timestamp) < (options.cacheTTL || CACHE_TTL)) {
+    if (cached && (now - cached.timestamp) < (options.cacheTTL ?? CACHE_TTL)) {
       return cached.data as T;
     }
 
@@ -161,42 +116,48 @@ const makeRequestInternal = async <T>(
   // Explicit caller cancellation remains supported through `options.signal`,
   // `cancelRequest`, and `cancelAllRequests`.
   const controller = new AbortController();
-  if (method === 'GET') {
-    inflightControllers.set(cacheKey, controller);
-  }
+  if (method === 'GET') inflightControllers.set(controller, cacheKey);
+  const abort = () => controller.abort();
+  if (options.signal?.aborted) abort();
+  else options.signal?.addEventListener('abort', abort, { once: true });
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    // Accept compressed responses
-    'Accept-Encoding': 'gzip, deflate, br',
     ...authHeaders(options.token),
     ...options.headers,
   };
 
   const executeFetch = async (retryCount: number = 0): Promise<T> => {
     try {
+      if (controller.signal.aborted) throw new DOMException('Cancelled', 'AbortError');
       const response = await fetch(url, {
         method,
         headers,
         body: bodyStr,
         credentials: 'include',
-        signal: options.signal || controller.signal,
+        signal: controller.signal,
         // Enable keep-alive for connection reuse
         keepalive: method !== 'GET',
         // Enable cache mode for GET requests
-        cache: method === 'GET' && !options.skipCache ? 'default' : 'no-store',
+        cache: method === 'GET' && !options.skipCache && !options.token ? 'default' : 'no-store',
       });
 
       const data = await readJson(response);
 
       // Cache successful GET responses
-      if (method === 'GET' && !options.skipCache) {
+      if (shareable && !controller.signal.aborted && generation === cacheGeneration) {
+        requestCache.delete(cacheKey);
         requestCache.set(cacheKey, { data, timestamp: Date.now() });
+        while (requestCache.size > MAX_CACHE_ENTRIES) {
+          const oldest = requestCache.keys().next().value;
+          if (oldest === undefined) break;
+          requestCache.delete(oldest);
+        }
       }
 
       return data as T;
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
+      if (controller.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
         throw new ApiError(499, 'The request was cancelled before it completed.');
       }
 
@@ -224,7 +185,7 @@ const makeRequestInternal = async <T>(
       }
 
       // Retry on network errors or transient gateway/time-out 5xx with backoff
-      if (!options.noRetry && retryCount < MAX_RETRIES) {
+      if (!options.noRetry && retryCount < MAX_RETRIES && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
         const delay = RETRY_DELAY * Math.pow(RETRY_BACKOFF, retryCount);
         if (process.env.NODE_ENV === 'development') {
           console.log(`[API] Retry ${retryCount + 1}/${MAX_RETRIES} for ${method} ${url} after ${delay}ms`);
@@ -247,20 +208,17 @@ const makeRequestInternal = async <T>(
   };
 
   const promise = executeFetch().finally(() => {
-    // A newer request may already own this key. Do not remove its controller
-    // when an older request settles after being aborted.
-    if (inflightControllers.get(cacheKey) === controller) {
-      inflightControllers.delete(cacheKey);
-    }
+    inflightControllers.delete(controller);
+    options.signal?.removeEventListener('abort', abort);
   });
 
-  // Only cacheable GETs participate in shared in-flight deduplication.
-  // skipCache callers explicitly require a fresh, independent network read.
-  if (method === 'GET' && !options.skipCache) {
+  if (shareable) {
     pendingRequests.set(cacheKey, promise);
-    promise.finally(() => {
+    const cleanup = () => {
       if (pendingRequests.get(cacheKey) === promise) pendingRequests.delete(cacheKey);
-    });
+    };
+    // Both branches handle settlement; do not create an unhandled rejection.
+    void promise.then(cleanup, cleanup);
   }
 
   return promise;
@@ -279,15 +237,15 @@ const makeRequest = async <T>(
     noRetry?: boolean;
   } = {}
 ): Promise<T> => {
-  // Try batching first
-  const batchResult = await tryBatchRequest<T>(method, path, options);
-  if (batchResult !== null) return batchResult;
-
+  // Share an already-running identical GET without a batching timer.
   return makeRequestInternal<T>(method, path, options);
 };
 
 // Invalidate cache for a specific path pattern
 export const invalidateCache = (pathPattern?: string) => {
+  // A response started before invalidation must never re-populate stale data.
+  cacheGeneration += 1;
+  pendingRequests.clear();
   if (!pathPattern) {
     requestCache.clear();
     return;
@@ -303,20 +261,17 @@ export const invalidateCache = (pathPattern?: string) => {
 export const prefetchData = (path: string, token?: string): void => {
   if (typeof window === 'undefined') return;
   const url = `${API_BASE_URL}${path}`;
-  const cacheKey = `GET:${url}`;
-  
-  if (!requestCache.has(cacheKey)) {
-    // Use low priority fetch
-    if ('requestIdleCallback' in window) {
-      requestIdleCallback(() => {
-        makeRequestInternal('GET', path, { token, cacheTTL: CACHE_TTL }).catch(() => {});
-      }, { timeout: 2000 });
-    } else {
-      setTimeout(() => {
-        makeRequestInternal('GET', path, { token, cacheTTL: CACHE_TTL }).catch(() => {});
-      }, 1000);
-    }
-  }
+  const cacheKey = getCacheKey('GET', url, token);
+  const generation = cacheGeneration;
+  const run = () => {
+    if (generation !== cacheGeneration || document.hidden || !navigator.onLine) return;
+    const cached = requestCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) return;
+    void makeRequestInternal('GET', path, { token, cacheTTL: CACHE_TTL, noRetry: true }).catch(() => {});
+  };
+  if ('requestIdleCallback' in window) requestIdleCallback(run, { timeout: 2000 });
+  else setTimeout(run, 1000);
+
 };
 
 export const apiGet = async <T>(
@@ -500,5 +455,5 @@ export const getCacheStats = () => ({
   size: requestCache.size,
   pendingRequests: pendingRequests.size,
   inflightRequests: inflightControllers.size,
-  batchQueueSize: batchQueue.size,
+  batchQueueSize: 0,
 });
