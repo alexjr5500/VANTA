@@ -6,12 +6,18 @@ import {sweepExpiredChatMedia} from '../services/chat-media-expiry.service';
 describe('expired group chat media cleanup',()=>{
   const now=new Date('2026-11-28T12:00:00Z');
   const file={id:'file',filename:'private.jpg',path:'cloudinary:image:vanta/message/private',url:'https://cdn.example/private',messageId:'message',permissions:'{"autoDeleteSeconds":86400}',createdAt:new Date('2026-11-10T12:00:00Z'),size:123};
+  const initialEnabled=process.env.CHAT_MEDIA_CLEANUP_ENABLED;
+  const initialDisabled=process.env.CHAT_MEDIA_CLEANUP_DISABLED;
   beforeEach(()=>{
+    process.env.CHAT_MEDIA_CLEANUP_ENABLED='true';
+    delete process.env.CHAT_MEDIA_CLEANUP_DISABLED;
     jest.resetAllMocks();
     (prisma.$transaction as jest.Mock).mockImplementation(async fn=>fn(prisma));
     (prisma.uploadedFile.updateMany as jest.Mock).mockResolvedValue({count:1});
     (prisma.attachment.deleteMany as jest.Mock).mockResolvedValue({count:1});
   });
+  afterAll(()=>{if(initialEnabled===undefined)delete process.env.CHAT_MEDIA_CLEANUP_ENABLED;else process.env.CHAT_MEDIA_CLEANUP_ENABLED=initialEnabled;if(initialDisabled===undefined)delete process.env.CHAT_MEDIA_CLEANUP_DISABLED;else process.env.CHAT_MEDIA_CLEANUP_DISABLED=initialDisabled;});
+  test('disabled cleanup does not query or touch storage',async()=>{delete process.env.CHAT_MEDIA_CLEANUP_ENABLED;expect(await sweepExpiredChatMedia(now)).toEqual({files:0,bytes:0,failed:0});expect(prisma.$transaction).not.toHaveBeenCalled();});
   test('deletes storage before marking metadata and removing the attachment reference',async()=>{
     (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([file]).mockResolvedValueOnce([]);
     (uploadService.purgeExpiredChatAsset as jest.Mock).mockResolvedValue(undefined);

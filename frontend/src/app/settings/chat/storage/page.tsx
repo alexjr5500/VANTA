@@ -57,7 +57,7 @@ export default function ChatStoragePage() {
     <SettingsGroup title="Message retention">
       <div className="space-y-2 px-4 py-4">
         <p className="text-sm font-medium">Group auto-expiry</p>
-        <p className="text-sm opacity-70">When creating a group, its owner can choose a message expiry duration. Expired messages and protected attachments are hidden from supported chat views and signed media access. Eligible group attachments are physically removed by the server after an additional seven-day safety grace period, unless shared, held for moderation or otherwise unsafe to delete.</p>
+        <p className="text-sm opacity-70">When creating a group, its owner can choose a message expiry duration. Expired messages and protected attachments are hidden from supported chat views and signed media access. When server cleanup is enabled, eligible group attachments are physically removed after an additional seven-day safety grace period, unless shared, held for moderation or otherwise unsafe to delete.</p>
         <p className="text-xs opacity-65">Direct chats and groups with expiry disabled are not affected. Downloaded copies remain on devices; reported storage usage decreases after confirmed server deletion.</p>
       </div>
     </SettingsGroup>

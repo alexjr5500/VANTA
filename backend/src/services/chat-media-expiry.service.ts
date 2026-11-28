@@ -16,7 +16,7 @@ type Candidate={id:string;filename:string;path:string|null;url:string;messageId:
  * Lock the owning message and upload row across the provider call so multiple
  * replicas cannot clean the same attachment or race normal message moderation.
  */
-async function nextCandidate(tx:Prisma.TransactionClient,now:Date,skipped:string[]):Promise<Candidate|undefined>{
+export async function nextChatMediaCleanupCandidate(tx:Prisma.TransactionClient,now:Date,skipped:string[]):Promise<Candidate|undefined>{
   const graceCutoff=new Date(now.getTime()-GRACE_MS);
   const localEnabled=process.env.CHAT_MEDIA_CLEANUP_LOCAL_SHARED_STORAGE==='true';
   const rows=await tx.$queryRaw<Candidate[]>`
@@ -54,18 +54,18 @@ async function nextCandidate(tx:Prisma.TransactionClient,now:Date,skipped:string
 }
 
 export async function sweepExpiredChatMedia(now=new Date()){
-  if(running||process.env.CHAT_MEDIA_CLEANUP_DISABLED==='true')return {files:0,bytes:0,failed:0};
+  if(running||process.env.CHAT_MEDIA_CLEANUP_ENABLED!=='true'||process.env.CHAT_MEDIA_CLEANUP_DISABLED==='true')return {files:0,bytes:0,failed:0};
   running=true;
   let files=0,bytes=0,failed=0;
   const skipped:string[]=[];
   try{
     for(let i=0;i<BATCH_SIZE;i++){
-      let selected:Candidate|undefined;
+      const context:{selected?:Candidate}={};
       try{
         const result=await prisma.$transaction(async tx=>{
-          selected=await nextCandidate(tx,now,skipped);
-          if(!selected)return null;
-          const file=selected;
+          const file=await nextChatMediaCleanupCandidate(tx,now,skipped);
+          if(!file)return null;
+          context.selected=file;
           const cutoff=retentionCutoff(file.permissions,now.getTime()-GRACE_MS);
           if(!cutoff||file.createdAt>=cutoff)throw new Error('Retention rule changed or invalid');
           // Only mark metadata deleted after storage success; keep the row as
@@ -79,6 +79,7 @@ export async function sweepExpiredChatMedia(now=new Date()){
         if(!result)break;
         files++;bytes+=result.bytes;
       }catch(error){
+        const selected=context.selected;
         if(!selected)throw error;
         failed++;skipped.push(selected.id);
         const fileId=selected.id;

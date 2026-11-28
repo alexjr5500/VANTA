@@ -95,6 +95,12 @@ jobs:
           src/__tests__/call-session.service.test.ts
           src/__tests__/story.service.test.ts
           src/__tests__/status-expiry.service.test.ts
+          src/__tests__/chat-retention.test.ts
+          src/__tests__/chat-media-expiry.service.test.ts
+          src/__tests__/provider-link.service.test.ts
+          src/__tests__/delegation.service.test.ts
+          src/__tests__/sensitive-content.service.test.ts
+          src/__tests__/account-access.service.test.ts
           src/__tests__/live.service.test.ts
           src/__tests__/compliance.active-schema.test.ts
           src/__tests__/content-removal.service.test.ts
@@ -175,10 +181,15 @@ jobs:
           node-version: 22
       - name: Install backend dependencies
         run: npm --prefix backend install
+      - name: Generate Prisma client for PostgreSQL integration
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
+        run: npx prisma generate
       - name: Run PostgreSQL integration and concurrency tests
         env:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
-        run: npm --prefix backend run test -- --runInBand src/__tests__/durable-queue.postgres.integration.test.ts
+        run: npm --prefix backend run test -- --runInBand src/__tests__/durable-queue.postgres.integration.test.ts src/__tests__/chat-media-expiry.postgres.integration.test.ts
       - name: Verify approved gift catalog migration and historical records
         env:
           DATABASE_URL: postgresql://test:test@127.0.0.1:5432/vanta_queue_test
