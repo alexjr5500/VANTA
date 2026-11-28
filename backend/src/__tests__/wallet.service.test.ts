@@ -15,6 +15,7 @@ jest.mock('../prisma', () => ({
     },
     walletPIN: {
       findUnique: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     walletTransaction: {
       create: jest.fn(),
@@ -171,6 +172,7 @@ describe('WalletService', () => {
   describe('requestWithdrawal', () => {
     test('should block withdrawals from frozen wallets', async () => {
       (prisma.wallet.findUnique as jest.Mock).mockResolvedValue({ ...mockWallet, isFrozen: true });
+      (prisma.user.findUnique as jest.Mock).mockResolvedValue({ twoFactorEnabled: false, twoFactorSecret: null });
       (prisma.walletPIN.findUnique as jest.Mock).mockResolvedValue({ id: 'pin1', walletId: 'wallet1', pinHash: 'hash', failedAttempts: 0, lockedUntil: null });
       await expect(walletService.requestWithdrawal('user1', 30, `0x${'a'.repeat(40)}`, '1234')).rejects.toThrow(
         'wallet is frozen'
@@ -382,6 +384,9 @@ describe('WalletService', () => {
   });
 
   describe('reconcileWallet follower reward claim direction', () => {
+    beforeEach(() => {
+      (prisma.$transaction as jest.Mock).mockImplementation(async (fn: any) => fn(prisma));
+    });
     test.each([
       ['creator', 70, 70],
       ['claimant', 30, 30],

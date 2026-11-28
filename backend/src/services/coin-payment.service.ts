@@ -1,7 +1,7 @@
 import { prisma } from '../prisma';
 import { walletService } from './wallet.service';
 import { auditLog } from '../security/auditLog';
-import { CryptoUtils } from '../security/crypto';
+import { verifyPaymentWebhookSignature, paymentWebhookFieldsMatch } from '../security/payment-webhook-signature';
 import {
   COIN_PAYMENT_MODE,
   COIN_PAYMENT_STATUS,
@@ -284,13 +284,16 @@ export class CoinPaymentService {
     if (typeof input.signature !== 'string' || !input.signature) {
       throw new PaymentWebhookError(401, 'Missing webhook signature.');
     }
-    const expected = CryptoUtils.sha256(`${input.rawBody || ''}${secret}`);
-    if (
-      expected.length !== input.signature.length ||
-      !CryptoUtils.constantTimeCompare(expected, input.signature)
-    ) {
+    if (!verifyPaymentWebhookSignature(input.rawBody, input.signature, secret)) {
       throw new PaymentWebhookError(401, 'Invalid webhook signature.');
     }
+    if (!paymentWebhookFieldsMatch(input.rawBody, input)) {
+      throw new PaymentWebhookError(400, 'Webhook fields do not match authenticated body.');
+    }
+    // The parsed signed body is authoritative even if an optional field was
+    // omitted by the caller. Do not allow omission to bypass recipient checks.
+    const signed = JSON.parse(input.rawBody);
+    input = { ...input, confirmations: signed.confirmations, confirmedAt: signed.confirmedAt, recipient: signed.recipient };
 
     const mode = getCoinPaymentMode();
     if (mode !== COIN_PAYMENT_MODE.LIVE) {

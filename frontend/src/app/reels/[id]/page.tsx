@@ -18,6 +18,7 @@ import ReelShareSheet from '@/components/social/ReelShareSheet';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import { resolveMediaUrl } from '@/lib/mediaUrl';
+import { chooseReelPlaybackSource } from '@/lib/reelPlaybackSource';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
 import { renderTextWithLinks } from '@/lib/linkify';
 import { cn } from '@/lib/utils';
@@ -37,6 +38,7 @@ type Reel = {
   title?: string;
   description?: string;
   videoUrl: string;
+  hlsUrl?: string | null;
   thumbnailUrl?: string;
   createdAt?: string;
   views?: number;
@@ -103,6 +105,8 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
   const [paused, setPaused] = useState(false);
   const [videoLoading, setVideoLoading] = useState(true);
   const [videoFailed, setVideoFailed] = useState(false);
+  const [nativeHlsSupported, setNativeHlsSupported] = useState(false);
+  const [hlsFailed, setHlsFailed] = useState(false);
   const [progress, setProgress] = useState(0);
   const [expandedCaption, setExpandedCaption] = useState(false);
   const [likedPulse, setLikedPulse] = useState(false);
@@ -112,6 +116,33 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
   const tapTimerRef = useRef<number>();
   const lastTapRef = useRef(0);
   const id = useMemo(() => decodeURIComponent(routeId).trim(), [routeId]);
+
+  useEffect(() => {
+    const probe = document.createElement('video');
+    setNativeHlsSupported(Boolean(probe.canPlayType('application/vnd.apple.mpegurl')));
+  }, []);
+
+  // A new Reel may have a different HLS stream. Retry native HLS for that
+  // stream, but keep the original MP4 as the permanent fallback on failure.
+  useEffect(() => {
+    setHlsFailed(false);
+  }, [reel?.id, reel?.hlsUrl]);
+
+  useEffect(() => {
+    if (!hlsFailed) return;
+    const element = videoRef.current;
+    if (!element) return;
+    element.load();
+    if (document.visibilityState !== 'hidden') void element.play().then(() => setPaused(false)).catch(() => setPaused(true));
+  }, [hlsFailed]);
+
+  useEffect(() => {
+    const pauseWhenHidden = () => {
+      if (document.visibilityState === 'hidden') videoRef.current?.pause();
+    };
+    document.addEventListener('visibilitychange', pauseWhenHidden);
+    return () => document.removeEventListener('visibilitychange', pauseWhenHidden);
+  }, []);
 
   // Derived engagement state — declared before event handlers so the toggles
   // can read the current Reel state safely.
@@ -302,7 +333,9 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
       <ReelErrorState onRetry={loadReel} />
     </main>;
   }
-  const videoSrc = resolveMediaUrl(reel.videoUrl);
+  const videoSrc = resolveMediaUrl(chooseReelPlaybackSource(
+    reel.videoUrl, reel.hlsUrl, nativeHlsSupported, hlsFailed,
+  ));
   const posterSrc = resolveMediaUrl(reel.thumbnailUrl);
   const captionText = reel.description || reel.title || '';
 
@@ -312,9 +345,8 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
     <div className="relative mx-auto h-full w-full max-w-[520px] overflow-hidden bg-[var(--background)]">
       {/* Full-bleed ambient backdrop so non-portrait uploads never letterbox
           into a thin strip: the contained video keeps its true aspect ratio
-          (never stretched/cropped) over a blurred copy of the same frame.
-          Falls back to a muted clone of the video itself when no thumbnail
-          is available, so the fill still shows. */}
+          (never stretched/cropped) over a blurred thumbnail. If absent,
+          use the solid stage background instead of a second video decoder. */}
       {posterSrc ? (
         <img
           src={posterSrc}
@@ -322,18 +354,7 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-[28px]"
         />
-      ) : (
-        <video
-          src={videoSrc}
-          muted
-          playsInline
-          loop
-          autoPlay
-          preload="metadata"
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-[28px]"
-        />
-      )}
+      ) : null}
       {/* Poster frame beneath the video while it loads or when it fails. */}
       {posterSrc && (
         <img
@@ -354,14 +375,25 @@ export default function ReelDetailPage({ params }: { params: Promise<{ id: strin
         preload="auto"
         onClick={handleVideoTap}
         onDoubleClick={likeWithFeedback}
-        onPlay={() => setPaused(false)}
+        onPlay={event => {
+          if (document.visibilityState === 'hidden') { event.currentTarget.pause(); return; }
+          setPaused(false);
+        }}
         onPause={() => setPaused(true)}
         onLoadStart={() => { setVideoLoading(true); setVideoFailed(false); }}
         onWaiting={() => setVideoLoading(true)}
         onPlaying={() => { setVideoLoading(false); setVideoFailed(false); }}
         onCanPlay={() => setVideoLoading(false)}
         onTimeUpdate={event => { const element = event.currentTarget; setProgress(element.duration ? (element.currentTime / element.duration) * 100 : 0); }}
-        onError={() => { setVideoFailed(true); setVideoLoading(false); }}
+        onError={() => {
+          if (nativeHlsSupported && reel.hlsUrl && !hlsFailed) {
+            setHlsFailed(true);
+            setVideoLoading(true);
+            return;
+          }
+          setVideoFailed(true);
+          setVideoLoading(false);
+        }}
         className="absolute inset-0 h-full w-full object-contain"
         aria-label={`Reel by ${creator.username}`}
       />

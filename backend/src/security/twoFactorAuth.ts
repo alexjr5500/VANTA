@@ -49,7 +49,9 @@ export class TwoFactorAuth {
     token: string,
     requireEnabled: boolean
   ): Promise<boolean> {
+    const nowSeconds = Math.floor(Date.now() / 1000);
     const delta = speakeasy.totp.verifyDelta({
+      time: nowSeconds,
       secret,
       encoding: 'base32',
       token,
@@ -57,20 +59,19 @@ export class TwoFactorAuth {
     });
     if (!delta || !Number.isInteger(delta.delta)) return false;
 
-    const acceptedStep = Math.floor(Date.now() / 30_000) + delta.delta;
+    const acceptedStep = Math.floor(nowSeconds / 30) + delta.delta;
     const where: any = {
       id: userId,
       twoFactorSecret: secret,
+      twoFactorEnabled: requireEnabled,
       OR: [
         { twoFactorLastUsedStep: null },
         { twoFactorLastUsedStep: { lt: acceptedStep } },
       ],
     };
-    if (requireEnabled) where.twoFactorEnabled = true;
-
     const consumed = await prisma.user.updateMany({
       where,
-      data: { twoFactorLastUsedStep: acceptedStep },
+      data: { twoFactorLastUsedStep: acceptedStep, ...(requireEnabled ? {} : { twoFactorEnabled: true }) },
     });
     return consumed.count === 1;
   }
@@ -93,7 +94,7 @@ export class TwoFactorAuth {
     }
 
     // Store secret and hashed backup codes
-    const saved = await prisma.user.updateMany({
+    const setup = await prisma.user.updateMany({
       where: { id: userId, twoFactorEnabled: false },
       data: {
         twoFactorSecret: secret.base32,
@@ -103,7 +104,7 @@ export class TwoFactorAuth {
       },
     });
 
-    if (!saved.count) throw new Error('Two-factor authentication is already enabled.');
+    if (setup.count !== 1) throw new Error('Cannot replace an active 2FA enrollment.');
 
     // Generate QR code URL
     const qrCodeUrl = secret.otpauth_url || 
@@ -148,12 +149,7 @@ export class TwoFactorAuth {
       return { success: false, error: 'Invalid verification code' };
     }
 
-    // Do not enable a replacement setup secret that was not verified.
-    const enabled = await prisma.user.updateMany({
-      where: { id: userId, twoFactorEnabled: false, twoFactorSecret: user.twoFactorSecret },
-      data: { twoFactorEnabled: true },
-    });
-    if (!enabled.count) return { success: false, error: 'Setup changed. Start again.' };
+    // The time-step consumption and enablement were committed together.
 
     auditLog.log({
       userId,
@@ -168,15 +164,18 @@ export class TwoFactorAuth {
   /**
    * Verify a 2FA code during login
    */
-  async verifyLogin(userId: string, token: string): Promise<TwoFactorVerifyResult> {
+  async verifyLogin(userId: string, token: string, requireEnabled = false, expectedSecret?: string | null): Promise<TwoFactorVerifyResult> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { twoFactorSecret: true, backupCodes: true, twoFactorEnabled: true },
     });
 
-    if (!user || !user.twoFactorEnabled) {
-      return { valid: true, isBackupCode: false }; // 2FA not enabled
+    if (!user) return { valid: false, isBackupCode: false };
+    if (expectedSecret !== undefined && user.twoFactorSecret !== expectedSecret) return { valid: false, isBackupCode: false };
+    if (!user.twoFactorEnabled) {
+      return { valid: !requireEnabled, isBackupCode: false };
     }
+    if (!user.twoFactorSecret) return { valid: false, isBackupCode: false };
     if (!speakeasy) throw new Error('TOTP provider is unavailable; refusing 2FA login.');
     const totpValid = await this.verifyAndConsumeTotp(userId, user.twoFactorSecret!, token, true);
 
@@ -198,7 +197,7 @@ export class TwoFactorAuth {
         // the same backup code from a stale copy of the stored list.
         backupCodes.splice(codeIndex, 1);
         const consumed = await prisma.user.updateMany({
-          where: { id: userId, twoFactorEnabled: true, backupCodes: user.backupCodes },
+          where: { id: userId, twoFactorEnabled: true, twoFactorSecret: user.twoFactorSecret, backupCodes: user.backupCodes },
           data: { backupCodes: JSON.stringify(backupCodes) },
         });
         if (consumed.count !== 1) {

@@ -8,7 +8,6 @@ import {
   uploadAvatarMulter,
   uploadBannerMulter,
   uploadThumbnail,
-  uploadDocument,
   uploadChunk,
 } from "../services";
 import {
@@ -24,7 +23,6 @@ import {
   uploadCommunityBanner,
   uploadEntityAvatar,
   linkUploadedFile,
-  uploadVerificationDocument,
   uploadMessageAttachment,
   deleteUploadedFile,
   getUserFiles,
@@ -112,8 +110,13 @@ router.post("/communities/:id/banner", uploadBannerMulter.single("banner"), uplo
 // VERIFICATION DOCUMENTS
 // ============================================================================
 
-// Verification document upload (PDF, DOC, TXT - 10MB max)
-router.post("/verification", uploadDocument.single("document"), uploadVerificationDocument);
+// Verification submission is under maintenance; reject before multipart storage.
+router.post("/verification", (_req, res) => {
+  res.status(503).json({
+    code: "VERIFICATION_UNDER_MAINTENANCE",
+    error: "Verification is temporarily under maintenance. Please try again later.",
+  });
+});
 
 // ============================================================================
 // MESSAGE ATTACHMENTS

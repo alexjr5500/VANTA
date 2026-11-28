@@ -236,7 +236,7 @@ export class ChatService {
         },
         messages: {
           where: visibleMessageWhere(userId),
-          orderBy: { createdAt: "desc" },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           take: 1,
           include: {
             sender: {
@@ -250,22 +250,53 @@ export class ChatService {
           },
         },
       },
-      orderBy: { updatedAt: "desc" },
-       take: Math.min(Math.max(limit, 1), 50) + 1,
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      take: Math.min(Math.max(limit, 1), 50) + 1,
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
     });
 
     const hasMore = conversations.length > Math.min(Math.max(limit, 1), 50);
     const page = hasMore ? conversations.slice(0, -1) : conversations;
     const conversationIds = page.map((conversation: any) => conversation.id);
-    const [groups, channels] = await Promise.all([
+    if (!page.length) return { conversations: [], nextCursor: null };
+    const partnersRequiringFollow = new Set<string>();
+    for (const conversation of page) {
+      const type = conversation.type || (conversation.isGroup ? "GROUP" : "DIRECT");
+      if (type !== "DIRECT") continue;
+      const partner = conversation.participants.find(p => p.userId !== userId)?.user;
+      if (!partner) continue;
+      const online = String(partner.userSettings?.onlineStatus || "everyone").toLowerCase();
+      const lastSeen = String(partner.userSettings?.lastSeen || "everyone").toLowerCase();
+      if (["followers", "following"].includes(online) || ["followers", "following"].includes(lastSeen)) {
+        partnersRequiringFollow.add(partner.id);
+      }
+    }
+    const retentionNow = Date.now();
+    const expired = page.flatMap(conversation => { const cutoff = retentionCutoff(conversation.permissions, retentionNow); return cutoff ? [{ conversationId: conversation.id, createdAt: { lt: cutoff } }] : []; });
+    const [groups, channels, unreadRows, follows] = await Promise.all([
       prisma.group.findMany({ where: { conversationId: { in: conversationIds } }, select: { id: true, conversationId: true } }),
       prisma.channel.findMany({ where: { conversationId: { in: conversationIds } }, select: { id: true, conversationId: true } }),
+      prisma.message.groupBy({
+        by: ["conversationId"],
+        where: {
+          conversationId: { in: conversationIds },
+          ...visibleMessageWhere(userId),
+          ...(expired.length ? { NOT: expired } : {}),
+          senderId: { not: userId },
+          reads: { none: { userId } },
+        },
+        _count: { _all: true },
+      }),
+      partnersRequiringFollow.size ? prisma.follow.findMany({
+        where: { followerId: userId, followingId: { in: [...partnersRequiringFollow] } },
+        select: { followingId: true },
+      }) : Promise.resolve([]),
     ]);
+    const unreadByConversation = new Map(unreadRows.map(row => [row.conversationId, row._count._all]));
+    const followedPartners = new Set(follows.map(row => row.followingId));
     const groupByConversation = new Map(groups.map(group => [group.conversationId, group.id]));
     const channelByConversation = new Map(channels.map(channel => [channel.conversationId, channel.id]));
-    const enriched = await Promise.all(
-      page.map(async (conversation: any) => {
+    const enriched = page.map((conversation: any) => {
         // Presence is a private-1:1 concept. Groups and channels must NOT expose a
         // single "partner" whose online state would make the whole row look online.
         const type = conversation.type || (conversation.isGroup ? "GROUP" : "DIRECT");
@@ -287,12 +318,7 @@ export class ChatService {
           const lastSeenVisibility = String(partner.userSettings?.lastSeen || "everyone").toLowerCase();
           const needsFollowerCheck = ["followers", "following"].includes(onlineVisibility) ||
             ["followers", "following"].includes(lastSeenVisibility);
-          const viewerFollowsPartner = needsFollowerCheck
-            ? Boolean(await prisma.follow.findFirst({
-                where: { followerId: userId, followingId: partner.id },
-                select: { followerId: true },
-              }))
-            : false;
+          const viewerFollowsPartner = needsFollowerCheck && followedPartners.has(partner.id);
           const canSeeOnline = !["nobody", "noone", "none"].includes(onlineVisibility) &&
             (!needsFollowerCheck || viewerFollowsPartner || !["followers", "following"].includes(onlineVisibility));
           const canSeeLastSeen = !["nobody", "noone", "none"].includes(lastSeenVisibility) &&
@@ -308,15 +334,8 @@ export class ChatService {
             ...(canSeeLastSeen && userPresence?.lastActive ? { lastActive: userPresence.lastActive } : {}),
           };
         }
-        const cutoff = retentionCutoff(conversation.permissions);
-        const unreadCount = await prisma.message.count({
-          where: {
-            conversationId: conversation.id,
-            ...visibleMessageWhere(userId, cutoff),
-            senderId: { not: userId },
-            reads: { none: { userId } },
-          },
-        });
+        const cutoff = retentionCutoff(conversation.permissions, retentionNow);
+        const unreadCount = unreadByConversation.get(conversation.id) ?? 0;
 
         return {
           id: conversation.id,
@@ -341,14 +360,15 @@ export class ChatService {
           participants,
           updatedAt: conversation.updatedAt,
         };
-      })
-    );
+      });
 
-    // Senders must not see a preview read state from participants who disabled
-    // read receipts.
-    await Promise.all(enriched.map(async conversation => {
-      conversation.lastMessage = (await sanitizeReadReceipts(conversation.lastMessage ? [conversation.lastMessage] : [], userId))[0] || null;
-    }));
+    // Apply the same per-message privacy rules using one batched lookup.
+    const previews = enriched.flatMap(conversation => conversation.lastMessage ? [conversation.lastMessage] : []);
+    const sanitized = await sanitizeReadReceipts(previews, userId);
+    let previewIndex = 0;
+    for (const conversation of enriched) {
+      if (conversation.lastMessage) conversation.lastMessage = sanitized[previewIndex++] || null;
+    }
 
     return { conversations: enriched, nextCursor: hasMore ? page[page.length - 1]?.id : null };
   }

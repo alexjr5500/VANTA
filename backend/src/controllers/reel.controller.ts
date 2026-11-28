@@ -6,7 +6,12 @@ import { assertReplyAllowed } from "../security/replyAudience";
 import { uploadService } from "../services";
 import { contentViewService } from "../services/content-view.service";
 import { buildReelFeed } from "../services/reel-feed.service";
+import { mapCurrentReelHls } from "../services/reel-hls-mapping";
 import { BADGE_USER_SELECT, enrichItemAuthors, enrichPublicUser } from "../services/public-verification";
+
+// This response field is enabled only after HLS acceptance testing.
+// Never replace the MP4 URL: older clients need the original as fallback.
+const reelHlsDeliveryEnabled = process.env.VANTA_DURABLE_QUEUE_MEDIA_DELIVERY === "true";
 
 const parseLimit = (value: unknown, defaultLimit = 20) => {
   const parsed = typeof value === "string" ? parseInt(value, 10) : NaN;
@@ -79,8 +84,8 @@ export const finalizeReel = async (req: AuthRequest, res: Response): Promise<voi
     const fileId = typeof req.body?.fileId === "string" ? req.body.fileId : undefined;
     if (!fileId) { res.status(400).json({ error: "fileId is required" }); return; }
     const file = await prisma.uploadedFile.findUnique({ where: { id: fileId } });
-    if (!file || file.deletedAt || file.userId !== userId || file.fileType !== "VIDEO") {
-      res.status(403).json({ error: "Uploaded Reel media was not found, is not owned by you, or is not a video" });
+    if (!file || file.deletedAt || file.userId !== userId || file.fileType !== "VIDEO" || file.category !== "reel") {
+      res.status(403).json({ error: "Uploaded Reel media must be an available Reel video owned by you" });
       return;
     }
     if (!file.url) { res.status(400).json({ error: "Uploaded Reel media has no storage URL" }); return; }
@@ -89,18 +94,39 @@ export const finalizeReel = async (req: AuthRequest, res: Response): Promise<voi
       ? Math.max(0, Math.min(req.body.duration, 86_400))
       : null;
 
-    const updated = await prisma.video.update({
-      where: { id: reel.id },
-      data: {
-        videoUrl: file.url,
-        thumbnailUrl: reel.thumbnailUrl || null,
-        duration: duration ?? reel.duration,
-        publishStatus: "PUBLISHED",
-      },
+    // Linking the upload and publishing the Reel must succeed together.
+    // Otherwise the Reel becomes public without a usable media association,
+    // leaving completed Cloudinary HLS derivatives missing from its feed.
+    const updated = await prisma.$transaction(async (tx) => {
+      const linked = await tx.uploadedFile.updateMany({
+        where: {
+          id: file.id,
+          userId,
+          fileType: "VIDEO",
+          category: "reel",
+          path: file.path,
+          url: file.url,
+          deletedAt: null,
+          OR: [
+            { recordId: null },
+            { recordType: "Video", recordId: reel.id },
+          ],
+        },
+        data: { recordType: "Video", recordId: reel.id, category: "reel" },
+      });
+      if (linked.count !== 1) {
+        throw new Error("Uploaded Reel media is no longer available for this Reel");
+      }
+      return tx.video.update({
+        where: { id: reel.id, creatorId: userId },
+        data: {
+          videoUrl: file.url,
+          thumbnailUrl: reel.thumbnailUrl || null,
+          duration: duration ?? reel.duration,
+          publishStatus: "PUBLISHED",
+        },
+      });
     });
-    await prisma.uploadedFile
-      .update({ where: { id: file.id }, data: { recordType: "Video", recordId: updated.id, category: "reel" } })
-      .catch(() => undefined);
     res.status(200).json({ message: "Reel published", video: updated });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
@@ -180,6 +206,16 @@ export const getReels = async (req: AuthRequest, res: Response): Promise<void> =
     const orderMap = new Map(pageReelIds.map((id, index) => [id, index]));
     reels.sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0));
 
+    const hlsFiles = reelHlsDeliveryEnabled && pageReelIds.length
+      ? await prisma.uploadedFile.findMany({
+        where: { recordType: "Video", recordId: { in: pageReelIds },
+          category: "reel", fileType: "VIDEO", deletedAt: null, hlsUrl: { not: null } },
+        select: { recordId: true, url: true, hlsUrl: true },
+      }) : [];
+    // A Reel may have had an upload replaced while older records are still
+    // linked. Never pair the current MP4 with a stale upload's HLS manifest.
+    const hlsByReel = mapCurrentReelHls(reels, hlsFiles);
+
     const giftTotals = pageReelIds.length ? await prisma.giftTransaction.groupBy({
       by: ["videoId"],
       where: { videoId: { in: pageReelIds }, status: "COMPLETED" },
@@ -199,6 +235,7 @@ export const getReels = async (req: AuthRequest, res: Response): Promise<void> =
         title: reel.title,
         description: reel.description,
         videoUrl: reel.videoUrl,
+        hlsUrl: hlsByReel.get(reel.id) ?? null,
         thumbnailUrl: reel.thumbnailUrl,
         duration: reel.duration,
         views: reel.views,
@@ -279,6 +316,13 @@ export const getReelById = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
+    const derivative = reelHlsDeliveryEnabled && reel.videoUrl
+      ? await prisma.uploadedFile.findFirst({
+        where: { recordType: "Video", recordId: reel.id, category: "reel",
+          fileType: "VIDEO", deletedAt: null, url: reel.videoUrl, hlsUrl: { not: null } },
+        select: { hlsUrl: true },
+      }) : null;
+
     const { creator, likes, saves, reposts, _count, ...rest } = reel as any;
     const gifts = await prisma.giftTransaction.aggregate({
       where: { videoId: reel.id, status: "COMPLETED" },
@@ -290,6 +334,7 @@ export const getReelById = async (req: AuthRequest, res: Response): Promise<void
     }) : null;
     res.status(200).json(enrichItemAuthors({
       ...rest,
+      hlsUrl: derivative?.hlsUrl ?? null,
       isGifted: Boolean(viewerGift),
       creator,
       likesCount: _count.likes,

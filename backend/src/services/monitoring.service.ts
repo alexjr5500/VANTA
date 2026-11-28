@@ -236,7 +236,8 @@ class ApiLatencyTracker {
       
       res.on('finish', () => {
         const duration = Date.now() - start;
-        const route = req.route?.path || req.path || 'unknown';
+        // Never use raw request paths (IDs, arbitrary paths, or user-controlled values).
+        const route = typeof req.route?.path === 'string' ? req.route.path : 'unmatched';
         const method = req.method;
         const statusCode = res.statusCode;
         const metricName = `api.${method}.${route}`;
@@ -379,6 +380,8 @@ export const apiLatencyMiddleware = apiLatencyTracker.middleware();
 
 // Setup default alert rules for common scenarios
 export function setupDefaultAlerts(): void {
+  // The opt-in windowed collector replaces the two legacy HTTP alert rules.
+  if (process.env.VANTA_HTTP_TELEMETRY_ENABLED !== 'true') {
   metricsCollector.addAlertRule({
     metricName: 'api.all',
     condition: 'gt',
@@ -398,6 +401,7 @@ export function setupDefaultAlerts(): void {
     severity: 'critical',
     message: 'High error rate (>10 5xx/min)',
   });
+  }
 
   metricsCollector.addAlertRule({
     metricName: 'cache.all.hit',

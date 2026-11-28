@@ -14,6 +14,7 @@ import { useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { useAuth } from '@/context/AuthContext';
 import { apiDelete, apiGet, apiPost } from '@/lib/apiClient';
+import { startVisiblePolling } from '@/lib/visiblePolling';
 import { createSocket } from '@/lib/socketClient';
 import { useToast } from '@/components/ui/Toast';
 import { canDownloadPostVideo, downloadPostVideo } from '@/lib/postVideoDownload';
@@ -93,8 +94,6 @@ export default function HomePage() {
   useEffect(() => { setTab(readDefaultSection('timeline')); setSectionReady(true); }, []);
   const [items, setItems] = useState<Item[]>([]);
   const [live, setLive] = useState<Item[]>([]);
-  const [trending, setTrending] = useState<Item[]>([]);
-  const [suggested, setSuggested] = useState<Item[]>([]);
   const [storyRefreshKey, setStoryRefreshKey] = useState(0);
   // Per-session feed seed. A stable seed keeps pagination consistent within a
   // visit; a refresh generates a NEW seed so the discovery content reorders.
@@ -156,11 +155,6 @@ export default function HomePage() {
   useEffect(() => { const on = () => setOnline(true); const off = () => setOnline(false); setOnline(navigator.onLine); addEventListener('online', on); addEventListener('offline', off); return () => { removeEventListener('online', on); removeEventListener('offline', off); }; }, []);
   useEffect(() => {
     if (!token) return;
-    Promise.allSettled([apiGet<any>('/api/live/discover?limit=6&sort=viewerCount', token), apiGet<any>('/api/feed/trending?limit=5', token), apiGet<any>('/api/profiles/discover?limit=5', token)]).then(([liveResult, trendResult, suggestedResult]) => {
-      if (liveResult.status === 'fulfilled') setLive(unwrap(liveResult.value));
-      if (trendResult.status === 'fulfilled') setTrending(unwrap(trendResult.value));
-      if (suggestedResult.status === 'fulfilled') setSuggested(unwrap(suggestedResult.value));
-    });
     const socket = createSocket(token, 'home-social');
     const update = (data: any) => setItems(previous => previous.map(item => item.id === data.postId ? {
       ...item,
@@ -175,16 +169,23 @@ export default function HomePage() {
     return () => { socket.off('social:post-updated', update); socket.off('social:comment-created', update); socket.disconnect(); };
   }, [token, user?.id]);
   useEffect(() => {
-    if (!token) return;
-    let current = true;
-    const refreshLive = async () => {
-      try {
-        const result = await apiGet<any>('/api/live/discover?limit=6&sort=viewerCount', token, { skipCache: true });
-        if (current) setLive(unwrap(result));
-      } catch { /* keep the last confirmed live list during temporary network failures */ }
-    };
-    const interval = window.setInterval(() => { void refreshLive(); }, 15_000);
-    return () => { current = false; window.clearInterval(interval); };
+    if (!token) { setLive([]); return; }
+    // Clear previous account's discovery data, then refresh only while visible/online.
+    setLive([]);
+    return startVisiblePolling({
+      intervalMs: 15_000,
+      isAvailable: () => document.visibilityState === 'visible' && navigator.onLine,
+      subscribe: notify => {
+        document.addEventListener('visibilitychange', notify);
+        window.addEventListener('online', notify);
+        return () => {
+          document.removeEventListener('visibilitychange', notify);
+          window.removeEventListener('online', notify);
+        };
+      },
+      load: () => apiGet<any>('/api/live/discover?limit=6&sort=viewerCount', token, { skipCache: true }),
+      onValue: result => setLive(unwrap(result)),
+    });
   }, [token]);
   useEffect(() => { const element = sentinel.current; if (!element) return; const observer = new IntersectionObserver(([entry]) => { if (entry.isIntersecting && hasMore && !loading && !loadingMore && !loadMoreError) void fetchFeed(false, cursor); }, { rootMargin: '500px' }); observer.observe(element); return () => observer.disconnect(); }, [cursor, fetchFeed, hasMore, loading, loadingMore, loadMoreError]);
 
@@ -200,7 +201,6 @@ export default function HomePage() {
       setItems(previous => previous.filter(entry => entry.id !== item.id));
       setStoryRefreshKey(key => key + 1);
       setLive(previous => previous.filter(stream => stream.id !== item.id));
-      setTrending(previous => previous.filter(entry => entry.id !== item.id));
       setDeletePostFor(undefined);
       toast.success(isVideoItem(item) ? 'Reel deleted' : 'Post deleted');
     } catch (reason: any) {
@@ -275,7 +275,6 @@ export default function HomePage() {
     pendingActionsRef.current.add(actionKey);
     const was = Boolean(profile.following || profile.isFollowing);
     const updateFollowing = (value: boolean) => {
-      setSuggested(previous => previous.map(entry => entry.id === profile.id ? { ...entry, following: value, isFollowing: value } : entry));
       setItems(previous => previous.map(entry => getAuthor(entry).id === profile.id ? { ...entry, following: value, isFollowing: value } : entry));
     };
     updateFollowing(!was);

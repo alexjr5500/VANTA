@@ -1,5 +1,6 @@
 import { sensitiveFilter, hideSensitiveForViewer } from "./sensitive-content.service";
 import { prisma } from "../prisma";
+import { feedPageKey, finishCursorPage, runFeedQueries } from "./feed-read-optimization";
 import { appendAuditLog } from "../security/auditLog";
 import { cacheService, CACHE_KEYS, CACHE_TTL } from "./cache.service";
 import { dbPerformanceTracker } from "./monitoring.service";
@@ -110,7 +111,7 @@ const formatComment = (comment: any) => {
 export class FeedService {
   async getFeed(userId: string, cursor?: string, limit: number = 20) {
     const hide = await hideSensitiveForViewer(userId);
-    const cacheKey = CACHE_KEYS.FEED(userId, cursor) + ':sensitive-v1:' + hide + ':' + limit;
+    const cacheKey = feedPageKey(CACHE_KEYS.FEED(userId), cursor, limit) + ':sensitive-v1:' + hide;
     
     return cacheService.getOrSet(cacheKey, async () => {
       const queryStart = Date.now();
@@ -125,7 +126,7 @@ export class FeedService {
 
       const posts = await prisma.post.findMany({
         where: { authorId: { in: followingIds }, moderationRemovedAt: null, ...sensitiveFilter(hide) },
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: limit + 1,
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
         include: {
@@ -140,7 +141,7 @@ export class FeedService {
 
       dbPerformanceTracker.trackQuery('Post', Date.now() - queryStart, 'findMany');
 
-      const nextCursor = posts.length > limit ? posts.pop()?.id : undefined;
+      const nextCursor = finishCursorPage(posts, limit);
 
       return {
         items: (await this.withAttachments(posts)).map(post => enrichItemAuthors({
@@ -194,7 +195,7 @@ export class FeedService {
 
   private async getHomeFeedCached(userId: string, cursor?: string, limit: number = 15, seed?: string) {
     const hide = await hideSensitiveForViewer(userId);
-    const cacheKey = `${CACHE_KEYS.HOME_FEED(userId, cursor)}:${seed || 'default'}:sensitive-v1:${hide}:${limit}`;
+    const cacheKey = feedPageKey(CACHE_KEYS.HOME_FEED(userId), cursor, limit, seed) + ':sensitive-v1:' + hide;
     
     return cacheService.getOrSet(cacheKey, async () => {
       const queryStart = Date.now();
@@ -208,7 +209,7 @@ export class FeedService {
       const followingIds = [...followedUserIds, userId];
 
       // 1. Live streams from followed creators (priority)
-      const followedStreams = followingIds.length > 1
+      const readFollowedStreams = async () => followingIds.length > 1
         ? await prisma.liveStream.findMany({
             where: {
               hostId: { in: followingIds.filter(id => id !== userId) },
@@ -239,7 +240,7 @@ export class FeedService {
       // present, the (already-capped) discovery bucket is deterministically
       // rotated so refreshes surface different eligible reels — no full-table
       // random sort.
-      const trendingVideos = seededShuffle(await prisma.video.findMany({
+      const readTrendingVideos = async () => seededShuffle(await prisma.video.findMany({
         where: { moderationRemovedAt: null, publishStatus: 'PUBLISHED', videoUrl: { not: null }, ...sensitiveFilter(hide) },
         orderBy: [{ views: 'desc' }, { createdAt: 'desc' }],
         take: 12,
@@ -261,7 +262,7 @@ export class FeedService {
       }), seed || '').slice(0, 8);
 
       // 3. Posts from followed creators (most recent)
-      const followedPosts = await prisma.post.findMany({
+      const readFollowedPosts = () => prisma.post.findMany({
         where: { authorId: { in: followingIds }, moderationRemovedAt: null, ...sensitiveFilter(hide) },
         orderBy: { createdAt: 'desc' },
         take: 8,
@@ -274,7 +275,7 @@ export class FeedService {
       });
 
       // 4. Trending posts (global). Seed-rotated discovery bucket (capped).
-      const trendingPosts = seededShuffle(await prisma.post.findMany({
+      const readTrendingPosts = async () => seededShuffle(await prisma.post.findMany({
         where: { authorId: { notIn: followingIds }, moderationRemovedAt: null, ...sensitiveFilter(hide) },
         orderBy: [{ likes: { _count: 'desc' } }, { createdAt: 'desc' }],
         take: 10,
@@ -287,7 +288,7 @@ export class FeedService {
       }), seed || '').slice(0, 5);
 
       // 5. Community posts. Seed-rotated discovery bucket (capped).
-      const communityPosts = seededShuffle(await prisma.communityPost.findMany({
+      const readCommunityPosts = async () => seededShuffle(await prisma.communityPost.findMany({
         orderBy: { createdAt: 'desc' },
         take: 8,
         include: {
@@ -306,7 +307,7 @@ export class FeedService {
       }), seed || '').slice(0, 4);
 
       // 6. Other live streams (worldwide). Seed-rotated discovery bucket.
-      const otherStreams = seededShuffle(await prisma.liveStream.findMany({
+      const readOtherStreams = async () => seededShuffle(await prisma.liveStream.findMany({
         where: {
           active: true,
           status: 'LIVE',
@@ -332,7 +333,7 @@ export class FeedService {
       }), seed || '').slice(0, 4);
 
       // 7. Suggested creators. Seed-rotated discovery bucket (capped).
-      const suggestedCreators = seededShuffle(await prisma.user.findMany({
+      const readSuggestedCreators = async () => seededShuffle(await prisma.user.findMany({
         where: {
           id: { notIn: followingIds },
           status: 'ACTIVE',
@@ -351,6 +352,14 @@ export class FeedService {
           _count: { select: { followers: true, posts: true } },
         },
       }), seed || '').slice(0, 3);
+
+      // Keep pool pressure bounded to three independent reads per feed request.
+      // Group order is preserved so ranking and the seeded mix stay unchanged.
+      const [followedStreams, trendingVideos, followedPosts, trendingPosts, communityPosts, otherStreams, suggestedCreators] =
+        await runFeedQueries([
+          readFollowedStreams, readTrendingVideos, readFollowedPosts,
+          readTrendingPosts, readCommunityPosts, readOtherStreams, readSuggestedCreators,
+        ] as const);
 
       dbPerformanceTracker.trackQuery('HomeFeed', Date.now() - queryStart, 'findMany');
 
@@ -644,7 +653,7 @@ export class FeedService {
 
   async getTrendingFeed(cursor?: string, limit: number = 20, userId?: string) {
     const hide = await hideSensitiveForViewer(userId);
-    return cacheService.getOrSet(CACHE_KEYS.TRENDING + ':sensitive-v1:' + hide + ':' + (cursor || '') + ':' + limit, async () => {
+    const load = async () => {
       const queryStart = Date.now();
       
       const posts = await prisma.post.findMany({
@@ -652,6 +661,7 @@ export class FeedService {
         orderBy: [
           { likes: { _count: "desc" } },
           { createdAt: "desc" },
+          { id: "desc" },
         ],
         take: limit + 1,
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -663,14 +673,16 @@ export class FeedService {
 
       dbPerformanceTracker.trackQuery('Post', Date.now() - queryStart, 'findManyTrending');
 
-      const nextCursor = posts.length > limit ? posts.pop()?.id : undefined;
+      const nextCursor = finishCursorPage(posts, limit);
       return { items: posts, nextCursor };
-    }, CACHE_TTL.MEDIUM);
+    };
+    // Only the canonical first page uses the existing shared invalidation key.
+    return hide && !cursor && limit === 20 ? cacheService.getOrSet(CACHE_KEYS.TRENDING, load, CACHE_TTL.MEDIUM) : load();
   }
 
   async getExploreFeed(cursor?: string, limit: number = 30, userId?: string) {
     const hide = await hideSensitiveForViewer(userId);
-    return cacheService.getOrSet(CACHE_KEYS.EXPLORE + ':sensitive-v1:' + hide + ':' + (cursor || '') + ':' + limit, async () => {
+    const load = async () => {
       const queryStart = Date.now();
       
       const [posts, streams, videos] = await Promise.all([
@@ -707,7 +719,9 @@ export class FeedService {
       dbPerformanceTracker.trackQuery('Explore', Date.now() - queryStart, 'findMany');
 
       return { posts, streams, videos };
-    }, CACHE_TTL.MEDIUM);
+    };
+    // Only the canonical first page uses the existing shared invalidation key.
+    return hide && !cursor && limit === 30 ? cacheService.getOrSet(CACHE_KEYS.EXPLORE, load, CACHE_TTL.MEDIUM) : load();
   }
 
   async createPost(authorId: string, content: string, mediaUrl?: string, replyAudience: ReplyAudience = "EVERYONE") {

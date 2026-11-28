@@ -267,6 +267,10 @@ model UploadedFile {
   deletedAt    DateTime?
   moderationOriginalPath String?
   moderationOriginalUrl  String?
+  // Cloudinary worker outputs; original url remains the safe MP4/image fallback.
+  optimizedUrl  String?
+  thumbnailUrl  String?
+  hlsUrl        String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -300,7 +304,8 @@ model UploadSession {
   totalChunks    Int
   receivedChunks Int      @default(0)
   receivedBytes  Int      @default(0)
-  status         String   @default("ACTIVE") // ACTIVE | COMPLETE | FAILED | CANCELLED
+  status         String   @default("ACTIVE") // ACTIVE | FINALIZING | COMPLETE | FAILED | CANCELLED
+  completedFileId String? // Exact file identity; legacy COMPLETE sessions are not guessed.
   recordType     String? // e.g. Story, Video - bound at session creation
   recordId       String? // draft record the composed file will be linked to
   createdAt      DateTime @default(now())
@@ -3900,4 +3905,14 @@ model TwoFactorLoginChallenge {
 
   @@index([userId, expiresAt])
   @@index([expiresAt])
+}
+
+
+// Permanent, cross-product blockchain reference fence. No cascading user/order
+// foreign keys: deleting or refunding an order must not make a payment reusable.
+model BlockchainPaymentClaim {
+  txHash    String   @id
+  family    String
+  orderId   String
+  createdAt DateTime @default(now())
 }

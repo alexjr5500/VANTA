@@ -1,7 +1,8 @@
 jest.mock('../prisma', () => ({ prisma: {
   conversation: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), findMany: jest.fn() },
   participant: { findUnique: jest.fn(), findMany: jest.fn() },
-  message: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), findMany: jest.fn(), count: jest.fn() },
+  group: { findMany: jest.fn() }, channel: { findMany: jest.fn() },
+  message: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
   uploadedFile: { findMany: jest.fn(), updateMany: jest.fn() },
   messageRead: { createMany: jest.fn() }, user: { count: jest.fn() },
   blockedUser: { findFirst: jest.fn() },
@@ -411,4 +412,50 @@ describe('ChatService security and persistence', () => {
     expect(db.conversation.create).not.toHaveBeenCalled();
   });
 
+});
+
+describe('ChatService conversation list batching', () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+    (db.group.findMany as jest.Mock).mockResolvedValue([]);
+    (db.channel.findMany as jest.Mock).mockResolvedValue([]);
+    (db.message.groupBy as jest.Mock).mockResolvedValue([{ conversationId: 'c1', _count: { _all: 3 } }]);
+    (db.follow.findMany as jest.Mock).mockResolvedValueOnce([{ followingId: 'allowed' }]);
+    (db.userSettings.findMany as jest.Mock).mockResolvedValue([
+      { userId: 'allowed', readReceipts: false },
+      { userId: 'hidden', readReceipts: true, privacyReadReceipts: 'everyone' },
+    ]);
+  });
+  it('batches counts and privacy lookups without exposing hidden presence or receipts', async () => {
+    const conv = (id: string, partner: string, senderId: string) => ({
+      id, type: 'DIRECT', participants: [
+        { userId: 'viewer', role: 'MEMBER', user: { id: 'viewer' } },
+        { userId: partner, role: 'MEMBER', user: { id: partner, userPresence: { isOnline: true, lastActive: new Date() },
+          userSettings: { onlineStatus: 'followers', lastSeen: 'nobody' } } },
+      ], messages: [{ id: 'm-' + id, senderId, reads: [{ userId: partner }, { userId: 'viewer' }] }],
+    });
+    (db.conversation.findMany as jest.Mock).mockResolvedValue([conv('c1', 'allowed', 'viewer'), conv('c2', 'hidden', 'hidden'), conv('lookahead', 'other', 'viewer')]);
+    const result = await service.getConversations('viewer', 2);
+    expect(result.nextCursor).toBe('c2');
+    expect(result.conversations.map(c => c.unreadCount)).toEqual([3, 0]);
+    expect(result.conversations[0].partner.isOnline).toBe(true);
+    expect(result.conversations[1].partner.isOnline).toBe(false);
+    expect(result.conversations[0].partner.lastActive).toBeUndefined();
+    expect(result.conversations[0].lastMessage.reads).toEqual([{ userId: 'viewer' }]);
+    expect(result.conversations[1].lastMessage.reads).toEqual([{ userId: 'viewer' }]);
+    expect(db.message.count).not.toHaveBeenCalled();
+    expect(db.message.groupBy).toHaveBeenCalledTimes(1);
+    expect(db.message.groupBy).toHaveBeenCalledWith(expect.objectContaining({
+      where: { conversationId: { in: ['c1', 'c2'] }, deletedAt: null, moderationRemovedAt: null,
+        senderId: { not: 'viewer' }, reads: { none: { userId: 'viewer' } } },
+    }));
+    expect(db.follow.findMany).toHaveBeenCalledTimes(1);
+    expect(db.userSettings.findMany).toHaveBeenCalledTimes(1);
+  });
+  it('does not query enrichment data for an empty page', async () => {
+    (db.conversation.findMany as jest.Mock).mockResolvedValue([]);
+    await expect(service.getConversations('viewer')).resolves.toEqual({ conversations: [], nextCursor: null });
+    expect(db.message.groupBy).not.toHaveBeenCalled();
+    expect(db.group.findMany).not.toHaveBeenCalled();
+  });
 });

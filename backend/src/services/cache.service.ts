@@ -1,4 +1,4 @@
-import { config } from '../security/config';
+import Redis from 'ioredis';
 
 // In-memory cache fallback when Redis is unavailable
 class MemoryCache {
@@ -44,7 +44,8 @@ class MemoryCache {
   }
 
   async delPattern(pattern: string): Promise<void> {
-    const regex = new RegExp(pattern.replace('*', '.*'));
+    // Treat literal regex metacharacters as data; '*' is the wildcard.
+    const regex = new RegExp('^' + pattern.split('*').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, ch => '\\' + ch)).join('.*') + '$');
     for (const key of this.store.keys()) {
       if (regex.test(key)) {
         this.store.delete(key);
@@ -107,7 +108,7 @@ class MemoryCache {
 }
 
 // Redis cache adapter (requires ioredis)
-let redisClient: any = null;
+let redisClient: Redis | null = null;
 let redisAvailable = false;
 
 // Cache event listeners for pub/sub invalidations
@@ -136,8 +137,8 @@ function emitCacheEvent(event: string, key: string): void {
 
 async function initRedis(): Promise<boolean> {
   try {
-    const Redis = require('ioredis');
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+    const redisUrl = process.env.REDIS_URL;
+    if (!redisUrl) return false;
     redisClient = new Redis(redisUrl, {
       retryStrategy: (times: number) => {
         const delay = Math.min(times * 50, 2000);
@@ -154,24 +155,23 @@ async function initRedis(): Promise<boolean> {
     });
 
     // Set up Redis event listeners
-    redisClient.on('error', (err: Error) => {
-      console.warn('[Cache] Redis error:', err.message);
+    redisClient.on('error', () => {
+      console.warn('[Cache] Redis connection error');
       redisAvailable = false;
     });
 
-    redisClient.on('reconnecting', () => {
-      console.info('[Cache] Redis reconnecting...');
-    });
-
-    redisClient.on('connect', () => {
-      console.info('[Cache] Redis connected');
+    const markUnavailable = () => { redisAvailable = false; };
+    redisClient.on('close', markUnavailable);
+    redisClient.on('end', markUnavailable);
+    redisClient.on('reconnecting', markUnavailable);
+    redisClient.on('ready', () => {
       redisAvailable = true;
     });
 
     await redisClient.connect();
-    redisAvailable = true;
+    redisAvailable = redisClient.status === 'ready';
     console.info('[Cache] Redis connected successfully');
-    return true;
+    return redisAvailable;
   } catch (error) {
     console.warn('[Cache] Redis unavailable, using in-memory cache fallback');
     redisAvailable = false;
@@ -221,6 +221,9 @@ class CacheWarmer {
 class CacheService {
   private memoryCache: MemoryCache;
   private warmer: CacheWarmer;
+  private readonly initialization: Promise<void>;
+  // In shared-only mode Redis misses and outages never expose stale local data.
+  private readonly sharedOnly = process.env.VANTA_REDIS_CACHE_SHARED_ONLY === 'true';
   private stats = {
     hits: 0,
     misses: 0,
@@ -240,17 +243,37 @@ class CacheService {
     this.memoryCache = new MemoryCache();
     this.hotCache = new MemoryCache(this.HOT_CACHE_TTL);
     this.warmer = new CacheWarmer();
-    this.init();
+    this.initialization = this.init();
   }
 
   private async init(): Promise<void> {
-    if (process.env.REDIS_URL) {
+    // Installing the previously missing dependency must not activate Redis
+    // on an existing deployment before staging acceptance and approval.
+    if (process.env.VANTA_REDIS_CACHE_ENABLED === 'true' && process.env.REDIS_URL) {
       await initRedis();
     }
   }
 
+  async waitForRedis(): Promise<boolean> {
+    await this.initialization;
+    return this.isRedisAvailable;
+  }
+
+  async probeRedis(): Promise<boolean> {
+    const client = redisClient;
+    if (!client || !this.isRedisAvailable) return false;
+    return (await client.ping()) === 'PONG' && this.isRedisAvailable;
+  }
+
+  async closeRedisConnection(): Promise<void> {
+    await this.initialization;
+    redisClient?.disconnect();
+    redisClient = null;
+    redisAvailable = false;
+  }
+
   get isRedisAvailable(): boolean {
-    return redisAvailable;
+    return redisAvailable && redisClient?.status === 'ready';
   }
 
   get hitRate(): number {
@@ -264,7 +287,10 @@ class CacheService {
       ...this.stats, 
       memorySize: this.memoryCache.size, 
       hotCacheSize: this.hotCache.size,
-      redisAvailable,
+      redisAvailable: this.isRedisAvailable,
+      redisConfigured: Boolean(process.env.REDIS_URL),
+      redisEnabled: process.env.VANTA_REDIS_CACHE_ENABLED === 'true',
+      sharedOnly: this.sharedOnly,
       warmerJobs: this.warmer.jobs,
     };
   }
@@ -283,6 +309,20 @@ class CacheService {
   async get<T>(key: string): Promise<T | null> {
     const sanitizedKey = this.sanitizeKey(key);
 
+    if (this.sharedOnly) {
+      try {
+        const value = this.isRedisAvailable && redisClient ? await redisClient.get(sanitizedKey) : null;
+        if (value !== null) {
+          const parsed = JSON.parse(value) as T;
+          this.stats.hits++;
+          this.stats.redisHits++;
+          return parsed;
+        }
+      } catch { /* shared cache unavailable: fetch authoritative data instead */ }
+      this.stats.misses++;
+      return null;
+    }
+
     // Try L1 hot cache first (fastest)
     const hotData = await this.hotCache.get<T>(sanitizedKey);
     if (hotData !== null) {
@@ -292,16 +332,14 @@ class CacheService {
     }
 
     // Try Redis if available (L2)
-    if (redisAvailable && redisClient) {
+    if (this.isRedisAvailable && redisClient) {
       try {
         const data = await redisClient.get(sanitizedKey);
         if (data) {
           this.stats.hits++;
           this.stats.redisHits++;
-          // Promote to hot cache
-          const parsed = JSON.parse(data) as T;
-          await this.hotCache.set(sanitizedKey, parsed);
-          return parsed;
+          // Do not promote without knowing the remaining shared TTL.
+          return JSON.parse(data) as T;
         }
       } catch {
         // Redis error, fall through to memory cache
@@ -310,7 +348,7 @@ class CacheService {
 
     // Fallback to memory cache (L3)
     const data = await this.memoryCache.get<T>(sanitizedKey);
-    if (data) {
+    if (data !== null) {
       this.stats.hits++;
       this.stats.memoryHits++;
       return data;
@@ -328,21 +366,17 @@ class CacheService {
     const sanitizedKey = this.sanitizeKey(key);
     this.stats.sets++;
 
-    // Set in hot cache
-    await this.hotCache.set(sanitizedKey, data, ttl);
-
-    // Set in memory cache
-    await this.memoryCache.set(sanitizedKey, data, ttl);
+    // Local hot entries must not outlive either the short hot TTL or the value.
+    if (!this.sharedOnly) {
+      await this.hotCache.set(sanitizedKey, data, Math.min(ttl || this.DEFAULT_TTL, this.HOT_CACHE_TTL));
+      await this.memoryCache.set(sanitizedKey, data, ttl);
+    }
 
     // Set in Redis if available
-    if (redisAvailable && redisClient) {
+    if (this.isRedisAvailable && redisClient) {
       try {
         const serialized = JSON.stringify(data);
-        if (ttl) {
-          await redisClient.set(sanitizedKey, serialized, 'PX', ttl);
-        } else {
-          await redisClient.set(sanitizedKey, serialized);
-        }
+        await redisClient.set(sanitizedKey, serialized, 'PX', ttl || this.DEFAULT_TTL);
       } catch {
         // Redis error, data already in memory cache
       }
@@ -351,18 +385,16 @@ class CacheService {
 
   async mset(entries: { key: string; data: any; ttl?: number }[]): Promise<void> {
     const sanitized = entries.map(e => ({ ...e, key: this.sanitizeKey(e.key) }));
-    await this.hotCache.mset(sanitized);
-    await this.memoryCache.mset(sanitized);
-    if (redisAvailable && redisClient) {
+    if (!this.sharedOnly) {
+      await this.hotCache.mset(sanitized.map(e => ({ ...e, ttl: Math.min(e.ttl || this.DEFAULT_TTL, this.HOT_CACHE_TTL) })));
+      await this.memoryCache.mset(sanitized);
+    }
+    if (this.isRedisAvailable && redisClient) {
       try {
         const pipeline = redisClient.pipeline();
         for (const entry of sanitized) {
           const serialized = JSON.stringify(entry.data);
-          if (entry.ttl) {
-            pipeline.set(entry.key, serialized, 'PX', entry.ttl);
-          } else {
-            pipeline.set(entry.key, serialized);
-          }
+          pipeline.set(entry.key, serialized, 'PX', entry.ttl || this.DEFAULT_TTL);
         }
         await pipeline.exec();
       } catch {
@@ -376,7 +408,7 @@ class CacheService {
     this.stats.deletes++;
     await this.hotCache.del(sanitizedKey);
     await this.memoryCache.del(sanitizedKey);
-    if (redisAvailable && redisClient) {
+    if (this.isRedisAvailable && redisClient) {
       try {
         await redisClient.del(sanitizedKey);
       } catch {
@@ -390,21 +422,18 @@ class CacheService {
     this.stats.deletes++;
     await this.hotCache.delPattern(pattern);
     await this.memoryCache.delPattern(pattern);
-    if (redisAvailable && redisClient) {
+    if (this.isRedisAvailable && redisClient) {
       try {
-        const stream = redisClient.scanStream({ match: pattern });
-        const pipeline = redisClient.pipeline();
-        stream.on('data', (keys: string[]) => {
-          for (const key of keys) {
-            pipeline.del(key);
+        // Await each scan/delete batch; avoid unhandled stream errors and an
+        // unbounded pipeline containing every matching key in the database.
+        let cursor = '0';
+        do {
+          const [next, keys] = await redisClient.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+          for (let start = 0; start < keys.length; start += 100) {
+            await redisClient.del(...keys.slice(start, start + 100));
           }
-        });
-        await new Promise<void>((resolve) => {
-          stream.on('end', async () => {
-            await pipeline.exec();
-            resolve();
-          });
-        });
+          cursor = next;
+        } while (cursor !== '0');
       } catch {
         // Ignore Redis errors
       }
@@ -413,9 +442,10 @@ class CacheService {
   }
 
   async flush(): Promise<void> {
+    if (this.sharedOnly) throw new Error('Global flush is disabled in shared cache mode');
     await this.hotCache.flush();
     await this.memoryCache.flush();
-    if (redisAvailable && redisClient) {
+    if (this.isRedisAvailable && redisClient) {
       try {
         await redisClient.flushdb();
       } catch {
@@ -426,11 +456,15 @@ class CacheService {
 
   async exists(key: string): Promise<boolean> {
     const sanitizedKey = this.sanitizeKey(key);
+    if (this.sharedOnly) {
+      try { return Boolean(this.isRedisAvailable && redisClient && await redisClient.exists(sanitizedKey) > 0); }
+      catch { return false; }
+    }
     const hotExists = await this.hotCache.exists(sanitizedKey);
     if (hotExists) return true;
     const memExists = await this.memoryCache.exists(sanitizedKey);
     if (memExists) return true;
-    if (redisAvailable && redisClient) {
+    if (this.isRedisAvailable && redisClient) {
       try {
         return await redisClient.exists(sanitizedKey) > 0;
       } catch {
@@ -442,15 +476,23 @@ class CacheService {
 
   async increment(key: string, amount: number = 1): Promise<number> {
     const sanitizedKey = this.sanitizeKey(key);
-    await this.hotCache.increment(sanitizedKey, amount);
-    await this.memoryCache.increment(sanitizedKey, amount);
-    if (redisAvailable && redisClient) {
+    // A cached copy of a shared counter must not mask another process's increment.
+    await this.hotCache.del(sanitizedKey);
+    if (this.isRedisAvailable && redisClient) {
       try {
-        return await redisClient.incrby(sanitizedKey, amount);
+        const count = await redisClient.eval(
+          "local n = redis.call('INCRBY', KEYS[1], ARGV[1]); " +
+          "if redis.call('PTTL', KEYS[1]) < 0 then redis.call('PEXPIRE', KEYS[1], ARGV[2]); end; return n",
+          1, sanitizedKey, amount, this.DEFAULT_TTL,
+        );
+        await this.memoryCache.del(sanitizedKey);
+        return Number(count);
       } catch {
-        return this.memoryCache.increment(sanitizedKey, amount);
+        // Local fallback is not a distributed counter. Never use it as proof
+        // that a cross-instance security or financial limit has been enforced.
       }
     }
+    if (this.sharedOnly) throw new Error('Shared cache counter unavailable');
     return this.memoryCache.increment(sanitizedKey, amount);
   }
 
@@ -475,6 +517,15 @@ class CacheService {
     ttl: number = 60_000,
     staleTtl: number = 300_000
   ): Promise<T> {
+    if (this.sharedOnly) {
+      // Do not read or retain a process-local stale value in shared mode.
+      // Preserve the existing wrapper schema for this method's cache keys.
+      const existing = await this.get<{ data: T; staleAt: number }>(key);
+      if (existing && Date.now() < existing.staleAt) return existing.data;
+      const fresh = await factory();
+      await this.set(key, { data: fresh, staleAt: Date.now() + staleTtl }, ttl);
+      return fresh;
+    }
     // Try to get fresh data
     const cached = await this.memoryCache.get<{ data: T; staleAt: number }>(key);
     if (cached) {

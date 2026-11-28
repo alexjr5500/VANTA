@@ -6,6 +6,7 @@ import { callSessionService } from '../services/call-session.service';
 import { presenceRegistry } from '../services/push/presence-registry';
 import { pushNotificationService } from '../services/push/push-notification.service';
 import { prisma } from '../prisma';
+import { observeRoomPresence, PresenceTransitions } from '../services/realtime-presence';
 
 let chatIO: Server | null = null;
 
@@ -112,8 +113,9 @@ export async function emitChatUnreadCounts(conversationId: string) {
   }
 }
 
-export const handleChatSocket = (io: Server) => {
+export const handleChatSocket = (io: Server, cluster?: { ready: () => boolean }) => {
   chatIO = io;
+  const transitions = new PresenceTransitions();
   io.use((socket, next) => {
     const token = socket.handshake.auth.token;
     if (!token) return next(new Error('Authentication error'));
@@ -131,11 +133,45 @@ export const handleChatSocket = (io: Server) => {
   io.on('connection', async (socket: Socket) => {
     const userId = socket.data.userId;
     const connectionCount = addConnection(userId, socket.id);
-    socket.join(`user_${userId}`);
-    if (connectionCount === 1) {
+    const joined = Promise.resolve(socket.join(`user_${userId}`));
+
+    // Register cleanup before awaiting I/O so even a fast disconnect is tracked.
+    socket.on('disconnect', () => {
       const lastActive = new Date();
-      await prisma.userPresence.upsert({ where: { userId }, update: { isOnline: true, lastActive }, create: { userId, isOnline: true, lastActive } }).catch(() => undefined);
-      await broadcastPresenceChange(io, userId, true, lastActive);
+      removeConnection(userId, socket.id);
+      void transitions.run(userId, async () => {
+        if (presenceRegistry.count(userId) > 0) return;
+        if (cluster) {
+          const observed = await observeRoomPresence(io, userId, cluster.ready, () => presenceRegistry.count(userId));
+          if (observed !== 'offline') return;
+        }
+        // Do not overwrite a newer online transition recorded while looking up peers.
+        const updated = await prisma.userPresence.updateMany({
+          where: { userId, isOnline: true, lastActive: { lte: lastActive } },
+          data: { isOnline: false, lastActive },
+        });
+        if (updated.count > 0 && presenceRegistry.count(userId) === 0) {
+          await broadcastPresenceChange(io, userId, false, lastActive);
+        }
+      }).catch(() => console.warn('[Presence] Offline transition unavailable'));
+    });
+
+    // Do not delay registration of chat/call handlers behind presence I/O.
+    const lastActive = new Date();
+    if (connectionCount === 1 || cluster) {
+      void transitions.run(userId, async () => {
+        await joined;
+        if (!socket.connected && presenceRegistry.count(userId) === 0) return;
+        await prisma.userPresence.upsert({
+          where: { userId }, update: { isOnline: true, lastActive },
+          create: { userId, isOnline: true, lastActive },
+        });
+        if (presenceRegistry.count(userId) > 0 && connectionCount === 1) {
+          await broadcastPresenceChange(io, userId, true, lastActive);
+        }
+      }).catch(() => console.warn('[Presence] Online transition unavailable'));
+    } else {
+      void joined.catch(() => console.warn('[Presence] Room join unavailable'));
     }
 
     socket.on('join_conversation', async (conversationId: string) => {
@@ -382,11 +418,5 @@ export const handleChatSocket = (io: Server) => {
       io.to(`user_${to}`).emit('call_renegotiate', { callId, conversationId, data: signal, from: userId });
     });
 
-    socket.on('disconnect', async () => {
-      if (removeConnection(userId, socket.id) > 0) return;
-      const lastActive = new Date();
-      await prisma.userPresence.upsert({ where: { userId }, update: { isOnline: false, lastActive }, create: { userId, isOnline: false, lastActive } }).catch(() => undefined);
-      await broadcastPresenceChange(io, userId, false, lastActive);
-    });
   });
 };

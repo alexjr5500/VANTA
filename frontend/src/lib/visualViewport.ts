@@ -1,6 +1,7 @@
 'use client';
 
 import type { CSSProperties } from 'react';
+import { createFrameCoalescer, viewportChanged } from './viewportScheduling';
 
 /**
  * VANTA global visual-viewport / mobile-keyboard helper.
@@ -52,8 +53,10 @@ function applyToRoot(state: VisualViewportState): void {
   root.style.setProperty('--vanta-safe-bottom', `calc(env(safe-area-inset-bottom, 0px) + ${state.keyboard}px)`);
 }
 
-function sync(): void {
-  current = readState();
+function sync(force = false): void {
+  const next = readState();
+  if (!force && !viewportChanged(current, next)) return;
+  current = next;
   applyToRoot(current);
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent<VisualViewportState>('vanta:viewport', { detail: current }));
@@ -64,8 +67,14 @@ export function mountVisualViewport(): () => void {
   if (typeof window === 'undefined' || mounted) return () => undefined;
   mounted = true;
   const vv = window.visualViewport;
-  const onChange = () => sync();
-  sync();
+  const scheduler = createFrameCoalescer(
+    callback => window.requestAnimationFrame(callback),
+    handle => window.cancelAnimationFrame(handle),
+    () => sync(),
+  );
+  const onChange = scheduler.schedule;
+  // Initial variables must exist before keyboard-dependent layout is rendered.
+  sync(true);
   vv?.addEventListener('resize', onChange);
   vv?.addEventListener('scroll', onChange);
   window.addEventListener('resize', onChange);
@@ -77,6 +86,7 @@ export function mountVisualViewport(): () => void {
     window.removeEventListener('resize', onChange);
     document.removeEventListener('focusin', onChange);
     document.removeEventListener('focusout', onChange);
+    scheduler.dispose();
     mounted = false;
   };
 }

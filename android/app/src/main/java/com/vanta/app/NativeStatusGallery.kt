@@ -22,10 +22,15 @@ import java.util.concurrent.ConcurrentHashMap
  * are intercepted locally and NEVER sent to VANTA servers before posting.
  */
 internal class NativeStatusGallery(private val activity: Activity, private val origin: String) {
+    companion object {
+        private const val GALLERY_PATH = "/__vanta_native_gallery/"
+        fun isGalleryPath(path: String?): Boolean = path?.startsWith(GALLERY_PATH) == true
+    }
+
     val nonce: String = UUID.randomUUID().toString()
     private val expectedHost = Uri.parse(origin).host
     private val entries = ConcurrentHashMap<String, MediaEntry>()
-    private val prefix = "/__vanta_native_gallery/" + nonce + "/"
+    private val prefix = GALLERY_PATH + nonce + "/"
 
     private data class MediaEntry(
         val key: String,
@@ -43,7 +48,10 @@ internal class NativeStatusGallery(private val activity: Activity, private val o
     fun listRecent(allowed: Boolean): String {
         val result = JSONObject()
         val items = JSONArray()
-        if (!allowed) return result.put("status", "permission").put("items", items).toString()
+        if (!allowed) {
+            entries.clear()
+            return result.put("status", "permission").put("items", items).toString()
+        }
 
         val candidates = mutableListOf<Pair<Long, MediaEntry>>()
         var permissionFailures = 0
@@ -113,7 +121,7 @@ internal class NativeStatusGallery(private val activity: Activity, private val o
     fun intercept(request: WebResourceRequest, trustedPage: Boolean, allowed: Boolean): WebResourceResponse? {
         val url = request.url
         val path = url.path ?: return null
-        if (!path.startsWith("/__vanta_native_gallery/")) return null
+        if (!isGalleryPath(path)) return null
         if (request.isForMainFrame || request.method != "GET" ||
             url.scheme != "https" || url.host != expectedHost || !trustedPage || !allowed
         ) return blocked()
@@ -147,9 +155,14 @@ internal class NativeStatusGallery(private val activity: Activity, private val o
                         )
                     }
                 } ?: return blocked()
+                // Release decoded native pixel memory even if JPEG encoding fails.
                 val bytes = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 77, bytes)
-                bitmap.recycle()
+                val encoded = try {
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 77, bytes)
+                } finally {
+                    bitmap.recycle()
+                }
+                if (!encoded) return blocked()
                 response("image/jpeg", ByteArrayInputStream(bytes.toByteArray()))
             }
         } catch (_: Exception) {
