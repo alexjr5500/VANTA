@@ -3,6 +3,7 @@
 import React, { useState, useEffect, memo, useCallback, useRef } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useAuth } from '@/context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
@@ -26,10 +27,10 @@ import {
 } from 'lucide-react';
 import VantaLogo from '@/components/ui/VantaLogo';
 import Avatar from '@/components/ui/Avatar';
-import CreatePostModal from '@/components/create/CreatePostModal';
-import GoLiveModal from '@/components/create/GoLiveModal';
-import ReelUploader from '@/components/create/ReelUploader';
-import CreateHub from '@/components/create/CreateHub';
+
+
+
+
 import StoryComposer from '@/components/story/StoryComposer';
 import { useContentCreation } from '@/components/create/ContentCreationContext';
 import { UploadManagerProvider } from '@/components/upload/UploadManagerContext';
@@ -43,6 +44,19 @@ import ChatCallOverlay from '@/components/messages/ChatCallOverlay';
 import GlobalGiftAnimations from '@/components/gifts/GlobalGiftAnimations';
 import { useToast } from '@/components/ui/Toast';
 import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
+
+// Keep heavy creation flows out of the startup bundle. Once opened they stay
+// mounted until the shell unmounts, retaining the existing close/reset behavior.
+const CreatePostModal = dynamic(() => import('@/components/create/CreatePostModal'), { ssr: false });
+const GoLiveModal = dynamic(() => import('@/components/create/GoLiveModal'), { ssr: false });
+const ReelUploader = dynamic(() => import('@/components/create/ReelUploader'), { ssr: false });
+const CreateHub = dynamic(() => import('@/components/create/CreateHub'), { ssr: false });
+
+function useOpened(open: boolean) {
+  const [opened, setOpened] = useState(open);
+  useEffect(() => { if (open) setOpened(true); }, [open]);
+  return open || opened;
+}
 
 // Secondary destinations live in one compact mobile sheet. The permanent
 // navigation below stays focused on the five primary product actions.
@@ -250,12 +264,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // nested scrollers (Home, Discover, Profile, Chat, and standard pages) alike.
   useEffect(() => {
     const lastPositions = new WeakMap<Element, number>();
+    let frame = 0;
+    let pendingHidden = false;
+    const queueNavVisibility = (hidden: boolean) => {
+      pendingHidden = hidden;
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        setBottomNavHidden(current => current === pendingHidden ? current : pendingHidden);
+      });
+    };
 
     const handleScroll = (event: Event) => {
       // Reels is a full-screen, swipe-driven feed: keep the primary VANTA
       // navigation visible while users move between videos.
       if (pathname?.startsWith('/reels')) {
-        setBottomNavHidden(false);
+        queueNavVisibility(false);
         return;
       }
 
@@ -275,7 +299,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       // Returning to the top always restores navigation. Ignore tiny movement
       // to prevent jitter from touch momentum and browser viewport adjustments.
       if (position <= 8) {
-        setBottomNavHidden(false);
+        queueNavVisibility(false);
         return;
       }
 
@@ -284,17 +308,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       // down the page, so hide the shared navigation instead of waiting for a
       // second event. This matters when a page receives one large scroll jump.
       if (previous === undefined) {
-        setBottomNavHidden(true);
+        queueNavVisibility(true);
         return;
       }
 
       const delta = position - previous;
       if (Math.abs(delta) < 6) return;
-      setBottomNavHidden(delta > 0);
+      queueNavVisibility(delta > 0);
     };
 
-    document.addEventListener('scroll', handleScroll, true);
-    return () => document.removeEventListener('scroll', handleScroll, true);
+    document.addEventListener('scroll', handleScroll, { capture: true, passive: true });
+    return () => {
+      document.removeEventListener('scroll', handleScroll, true);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, [pathname]);
 
   useEffect(() => {
@@ -308,12 +335,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     window.addEventListener('vanta:floating-create-open', handleFloatingCreate);
     return () => window.removeEventListener('vanta:floating-create-open', handleFloatingCreate);
   }, []);
-  const [isClient, setIsClient] = useState(false);
   const postOpen = activeFlow === 'post';
-
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
+  const mountHub = useOpened(createHubOpen);
+  const mountPost = useOpened(postOpen);
+  const mountLive = useOpened(activeFlow === 'live');
+  const mountReel = useOpened(activeFlow === 'reel');
 
   // Surface push-intent failures (e.g. "call no longer available" after
   // tapping Answer on an expired notification) as toasts.
@@ -475,11 +501,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           )}
         </AnimatePresence>
         {!isChatPage && <>
-          <CreateHub open={createHubOpen} onClose={closeCreateHub} />
-          <CreatePostModal open={postOpen} initialIntent="post" onClose={closeAll} />
+          {mountHub && <CreateHub open={createHubOpen} onClose={closeCreateHub} />}
+          {mountPost && <CreatePostModal open={postOpen} initialIntent="post" onClose={closeAll} />}
           <StoryComposer open={activeFlow === 'story'} onClose={closeAll} onRequestOpen={openStoryModal} />
-          <GoLiveModal open={activeFlow === 'live'} onClose={closeAll} />
-          <ReelUploader open={activeFlow === 'reel'} selectedFile={reelFile} onChooseAnother={openReelUploader} onClose={closeAll} />
+          {mountLive && <GoLiveModal open={activeFlow === 'live'} onClose={closeAll} />}
+          {mountReel && <ReelUploader open={activeFlow === 'reel'} selectedFile={reelFile} onChooseAnother={openReelUploader} onClose={closeAll} />}
         </>}
         {/* Global background-upload indicator — always mounted so an in-progress
             Story/Reel upload stays visible and controllable while the user
@@ -528,15 +554,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 !isReelsPage && cn(isHomesHeaderRoute || isPostDetailPage ? 'px-0 pb-0' : 'px-4 pb-5', isSettingsRoute || isFlushHeaderRoute || isHomesHeaderRoute || isPostDetailPage ? 'pt-0' : 'pt-5'),
               isScrollPage && isConsolePage && 'px-4 pt-5 pb-24'
             )}>
-            <motion.div
-              key={isClient ? pathname : 'initial'}
+            <div
+              key={pathname}
               className={cn(isSettingsRoute && 'vanta-settings-shell', (isHomesTaskPage || isHomePage || isDiscoverPage || isStoryPage || isReelsFeed || isReelViewerPage || isGoLivePage || isChatPage || isProfilePage || isPostReplyPage) && 'h-full min-h-0')}
-              initial={{ opacity: 0, ...(isConsolePage ? {} : { y: 10 }) }}
-              animate={{ opacity: 1, ...(isConsolePage ? {} : { y: 0 }) }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
             >
               {children}
-            </motion.div>
+            </div>
           </div>
         </main>
 

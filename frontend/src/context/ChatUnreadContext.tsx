@@ -24,25 +24,29 @@ const safeCount = (value: unknown) => Number.isFinite(Number(value)) ? Math.max(
  */
 export function ChatUnreadProvider({ children }: { children: React.ReactNode }) {
   const { token, user } = useAuth();
+  const userId = user?.id;
+  const scope = useMemo(() => ({ token, userId }), [token, userId]);
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
-  const fetchingRef = useRef(false);
+  const fetchingRef = useRef<typeof scope | null>(null);
 
   const refreshChatUnread = useCallback(async () => {
-    if (!token || !user) { setChatUnreadCount(0); return; }
-    if (fetchingRef.current) return;
-    fetchingRef.current = true;
+    if (!token || !userId) { setChatUnreadCount(0); return; }
+    if (fetchingRef.current === scope) return;
+    fetchingRef.current = scope;
     try {
       const response = await apiGet<{ count?: number }>('/api/messages/unread/count', token, { skipCache: true });
-      setChatUnreadCount(safeCount(response?.count));
+      if (currentScope.current === scope) setChatUnreadCount(safeCount(response?.count));
     } catch {
       // Keep the last known value; the socket will reconcile it.
     } finally {
-      fetchingRef.current = false;
+      if (fetchingRef.current === scope) fetchingRef.current = null;
     }
-  }, [token, user]);
+  }, [token, userId, scope]);
 
   useEffect(() => {
-    if (!token || !user) { setChatUnreadCount(0); return; }
+    if (!token || !userId) { setChatUnreadCount(0); return; }
     void refreshChatUnread();
     const onFocus = () => void refreshChatUnread();
     window.addEventListener('focus', onFocus);
@@ -64,7 +68,7 @@ export function ChatUnreadProvider({ children }: { children: React.ReactNode }) 
       socket.off('conversations:refresh', onAnyRefresh);
       socket.disconnect();
     };
-  }, [refreshChatUnread, token, user]);
+  }, [refreshChatUnread, token, userId]);
 
   const value = useMemo<ChatUnreadContextValue>(() => ({
     chatUnreadCount,

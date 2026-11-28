@@ -764,7 +764,7 @@ export default function ReelsPage() {
             isOwn={Boolean(user && ((user.id && String(reel.author.id) === String(user.id)) || (user.username && reel.author.username?.toLowerCase() === user.username.toLowerCase())))}
             index={index}
             active={active === index}
-            preload={shouldMountReelVideo(index, active, visiblePage, lowerData) ? reelPreload(index, active, lowerData) : null}
+            preload={shouldMountReelVideo(index, active, visiblePage, lowerData) ? reelPreload(index, active, lowerData, visiblePage, playingId === activeId) : null}
             muted={muted}
             shouldPlay={active === index && shouldPlay}
             blocked={blockedId === reel.id}

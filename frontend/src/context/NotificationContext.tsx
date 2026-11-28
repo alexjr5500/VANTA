@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { apiGet } from '@/lib/apiClient';
 import { createSocket } from '@/lib/socketClient';
@@ -40,21 +40,47 @@ const isChatNotification = (notification: VantaNotification) => CHAT_NOTIFICATIO
 
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
   const { token, user } = useAuth();
+  const userId = user?.id;
+  const scope = useMemo(() => ({ token, userId }), [token, userId]);
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
   const [unreadCount, setUnreadCount] = useState(0);
   const [latestNotification, setLatestNotification] = useState<VantaNotification | null>(null);
   const [notificationRevision, setNotificationRevision] = useState(0);
 
   const reconcileUnreadCount = useCallback(async () => {
-    if (!token || !user) { setUnreadCount(0); return; }
+    if (!token || !userId) { setUnreadCount(0); return; }
     const response = await apiGet<{ unreadCount?: number; count?: number }>('/api/notifications/unread-count', token, { skipCache: true });
-    setUnreadCount(safeCount(response.unreadCount ?? response.count));
-  }, [token, user]);
+    if (currentScope.current === scope) setUnreadCount(safeCount(response.unreadCount ?? response.count));
+  }, [token, userId, scope]);
 
   useEffect(() => {
-    if (!token || !user) { setUnreadCount(0); setLatestNotification(null); return; }
-    void reconcileUnreadCount();
-    const refresh = () => void reconcileUnreadCount();
+    if (!token || !userId) { setUnreadCount(0); setLatestNotification(null); return; }
+    // Initial, reconnect and focus refreshes may arrive together. Coalesce
+    // only automatic reads; explicit reconciliation remains independent.
+    let disposed = false;
+    let refreshing = false;
+    let refreshAgain = false;
+    const refresh = async () => {
+      if (disposed || document.visibilityState === 'hidden' || !navigator.onLine) return;
+      if (refreshing) { refreshAgain = true; return; }
+      refreshing = true;
+      try {
+        await reconcileUnreadCount();
+      } catch {
+        // Retain the last badge; reconnect/focus or the next tick reconciles.
+      } finally {
+        refreshing = false;
+        if (refreshAgain && !disposed) {
+          refreshAgain = false;
+          void refresh();
+        }
+      }
+    };
+    void refresh();
     window.addEventListener('focus', refresh);
+    window.addEventListener('online', refresh);
+    document.addEventListener('visibilitychange', refresh);
     const interval = window.setInterval(refresh, 60_000);
     const socket = createSocket(token, 'notifications');
     const onNotification = (notification: VantaNotification) => {
@@ -84,7 +110,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     socket.on('profile_updated', onProfileUpdated);
     socket.connect();
     return () => {
+      disposed = true;
       window.removeEventListener('focus', refresh);
+      window.removeEventListener('online', refresh);
+      document.removeEventListener('visibilitychange', refresh);
       window.clearInterval(interval);
       socket.off('connect', refresh);
       socket.off('new_notification', onNotification);
@@ -94,7 +123,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       socket.off('profile_updated', onProfileUpdated);
       socket.disconnect();
     };
-  }, [reconcileUnreadCount, token, user]);
+  }, [reconcileUnreadCount, token, userId]);
 
   const value = useMemo<NotificationContextValue>(() => ({
     unreadCount,

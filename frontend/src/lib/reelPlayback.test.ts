@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { isReelTap, isReelDoubleTap, reelPreload, reelIndexAtScroll, nextReelLike } from './reelPlayback';
 
 describe('Reels feed playback rules', () => {
-  it('preloads the next reel, retains the previous, and mounts no distant players', () => {
-    expect(Array.from({length: 7}, (_, i) => reelPreload(i, 3, false))).toEqual([null,null,'metadata','auto','auto',null,null]);
-    expect(reelPreload(4, 3, true)).toBe('metadata');
+  it('prioritizes active playback and preloads only the next metadata when playing', () => {
+    expect(Array.from({length: 7}, (_, i) => reelPreload(i, 3, false))).toEqual([null,null,null,'auto','metadata',null,null]);
+    expect(reelPreload(4, 3, true)).toBeNull();
     expect(reelPreload(0, 0, true)).toBe('auto');
+    expect(reelPreload(4, 3, false, true, false)).toBeNull();
+    expect(reelPreload(3, 3, false, false)).toBeNull();
   });
   it('uses the nearest snap position, including resize and out-of-range values', () => {
     expect(reelIndexAtScroll(349, 700, 5)).toBe(0);

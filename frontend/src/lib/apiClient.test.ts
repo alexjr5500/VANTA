@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { apiGet, apiPost } from './apiClient';
+import { apiGet, apiPost, invalidateCache, getCacheStats } from './apiClient';
 
 /** Build a minimal Response-like object the client's readJson() understands. */
 const jsonResponse = (status: number, body: unknown): Response =>
@@ -102,4 +102,56 @@ describe('apiClient retry policy', () => {
     expect(result).toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   }, 10_000);
+});
+
+describe('session-safe request efficiency', () => {
+  beforeEach(() => invalidateCache());
+  afterEach(() => { invalidateCache(); vi.unstubAllGlobals(); });
+
+  it('does not share cached or pending responses across tokens', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(200, { owner: 'a' }))
+      .mockResolvedValueOnce(jsonResponse(200, { owner: 'b' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const [a, b] = await Promise.all([apiGet('/api/feed/home', 'a'), apiGet('/api/feed/home', 'b')]);
+    expect(a).toEqual({ owner: 'a' });
+    expect(b).toEqual({ owner: 'b' });
+    expect(await apiGet('/api/feed/home', 'a')).toEqual(a);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('deduplicates immediately for the same token without a batching delay', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const a = apiGet('/api/feed/home', 'a');
+    const b = apiGet('/api/feed/home', 'a');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await Promise.all([a, b])).toEqual([{ ok: true }, { ok: true }]);
+    expect(getCacheStats().pendingRequests).toBe(0);
+  });
+
+  it('does not repopulate an invalidated cache with a stale in-flight response', async () => {
+    let resolve!: (response: Response) => void;
+    const fetchMock = vi.fn().mockReturnValueOnce(new Promise<Response>(r => { resolve = r; }))
+      .mockResolvedValueOnce(jsonResponse(200, { value: 2 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const stale = apiGet('/api/feed/home', 'a');
+    invalidateCache();
+    const fresh = apiGet('/api/feed/home', 'a');
+    expect(await fresh).toEqual({ value: 2 });
+    resolve(jsonResponse(200, { value: 1 }));
+    await stale;
+    expect(await apiGet('/api/feed/home', 'a')).toEqual({ value: 2 });
+  });
+
+  it('does not share caller-owned cancellation with another request', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(200, { value: 1 }))
+      .mockResolvedValueOnce(jsonResponse(200, { value: 2 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+    const [a, b] = await Promise.all([apiGet('/api/feed/home', 'a', { signal: controller.signal }), apiGet('/api/feed/home', 'a')]);
+    expect(a).toEqual({ value: 1 });
+    expect(b).toEqual({ value: 2 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

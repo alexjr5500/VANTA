@@ -118,9 +118,13 @@ export default function HomePage() {
   const sentinel = useRef<HTMLDivElement>(null);
   const pageScrollRef = useRef<HTMLDivElement>(null);
   const pendingActionsRef = useRef(new Set<string>());
+  const feedRequest = useRef(0);
+  const feedBusy = useRef(false);
 
   const fetchFeed = useCallback(async (reset = true, requestedCursor?: string, nextSeed?: string) => {
-    if (!token || !sectionReady) return;
+    if (!token || !sectionReady || (!reset && feedBusy.current)) return;
+    const request = ++feedRequest.current;
+    feedBusy.current = true;
     reset ? setLoading(true) : setLoadingMore(true);
     if (reset) { setError(''); setLoadMoreError(false); }
     else setLoadMoreError(false);
@@ -132,12 +136,17 @@ export default function HomePage() {
       if (tab !== 'following') query.set('seed', seedToUse);
       const endpoint = tab === 'following' ? '/api/feed' : '/api/feed/home';
       const data = await apiGet<any>(`${endpoint}?${query}`, token, { skipCache: reset });
+      if (request !== feedRequest.current) return;
       const next: Item[] = unwrap(data).map((item): Item => ({ ...item, liked: typeof item.liked === 'boolean' ? item.liked : typeof item.isLiked === 'boolean' ? item.isLiked : false, likes: item.likes ?? item.likesCount ?? item._count?.likes ?? 0 }));
-      setItems(previous => reset ? next : [...previous, ...next.filter(item => !previous.some(existing => existing.id === item.id))]);
+      setItems(previous => {
+        if (reset) return next;
+        const ids = new Set(previous.map(item => item.id));
+        return [...previous, ...next.filter(item => { if (ids.has(item.id)) return false; ids.add(item.id); return true; })];
+      });
       setCursor(data?.nextCursor);
       setHasMore(Boolean(data?.nextCursor));
-    } catch { if (reset) setError("Couldn't load your feed."); else setLoadMoreError(true); }
-    finally { setLoading(false); setLoadingMore(false); }
+    } catch { if (request === feedRequest.current) { if (reset) setError("Couldn't load your feed."); else setLoadMoreError(true); } }
+    finally { if (request === feedRequest.current) { feedBusy.current = false; setLoading(false); setLoadingMore(false); } }
   }, [token, tab, sectionReady]);
 
   // Explicit refresh: start a NEW feed session (new seed) so the discovery
@@ -151,7 +160,10 @@ export default function HomePage() {
     await fetchFeed(true, undefined, nextSeed);
   }, [fetchFeed]);
 
-  useEffect(() => { setCursor(undefined); setHasMore(true); void fetchFeed(true); }, [fetchFeed]);
+  useEffect(() => {
+    setItems([]); setCursor(undefined); setHasMore(true); void fetchFeed(true);
+    return () => { feedRequest.current += 1; feedBusy.current = false; };
+  }, [fetchFeed]);
   useEffect(() => { const on = () => setOnline(true); const off = () => setOnline(false); setOnline(navigator.onLine); addEventListener('online', on); addEventListener('offline', off); return () => { removeEventListener('online', on); removeEventListener('offline', off); }; }, []);
   useEffect(() => {
     if (!token) return;
@@ -350,7 +362,7 @@ export default function HomePage() {
         <div className="mb-2 grid grid-cols-3 gap-1 rounded-lg border border-white/[.06] bg-[var(--surface)] p-0.5" role="tablist" aria-label="Feed filters">{([['forYou', 'For you'], ['following', 'Following'], ['latest', 'Latest']] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={cn('min-h-9 min-w-0 rounded-md px-1 text-xs font-medium transition sm:text-sm', tab === id ? 'bg-[#c9a227] text-black shadow-sm' : 'text-[#858585] hover:bg-white/[.04] hover:text-white')}>{label}</button>)}</div>
         <button type="button" onClick={openPostModal} className="mb-4 hidden w-full items-center gap-3 rounded-lg border border-white/[.08] bg-[#0d0d0f] px-4 py-3 text-left text-sm text-[#666] transition hover:border-white/[.14] hover:bg-[#151517] hover:text-[#b8b8b8] "><Avatar src={user?.avatar || user?.avatarUrl || (user?.profile as any)?.avatar || (user?.profile as any)?.avatarUrl} alt={user?.username || 'You'} size="md"/><span className="flex-1">Share something with VANTA...</span><span className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/[.08] text-[#b8b8b8]"><ImageIcon size={17}/></span></button>
         {!online && <div className="mb-4 flex items-center gap-2 rounded-lg border border-white/[.08] bg-[var(--surface)] px-3 py-2.5 text-xs text-[#b8b8b8]"><WifiOff size={14}/>You are offline. Some actions are unavailable.</div>}
-        {loading && !items.length ? <FeedSkeleton/> : error && !items.length ? <ErrorState retry={() => fetchFeed(true)}/> : !visible.length ? <EmptyFeed discover={() => router.push('/discover')}/> : <div className="space-y-2">{visible.map(item => <FeedPostCard key={item.id} item={item} currentUserId={user?.id} onLike={() => optimistic(item, 'like')} onSave={() => optimistic(item, 'save')} onComment={item => { if (isVideoItem(item)) { if (token) setReelCommentsFor(item); else router.push('/login'); } else router.push(`/post/${encodeURIComponent(cleanId(item))}/reply`); }} onShare={setRepostFor} onGift={openGift} onFollow={follow} onMore={setMoreFor} compactCaption feedCompactMedia hideFollowButton/>)}<div ref={sentinel} className="flex justify-center py-6">{loadingMore && <Loader2 className="animate-spin text-[#666]"/>}{loadMoreError && <button type="button" onClick={() => void fetchFeed(false, cursor)} className="rounded-lg px-4 py-2 text-xs text-[#c9a227] hover:bg-white/[.05]">Couldn't load more posts. Retry</button>}{!hasMore && <span className="text-xs text-[#666]">You&apos;re all caught up.</span>}</div></div>}
+        {loading && !items.length ? <FeedSkeleton/> : error && !items.length ? <ErrorState retry={() => fetchFeed(true)}/> : !visible.length ? <EmptyFeed discover={() => router.push('/discover')}/> : <div className="space-y-2">{visible.map(item => <div key={item.id} className="[content-visibility:auto] [contain-intrinsic-size:auto_400px]"><FeedPostCard item={item} currentUserId={user?.id} onLike={() => optimistic(item, 'like')} onSave={() => optimistic(item, 'save')} onComment={item => { if (isVideoItem(item)) { if (token) setReelCommentsFor(item); else router.push('/login'); } else router.push(`/post/${encodeURIComponent(cleanId(item))}/reply`); }} onShare={setRepostFor} onGift={openGift} onFollow={follow} onMore={setMoreFor} compactCaption feedCompactMedia hideFollowButton/></div>)}<div ref={sentinel} className="flex justify-center py-6">{loadingMore && <Loader2 className="animate-spin text-[#666]"/>}{loadMoreError && <button type="button" onClick={() => void fetchFeed(false, cursor)} className="rounded-lg px-4 py-2 text-xs text-[#c9a227] hover:bg-white/[.05]">Couldn't load more posts. Retry</button>}{!hasMore && <span className="text-xs text-[#666]">You&apos;re all caught up.</span>}</div></div>}
       </main>
       </div>
     </PullToRefresh>
