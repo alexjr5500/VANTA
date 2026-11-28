@@ -1,3 +1,4 @@
+import { requireShopPaymentProof } from './shop-payment-proof.service';
 import { shopCoinBadgeEnabled, badgeCoinCost } from '../config/shop-coin-badge.config';
 import { shopCryptoNetworks, shopLiveCryptoEnabled } from '../config/shop-crypto.config';
 import { shopCardEnabled } from '../config/shop-card.config';
@@ -137,7 +138,7 @@ export class VerificationPaymentService {
       throw new Error('Unsupported payment network.');
     }
 
-    const recipientUserId = await resolveShopGiftRecipient(userId, recipientId);
+    const recipientUserId = await resolveShopGiftRecipient(userId, recipientId, dedicatedInvoice);
     const catalogPlan = BADGE_PLAN_BY_ID.get(planId);
     if (!catalogPlan) throw new Error('Invalid verification plan');
 
@@ -282,7 +283,7 @@ export class VerificationPaymentService {
   async activateEntitlementFromOrder(
     userId: string,
     order: any,
-    options: { mode?: string; providerReference?: string; ipAddress?: string; metadata?: Record<string, unknown> | null } = {}
+    options: { mode?: string; providerReference?: string; ipAddress?: string; metadata?: Record<string, unknown> | null; dedicatedInvoiceId?: string } = {}
   ): Promise<any> {
     const existingAttempt = await prisma.verificationPurchase.findUnique({ where: { id: order.id } });
     if (!existingAttempt || existingAttempt.userId !== userId) {
@@ -295,10 +296,12 @@ export class VerificationPaymentService {
     if (existingAttempt.status === VERIFICATION_PURCHASE_STATUS.REFUNDED) {
       throw new Error('This purchase was refunded and cannot be completed again.');
     }
-    if (!VERIFICATION_PURCHASE_ACTIVABLE_STATUSES.includes(existingAttempt.status)) {
+    const dedicated = options.mode === 'live' && options.dedicatedInvoiceId ? await requireShopPaymentProof('badge',existingAttempt,options.dedicatedInvoiceId,options.providerReference) : null;
+    const activable = dedicated ? [...VERIFICATION_PURCHASE_ACTIVABLE_STATUSES,'EXPIRED'] : [...VERIFICATION_PURCHASE_ACTIVABLE_STATUSES];
+    if (!activable.includes(existingAttempt.status)) {
       throw new Error(`This purchase cannot be completed (status: ${existingAttempt.status}).`);
     }
-    if (new Date(existingAttempt.expiresAt).getTime() < Date.now()) {
+    if (!dedicated && new Date(existingAttempt.expiresAt).getTime() < Date.now()) {
       throw new Error('This payment session has expired. Please start a new purchase.');
     }
 
@@ -315,18 +318,22 @@ export class VerificationPaymentService {
 
     const mode = options.mode || existingAttempt.paymentMode || COIN_PAYMENT_MODE.LIVE;
     const recipientId = existingAttempt.recipientUserId || userId;
-    if (existingAttempt.recipientUserId && (mode !== 'test' || existingAttempt.paymentMode !== 'test' || !shopSandboxEnabled())) throw new Error('Gift purchases require the isolated sandbox.');
+    if (existingAttempt.recipientUserId && !dedicated && (mode !== 'test' || existingAttempt.paymentMode !== 'test' || !shopSandboxEnabled())) throw new Error('Gift purchases require the isolated sandbox.');
     const providerRef = (options.providerReference || existingAttempt.providerReference || '').trim();
     const providerOrderId = resolveProviderOrderId(mode, existingAttempt.id, providerRef);
     const now = new Date();
 
     const result = await prisma.$transaction(async (tx) => {
+      if (dedicated) {
+        await tx.$queryRaw`SELECT "id" FROM "ShopCryptoInvoice" WHERE "id" = ${dedicated.id} FOR UPDATE`;
+        await requireShopPaymentProof('badge',existingAttempt,dedicated.id,options.providerReference,tx);
+      }
       // ---- atomic idempotency claim ----
       const claimed = await tx.verificationPurchase.updateMany({
         where: {
           id: existingAttempt.id,
           userId,
-          status: { in: [...VERIFICATION_PURCHASE_ACTIVABLE_STATUSES] },
+          status: { in: activable },
         },
         data: {
           status: VERIFICATION_PURCHASE_STATUS.COMPLETED,
@@ -350,7 +357,7 @@ export class VerificationPaymentService {
         throw new Error('This purchase was already processed.');
       }
 
-      if (existingAttempt.recipientUserId) {
+      if (existingAttempt.recipientUserId || dedicated) {
         // Serialize gift activation for the target and fail closed if the account is no longer active.
         const active = await tx.user.updateMany({ where: { id: recipientId, status: 'ACTIVE' }, data: { status: 'ACTIVE' } });
         if (active.count !== 1) throw new Error('Gift recipient unavailable.');
@@ -362,7 +369,7 @@ export class VerificationPaymentService {
         existingBadge.expiresAt &&
         new Date(existingBadge.expiresAt).getTime() > now.getTime();
 
-      if (existingAttempt.recipientUserId && existingBadge?.status === 'ACTIVE') throw new Error('Recipient already has an active badge. Choose another recipient.');
+      if (existingAttempt.recipientUserId && existingBadge && ['ACTIVE','SUSPENDED'].includes(existingBadge.status)) throw new Error('Recipient already has an active badge. Choose another recipient.');
       const startDate = hasActiveBadge && existingBadge?.expiresAt ? new Date(existingBadge.expiresAt) : now;
       const endDate = addMonths(startDate, plan.durationMonths);
 

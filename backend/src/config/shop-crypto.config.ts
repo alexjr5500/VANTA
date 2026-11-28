@@ -32,3 +32,8 @@ export function shopCryptoNetworks(): string[] {
   }
   return networks;
 }
+
+/** Separate opt-in; never enables legacy shared-address routes. */
+export function shopLiveGiftsEnabled(): boolean {
+  return shopLiveCryptoEnabled() && process.env.VANTA_SHOP_LIVE_GIFTS_ENABLED === 'true';
+}

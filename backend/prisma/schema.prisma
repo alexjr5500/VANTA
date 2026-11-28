@@ -3876,6 +3876,9 @@ model ShopCryptoInvoice {
   lastCheckedAt DateTime?
   settledAt DateTime?
   treasuryTransfer ShopTreasuryTransfer?
+  verifiedAt DateTime?
+  paymentSender String?
+  supportCase ShopCryptoCase?
   @@unique([network, transactionHash])
   @@index([payerId, createdAt])
   @@index([network, expiresAt])
@@ -3926,4 +3929,19 @@ model ShopTreasuryTransfer {
   @@unique([network, transactionHash])
   @@index([status, authorizedAt])
   @@index([automation, status, nextAttemptAt])
+}
+
+model ShopCryptoCase {
+  id String @id @default(cuid())
+  invoiceId String @unique
+  invoice ShopCryptoInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  kind String
+  status String @default("OPEN")
+  reason String
+  reportedHash String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  reviewedBy String?
+  reviewNote String?
+  @@index([status, createdAt])
 }

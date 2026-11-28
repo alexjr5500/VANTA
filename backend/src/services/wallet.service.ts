@@ -1,3 +1,4 @@
+import { requireShopPaymentProof } from './shop-payment-proof.service';
 import { shopCardEnabled } from '../config/shop-card.config';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 import { prisma } from "../prisma";
@@ -579,6 +580,7 @@ export class WalletService {
       providerOrderId?: string;
       /** Optional verified-provider details stored for auditability. */
       verification?: Record<string, unknown>;
+      dedicatedInvoiceId?: string;
       ipAddress?: string;
     } = { mode: "live" }
   ) {
@@ -591,13 +593,15 @@ export class WalletService {
     if (order.status === COIN_PAYMENT_STATUS.REFUNDED) {
       throw new Error("This purchase was refunded and cannot be completed again.");
     }
-    if (!COIN_PAYMENT_CREDITABLE_STATUSES.includes(order.status)) {
+    const dedicated = options.mode === 'live' && options.dedicatedInvoiceId ? await requireShopPaymentProof('coins',order,options.dedicatedInvoiceId,options.providerOrderId) : null;
+    const creditable = dedicated ? [...COIN_PAYMENT_CREDITABLE_STATUSES, 'EXPIRED'] : [...COIN_PAYMENT_CREDITABLE_STATUSES];
+    if (!creditable.includes(order.status)) {
       throw new Error(`This purchase order cannot be completed (status: ${order.status}).`);
     }
     if (order.paymentMethod === "stripe-card") {
       const paid = await prisma.shopCardCheckout.findFirst({ where: { orderId, payerId: userId, product: "coins", paidAt: { not: null }, paymentIntentId: { not: null } } });
       if (!shopCardEnabled() || options.mode !== "test" || !paid || paid.amountCents !== Math.round(order.amount * 100) || options.providerOrderId !== paid.paymentIntentId || !order.expiresAt || order.expiresAt.getTime() <= Date.now()) throw new Error("Card payment is not verified or expired.");
-    } else if (COIN_PAYMENT_ORDER_TTL_SECONDS > 0) {
+    } else if (!dedicated && COIN_PAYMENT_ORDER_TTL_SECONDS > 0) {
       const createdAt = new Date(order.createdAt).getTime();
       if (Date.now() - createdAt > COIN_PAYMENT_ORDER_TTL_SECONDS * 1000) {
         throw new Error("This payment session has expired. Please start a new purchase.");
@@ -616,7 +620,7 @@ export class WalletService {
     }
 
     const recipientId = order.recipientUserId || userId;
-    if (order.recipientUserId && (options.mode !== "test" || order.paymentMode !== "test" || !shopSandboxEnabled())) {
+    if (order.recipientUserId && !dedicated && (options.mode !== "test" || order.paymentMode !== "test" || !shopSandboxEnabled())) {
       throw new Error("Gift purchase is only available in the isolated sandbox.");
     }
     const wallet = await this.ensureWallet(recipientId);
@@ -635,12 +639,17 @@ export class WalletService {
     // Conditional status flip makes the completion idempotent under concurrency:
     // a second request finds 0 rows updated and cannot credit twice.
     const result = await prisma.$transaction(async (tx) => {
-      if (order.recipientUserId) {
+      if (dedicated) {
+        await tx.$queryRaw`SELECT "id" FROM "ShopCryptoInvoice" WHERE "id" = ${dedicated.id} FOR UPDATE`;
+        await requireShopPaymentProof("coins",order,dedicated.id,options.providerOrderId,tx);
+        const active = await tx.user.updateMany({ where: { id: recipientId, status: "ACTIVE" }, data: { status: "ACTIVE" } });
+        if (active.count !== 1) throw new Error("Recipient unavailable");
+      } else if (order.recipientUserId) {
         const active = await tx.user.findFirst({ where: { id: recipientId, status: "ACTIVE" }, select: { id: true } });
         if (!active) throw new Error("Gift recipient unavailable.");
       }
       const claimed = await tx.purchaseOrder.updateMany({
-        where: { id: orderId, userId, status: { in: [...COIN_PAYMENT_CREDITABLE_STATUSES] } },
+        where: { id: orderId, userId, status: { in: creditable } },
         data: {
           status: COIN_PAYMENT_STATUS.COMPLETED,
           providerOrderId,
@@ -657,14 +666,14 @@ export class WalletService {
         throw new Error("This purchase order was already processed.");
       }
 
-      if (order.recipientUserId) {
+      if (order.recipientUserId || dedicated) {
         const credit = await tx.wallet.updateMany({
           where: { userId: recipientId, isFrozen: false },
           data: { coinBalance: { increment: order.coins }, totalCoinsPurchased: { increment: order.coins } },
         });
         if (credit.count !== 1) throw new Error("Gift recipient wallet unavailable.");
       }
-      const updatedWallet = order.recipientUserId
+      const updatedWallet = order.recipientUserId || dedicated
         ? await tx.wallet.findUniqueOrThrow({ where: { userId: recipientId } })
         : await tx.wallet.update({
         where: { userId },

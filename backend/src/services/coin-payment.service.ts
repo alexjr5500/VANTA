@@ -125,7 +125,7 @@ export class CoinPaymentService {
       throw new Error('Unsupported payment network.');
     }
 
-    const recipientUserId = await resolveShopGiftRecipient(userId, recipientId);
+    const recipientUserId = await resolveShopGiftRecipient(userId, recipientId, dedicatedInvoice);
     const isCustom = packageId === 'custom';
     if (isCustom && ((!shopSandboxEnabled() && !shopLiveCryptoEnabled()) || typeof customCoins !== 'number' || !Number.isSafeInteger(customCoins) || customCoins < 100 || customCoins > 100000)) {
       throw new Error('Custom quantity must be a whole number from 100 to 100,000 in an enabled checkout.');

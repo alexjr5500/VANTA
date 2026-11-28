@@ -13,7 +13,7 @@ type Product = 'coins' | 'badge';
 type Pack = { id: string; coins: number; price: number };
 type Recipient = { id: string; username: string; fullName?: string };
 type Invoice = { orderId: string; amount: number; currency: string; network: string; expiresAt: string; coins?: number; planId?: string; product?: Product } & ({ mode: 'test'; simulateToken: string } | { mode: 'live'; address: string; paymentUri: string; qrCode: string; token: string; tokenAmount: string });
-type PendingInvoice = { orderId: string; product: Product; network: string; amount: number; expiresAt: string };
+type PendingInvoice = { status?:string; gift?:boolean; orderId: string; product: Product; network: string; amount: number; expiresAt: string };
 type Step = 'choose' | 'payment' | 'token' | 'invoice' | 'waiting' | 'card' | 'success';
 type CardOrder = { orderId: string; product: Product; amount: number; expiresAt: string; checkoutUrl?: string | null; status?: string };
 function cardFrom(value: unknown): CardOrder {
@@ -107,6 +107,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   const [networkSearch, setNetworkSearch] = useState('');
   const [sandbox, setSandbox] = useState(false);
   const [liveCrypto, setLiveCrypto] = useState(false);
+  const [liveGifts,setLiveGifts]=useState(false);
   const [liveNetworks, setLiveNetworks] = useState<string[]>([]);
   const [cardTest, setCardTest] = useState(false);
   const [cardOrder, setCardOrder] = useState<CardOrder | null>(null);
@@ -128,7 +129,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   useEffect(() => {
     if (!open || !token) return;
     let active = true;
-    setProduct(initialProduct); setStep('choose'); setPackId(''); setPlanId(initialPlan?.id || ''); setGift(false); setRecipient(null); setQuery(''); setRecipients([]); setRenew(false); setCustom(''); setInvoice(null); setError(''); setSandbox(false); setLiveCrypto(false); setLiveNetworks([]); setCardTest(false); setCardOrder(null); setPendingCards([]); setPendingInvoices([]); setTxHash(''); setPaymentStatus('PENDING'); setQrExpanded(false); setPacks([]); setPlans([]); setRate(null); setBalance(null); setAvailableCoins(null); setCoinBadge(false); setWalletPin(''); setCoinReceipt(null); coinRequest.current = null; setMethod('crypto'); setNetwork('usdt-bep20'); setLoading(true);
+    setProduct(initialProduct); setStep('choose'); setPackId(''); setPlanId(initialPlan?.id || ''); setGift(false); setRecipient(null); setQuery(''); setRecipients([]); setRenew(false); setCustom(''); setInvoice(null); setError(''); setSandbox(false); setLiveCrypto(false); setLiveGifts(false); setLiveNetworks([]); setCardTest(false); setCardOrder(null); setPendingCards([]); setPendingInvoices([]); setTxHash(''); setPaymentStatus('PENDING'); setQrExpanded(false); setPacks([]); setPlans([]); setRate(null); setBalance(null); setAvailableCoins(null); setCoinBadge(false); setWalletPin(''); setCoinReceipt(null); coinRequest.current = null; setMethod('crypto'); setNetwork('usdt-bep20'); setLoading(true);
     Promise.allSettled([
       request('/api/wallets/packages', token).then(data => ({ packs: packagesFrom(data), rate: obj(data).exchangeRate })),
       getBadgePurchasePlans(token),
@@ -146,7 +147,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
         const capabilities = obj(s.value);
         setSandbox(capabilities.sandbox === true);
         setCoinBadge(capabilities.coinBadge === true);
-        setLiveCrypto(capabilities.liveCrypto === true);
+        setLiveCrypto(capabilities.liveCrypto === true); setLiveGifts(capabilities.liveGifts===true);
         if (Array.isArray(capabilities.cryptoNetworks)) setLiveNetworks(capabilities.cryptoNetworks.filter((v: unknown): v is string => typeof v === 'string'));
         const webCard = capabilities.cardTest === true && !/VANTAAndroid/i.test(navigator.userAgent);
         setCardTest(webCard);
@@ -240,7 +241,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
   const clipboard = async (value: string) => { try { await navigator.clipboard.writeText(value); setCopied(value); } catch { setError('Clipboard unavailable. Select and copy manually.'); } };
   const paste = async () => { try { setRecipient(null); setQuery((await navigator.clipboard.readText()).trim()); } catch { setError('Paste the username into the field manually.'); } };
   const badgeCost = product === 'badge' && plan && rate ? Math.round(plan.priceUSD * rate) : null;
-  const canPay = !renew && (method === 'card' ? cardTest : method === 'coins' ? coinBadge && badgeCost !== null && availableCoins !== null && availableCoins >= badgeCost && /^[0-9]{4,6}$/.test(walletPin) : method === 'crypto' && (sandbox || (liveCrypto && !gift)) && networkEnabled(network));
+  const canPay = !renew && (method === 'card' ? cardTest : method === 'coins' ? coinBadge && badgeCost !== null && availableCoins !== null && availableCoins >= badgeCost && /^[0-9]{4,6}$/.test(walletPin) : method === 'crypto' && (sandbox || (liveCrypto && (!gift || liveGifts))) && networkEnabled(network));
   async function resumeCard(orderId: string) {
     if (!token || actionLock.current) return;
     actionLock.current = true; setBusy(true); setError('');
@@ -299,7 +300,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
         return;
       }
       const data = liveCrypto && !sandbox
-        ? await request('/api/wallets/shop/crypto/invoices', token, { product, network, ...(product === 'coins' ? { packageId: packId, ...(packId === 'custom' ? { customCoins: quantity } : {}) } : { planId }) })
+        ? await request('/api/wallets/shop/crypto/invoices', token, { product, network, ...(product === 'coins' ? { packageId: packId, ...(packId === 'custom' ? { customCoins: quantity } : {}) } : { planId }), ...(gift && recipient ? {recipientId:recipient.id}: {}) })
         : product === 'coins'
         ? await request('/api/wallets/payment-address', token, { packageId: packId, network, ...(packId === 'custom' ? { customCoins: quantity } : {}), ...(gift && recipient ? { recipientId: recipient.id } : {}) })
         : await request('/api/verification/purchase/init', token, { planId, network, ...(gift && recipient ? { recipientId: recipient.id } : {}) });
@@ -394,7 +395,7 @@ export default function VantaShop({ open, initialProduct, initialPlan, onClose, 
             <label className="block">Confirm wallet PIN<input type="password" inputMode="numeric" autoComplete="off" maxLength={6} value={walletPin} onChange={e => setWalletPin(e.target.value.replace(/[^0-9]/g, ''))} className="mt-2 w-full rounded-xl bg-[#191d21] p-3" placeholder="4–6 digits"/></label>
             <p className={muted}>One-time payment from spendable test coins. Existing active or suspended badges cannot be replaced with this payment method.</p>
           </div>}
-          <p className={'text-sm ' + muted}>{renew ? 'Recurring billing is not connected yet.' : method === 'card' ? (cardTest ? 'You will enter card details on Stripe in test mode.' : 'Web card checkout is not configured; Android Play Billing is separate.') : method === 'coins' ? (coinBadge ? 'Your PIN authorizes the exact coin debit.' : 'Coin checkout is not configured.') : method !== 'crypto' ? 'This payment provider is not configured.' : sandbox ? 'Test checkout only. No real funds will be requested.' : liveCrypto && gift ? 'Live gifts are not enabled yet.' : liveCrypto ? 'Send the exact token amount on the selected network.' : 'Checkout is disabled on this environment.'}</p>
+          <p className={'text-sm ' + muted}>{renew ? 'Recurring billing is not connected yet.' : method === 'card' ? (cardTest ? 'You will enter card details on Stripe in test mode.' : 'Web card checkout is not configured; Android Play Billing is separate.') : method === 'coins' ? (coinBadge ? 'Your PIN authorizes the exact coin debit.' : 'Coin checkout is not configured.') : method !== 'crypto' ? 'This payment provider is not configured.' : sandbox ? 'Test checkout only. No real funds will be requested.' : liveCrypto && gift && !liveGifts ? 'Live gifts are not enabled yet.' : liveCrypto ? 'Send the exact token amount on the selected network.' : 'Checkout is disabled on this environment.'}</p>
         </>}
       </div><footer className="shrink-0 space-y-2 px-4 pb-[calc(16px+env(safe-area-inset-bottom))] pt-2">{error && <p role="alert" className="text-sm text-red-300">{error}</p>}{step === 'token' ? footerButton('OK', () => go('payment')) : footerButton(method === 'coins' && badgeCost !== null ? 'Pay ' + badgeCost.toLocaleString() + ' test coins' : ((sandbox || (method === 'card' && cardTest)) ? 'Test pay ' : 'Pay ') + usd(price || 0), start, !ready || !canPay)}{step === 'payment' && <p className={'text-center text-xs ' + muted}>No payment is charged until a supported checkout is confirmed.</p>}</footer></section></div>}
     </div>
