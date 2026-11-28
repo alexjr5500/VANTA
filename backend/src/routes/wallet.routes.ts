@@ -18,6 +18,7 @@ import { buyBadgeWithCoins } from '../services/shop-coin-badge.service';
 import { shopCardEnabled } from '../config/shop-card.config';
 import { createShopCardCheckout, checkShopCardCheckout, resumeShopCardCheckout, listShopCardCheckouts } from '../services/shop-card.service';
 import { shopCryptoNetworks, shopLiveCryptoEnabled, shopLiveGiftsEnabled } from '../config/shop-crypto.config';
+import { openShopCryptoCase } from '../services/shop-crypto-case.service';
 import { createShopCryptoInvoice, resumeShopCryptoInvoice, checkShopCryptoInvoice, listShopCryptoInvoices, shopCryptoStatus } from '../services/shop-crypto.service';
 import { shopSandboxEnabled } from '../config/shop-sandbox.config';
 
@@ -139,6 +140,10 @@ router.post('/shop/crypto/invoices/:orderId/check', rateLimiter.otp, async (req:
   if (!req.user?.userId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   try { res.json(await checkShopCryptoInvoice(req.user.userId, req.params.orderId, typeof req.body?.txHash === 'string' ? req.body.txHash.trim() : undefined)); }
   catch { res.status(400).json({ error: 'Could not verify payment. Check the transaction hash or try again shortly.' }); }
+});
+router.post('/shop/crypto/invoices/:orderId/case',rateLimiter.otp,async(req:import('../middleware/auth.middleware').AuthRequest,res)=>{
+ if(!req.user?.userId){res.status(401).json({error:'Unauthorized'});return;}
+ try{res.status(201).json(await openShopCryptoCase(req.user.userId,req.params.orderId,req.body||{}));}catch{res.status(400).json({error:'Could not open payment case. Check the order and description.'});}
 });
 // Coin purchase history for the authenticated user
 router.get('/purchases', getCoinPurchases);

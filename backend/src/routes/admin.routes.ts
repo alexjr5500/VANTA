@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { listShopCryptoCases,reviewShopCryptoCase,verifyShopCryptoRefund } from '../services/shop-crypto-case.service';
 import { rateLimiter, AuthenticatedRequest } from '../security';
 import { treasuryDashboard, authorizeTreasuryTransfer, recordTreasuryBroadcast, verifyTreasuryTransfer } from '../services/shop-treasury.service';
 import {
@@ -90,6 +91,15 @@ router.use(authenticate);
 router.use(requireRole(Role.ADMIN, Role.CEO, Role.SUPER_ADMIN, Role.MODERATOR));
 router.use(requireAdminTwoFactorVerified);
 const treasuryRole = requireRole(Role.CEO, Role.SUPER_ADMIN);
+router.get('/shop-crypto-cases',treasuryRole,requirePermission(Permission.VIEW_WALLET),async(req,res)=>{
+ res.setHeader('Cache-Control','no-store');try{res.json(await listShopCryptoCases(typeof req.query.cursor==='string'?req.query.cursor:undefined));}catch{res.status(503).json({error:'Cases unavailable'});}
+});
+router.post('/shop-crypto-cases/:id/review',treasuryRole,requirePermission(Permission.MANAGE_PAYMENTS),rateLimiter.otp,async(req:AuthenticatedRequest,res)=>{
+ try{res.json(await reviewShopCryptoCase(req.user!.userId,req.params.id,req.body||{}));}catch{res.status(400).json({error:'Case review not authorized or invalid. Check eligibility and authenticator.'});}
+});
+router.post('/shop-crypto-cases/:id/verify-refund',treasuryRole,requirePermission(Permission.MANAGE_PAYMENTS),rateLimiter.otp,async(req:AuthenticatedRequest,res)=>{
+ try{res.json(await verifyShopCryptoRefund(req.user!.userId,req.params.id,req.body||{}));}catch{res.status(400).json({error:'Refund not independently verified. Do not resend blindly.'});}
+});
 router.get('/treasury', treasuryRole, requirePermission(Permission.VIEW_WALLET), async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try { res.json(await treasuryDashboard(typeof req.query.cursor === 'string' ? req.query.cursor : undefined)); }

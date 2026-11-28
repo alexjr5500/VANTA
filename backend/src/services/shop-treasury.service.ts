@@ -13,6 +13,8 @@ function reference(network: string, hash: string) {
 }
 export async function assertVerifiedInvoice(tx: Prisma.TransactionClient, invoice: ShopCryptoInvoice) {
   if (!invoice.settledAt || !invoice.transactionHash || !/^[1-9][0-9]*$/.test(invoice.amountAtomic)) throw new Error('Invoice is not verified and fulfilled');
+  const hold=await tx.shopCryptoCase.findUnique({where:{invoiceId:invoice.id}});
+  if(hold&&!['REJECTED','RESOLVED'].includes(hold.status))throw new Error('Invoice under payment review');
   const expected = 'live:' + reference(invoice.network, invoice.transactionHash);
   const where = { id: invoice.orderId, userId: invoice.payerId, status: 'COMPLETED', paymentMode: 'live', providerOrderId: expected };
   const order = invoice.product === 'coins' ? await tx.purchaseOrder.findFirst({ where: { ...where, paymentMethod: invoice.network } }) : invoice.product === 'badge' ? await tx.verificationPurchase.findFirst({ where: { ...where, network: invoice.network } }) : null;

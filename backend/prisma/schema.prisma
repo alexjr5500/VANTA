@@ -3943,5 +3943,8 @@ model ShopCryptoCase {
   updatedAt DateTime @updatedAt
   reviewedBy String?
   reviewNote String?
+  refundDestination String?
+  refundAuthorizedAt DateTime?
+  refundHash String? @unique
   @@index([status, createdAt])
 }

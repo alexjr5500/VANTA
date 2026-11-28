@@ -91,7 +91,7 @@ export async function verifyGram(invoice: ShopCryptoInvoice, suppliedHash: strin
   // trusts the configured mainnet indexer; it is not a local Merkle proof.
   const block = await call('/api/v3/transactions', { account: invoice.address, hash: queryHash, mc_seqno: String(tx.mc_block_seqno), limit: '2' });
   if (!Array.isArray(block.transactions) || block.transactions.length !== 1 || !validTransfer(block.transactions[0], invoice, hash, head) || block.transactions[0].mc_block_seqno !== tx.mc_block_seqno) throw new BlockchainTxVerificationError('RPC_ERROR', 'Masterchain inclusion not established.', true);
-  return { verified: true, txHash: hash, network: 'gram-ton', asset: 'GRAM', recipient: invoice.address, amountAtomic: invoice.amountAtomic, masterchainSeqno: tx.mc_block_seqno, verifiedAt: new Date().toISOString() };
+  return { verified: true, sender:tonRawAddress(tx.in_msg.source), txHash: hash, network: 'gram-ton', asset: 'GRAM', recipient: invoice.address, amountAtomic: invoice.amountAtomic, masterchainSeqno: tx.mc_block_seqno, verifiedAt: new Date().toISOString() };
 }
 export async function discoverGram(invoice: ShopCryptoInvoice, call: Call = tonCall): Promise<string[]> {
   const hashes = new Set<string>();

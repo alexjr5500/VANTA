@@ -76,12 +76,13 @@ async function renderInvoice(i: ShopCryptoInvoice) {
   const order = await orderFor(i);
   if (!network || !shopCryptoNetworks().includes(network.id) || !order || (order.recipientUserId && !shopLiveGiftsEnabled()) || !shopCryptoAddresses(i.network).includes(i.address)) throw new Error('Invoice unavailable');
   if (expectedAtomic(i, network, order.amount) !== i.amountAtomic) throw new Error('Invoice price mismatch');
-  if (!pendingStates.includes(order.status) || Date.now() >= i.expiresAt.getTime()) throw new Error('Invoice closed. Contact support if you already sent payment.');
+  if (!recoverableStates.includes(order.status) && !['COMPLETED','REFUNDED'].includes(order.status)) throw new Error('Invoice unavailable');
+  const closed=!pendingStates.includes(order.status)||Date.now()>=i.expiresAt.getTime();
   const uri = paymentUri(network, i.address, i.amountAtomic);
   return { orderId: i.orderId, product: i.product, amount: order.amount, currency: 'USD', network: i.network,
-    gift: !!order.recipientUserId, mode: 'live' as const, expiresAt: i.expiresAt.toISOString(), address: network.ton ? tonFriendlyAddress(i.address) : i.address, paymentUri: uri,
+    gift: !!order.recipientUserId, closed, mode: 'live' as const, expiresAt: i.expiresAt.toISOString(), address: network.ton ? tonFriendlyAddress(i.address) : i.address, paymentUri: uri,
     qrCode: await QRCode.toDataURL(uri, { width: 360, margin: 3, errorCorrectionLevel: 'M' }),
-    token: network.tokenName, tokenAmount: (network.native || network.ton) ? atomicDisplay(i.amountAtomic, network.tokenDecimals) : order.amount.toFixed(2), status: order.status,
+    token: network.tokenName, tokenAmount: (network.native || network.ton) ? atomicDisplay(i.amountAtomic, network.tokenDecimals) : order.amount.toFixed(2), status: closed && !['COMPLETED','REFUNDED'].includes(order.status)?'RECONCILIATION':order.status,
     ...(i.product === 'coins' && 'coins' in order ? { coins: order.coins } : {}),
     ...(i.product === 'badge' && 'planId' in order ? { planId: order.planId } : {}),
   };
@@ -139,11 +140,11 @@ export async function resumeShopCryptoInvoice(payerId: string, orderId: string) 
 }
 
 export async function listShopCryptoInvoices(payerId: string) {
-  const invoices = await prisma.shopCryptoInvoice.findMany({ where: { payerId, settledAt: null, OR:[{expiresAt:{gt:new Date(Date.now()-recoveryMs)}},{transactionHash:{not:null}}] }, orderBy: { createdAt: 'desc' }, take: 10 });
+  const invoices = await prisma.shopCryptoInvoice.findMany({ where: { payerId }, orderBy: { createdAt: 'desc' }, take: 10 });
   const result: { orderId: string; product: string; network: string; amount: number; expiresAt: Date; status:string; gift:boolean }[] = [];
   for (const invoice of invoices) {
     const order = await orderFor(invoice);
-    if (order && recoverableStates.includes(order.status) && shopCryptoAddresses(invoice.network).includes(invoice.address)) result.push({ orderId: invoice.orderId, product: invoice.product, network: invoice.network, amount: order.amount, expiresAt: invoice.expiresAt, status:Date.now()>=invoice.expiresAt.getTime()?'RECONCILIATION':order.status,gift:!!order.recipientUserId });
+    if (order && (recoverableStates.includes(order.status)||['COMPLETED','REFUNDED'].includes(order.status))) result.push({ orderId: invoice.orderId, product: invoice.product, network: invoice.network, amount: order.amount, expiresAt: invoice.expiresAt, status:['COMPLETED','REFUNDED'].includes(order.status)?order.status:Date.now()>=invoice.expiresAt.getTime()?'RECONCILIATION':order.status,gift:!!order.recipientUserId });
   }
   return { invoices: result };
 }
@@ -152,9 +153,10 @@ export async function shopCryptoStatus(payerId: string, orderId: string) {
   if (!invoice) throw new Error('Invoice not found');
   const order = await orderFor(invoice);
   if (!order) throw new Error('Order not found');
+  const supportCase=await prisma.shopCryptoCase.findUnique({where:{invoiceId:invoice.id},select:{id:true,kind:true,status:true,refundHash:true}});
   const success = order.status === 'COMPLETED';
   const status = success ? 'COMPLETED' : order.status==='REFUNDED'?'REFUNDED': !pendingStates.includes(order.status) || Date.now() >= invoice.expiresAt.getTime() ? 'RECONCILIATION' : invoice.transactionHash ? 'PROCESSING' : order.status;
-  return { success, status, gift:!!order.recipientUserId, ...(success && 'coins' in order ? { coins: order.coins } : {}) };
+  return { success, status, supportCase, gift:!!order.recipientUserId, ...(success && 'coins' in order ? { coins: order.coins } : {}) };
 }
 const running = new Set<string>();
 async function verifyAndSettle(i: ShopCryptoInvoice, txHash: string) {
@@ -181,6 +183,8 @@ async function verifyAndSettle(i: ShopCryptoInvoice, txHash: string) {
     if(claim.count!==1)throw new Error('A different payment is already attached to the invoice');
     if(!i.verifiedAt)await appendAuditLog(tx,{userId:i.payerId,action:'SHOP_CRYPTO_PAYMENT_VERIFIED',metadata:{invoiceId:i.id,network:i.network,hash}});
   });
+  const hold=await prisma.shopCryptoCase.findUnique({where:{invoiceId:i.id}});
+  if(hold?.kind==='REFUND'&&hold.status!=='REJECTED')return {success:false,status:'RECONCILIATION',message:'Payment verified; refund review pending.'};
   if (i.product === 'coins') await walletService.completeCoinPurchase(i.payerId, i.orderId, {
     mode: 'live', dedicatedInvoiceId:i.id, providerOrderId: shopPaymentReference(i.network,hash), verification: { invoiceId: i.id, onChain: verified },
   });
@@ -284,7 +288,7 @@ export function startShopCryptoMonitor() {
     try {
       if (!shopLiveCryptoEnabled()) return;
       const invoices = await prisma.shopCryptoInvoice.findMany({
-        where: { settledAt: null, OR:[{expiresAt:{gt:new Date(Date.now()-recoveryMs)}},{transactionHash:{not:null}}] },
+        where: { settledAt: null, AND:[{OR:[{supportCase:null},{supportCase:{status:'REJECTED'}},{supportCase:{kind:'RECONCILIATION'}}]},{OR:[{expiresAt:{gt:new Date(Date.now()-recoveryMs)}},{transactionHash:{not:null}}]}] },
         orderBy: { lastCheckedAt: { sort: 'asc', nulls: 'first' } }, take: 12,
       });
       await Promise.allSettled(invoices.map(i => checkInvoice(i)));

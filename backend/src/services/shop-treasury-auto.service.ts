@@ -78,7 +78,8 @@ async function enqueue(config: SignerConfig) {
   const rows = await prisma.$queryRaw<ShopCryptoInvoice[]> `
     SELECT i.* FROM "ShopCryptoInvoice" i
     LEFT JOIN "ShopTreasuryTransfer" t ON t."invoiceId" = i."id"
-    WHERE i."settledAt" >= ${since} AND i."transactionHash" IS NOT NULL AND t."id" IS NULL
+    LEFT JOIN "ShopCryptoCase" c ON c."invoiceId"=i."id"
+    WHERE i."settledAt" >= ${since} AND i."transactionHash" IS NOT NULL AND t."id" IS NULL AND (c."id" IS NULL OR c."status" IN ('REJECTED','RESOLVED'))
       AND i."network" = ANY(${config.networks.map(n => n.network)}::text[])
       AND (
         (i."product" = 'coins' AND EXISTS (

@@ -1,0 +1,2 @@
+ALTER TABLE "ShopCryptoCase" ADD COLUMN "refundDestination" TEXT, ADD COLUMN "refundAuthorizedAt" TIMESTAMP(3), ADD COLUMN "refundHash" TEXT;
+CREATE UNIQUE INDEX "ShopCryptoCase_refundHash_key" ON "ShopCryptoCase"("refundHash");
