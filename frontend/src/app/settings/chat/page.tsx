@@ -48,7 +48,7 @@ export default function ChatSettingsPage() {
   const [saving, setSaving] = useState<ChatPrefKey[]>([]);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { prefs: voice, set: setVoice, hydrated: voiceLoaded } = useLocalPrefs('vanta_voice_playback', VOICE_DEFAULTS);
+  const { prefs: voice, set: setVoice, hydrated: voiceLoaded, saveError: voiceError } = useLocalPrefs('vanta_voice_playback', VOICE_DEFAULTS);
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
 
   const flagSaved = (key: string) => {
@@ -61,7 +61,8 @@ export default function ChatSettingsPage() {
     setLoading(true); setLoadError(false); setPrefs(CHAT_DEFAULTS);
     if (!token) return;
     let cancel = false;
-    apiGet<Partial<ChatPrefs>>('/api/settings/privacy', token, { skipCache: true })
+    const controller = new AbortController();
+    apiGet<Partial<ChatPrefs>>('/api/settings/privacy', token, { skipCache: true, signal: controller.signal })
       .then((data) => {
         if (cancel || !data) return;
         setPrefs({
@@ -77,7 +78,7 @@ export default function ChatSettingsPage() {
       .finally(() => {
         if (!cancel) setLoading(false);
       });
-    return () => { cancel = true; };
+    return () => { cancel = true; controller.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toast identity churns; load-once is intentional
   }, [token]);
 
@@ -175,6 +176,7 @@ export default function ChatSettingsPage() {
               ]}
             />
           </SettingsGroup>
+          {voiceError && <p role="alert" className="px-4 text-sm text-red-400">{voiceError}</p>}
           <SettingsGroup title="Security">
             <SettingsLink href="/settings/chat/passcode" title="Chat passcode" description="Lock the chat screen on this device" />
           </SettingsGroup>

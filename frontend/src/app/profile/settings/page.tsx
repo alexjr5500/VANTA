@@ -1,11 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Accessibility, ArrowLeft, Bell, ChevronRight, CircleEllipsis, Database, Globe, LockKeyhole, MessageCircle, Mic, Newspaper, Search, ShieldCheck, SlidersHorizontal, User, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { apiGet } from '@/lib/apiClient';
 import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 import { useScrollRestore } from '@/components/settings/SettingsUI';
 
@@ -72,31 +71,19 @@ const searchable = [
 ];
 
 export default function SettingsPage() {
-  const { token } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
   const tr = useLocalizedUiText();
   const saveScroll = useScrollRestore();
   const [query, setQuery] = useState('');
-  const [username, setUsername] = useState('');
-
-  useEffect(() => {
-    setUsername('');
-    if (!token) return;
-    let active = true;
-    apiGet<{ username: string }>('/api/profiles/me', token)
-      .then((profile) => { if (active) setUsername(profile.username || ''); })
-      .catch(() => { /* A profile failure must not block settings navigation. */ });
-    return () => { active = false; };
-  }, [token]);
-
+  const username = user?.username || '';
+  const index = useMemo(() => [...categories, ...searchable].map(item => {
+    const label = tr(item.title);
+    return { ...item, label, searchText: (item.title + ' ' + label).toLocaleLowerCase() };
+  }), [tr]);
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const searching = terms.length > 0;
-  const rows = searching
-    ? [...categories, ...searchable].filter(({ title }) => {
-        const haystack = (title + ' ' + tr(title)).toLocaleLowerCase();
-        return terms.every((term) => haystack.includes(term));
-      })
-    : categories;
+  const rows = searching ? index.filter(item => terms.every(term => item.searchText.includes(term))) : index.slice(0, categories.length);
 
   return (
     <div className="min-h-[70vh] pb-[calc(5rem+env(safe-area-inset-bottom))] bg-[var(--background)]">
@@ -116,11 +103,11 @@ export default function SettingsPage() {
       </header>
       <h1 className="sr-only">{tr('Settings')}</h1>
       <nav aria-label={tr('Settings')} className="-mx-4">
-        {rows.map(({ title, href, icon: Icon }) => (
-          <Link key={title} href={href} onClick={saveScroll}
+        {rows.map(({ title, href, label, icon: Icon }) => (
+          <Link key={title} href={href} prefetch={false} onClick={saveScroll}
             className="flex min-h-[58px] items-center gap-4 px-5 py-3 text-[var(--foreground)] transition-colors hover:bg-[var(--surface-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vanta-gold)]">
             <Icon size={21} strokeWidth={1.8} className="shrink-0 text-[var(--vanta-gold)]" aria-hidden="true" />
-            <span className="min-w-0 flex-1 text-[15px] font-medium">{tr(title)}</span>
+            <span className="min-w-0 flex-1 text-[15px] font-medium">{label}</span>
             {!searching && title === 'Account' && username && <span className="max-w-[35%] truncate text-xs opacity-60">@{username}</span>}
             <ChevronRight size={17} className="shrink-0 opacity-40" aria-hidden="true" />
           </Link>
@@ -128,8 +115,8 @@ export default function SettingsPage() {
       </nav>
       {searching && rows.length === 0 && <p role="status" className="py-10 text-center text-sm text-[var(--foreground)] opacity-70">{tr('No matching settings')}</p>}
       {!searching && <footer className="mt-5 text-center text-xs text-[var(--foreground)] opacity-65">
-        <Link href="/settings/about" onClick={saveScroll} className="block py-2">VANTA · {tr('App version')}</Link>
-        <Link href="/settings/whats-new" onClick={saveScroll} className="block py-2 underline">{tr("What's New")}</Link>
+        <Link href="/settings/about" prefetch={false} onClick={saveScroll} className="block py-2">VANTA · {tr('App version')}</Link>
+        <Link href="/settings/whats-new" prefetch={false} onClick={saveScroll} className="block py-2 underline">{tr("What's New")}</Link>
       </footer>}
     </div>
   );

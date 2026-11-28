@@ -45,9 +45,12 @@ export default function LanguageSettingsPage() {
     setReady(false); chosenLocally.current=false;
     if (!token) return;
     let cancel = false;
-    apiGet<{ language?: string }>('/api/settings/privacy', token, { skipCache: true })
+    const controller = new AbortController();
+    apiGet<{ language?: string }>('/api/settings/privacy', token, { skipCache: true, signal: controller.signal })
       .then((data) => {
-        if (cancel || chosenLocally.current || !data?.language) return;
+        if (cancel || chosenLocally.current) return;
+        setReady(true);
+        if (!data?.language) return;
         // If the account has a saved language different from the current one,
         // switch the app to it.
         const canonical = locales.find(code => code.toLowerCase() === data.language?.toLowerCase());
@@ -55,10 +58,9 @@ export default function LanguageSettingsPage() {
         if (canonical !== locale) void setLocale(canonical);
         setSelected(canonical);
       })
-      .catch(() => { if (!cancel) toast.error('Could not load saved language'); })
-      .finally(() => { if (!cancel) setReady(true); });
+      .catch(() => { if (!cancel) toast.error('Could not load saved language'); });
     return () => {
-      cancel = true;
+      cancel = true; controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrate once on open
   }, [token]);
@@ -99,7 +101,7 @@ export default function LanguageSettingsPage() {
         description="Used across the app"
         right={saving ? <Loader2 className="h-3.5 w-3.5 animate-spin text-white/30" /> : undefined}
       >
-        <div className="divide-y divide-white/[0.06]">
+        <div className="space-y-0.5">
           {LANGUAGES.filter(lang => (lang.label + ' ' + lang.value).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map((lang) => {
             const active = selected === lang.value;
             return (
@@ -116,10 +118,10 @@ export default function LanguageSettingsPage() {
               >
                 <span
                   className={cn(
-                    'grid h-8 w-8 shrink-0 place-items-center rounded-lg border transition-colors',
+                    'grid h-8 w-8 shrink-0 place-items-center rounded-lg transition-colors',
                     active
-                      ? 'border-[var(--settings-accent-border)] bg-[var(--settings-accent-soft)] text-[var(--settings-accent-text)]'
-                      : 'border-white/[0.06] bg-white/[0.03] text-white/40'
+                      ? 'bg-[var(--settings-accent-soft)] text-[var(--settings-accent-text)]'
+                      : 'text-[var(--vanta-gold)]'
                   )}
                 >
                   <Globe size={16} strokeWidth={1.9} />

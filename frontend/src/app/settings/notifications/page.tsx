@@ -99,7 +99,8 @@ export default function NotificationSettingsPage() {
     setLoading(true); setLoadError(false); setBackend(BACKEND_DEFAULTS);
     if (!token) return;
     let cancel = false;
-    apiGet<BackendPrefs>('/api/settings/notifications', token, { skipCache: true })
+    const controller = new AbortController();
+    apiGet<BackendPrefs>('/api/settings/notifications', token, { skipCache: true, signal: controller.signal })
       .then((data) => {
         if (cancel) return;
         setBackend({ ...BACKEND_DEFAULTS, ...(data || {}) });
@@ -111,7 +112,7 @@ export default function NotificationSettingsPage() {
         if (!cancel) setLoading(false);
       });
     return () => {
-      cancel = true;
+      cancel = true; controller.abort();
     };
   }, [token]);
 
@@ -213,7 +214,7 @@ export default function NotificationSettingsPage() {
               <div className="flex items-center gap-2.5 bg-[var(--settings-accent-softer)] px-4 py-3">
                 <Info size={13} className="shrink-0 text-[var(--settings-accent-text)]" aria-hidden="true" />
                 <p className="text-xs leading-relaxed text-white/40">
-                  Social alerts are paused. Chat and live categories have their own controls.
+                  Device push is paused for this account, including chat and live push. Their in-app categories have separate controls.
                 </p>
               </div>
             )}

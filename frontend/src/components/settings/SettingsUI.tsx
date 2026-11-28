@@ -16,10 +16,9 @@ import React, {
   type ReactNode,
 } from 'react';
 import Link from 'next/link';
-import { AnimatePresence, motion } from 'framer-motion';
 import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { storage } from '@/lib/platformStorage';
+import { localSettingsValue, settingsScrollKey, isSettingsPage } from '@/lib/settingsPersistence';
 import { useLocalizedUiText } from '@/lib/i18n/useLocalizedUiText';
 
 /* Accent — driven by the user's selected Accent setting (Gold/Monochrome).
@@ -45,51 +44,22 @@ type IconComponent = React.ComponentType<{
    Scroll restoration — returning from a sub-page keeps your place.
    ──────────────────────────────────────────────────────────────── */
 
-const SCROLL_KEY = 'vanta_settings_scroll';
-
 /** The app's single mobile scroll container (see AppLayout [data-vanta-scroll]). */
 function findScrollContainer(): HTMLElement | null {
   if (typeof document === 'undefined') return null;
   return document.querySelector('[data-vanta-scroll]');
 }
 
+// The shell restores once per route, rather than once for every link.
 export function useScrollRestore() {
-  const save = useCallback(() => {
-    if (typeof window === 'undefined') return;
+  return useCallback(() => {
     try {
+      const pathname = window.location.pathname;
+      if (!isSettingsPage(pathname)) return;
       const container = findScrollContainer();
-      const offset = container ? container.scrollTop : Math.max(0, window.scrollY);
-      sessionStorage.setItem(SCROLL_KEY, String(offset));
-    } catch {
-      /* private mode — ignore */
-    }
+      sessionStorage.setItem(settingsScrollKey(pathname), String(container?.scrollTop ?? Math.max(0, window.scrollY)));
+    } catch { /* private browsing */ }
   }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    let target = 0;
-    try {
-      target = Number(sessionStorage.getItem(SCROLL_KEY));
-    } catch {
-      /* ignore */
-    }
-    if (target > 0) {
-      // Runs after AppLayout's route-change reset so the saved position wins.
-      const t = window.setTimeout(() => {
-        const container = findScrollContainer();
-        if (container) container.scrollTo({ top: target });
-        else window.scrollTo(0, target);
-      }, 0);
-      try {
-        sessionStorage.removeItem(SCROLL_KEY);
-      } catch {
-        /* ignore */
-      }
-      return () => window.clearTimeout(t);
-    }
-  }, []);
-
-  return save;
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -98,57 +68,43 @@ export function useScrollRestore() {
    column so the experience still feels instant and durable.
    ──────────────────────────────────────────────────────────────── */
 
-export function useLocalPrefs<T extends Record<string, boolean | string>>(
-  key: string,
-  defaults: T
-) {
-  type K = keyof T;
+export function useLocalPrefs<T extends Record<string, boolean | string>>(key: string, defaults: T) {
   const [prefs, setPrefs] = useState<T>(defaults);
   const [hydrated, setHydrated] = useState(false);
   const [savedVisible, setSavedVisible] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const current = useRef(defaults);
+  const initial = useRef(defaults);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   useEffect(() => {
-    let cancel = false;
-    (async () => {
-      const raw = await storage.getItem(key);
-      if (!cancel && raw) {
-        try {
-          const parsed = JSON.parse(raw) as Partial<T>;
-          setPrefs((prev) => ({ ...prev, ...parsed }));
-        } catch {
-          /* corrupted — fall back to defaults */
-        }
-      }
-      if (!cancel) setHydrated(true);
-    })();
-    return () => {
-      cancel = true;
-    };
+    setHydrated(false);
+    setSavedVisible(false);
+    setSaveError('');
+    let next = initial.current;
+    try { next = localSettingsValue(localStorage.getItem(key), initial.current); }
+    catch { setSaveError('Device storage is unavailable.'); }
+    current.current = next;
+    setPrefs(next);
+    setHydrated(true);
+    return () => { if (savedTimer.current) clearTimeout(savedTimer.current); };
   }, [key]);
-
-  const set = useCallback(
-    (k: K, value: T[K]) => {
-      setPrefs((prev) => {
-        const next = { ...prev, [k]: value } as T;
-        void storage.setItem(key, JSON.stringify(next));
-        return next;
-      });
+  const set = useCallback((k: keyof T, value: T[keyof T]) => {
+    if (!hydrated) return;
+    const next = { ...current.current, [k]: value } as T;
+    try {
+      localStorage.setItem(key, JSON.stringify(next));
+      current.current = next;
+      setPrefs(next);
+      setSaveError('');
       setSavedVisible(true);
       if (savedTimer.current) clearTimeout(savedTimer.current);
       savedTimer.current = setTimeout(() => setSavedVisible(false), 1400);
-    },
-    [key]
-  );
-
-  useEffect(
-    () => () => {
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-    },
-    []
-  );
-
-  return { prefs, set, hydrated, savedVisible };
+    } catch {
+      setSavedVisible(false);
+      setSaveError('Could not save on this device. Try again.');
+    }
+  }, [key, hydrated]);
+  return { prefs, set, hydrated, savedVisible, saveError };
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -156,21 +112,12 @@ export function useLocalPrefs<T extends Record<string, boolean | string>>(
    ──────────────────────────────────────────────────────────────── */
 
 export function SavedChip({ visible = true }: { visible?: boolean }) {
+  if (!visible) return null;
   return (
-    <AnimatePresence>
-      {visible && (
-        <motion.span
-          initial={{ opacity: 0, scale: 0.85 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.85 }}
-          transition={{ duration: 0.16, ease: 'easeOut' }}
-          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--settings-accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--settings-accent-text)]"
-        >
-          <Check size={9} strokeWidth={3} aria-hidden="true" />
-          saved
-        </motion.span>
-      )}
-    </AnimatePresence>
+    <span role="status" className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--settings-accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--settings-accent-text)]">
+      <Check size={9} strokeWidth={3} aria-hidden="true" />
+      saved
+    </span>
   );
 }
 
@@ -198,7 +145,7 @@ export function SettingsToggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        'relative h-6 w-11 shrink-0 rounded-full outline-none transition-colors duration-200',
+        'relative h-6 w-11 shrink-0 rounded-full outline-none transition-colors duration-200 motion-reduce:transition-none',
         'focus-visible:ring-2 focus-visible:ring-[var(--settings-accent-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0d0d0f]',
         disabled && 'cursor-not-allowed',
         checked ? 'bg-[var(--settings-accent)]' : 'bg-white/[0.14]'
@@ -207,7 +154,7 @@ export function SettingsToggle({
       <span
         aria-hidden="true"
         className={cn(
-          'absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200',
+          'absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 motion-reduce:transition-none',
           checked ? 'translate-x-[20px]' : 'translate-x-0'
         )}
         style={{ transitionTimingFunction: 'var(--ease-spring)' }}
@@ -216,7 +163,7 @@ export function SettingsToggle({
   );
 }
 /* ────────────────────────────────────────────────────────────────
-   SettingsGroup — one logical section header + one quiet card
+   SettingsGroup — one logical section header, separated by whitespace
    ──────────────────────────────────────────────────────────────── */
 
 export function SettingsGroup({
@@ -252,7 +199,7 @@ export function SettingsGroup({
               </h2>
             )}
             {description && (
-              <p className="mt-0.5 text-xs leading-relaxed text-white/30">
+              <p className="mt-0.5 text-xs leading-relaxed text-white/55">
                 {tr(description)}
               </p>
             )}
@@ -260,7 +207,7 @@ export function SettingsGroup({
           {right && <span className="shrink-0">{right}</span>}
         </div>
       )}
-      <div className="divide-y divide-white/[0.06]">{children}</div>
+      <div className="space-y-0.5">{children}</div>
     </section>
   );
 }
@@ -289,6 +236,7 @@ export function SettingsLink({
   return (
     <Link
       href={href}
+      prefetch={false}
       onClick={saveScroll}
       className="group flex min-h-[62px] items-center gap-3.5 px-4 py-3 transition-colors hover:bg-white/[0.03] active:bg-white/[0.06]"
     >
@@ -301,11 +249,11 @@ export function SettingsLink({
         </span>
       )}
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-white">
+        <span className="block break-words text-sm font-medium text-white">
           {tr(title)}
         </span>
         {description && (
-          <span className="mt-0.5 block truncate text-xs text-white/30">
+          <span className="mt-0.5 block text-xs leading-relaxed text-white/55">
             {tr(description)}
           </span>
         )}
@@ -362,7 +310,7 @@ export function ToggleRow({
         <span className="flex items-center gap-2">
           <span
             className={cn(
-              'truncate text-sm font-medium text-white',
+              'break-words text-sm font-medium text-white',
               disabled && 'text-white/40'
             )}
           >
@@ -371,7 +319,7 @@ export function ToggleRow({
           {saved && <SavedChip />}
         </span>
         {description && (
-          <span className="mt-0.5 block text-xs leading-relaxed text-white/30">
+          <span className="mt-0.5 block text-xs leading-relaxed text-white/55">
             {description}
           </span>
         )}
@@ -436,18 +384,18 @@ export function SelectRow({
       >
         {Icon && (
           <span
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-white/40"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-[var(--vanta-gold)]"
             aria-hidden="true"
           >
             <Icon size={17} strokeWidth={1.9} />
           </span>
         )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium text-white">
+          <span className="block break-words text-sm font-medium text-white">
             {title}
           </span>
           {description && (
-            <span className="mt-0.5 block text-xs text-white/30">
+            <span className="mt-0.5 block text-xs leading-relaxed text-white/55">
               {description}
             </span>
           )}
@@ -462,22 +410,15 @@ export function SelectRow({
         <ChevronDown
           size={15}
           className={cn(
-            'shrink-0 text-white/25 transition-transform duration-200',
+            'shrink-0 text-white/25 transition-transform duration-200 motion-reduce:transition-none',
             open && 'rotate-180'
           )}
           aria-hidden="true"
         />
       </button>
 
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-            className="overflow-hidden"
-          >
+      {open && !disabled && (
+          <div>
             <div className="space-y-1.5 px-4 pb-3">
               {options.map((option) => {
                 const selected = option.value === value;
@@ -485,15 +426,18 @@ export function SelectRow({
                   <button
                     key={option.value}
                     type="button"
+                    aria-pressed={selected}
+                    disabled={disabled}
                     onClick={() => {
+                      if (disabled) return;
                       onSelect(option.value);
                       setOpen(false);
                     }}
                     className={cn(
-                      'flex w-full items-center justify-between gap-3 rounded-[10px] border px-3.5 py-3 text-left transition-colors',
+                      'flex w-full items-center justify-between gap-3 rounded-[10px] px-3.5 py-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--settings-accent)]',
                       selected
-                        ? 'border-[var(--active-border)] bg-[var(--active-soft)]'
-                        : 'border-[var(--border)] bg-transparent hover:bg-[var(--surface-hover)]'
+                        ? 'bg-[var(--active-soft)]'
+                        : 'bg-transparent hover:bg-[var(--surface-hover)]'
                     )}
                   >
                     <span className="min-w-0">
@@ -501,7 +445,7 @@ export function SelectRow({
                         {option.label}
                       </span>
                       {option.description && (
-                        <span className="mt-0.5 block text-xs text-white/30">
+                        <span className="mt-0.5 block text-xs leading-relaxed text-white/55">
                           {option.description}
                         </span>
                       )}
@@ -518,9 +462,8 @@ export function SelectRow({
                 );
               })}
             </div>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
     </div>
   );
 }

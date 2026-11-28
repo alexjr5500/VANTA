@@ -31,15 +31,16 @@ export default function AppearanceSettingsPage() {
     setReady(false);
     if (!token) return;
     let cancel = false;
-    apiGet<{ accent?: string; density?: string }>('/api/settings/privacy', token, { skipCache: true })
+    const controller = new AbortController();
+    apiGet<{ accent?: string; density?: string }>('/api/settings/privacy', token, { skipCache: true, signal: controller.signal })
       .then((data) => {
         if (cancel || !data) return;
         if (data.accent === 'gold' || data.accent === 'monochrome') setAccent(data.accent);
         if (data.density === 'compact' || data.density === 'comfortable') setDensity(data.density);
+        setReady(true);
       })
-      .catch(() => { if (!cancel) toast.error('Could not load saved appearance'); })
-      .finally(() => { if (!cancel) setReady(true); });
-    return () => { cancel = true; };
+      .catch(() => { if (!cancel) toast.error('Could not load saved appearance'); });
+    return () => { cancel = true; controller.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrate once on open
   }, [token]);
 

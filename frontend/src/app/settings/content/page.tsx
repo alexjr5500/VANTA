@@ -33,7 +33,7 @@ const LOCAL_DEFAULTS = {
 type LocalKey = keyof typeof LOCAL_DEFAULTS;
 
 export default function ContentMediaSettingsPage() {
-  const { prefs, set, savedVisible } = useLocalPrefs(
+  const { prefs, set, savedVisible, hydrated, saveError } = useLocalPrefs(
     'vanta_content_extras',
     LOCAL_DEFAULTS
   );
@@ -75,6 +75,7 @@ export default function ContentMediaSettingsPage() {
           title="Video Autoplay"
           description="Automatically play videos while browsing your feed."
           checked={prefs.homeAutoplay}
+          disabled={!hydrated}
           onChange={(v) => toggle('homeAutoplay', v)}
         />
         <ToggleRow
@@ -82,6 +83,7 @@ export default function ContentMediaSettingsPage() {
           title="Reels autoplay"
           description="Play Reels automatically as you watch."
           checked={prefs.autoplay}
+          disabled={!hydrated}
           onChange={(v) => toggle('autoplay', v)}
         />
         <SelectRow
@@ -89,6 +91,7 @@ export default function ContentMediaSettingsPage() {
           title="Media quality"
           description="Preferred video sharpness"
           value={prefs.quality}
+          disabled={!hydrated}
           onSelect={(v) => set('quality', v)}
           options={[
             { value: 'auto', label: 'Auto', description: 'Let VANTA pick the best quality.' },
@@ -109,10 +112,12 @@ export default function ContentMediaSettingsPage() {
           title="Lower data usage"
           description="Play lighter versions of media on mobile data."
           checked={prefs.lowerData}
+          disabled={!hydrated}
           onChange={(v) => toggle('lowerData', v)}
         />
       </SettingsGroup>
 
+      {saveError && <p role="alert" className="px-4 text-sm text-red-400">{saveError}</p>}
       <SettingsGroup title="Sensitive content in feeds">
         <ToggleRow title="Hide labeled sensitive posts and reels" description="Filter moderator-labeled material from supported Timeline, Trending, Explore and Reels feeds. Accounts under 18 or without a birth date always use the restrictive filter. This is not a complete content safety filter." checked={hide!==false} disabled={hide===null||busy} onChange={value=>void saveSensitive(value)} />
         {error&&<p role="alert" className="px-4 py-2 text-sm text-red-400">{error}</p>}

@@ -1,8 +1,19 @@
 import {prisma} from '../prisma';
-import {endDelegation,readDelegatedAnalytics,respondToDelegation} from '../services/delegation.service';
-jest.mock('../prisma',()=>({prisma:{$transaction:jest.fn(),$queryRaw:jest.fn(),accountDelegation:{findFirst:jest.fn(),updateMany:jest.fn()},user:{count:jest.fn()},blockedUser:{findFirst:jest.fn()},follow:{count:jest.fn()},post:{aggregate:jest.fn()},video:{aggregate:jest.fn()},postLike:{count:jest.fn()},videoLike:{count:jest.fn()},postComment:{count:jest.fn()},videoComment:{count:jest.fn()}}}));
+import {endDelegation,inviteDelegate,readDelegatedAnalytics,respondToDelegation} from '../services/delegation.service';
+jest.mock('../prisma',()=>({prisma:{$transaction:jest.fn(),$queryRaw:jest.fn(),accountDelegation:{findFirst:jest.fn(),updateMany:jest.fn()},user:{count:jest.fn(),updateMany:jest.fn(),findFirst:jest.fn()},blockedUser:{findFirst:jest.fn()},follow:{count:jest.fn()},post:{aggregate:jest.fn()},video:{aggregate:jest.fn()},postLike:{count:jest.fn()},videoLike:{count:jest.fn()},postComment:{count:jest.fn()},videoComment:{count:jest.fn()}}}));
 describe('scoped delegation',()=>{
   beforeEach(()=>{jest.resetAllMocks();(prisma.$transaction as jest.Mock).mockImplementation(async fn=>fn(prisma));});
+  test('invitation refuses changed credentials and a revoked session before looking up a delegate',async()=>{
+    const approval={sessionId:'session',passwordHash:'hash',twoFactorEnabled:true,twoFactorSecret:'secret'};
+    (prisma.user.updateMany as jest.Mock).mockResolvedValueOnce({count:0});
+    await expect(inviteDelegate('owner','target',approval)).rejects.toThrow('Credentials changed');
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    (prisma.user.updateMany as jest.Mock).mockResolvedValueOnce({count:1});
+    (prisma.$queryRaw as jest.Mock).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    await expect(inviteDelegate('owner','target',approval)).rejects.toThrow('Session expired');
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    expect(prisma.user.updateMany).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({id:'owner',passwordHash:'hash',twoFactorEnabled:true,twoFactorSecret:'secret'})}));
+  });
   test('unknown, revoked, expired or foreign grant never reads analytics',async()=>{
     (prisma.$queryRaw as jest.Mock).mockResolvedValue([]);
     await expect(readDelegatedAnalytics('delegate','grant')).rejects.toThrow('unavailable');
