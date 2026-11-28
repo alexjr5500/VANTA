@@ -58,9 +58,10 @@ export default function ChatSettingsPage() {
   };
 
   useEffect(() => {
+    setLoading(true); setLoadError(false); setPrefs(CHAT_DEFAULTS);
     if (!token) return;
     let cancel = false;
-    apiGet<Partial<ChatPrefs>>('/api/settings/privacy', token)
+    apiGet<Partial<ChatPrefs>>('/api/settings/privacy', token, { skipCache: true })
       .then((data) => {
         if (cancel || !data) return;
         setPrefs({

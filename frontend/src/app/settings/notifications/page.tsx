@@ -96,9 +96,10 @@ export default function NotificationSettingsPage() {
   );
 
   useEffect(() => {
+    setLoading(true); setLoadError(false); setBackend(BACKEND_DEFAULTS);
     if (!token) return;
     let cancel = false;
-    apiGet<any>('/api/settings/notifications', token)
+    apiGet<BackendPrefs>('/api/settings/notifications', token, { skipCache: true })
       .then((data) => {
         if (cancel) return;
         setBackend({ ...BACKEND_DEFAULTS, ...(data || {}) });
@@ -202,7 +203,7 @@ export default function NotificationSettingsPage() {
             <ToggleRow
               icon={BellRing}
               title="Social and general alerts"
-              description="Enable social and general activity notifications."
+              description="Controls device push delivery and new social/general activity notifications. Chat and live in-app preferences are separate."
               checked={backend.pushAlerts}
               onChange={(v) => toggleBackend('pushAlerts', v)}
               disabled={loadError || saving.includes('pushAlerts')}

@@ -28,9 +28,10 @@ export default function AppearanceSettingsPage() {
   const busy = useRef(false);
 
   useEffect(() => {
+    setReady(false);
     if (!token) return;
     let cancel = false;
-    apiGet<{ accent?: string; density?: string }>('/api/settings/privacy', token)
+    apiGet<{ accent?: string; density?: string }>('/api/settings/privacy', token, { skipCache: true })
       .then((data) => {
         if (cancel || !data) return;
         if (data.accent === 'gold' || data.accent === 'monochrome') setAccent(data.accent);

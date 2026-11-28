@@ -32,6 +32,7 @@ export default function DeactivatePage() {
     // The server has already deactivated the account; a local update failure
     // must not invite another destructive request.
     try { await updateUser({ status: 'DEACTIVATED' }); }
+    catch { /* The committed server state remains authoritative. */ }
     finally { router.replace('/account/deactivated'); }
   };
 

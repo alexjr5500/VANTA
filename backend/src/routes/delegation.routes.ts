@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { rateLimiter } from '../security';
+import { prisma } from '../prisma';
+import { CryptoUtils } from '../security/crypto';
+import { twoFactorAuth } from '../security/twoFactorAuth';
 import { auditLog } from '../security/auditLog';
 import { notificationService } from '../services/notification.service';
 import { listDelegations, inviteDelegate, respondToDelegation, endDelegation, readDelegatedAnalytics } from '../services/delegation.service';
@@ -15,7 +18,12 @@ delegationRoutes.post('/delegations',rateLimiter.login2fa,async(req:AuthRequest,
   const username=typeof req.body?.username==='string'?req.body.username.trim().replace(/^@/,''):'';
   if(!/^[a-zA-Z0-9_.-]{3,30}$/.test(username)){res.status(400).json({error:'Enter a valid username'});return;}
   const ownerId=req.user.userId;
+  const password=req.body?.password,code=req.body?.code;
+  if(typeof password!=='string'||!password||password.length>1024){res.status(400).json({error:'Enter your current VANTA password'});return;}
   try{
+    const owner=await prisma.user.findUnique({where:{id:ownerId},select:{passwordHash:true,twoFactorEnabled:true,status:true,lockedUntil:true}});
+    if(!owner?.passwordHash||owner.status!=='ACTIVE'||(owner.lockedUntil&&owner.lockedUntil>new Date())||!await CryptoUtils.verifyPassword(owner.passwordHash,password)){res.status(403).json({error:'Current password required to grant access'});return;}
+    if(owner.twoFactorEnabled&&(typeof code!=='string'||!/^\d{6}$/.test(code)||!(await twoFactorAuth.verifyLogin(ownerId,code)).valid)){res.status(403).json({error:'Enter a fresh authenticator code'});return;}
     const result=await inviteDelegate(ownerId,username);
     if(result.created){
       await auditLog.log({userId:ownerId,action:'DELEGATION_INVITED',metadata:{grantId:result.grant.id,scope:result.grant.scope}});

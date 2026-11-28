@@ -15,6 +15,8 @@ export default function DelegationPage(){
   const {token}=useAuth();
   const [inbox,setInbox]=useState<Inbox|null>(null);
   const [username,setUsername]=useState('');
+  const [password,setPassword]=useState('');
+  const [code,setCode]=useState('');
   const [error,setError]=useState('');
   const [notice,setNotice]=useState('');
   const [busy,setBusy]=useState(false);
@@ -36,7 +38,8 @@ export default function DelegationPage(){
   const refresh=()=>{setAnalytics(null);setRevision(v=>v+1);};
   const invite=()=>run(async auth=>{
     if(!window.confirm('Invite @'+username.replace(/^@/,'')+' to view your aggregate content analytics for 30 days after acceptance?'))return;
-    const grant=await apiPost<Grant>(base,{username},auth);
+    let grant:Grant;
+    try{grant=await apiPost<Grant>(base,{username,password,code},auth,undefined,{noRetry:true});}finally{setPassword('');setCode('');}
     setUsername('');refresh();setNotice(grant.status==='ACTIVE'?'This delegate already has access.':'Invitation pending acceptance.');
   });
   const respond=(grant:Grant,accept:boolean)=>run(async auth=>{
@@ -71,7 +74,9 @@ export default function DelegationPage(){
       <form className="p-4 space-y-3" onSubmit={event=>{event.preventDefault();void invite();}}>
         <label htmlFor="delegate-user" className="text-sm">VANTA username</label>
         <input id="delegate-user" value={username} onChange={event=>setUsername(event.target.value)} maxLength={31} placeholder="@username" className="settings-input w-full"/>
-        <button type="submit" disabled={busy||!username.trim()} className="btn-accent w-full disabled:opacity-50">Send invitation</button>
+        <label className="block text-sm">Current password<input type="password" autoComplete="current-password" value={password} onChange={event=>setPassword(event.target.value)} className="settings-input w-full" required /></label>
+        <label className="block text-sm">Authenticator code (if enabled)<input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={event=>setCode(event.target.value.replace(/\D/g,'').slice(0,6))} className="settings-input w-full" /></label>
+        <button type="submit" disabled={busy||!username.trim()||!password} className="btn-accent w-full disabled:opacity-50">Send invitation</button>
       </form>
     </SettingsGroup>
     {error&&<p role="alert" className="text-sm text-red-400">{error}</p>}

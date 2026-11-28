@@ -829,7 +829,11 @@ export class UserService {
         throw new Error('Profile privacy must be public or private');
       }
       settings.privacyProfile = value;
-      settings.accountType = value === 'private' ? 'PRIVATE' : 'PUBLIC';
+      if (value === 'private') settings.accountType = 'PRIVATE';
+      else {
+        const current = await prisma.userSettings.findUnique({where:{userId},select:{accountType:true}});
+        settings.accountType = current?.accountType === 'CREATOR' ? 'CREATOR' : 'PUBLIC';
+      }
     }
 
     if (data.privacyMessages !== undefined) {

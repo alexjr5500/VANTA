@@ -832,6 +832,7 @@ export const get2FAStatus = async (req: AuthenticatedRequest, res: Response): Pr
   try {
     if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
     const user = await prisma.user.findUnique({ where: { id: req.user.userId }, select: { twoFactorEnabled: true } });
+    res.set('Cache-Control','private, no-store');
     res.status(200).json({ enabled: user?.twoFactorEnabled || false });
   } catch (error) {
     res.status(400).json({ error: 'Failed to get 2FA status' });
@@ -842,6 +843,7 @@ export const getBackupCodes = async (req: AuthenticatedRequest, res: Response): 
   try {
     if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
     const count = await twoFactorAuth.getRemainingBackupCodes(req.user.userId);
+    res.set('Cache-Control','private, no-store');
     res.status(200).json({ remainingCodes: count });
   } catch (error) {
     res.status(400).json({ error: 'Failed to get backup codes' });

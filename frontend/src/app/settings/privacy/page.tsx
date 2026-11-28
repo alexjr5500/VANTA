@@ -87,12 +87,13 @@ export default function PrivacySettingsPage() {
   );
 
   useEffect(() => {
+    setLoading(true); setLoadError(false); setPrivacy(PRIVACY_DEFAULTS); setBlocked([]); setMuted([]);
     if (!token) return;
     let cancel = false;
     Promise.all([
-      apiGet<PrivacySettings>('/api/settings/privacy', token),
-      apiGet<{ blocked: UserReference[] }>('/api/settings/blocked', token),
-      apiGet<{ muted: UserReference[] }>('/api/settings/muted', token),
+      apiGet<PrivacySettings>('/api/settings/privacy', token, { skipCache: true }),
+      apiGet<{ blocked: UserReference[] }>('/api/settings/blocked', token, { skipCache: true }),
+      apiGet<{ muted: UserReference[] }>('/api/settings/muted', token, { skipCache: true }),
     ])
       .then(([p, b, m]) => {
         if (cancel) return;
@@ -118,7 +119,11 @@ export default function PrivacySettingsPage() {
     setSaving((prev) => [...prev, key]);
     try {
       const result = await apiPut<{settings?: Partial<PrivacySettings>}>('/api/settings/privacy', { [key]: value }, token);
-      setPrivacy((prev) => ({ ...prev, ...(result.settings || { [key]: value }) }));
+      setPrivacy(prev => {
+        const confirmed = result.settings;
+        const related: (keyof PrivacySettings)[] = key === 'activityStatus' ? [key,'onlineStatus','lastSeen'] : key === 'readReceipts' ? [key,'privacyReadReceipts'] : [key];
+        return {...prev,...Object.fromEntries(related.map(field=>[field,confirmed?.[field] ?? (field===key?value:prev[field])]))};
+      });
       flagSaved(key);
     } catch {
       toast.error('Could not save', 'Please try again.');
@@ -137,7 +142,7 @@ export default function PrivacySettingsPage() {
       setBlockTarget('');
       const res = await apiGet<{ blocked: UserReference[] }>(
         '/api/settings/blocked',
-        token
+        token, { skipCache: true }
       );
       setBlocked(res?.blocked || []);
       toast.success('Account blocked');
@@ -171,7 +176,7 @@ export default function PrivacySettingsPage() {
       setMuteTarget('');
       const res = await apiGet<{ muted: UserReference[] }>(
         '/api/settings/muted',
-        token
+        token, { skipCache: true }
       );
       setMuted(res?.muted || []);
       toast.success('Account muted');

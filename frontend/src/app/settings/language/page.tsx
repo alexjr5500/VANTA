@@ -42,9 +42,10 @@ export default function LanguageSettingsPage() {
   }, [locale]);
 
   useEffect(() => {
+    setReady(false); chosenLocally.current=false;
     if (!token) return;
     let cancel = false;
-    apiGet<{ language?: string }>('/api/settings/privacy', token)
+    apiGet<{ language?: string }>('/api/settings/privacy', token, { skipCache: true })
       .then((data) => {
         if (cancel || chosenLocally.current || !data?.language) return;
         // If the account has a saved language different from the current one,
