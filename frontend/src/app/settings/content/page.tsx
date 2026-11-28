@@ -63,6 +63,7 @@ export default function ContentMediaSettingsPage() {
       </div>
 
       <DefaultSectionSetting area="timeline" />
+      <SettingsGroup title="External links"><SettingsLink href="/settings/content/external-links" title="Open links" description="Choose how external websites open on this device" /></SettingsGroup>
       <SettingsGroup
         icon={Play}
         title="Playback"

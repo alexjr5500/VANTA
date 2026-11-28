@@ -6,6 +6,7 @@
    ═══════════════════════════════════════════════════════════════ */
 
 import { useState } from 'react';
+import {useNativeSettings} from '@/lib/nativeSettings';
 import packageInfo from '../../../../package.json';
 import {
   FileText,
@@ -23,9 +24,10 @@ const APP_VERSION = packageInfo.version;
 
 export default function AboutPage() {
   const [copyStatus, setCopyStatus] = useState('');
+  const {settings,android}=useNativeSettings();
   const copyDetails = async () => {
     try {
-      await navigator.clipboard.writeText(['VANTA web version: ' + APP_VERSION, 'Platform: ' + navigator.userAgent, 'Language: ' + navigator.language].join('\n'));
+      await navigator.clipboard.writeText(['VANTA web version: ' + APP_VERSION, ...(settings?['Android app version: '+settings.version+' ('+settings.versionCode+')']:[]), 'Platform: ' + navigator.userAgent, 'Language: ' + navigator.language].join('\n'));
       setCopyStatus('Diagnostic details copied.');
     } catch { setCopyStatus('Could not copy details.'); }
   };
@@ -100,6 +102,7 @@ export default function AboutPage() {
           </div>
           <span className="shrink-0 text-xs text-white/30">{APP_VERSION}</span>
         </div>
+        {android&&<div className="flex justify-between gap-3 px-4 py-3"><span className="text-sm">Android app version</span><span className="text-xs opacity-75">{settings?settings.version+' ('+settings.versionCode+')':'Unavailable in this build'}</span></div>}
         <div className="px-4 py-3 space-y-2"><p className="text-xs opacity-70">Share version and browser details with support. This does not include your account token or messages.</p><button type="button" onClick={() => void copyDetails()} className="min-h-10 text-sm text-[var(--vanta-gold)]">Copy diagnostic details</button>{copyStatus && <p role="status" className="text-xs opacity-75">{copyStatus}</p>}</div>
       </SettingsGroup>
     </div>

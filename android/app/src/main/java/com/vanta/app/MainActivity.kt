@@ -1,5 +1,8 @@
 package com.vanta.app
 
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import androidx.browser.customtabs.CustomTabsIntent
 import android.app.Activity
 import android.app.Dialog
 import android.Manifest
@@ -56,6 +59,8 @@ import org.json.JSONObject
 class MainActivity : Activity() {
     private lateinit var webView: WebView
     private val nativeShareNonce = UUID.randomUUID().toString()
+    private val nativeSettingsNonce = UUID.randomUUID().toString()
+    private val nativeSettings by lazy { getSharedPreferences("vanta_native_settings", MODE_PRIVATE) }
     private val nativeGallery by lazy { NativeStatusGallery(this, VANTA_ORIGIN) }
     @Volatile private var galleryPageTrusted = false
     private var pendingFileCallback: android.webkit.ValueCallback<Array<Uri>>? = null
@@ -197,6 +202,7 @@ class MainActivity : Activity() {
             addJavascriptInterface(VantaNativeGalleryBridge(), "VantaNativeGallery")
             addJavascriptInterface(VantaNativeVideoSaveBridge(), "VantaNativeVideo")
             addJavascriptInterface(VantaNativeLocationBridge(), "VantaNativeLocation")
+            addJavascriptInterface(VantaNativeSettingsBridge(), "VantaNativeSettings")
             settings.domStorageEnabled = true
             // Calls, livestreams, and camera previews attach MediaStreams after
             // the user's call / Go Live action. Do not require a second playback
@@ -234,10 +240,10 @@ class MainActivity : Activity() {
                 ): Boolean {
                     if (!request.isForMainFrame) return false
                     val uri = request.url
-                    if (uri.scheme == "https" && uri.host in VANTA_HOSTS) return false
+                    if (isTrustedPage(uri.toString())) return false
 
-                    if (uri.scheme == "https") {
-                        runCatching { startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+                    if (uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) {
+                        openExternalWebsite(uri)
                     }
                     return true
                 }
@@ -248,6 +254,7 @@ class MainActivity : Activity() {
                     applySystemBottomInset()
                     publishNativeShareNonce(view, url)
                     publishNativeGalleryNonce(view, url)
+                    publishNativeSettings(view, url)
                     if (isTrustedPage(url)) {
                         view.evaluateJavascript(
                             "window.__VANTA_NATIVE_LOCATION_NONCE__ = '$nativeLocationNonce';" +
@@ -768,7 +775,65 @@ class MainActivity : Activity() {
     private fun isTrustedPage(url: String?): Boolean {
         if (url.isNullOrBlank()) return false
         val uri = Uri.parse(url)
-        return uri.scheme == "https" && uri.host in VANTA_HOSTS
+        return uri.scheme == "https" && uri.host in VANTA_HOSTS && uri.userInfo == null && (uri.port == -1 || uri.port == 443)
+    }
+
+    // The browser owns its own rendering process. External content is never
+    // loaded into the WebView that has authenticated VANTA JS bridges.
+    private fun openExternalWebsite(uri: Uri) {
+        val mode = nativeSettings.getString("external_links", "browser")
+        // OAuth provider authorization must retain its existing browser flow.
+        val oauthHost = uri.host in setOf("accounts.google.com", "oauth.telegram.org")
+        val opened = if (mode == "custom_tab" && !oauthHost) runCatching {
+            CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(this, uri)
+        }.isSuccess else false
+        if (!opened) runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
+        }
+    }
+
+    private fun publishNativeSettings(view: WebView, url: String?) {
+        if (!isTrustedPage(url)) return
+        val manager = AppWidgetManager.getInstance(this)
+        val pinSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager.isRequestPinAppWidgetSupported
+        val payload = JSONObject().apply {
+            put("nonce", nativeSettingsNonce)
+            put("linkMode", nativeSettings.getString("external_links", "browser"))
+            put("pinSupported", pinSupported)
+            put("version", BuildConfig.VERSION_NAME)
+            put("versionCode", BuildConfig.VERSION_CODE)
+        }
+        view.evaluateJavascript("window.__VANTA_NATIVE_SETTINGS__ = " + payload.toString() +
+            ";window.dispatchEvent(new Event('vanta-native-settings-ready'));", null)
+    }
+
+    inner class VantaNativeSettingsBridge {
+        @JavascriptInterface
+        fun setExternalLinkMode(nonce: String?, mode: String?, requestId: String?) {
+            if (nonce != nativeSettingsNonce || !galleryPageTrusted || mode !in setOf("browser", "custom_tab") ||
+                requestId.isNullOrBlank() || !requestId.matches(Regex("[A-Za-z0-9_-]{1,80}"))) return
+            runOnUiThread {
+                if (!isTrustedPage(webView.url)) return@runOnUiThread
+                val saved = nativeSettings.edit().putString("external_links", mode).commit()
+                publishNativeSettings(webView, webView.url)
+                webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('vanta-native-settings-result',{detail:{requestId:'$requestId',ok:$saved}}));", null)
+            }
+        }
+
+        @JavascriptInterface
+        fun requestChatWidget(nonce: String?, requestId: String?) {
+            if (nonce != nativeSettingsNonce || !galleryPageTrusted ||
+                requestId.isNullOrBlank() || !requestId.matches(Regex("[A-Za-z0-9_-]{1,80}"))) return
+            runOnUiThread {
+                if (!isTrustedPage(webView.url)) return@runOnUiThread
+                val requested = runCatching {
+                    val manager = AppWidgetManager.getInstance(this@MainActivity)
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && manager.isRequestPinAppWidgetSupported &&
+                        manager.requestPinAppWidget(ComponentName(this@MainActivity, ChatWidgetProvider::class.java), null, null)
+                }.getOrDefault(false)
+                webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('vanta-native-settings-result',{detail:{requestId:'$requestId',ok:$requested}}));", null)
+            }
+        }
     }
 
     private fun showNativeAttachmentPicker() {

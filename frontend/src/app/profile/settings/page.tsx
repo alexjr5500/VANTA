@@ -51,6 +51,8 @@ const searchable = [
   { title: 'Chat and call troubleshooting', href: '/settings/chat/troubleshooting', icon: MessageCircle },
   { title: 'Autoplay, media quality and data usage', href: '/settings/content', icon: Newspaper },
   { title: 'Sensitive content feed filter', href: '/settings/content', icon: ShieldCheck },
+  { title: 'External link opening preferences', href: '/settings/content/external-links', icon: Newspaper },
+  { title: 'Chat home screen widget', href: '/settings/chat/widget', icon: MessageCircle },
   { title: 'Default timeline feed', href: '/settings/content', icon: Newspaper },
   { title: 'Default Explore category', href: '/settings/explore', icon: Search },
   { title: 'Default live tab and live audience', href: '/settings/spaces', icon: Mic },
