@@ -1,3 +1,4 @@
+import { sensitiveFilter, hideSensitiveForViewer } from "./sensitive-content.service";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 
@@ -86,8 +87,10 @@ export async function buildReelFeed(input: {
   seed?: string;
   start: number;
   limit: number;
+  hideSensitive?: boolean;
 }) {
   const { userId, feed, seed, start, limit } = input;
+  const hide = input.hideSensitive ?? await hideSensitiveForViewer(userId);
 
   const followingFilter =
     feed === "following" && userId
@@ -98,6 +101,7 @@ export async function buildReelFeed(input: {
   const where: Prisma.VideoWhereInput = {
     publishStatus: "PUBLISHED",
     moderationRemovedAt: null,
+    ...sensitiveFilter(hide),
     creator: {
       status: "ACTIVE",
       ...(followingFilter ? { followers: followingFilter.followers } : {}),

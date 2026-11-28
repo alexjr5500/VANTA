@@ -50,6 +50,7 @@ const searchable = [
   { title: 'Chat storage and data', href: '/settings/chat/storage', icon: Database },
   { title: 'Chat and call troubleshooting', href: '/settings/chat/troubleshooting', icon: MessageCircle },
   { title: 'Autoplay, media quality and data usage', href: '/settings/content', icon: Newspaper },
+  { title: 'Sensitive content feed filter', href: '/settings/content', icon: ShieldCheck },
   { title: 'Default timeline feed', href: '/settings/content', icon: Newspaper },
   { title: 'Default Explore category', href: '/settings/explore', icon: Search },
   { title: 'Default live tab and live audience', href: '/settings/spaces', icon: Mic },

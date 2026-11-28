@@ -814,6 +814,10 @@ export class UserService {
     if (data.activityStatus !== undefined) { settings.onlineStatus = data.activityStatus ? 'everyone' : 'nobody'; settings.lastSeen = data.activityStatus ? 'everyone' : 'nobody'; }
     if (data.readReceipts !== undefined) settings.privacyReadReceipts = data.readReceipts ? 'everyone' : 'nobody';
 
+    if (data.hideSensitiveContent !== undefined) {
+      if (typeof data.hideSensitiveContent !== 'boolean') throw new Error('Sensitive content preference must be boolean');
+      settings.hideSensitiveContent = data.hideSensitiveContent;
+    }
     if (data.requireChatRequest !== undefined) {
       if (typeof data.requireChatRequest !== 'boolean') throw new Error('Message request preference must be a boolean');
       settings.requireChatRequest = data.requireChatRequest;

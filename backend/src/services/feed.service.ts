@@ -1,3 +1,4 @@
+import { sensitiveFilter, hideSensitiveForViewer } from "./sensitive-content.service";
 import { prisma } from "../prisma";
 import { appendAuditLog } from "../security/auditLog";
 import { cacheService, CACHE_KEYS, CACHE_TTL } from "./cache.service";
@@ -108,7 +109,8 @@ const formatComment = (comment: any) => {
 
 export class FeedService {
   async getFeed(userId: string, cursor?: string, limit: number = 20) {
-    const cacheKey = CACHE_KEYS.FEED(userId, cursor);
+    const hide = await hideSensitiveForViewer(userId);
+    const cacheKey = CACHE_KEYS.FEED(userId, cursor) + ':sensitive-v1:' + hide + ':' + limit;
     
     return cacheService.getOrSet(cacheKey, async () => {
       const queryStart = Date.now();
@@ -122,7 +124,7 @@ export class FeedService {
       const followingIds = [...followedUserIds, userId];
 
       const posts = await prisma.post.findMany({
-        where: { authorId: { in: followingIds }, moderationRemovedAt: null },
+        where: { authorId: { in: followingIds }, moderationRemovedAt: null, ...sensitiveFilter(hide) },
         orderBy: { createdAt: "desc" },
         take: limit + 1,
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -191,7 +193,8 @@ export class FeedService {
   }
 
   private async getHomeFeedCached(userId: string, cursor?: string, limit: number = 15, seed?: string) {
-    const cacheKey = `${CACHE_KEYS.HOME_FEED(userId, cursor)}:${seed || 'default'}`;
+    const hide = await hideSensitiveForViewer(userId);
+    const cacheKey = `${CACHE_KEYS.HOME_FEED(userId, cursor)}:${seed || 'default'}:sensitive-v1:${hide}:${limit}`;
     
     return cacheService.getOrSet(cacheKey, async () => {
       const queryStart = Date.now();
@@ -237,7 +240,7 @@ export class FeedService {
       // rotated so refreshes surface different eligible reels — no full-table
       // random sort.
       const trendingVideos = seededShuffle(await prisma.video.findMany({
-        where: { moderationRemovedAt: null, publishStatus: 'PUBLISHED', videoUrl: { not: null } },
+        where: { moderationRemovedAt: null, publishStatus: 'PUBLISHED', videoUrl: { not: null }, ...sensitiveFilter(hide) },
         orderBy: [{ views: 'desc' }, { createdAt: 'desc' }],
         take: 12,
         include: {
@@ -259,7 +262,7 @@ export class FeedService {
 
       // 3. Posts from followed creators (most recent)
       const followedPosts = await prisma.post.findMany({
-        where: { authorId: { in: followingIds } },
+        where: { authorId: { in: followingIds }, moderationRemovedAt: null, ...sensitiveFilter(hide) },
         orderBy: { createdAt: 'desc' },
         take: 8,
         include: {
@@ -272,7 +275,7 @@ export class FeedService {
 
       // 4. Trending posts (global). Seed-rotated discovery bucket (capped).
       const trendingPosts = seededShuffle(await prisma.post.findMany({
-        where: { authorId: { notIn: followingIds }, moderationRemovedAt: null },
+        where: { authorId: { notIn: followingIds }, moderationRemovedAt: null, ...sensitiveFilter(hide) },
         orderBy: [{ likes: { _count: 'desc' } }, { createdAt: 'desc' }],
         take: 10,
         include: {
@@ -639,12 +642,13 @@ export class FeedService {
     };
   }
 
-  async getTrendingFeed(cursor?: string, limit: number = 20) {
-    return cacheService.getOrSet(CACHE_KEYS.TRENDING, async () => {
+  async getTrendingFeed(cursor?: string, limit: number = 20, userId?: string) {
+    const hide = await hideSensitiveForViewer(userId);
+    return cacheService.getOrSet(CACHE_KEYS.TRENDING + ':sensitive-v1:' + hide + ':' + (cursor || '') + ':' + limit, async () => {
       const queryStart = Date.now();
       
       const posts = await prisma.post.findMany({
-        where: { moderationRemovedAt: null },
+        where: { moderationRemovedAt: null, ...sensitiveFilter(hide) },
         orderBy: [
           { likes: { _count: "desc" } },
           { createdAt: "desc" },
@@ -664,13 +668,14 @@ export class FeedService {
     }, CACHE_TTL.MEDIUM);
   }
 
-  async getExploreFeed(cursor?: string, limit: number = 30) {
-    return cacheService.getOrSet(CACHE_KEYS.EXPLORE, async () => {
+  async getExploreFeed(cursor?: string, limit: number = 30, userId?: string) {
+    const hide = await hideSensitiveForViewer(userId);
+    return cacheService.getOrSet(CACHE_KEYS.EXPLORE + ':sensitive-v1:' + hide + ':' + (cursor || '') + ':' + limit, async () => {
       const queryStart = Date.now();
       
       const [posts, streams, videos] = await Promise.all([
         prisma.post.findMany({
-          where: { moderationRemovedAt: null },
+          where: { moderationRemovedAt: null, ...sensitiveFilter(hide) },
           orderBy: { createdAt: "desc" },
           take: limit,
           ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -689,7 +694,7 @@ export class FeedService {
           },
         }),
         prisma.video.findMany({
-          where: { moderationRemovedAt: null, publishStatus: "PUBLISHED", videoUrl: { not: null } },
+          where: { moderationRemovedAt: null, publishStatus: "PUBLISHED", videoUrl: { not: null }, ...sensitiveFilter(hide) },
           orderBy: { views: "desc" },
           take: limit,
           include: {
@@ -715,7 +720,9 @@ export class FeedService {
     await cacheService.delPattern(`feed:${authorId}:*`);
     await cacheService.delPattern(`homefeed:*`);
     await cacheService.del(CACHE_KEYS.TRENDING);
+    await cacheService.delPattern('trending:sensitive-v1:*');
     await cacheService.del(CACHE_KEYS.EXPLORE);
+    await cacheService.delPattern('explore:sensitive-v1:*');
     
     return post;
   }
@@ -731,7 +738,9 @@ export class FeedService {
     await cacheService.delPattern(`feed:${userId}:*`);
     await cacheService.delPattern(`homefeed:*`);
     await cacheService.del(CACHE_KEYS.TRENDING);
+    await cacheService.delPattern('trending:sensitive-v1:*');
     await cacheService.del(CACHE_KEYS.EXPLORE);
+    await cacheService.delPattern('explore:sensitive-v1:*');
     
     return { success: true };
   }
@@ -754,6 +763,7 @@ export class FeedService {
     await cacheService.delPattern(`feed:*`);
     await cacheService.delPattern(`homefeed:*`);
     await cacheService.del(CACHE_KEYS.TRENDING);
+    await cacheService.delPattern('trending:sensitive-v1:*');
     
     emitSocialEvent("social:post-updated", { postId, likes: result.likeCount, likedBy: userId, liked: result.liked, authorId: result.authorId, authorLikes: result.authorLikes });
     if (result.liked && post.authorId !== userId) {

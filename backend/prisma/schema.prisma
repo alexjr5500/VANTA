@@ -663,6 +663,7 @@ model Video {
   // Publishing lifecycle, mirroring Story.publishStatus. Legacy rows default to
   // "PUBLISHED" so existing production data needs no migration value.
   publishStatus String         @default("PUBLISHED")
+  sensitiveContent Boolean @default(false)
   moderationRemovedAt DateTime?
   creatorId     String
   creator       User           @relation("CreatorVideos", fields: [creatorId], references: [id], onDelete: Cascade)
@@ -796,6 +797,7 @@ model Post {
   reposts    PostRepost[]
   shareCount Int           @default(0)
   views      Int           @default(0)
+  sensitiveContent Boolean @default(false)
   moderationRemovedAt DateTime?
   createdAt  DateTime      @default(now())
   updatedAt  DateTime      @updatedAt
@@ -1199,6 +1201,7 @@ model UserSettings {
   messagePreviews   Boolean  @default(true)
   chatNotifications Boolean  @default(true)
   requireChatRequest Boolean @default(false)
+  hideSensitiveContent Boolean @default(true)
   privacyProfile    String   @default("public")
   privacyMessages   String   @default("everyone")
   privacyFollows    String   @default("everyone")

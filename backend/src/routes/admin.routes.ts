@@ -1,3 +1,4 @@
+import { setContentSensitivity } from '../controllers/sensitive-content.controller';
 import { Router } from 'express';
 import {
   getDashboardStats,
@@ -260,6 +261,7 @@ router.get('/infrastructure', requirePermission(Permission.VIEW_SYSTEM_HEALTH), 
 router.get('/finance/transactions', requirePermission(Permission.VIEW_TRANSACTIONS), getFinanceTransactions);
 
 // Content moderation
+router.post('/content/sensitivity', requirePermission(Permission.MODERATE_CONTENT), setContentSensitivity);
 router.get('/content', requirePermission(Permission.MODERATE_CONTENT), getContentItems);
 router.post('/content/:queueId/review', requirePermission(Permission.MODERATE_CONTENT), reviewContentItem);
 
