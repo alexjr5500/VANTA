@@ -46,19 +46,21 @@ accountAccessRoutes.delete('/trusted-devices/:id', async (req: AuthRequest, res)
   if (!userId || !currentSession) { res.status(401).json({error:'Unauthorized'}); return; }
   if (!id || typeof password !== 'string' || password.length > 1024) {res.status(400).json({error:'Enter your current VANTA password'});return;}
   try {
-    const user = await prisma.user.findUnique({where:{id:userId},select:{passwordHash:true,twoFactorEnabled:true,emailVerified:true,status:true,lockedUntil:true}});
+    const user = await prisma.user.findUnique({where:{id:userId},select:{passwordHash:true,twoFactorEnabled:true,twoFactorSecret:true,emailVerified:true,status:true,lockedUntil:true}});
     if (!user?.passwordHash || user.status !== 'ACTIVE' || (user.lockedUntil && user.lockedUntil > new Date()) || !await CryptoUtils.verifyPassword(user.passwordHash,password)) {
       res.status(403).json({error:'A working VANTA password is required before disconnecting a sign-in method'});return;
     }
     if (!user.emailVerified) {res.status(403).json({error:'Verify your VANTA email before disconnecting a sign-in method'});return;}
-    if (user.twoFactorEnabled && (typeof code !== 'string' || !/^\d{6}$/.test(code) || !(await twoFactorAuth.verifyLogin(userId,code)).valid)) {
+    if (user.twoFactorEnabled && (typeof code !== 'string' || !/^\d{6}$/.test(code) || !(await twoFactorAuth.verifyLogin(userId,code,true,user.twoFactorSecret)).valid)) {
       res.status(403).json({error:'Enter a fresh authenticator code'});return;
     }
     const removed = await prisma.$transaction(async tx => {
       // Re-check the credential state before the mutation; never accept a
       // password or 2FA decision made against an outdated configuration.
-      const current = await tx.user.findUnique({where:{id:userId},select:{passwordHash:true,twoFactorEnabled:true,emailVerified:true,status:true}});
-      if (!current || current.status !== 'ACTIVE' || !current.emailVerified || current.passwordHash !== user.passwordHash || current.twoFactorEnabled !== user.twoFactorEnabled) throw new Error('Credentials changed');
+      const current = await tx.user.updateMany({where:{id:userId,status:'ACTIVE',emailVerified:true,passwordHash:user.passwordHash,twoFactorEnabled:user.twoFactorEnabled,twoFactorSecret:user.twoFactorSecret,OR:[{lockedUntil:null},{lockedUntil:{lte:new Date()}}]},data:{emailVerified:true}});
+      if (current.count !== 1) throw new Error('Credentials changed');
+      const session = await tx.session.findFirst({where:{id:currentSession,userId,expiresAt:{gt:new Date()}},select:{id:true}});
+      if (!session) throw new Error('Session expired');
       const deleted = await tx.providerAccount.deleteMany({where:{id,userId}});
       if (deleted.count) await tx.session.deleteMany({where:{userId,id:{not:currentSession}}});
       return deleted.count;
@@ -101,7 +103,7 @@ accountAccessRoutes.post('/connected-accounts/link/:id/confirm',rateLimiter.logi
     if(!pending){res.status(404).json({error:'Link request expired or unavailable'});return;}
     const user=await prisma.user.findUnique({where:{id:userId},select:{passwordHash:true,emailVerified:true,status:true,lockedUntil:true,twoFactorEnabled:true,twoFactorSecret:true}});
     if(!user?.passwordHash||!user.emailVerified||user.status!=='ACTIVE'||(user.lockedUntil&&user.lockedUntil>new Date())||!await CryptoUtils.verifyPassword(user.passwordHash,password)){res.status(403).json({error:'Verify your email and enter your current VANTA password'});return;}
-    if(user.twoFactorEnabled&&(typeof code!=='string'||!/^\d{6}$/.test(code)||!(await twoFactorAuth.verifyLogin(userId,code)).valid)){res.status(403).json({error:'Enter a fresh authenticator code'});return;}
+    if(user.twoFactorEnabled&&(typeof code!=='string'||!/^\d{6}$/.test(code)||!(await twoFactorAuth.verifyLogin(userId,code,true,user.twoFactorSecret)).valid)){res.status(403).json({error:'Enter a fresh authenticator code'});return;}
     await confirmProviderLink(userId,sessionId,pending,user);
     await auditLog.log({userId,action:'OAUTH_ACCOUNT_LINKED',metadata:{provider:pending.provider}});
     res.json({message:'Sign-in account connected'});

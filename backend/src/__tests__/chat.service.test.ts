@@ -447,7 +447,7 @@ describe('ChatService conversation list batching', () => {
     expect(db.message.groupBy).toHaveBeenCalledTimes(1);
     expect(db.message.groupBy).toHaveBeenCalledWith(expect.objectContaining({
       where: { conversationId: { in: ['c1', 'c2'] }, deletedAt: null, moderationRemovedAt: null,
-        senderId: { not: 'viewer' }, reads: { none: { userId: 'viewer' } } },
+        OR: [{ deletedFor: null }, { deletedFor: { not: 'viewer' } }], senderId: { not: 'viewer' }, reads: { none: { userId: 'viewer' } } },
     }));
     expect(db.follow.findMany).toHaveBeenCalledTimes(1);
     expect(db.userSettings.findMany).toHaveBeenCalledTimes(1);

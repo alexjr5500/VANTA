@@ -327,7 +327,7 @@ export const completeLogin2FA = async (req: Request, res: Response): Promise<voi
 
     const user = await prisma.user.findUnique({
       where: { id: challenge.userId },
-      select: { id: true, email: true, username: true, fullName: true, role: true, status: true, twoFactorEnabled: true, emailVerified: true, lockedUntil: true },
+      select: { id: true, email: true, username: true, fullName: true, role: true, status: true, twoFactorEnabled: true, twoFactorSecret: true, emailVerified: true, lockedUntil: true },
     });
 
     if (!user) {
@@ -364,7 +364,7 @@ export const completeLogin2FA = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const result = await twoFactorAuth.verifyLogin(user.id, token.trim());
+    const result = await twoFactorAuth.verifyLogin(user.id, token.trim(), true, user.twoFactorSecret);
     if (!result.valid) {
       res.status(401).json({ error: 'Invalid verification code' });
       return;
@@ -799,7 +799,7 @@ export const verify2FA = async (req: AuthenticatedRequest, res: Response): Promi
   try {
     if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
     const { token } = req.body;
-    const result = await twoFactorAuth.verifyLogin(req.user.userId, token);
+    const result = await twoFactorAuth.verifyLogin(req.user.userId, token, true);
     if (result.valid) {
       res.status(200).json({ verified: true, isBackupCode: result.isBackupCode, remainingBackupCodes: result.remainingBackupCodes });
     } else {
