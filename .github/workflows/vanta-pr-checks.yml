@@ -384,3 +384,16 @@ jobs:
 
       - name: Exercise online encrypted PostgreSQL 18 capture with restricted reader
         run: bash backend/scripts/ci-backup-database-online.sh
+
+  production-api-image:
+    name: Production API image build and runtime contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build dedicated HTTP API image
+        run: docker build -f backend/Dockerfile.api -t vanta-api-ci .
+      - name: Verify API and migration entrypoints without production credentials
+        run: |
+          docker run --rm --entrypoint sh vanta-api-ci -ec 'test -s backend/dist/index.js; test -s backend/dist/deploy/migrate-deploy.js; node --version; ffprobe -version; age --version; cd backend; node -e "require(\"sharp\"); require(\"@prisma/client\")"'
+          docker run --rm -e DATABASE_URL=postgresql://test:test@127.0.0.1:5432/vanta_test --entrypoint sh vanta-api-ci -ec 'cd backend; ./node_modules/.bin/prisma validate --schema prisma/schema.prisma'

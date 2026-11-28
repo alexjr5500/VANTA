@@ -1,0 +1,23 @@
+# HTTP API only. Build from the repository root with -f backend/Dockerfile.api.
+# Backup and recovery images are deliberately separate.
+FROM node:22-trixie-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates openssl libatomic1 ffmpeg age tar python3 make g++ \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY backend/package.json backend/tsconfig.json backend/tsconfig.build.json ./backend/
+COPY backend/prisma/ ./backend/prisma/
+RUN npm --prefix backend install --include=dev --no-audit --no-fund
+COPY backend/backup-runtime/ ./backend/backup-runtime/
+COPY backend/src/ ./backend/src/
+COPY backend/scripts/ ./backend/scripts/
+COPY backend/public/ ./backend/public/
+COPY backend/ai/ ./backend/ai/
+RUN npm --prefix backend exec -- prisma generate --schema=/app/backend/prisma/schema.prisma \
+ && npm --prefix backend run build \
+ && test -f backend/dist/index.js \
+ && test -f backend/dist/deploy/migrate-deploy.js \
+ && ffprobe -version >/dev/null
+# Railway supplies runtime variables and runs its existing pre-deploy migration
+# once. Never run migrations or seed data during image build.
+CMD ["npm", "--prefix", "backend", "start"]
